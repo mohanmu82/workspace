@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs sed:*)",
+      "Bash(sed -i 's/com\\\\.example/com.mycompany/g' /c/work/workspace/test/pom.xml /c/work/workspace/batchworkflow/pom.xml)",
+      "Bash(sed -i 's/^package com\\\\.mycompany\\\\.batch;$/package com.mycompany.batch.config;/' /c/work/workspace/batchworkflow/src/main/java/com/mycompany/batch/config/BatchProperties.java /c/work/workspace/batchworkflow/src/main/java/com/mycompany/batch/config/WebSocketConfig.java)",
+      "Bash(sed -i 's/^package com\\\\.mycompany\\\\.batch;$/package com.mycompany.batch.web;/' /c/work/workspace/batchworkflow/src/main/java/com/mycompany/batch/web/BatchController.java /c/work/workspace/batchworkflow/src/main/java/com/mycompany/batch/web/BatchWebSocketHandler.java /c/work/workspace/batchworkflow/src/main/java/com/mycompany/batch/web/RunRequest.java)",
+      "Bash(sed -i 's/^package com\\\\.mycompany\\\\.batch;$/package com.mycompany.batch.service;/' /c/work/workspace/batchworkflow/src/main/java/com/mycompany/batch/service/BatchService.java)",
+      "Bash(sed -i 's/^package com\\\\.mycompany\\\\.batch;$/package com.mycompany.batch.auth;/' /c/work/workspace/batchworkflow/src/main/java/com/mycompany/batch/auth/HttpAuthProvider.java /c/work/workspace/batchworkflow/src/main/java/com/mycompany/batch/auth/BasicAuthProvider.java /c/work/workspace/batchworkflow/src/main/java/com/mycompany/batch/auth/JwtAuthProvider.java /c/work/workspace/batchworkflow/src/main/java/com/mycompany/batch/auth/KerberosAuthProvider.java)",
+      "Bash(sed -i 's/^package com\\\\.mycompany\\\\.batch;$/package com.mycompany.batch.xpath;/' /c/work/workspace/batchworkflow/src/main/java/com/mycompany/batch/xpath/XPathColumn.java /c/work/workspace/batchworkflow/src/main/java/com/mycompany/batch/xpath/XPathExtractor.java)"
+    ]
+  }
+}

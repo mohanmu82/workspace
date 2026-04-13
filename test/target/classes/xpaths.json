@@ -1,0 +1,20 @@
+{
+"Status":"//MedlineCitation/@Status",
+"Owner":"//MedlineCitation/@Owner",
+"ISSN":"//Article/Journal/ISSN",
+"ArticleTitle": "//Article/ArticleTitle",
+"IndexingMethod":"/PubmedArticleSet/PubmedArticle/MedlineCitation/@IndexingMethod",
+"Version":"/PubmedArticleSet/PubmedArticle/MedlineCitation/PMID/@Version",
+"PubModel":"/PubmedArticleSet/PubmedArticle/MedlineCitation/Article/@PubModel",
+"IssnType":"/PubmedArticleSet/PubmedArticle/MedlineCitation/Article/Journal/ISSN/@IssnType",
+"CitedMedium":"/PubmedArticleSet/PubmedArticle/MedlineCitation/Article/Journal/JournalIssue/@CitedMedium",
+"CompleteYN":"/PubmedArticleSet/PubmedArticle/MedlineCitation/Article/AuthorList/@CompleteYN",
+"ValidYN":"/PubmedArticleSet/PubmedArticle/MedlineCitation/Article/AuthorList/Author/@ValidYN",
+"PublicationTypeUI":"/PubmedArticleSet/PubmedArticle/MedlineCitation/Article/PublicationTypeList/PublicationType/@UI",
+"DescriptorNameUI":"/PubmedArticleSet/PubmedArticle/MedlineCitation/MeshHeadingList/MeshHeading/DescriptorName/@UI",
+"MajorTopicDescriptorYN":"/PubmedArticleSet/PubmedArticle/MedlineCitation/MeshHeadingList/MeshHeading/DescriptorName/@MajorTopicYN",
+"UI":"/PubmedArticleSet/PubmedArticle/MedlineCitation/MeshHeadingList/MeshHeading/QualifierName/@UI",
+"MajorTopicQualifierYN":"/PubmedArticleSet/PubmedArticle/MedlineCitation/MeshHeadingList/MeshHeading/QualifierName/@MajorTopicYN",
+"PubStatus":"/PubmedArticleSet/PubmedArticle/PubmedData/History/PubMedPubDate/@PubStatus",
+"IdType":"/PubmedArticleSet/PubmedArticle/PubmedData/ArticleIdList/ArticleId/@IdType"
+}

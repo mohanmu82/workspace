@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NLP Analyzer</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f5f5f5;
+            display: flex;
+            justify-content: center;
+            padding: 40px 16px;
+            min-height: 100vh;
+        }
+
+        .container {
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            padding: 32px;
+            width: 100%;
+            max-width: 700px;
+            height: fit-content;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            margin-bottom: 24px;
+            color: #1a1a1a;
+        }
+
+        label {
+            display: block;
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: #444;
+            margin-bottom: 6px;
+        }
+
+        select,
+        input[type="password"],
+        textarea {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 0.95rem;
+            font-family: inherit;
+            outline: none;
+            transition: border-color 0.15s;
+            resize: vertical;
+        }
+
+        select:focus,
+        input[type="password"]:focus,
+        textarea:focus {
+            border-color: #6366f1;
+            box-shadow: 0 0 0 3px rgba(99,102,241,0.15);
+        }
+
+        .field {
+            margin-bottom: 20px;
+        }
+
+        button {
+            background: #6366f1;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            padding: 10px 24px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        button:hover:not(:disabled) {
+            background: #4f46e5;
+        }
+
+        button:disabled {
+            background: #a5b4fc;
+            cursor: not-allowed;
+        }
+
+        .response-section {
+            margin-top: 28px;
+        }
+
+        .response-label {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: #444;
+            margin-bottom: 8px;
+        }
+
+        pre {
+            background: #1e1e2e;
+            color: #cdd6f4;
+            border-radius: 6px;
+            padding: 16px;
+            font-size: 0.85rem;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+            min-height: 80px;
+            line-height: 1.6;
+        }
+
+        .error {
+            color: #ef4444;
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            border-radius: 6px;
+            padding: 12px;
+            font-size: 0.875rem;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255,255,255,0.4);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+            vertical-align: middle;
+            margin-right: 6px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>NLP Analyzer</h1>
+
+        <div class="field">
+            <label for="engine">Engine</label>
+            <select id="engine" onchange="onEngineChange()">
+                <option value="claude-analyze">Claude (claude-haiku-4-5)</option>
+                <option value="analyze">Stanford CoreNLP (rule-based)</option>
+            </select>
+        </div>
+
+        <div class="field" id="apiKeyField">
+            <label for="apiKey">API Key</label>
+            <input type="password" id="apiKey" placeholder="sk-ant-..." autocomplete="off">
+        </div>
+
+        <div class="field">
+            <label for="naturalLanguage">Natural Language</label>
+            <textarea id="naturalLanguage" rows="4" placeholder="e.g. Show me all sales by region in the last quarter"></textarea>
+        </div>
+
+        <button id="submitBtn" onclick="analyze()">Analyze</button>
+
+        <div class="response-section" id="responseSection" style="display:none">
+            <div class="response-label">Response</div>
+            <div id="responseOutput"></div>
+        </div>
+    </div>
+
+    <script>
+        function onEngineChange() {
+            const isClaude = document.getElementById('engine').value === 'claude-analyze';
+            document.getElementById('apiKeyField').style.display = isClaude ? 'block' : 'none';
+        }
+
+        async function analyze() {
+            const engine = document.getElementById('engine').value;
+            const apiKey = document.getElementById('apiKey').value.trim();
+            const naturalLanguage = document.getElementById('naturalLanguage').value.trim();
+            const btn = document.getElementById('submitBtn');
+            const section = document.getElementById('responseSection');
+            const output = document.getElementById('responseOutput');
+
+            if (!naturalLanguage) {
+                section.style.display = 'block';
+                output.innerHTML = '<div class="error">Please enter a natural language query.</div>';
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span>Analyzing...';
+            section.style.display = 'none';
+
+            const params = new URLSearchParams({ naturalLanguage });
+            if (engine === 'claude-analyze' && apiKey) params.append('apiKey', apiKey);
+
+            try {
+                const res = await fetch(`/nlp/${engine}?${params}`);
+                const text = await res.text();
+
+                section.style.display = 'block';
+
+                if (!res.ok) {
+                    let message = text;
+                    try {
+                        const err = JSON.parse(text);
+                        message = err.message || err.error || JSON.stringify(err, null, 2);
+                    } catch (_) {}
+                    output.innerHTML = `<div class="error">${escapeHtml(message)}</div>`;
+                } else {
+                    const json = JSON.parse(text);
+                    output.innerHTML = `<pre>${escapeHtml(JSON.stringify(json, null, 2))}</pre>`;
+                }
+            } catch (err) {
+                section.style.display = 'block';
+                output.innerHTML = `<div class="error">Request failed: ${escapeHtml(err.message)}</div>`;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Analyze';
+            }
+        }
+
+        function escapeHtml(str) {
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
+        document.getElementById('naturalLanguage').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) analyze();
+        });
+    </script>
+</body>
+</html>

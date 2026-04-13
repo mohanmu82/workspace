@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Batch Runner</title>
+    <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@31/dist/ag-grid-community.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f4f5f7;
+            color: #172b4d;
+            padding: 24px;
+        }
+
+        h1 {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 20px;
+        }
+
+        .toolbar {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .toolbar input {
+            flex: 1;
+            padding: 8px 12px;
+            font-size: 14px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            outline: none;
+        }
+
+        .toolbar input:focus, .toolbar select:focus {
+            border-color: #4c9aff;
+            box-shadow: 0 0 0 2px rgba(76, 154, 255, 0.25);
+        }
+
+        .toolbar select {
+            padding: 8px 12px;
+            font-size: 14px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            outline: none;
+            background: #fff;
+            max-width: 200px;
+        }
+
+        .toolbar select:disabled {
+            background: #f4f5f7;
+            color: #a5adba;
+            cursor: not-allowed;
+        }
+
+        .toolbar button {
+            padding: 8px 20px;
+            font-size: 14px;
+            font-weight: 500;
+            background: #0052cc;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .toolbar button:hover { background: #0065ff; }
+        .toolbar button:disabled { background: #a5adba; cursor: not-allowed; }
+
+        .toolbar button.secondary {
+            background: #fff;
+            color: #0052cc;
+            border: 1px solid #0052cc;
+        }
+
+        .toolbar button.secondary:hover { background: #e9f0ff; }
+        .toolbar button.secondary:disabled { background: #fff; color: #a5adba; border-color: #a5adba; }
+
+        .stats-bar {
+            display: none;
+            gap: 24px;
+            margin-bottom: 10px;
+            font-size: 13px;
+        }
+
+        .stat {
+            background: #fff;
+            border: 1px solid #dfe1e6;
+            border-radius: 4px;
+            padding: 6px 14px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+        }
+
+        .stat-label { color: #5e6c84; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .stat-value { font-size: 16px; font-weight: 600; color: #172b4d; }
+
+        .status-bar {
+            font-size: 13px;
+            color: #5e6c84;
+            margin-bottom: 10px;
+            min-height: 18px;
+        }
+
+        .status-bar.error { color: #de350b; }
+
+        #grid {
+            width: 100%;
+            height: calc(100vh - 160px);
+        }
+
+        .row-failed { background-color: #ffebe6 !important; color: #bf2600; }
+        .row-failed:hover { background-color: #ffbdad !important; }
+    </style>
+</head>
+<body>
+
+<h1>Batch Runner</h1>
+
+<div class="toolbar">
+    <select id="operationType" disabled>
+        <option value="">Loading operations...</option>
+    </select>
+    <input id="inputFilePath" type="text" placeholder="Input file path" />
+    <input id="inputCount" type="number" placeholder="Max rows (optional)" min="1" style="max-width: 180px;" />
+    <select id="debugMode" title="Debug mode">
+        <option value="0">Normal</option>
+        <option value="-1">Debug (skip extraction)</option>
+    </select>
+    <button id="runBtn" onclick="runBatch()">Run</button>
+    <button id="exportBtn" class="secondary" onclick="exportCsv()" disabled>Export CSV</button>
+    <button id="expandBtn" class="secondary" onclick="expandColumns()" disabled>Expand Columns</button>
+    <button id="shrinkBtn" class="secondary" onclick="shrinkColumns()" disabled>Shrink Columns</button>
+    <button id="copyJsonBtn" class="secondary" onclick="copyJson()" disabled>Copy JSON</button>
+    <button id="clearBtn" class="secondary" onclick="clearGrid()" disabled>Clear</button>
+    <button id="showOpsBtn" class="secondary" onclick="showAllOperations()">Show All Operations</button>
+</div>
+
+<div id="statusBar" class="status-bar"></div>
+
+<div id="statsBar" class="stats-bar">
+    <div class="stat"><span class="stat-label">Method</span><span id="statMethod" class="stat-value">—</span></div>
+    <div class="stat"><span class="stat-label">Threads</span><span id="statThreadCount" class="stat-value">—</span></div>
+    <div class="stat"><span class="stat-label">Min</span><span id="statMin" class="stat-value">—</span></div>
+    <div class="stat"><span class="stat-label">Avg</span><span id="statAvg" class="stat-value">—</span></div>
+    <div class="stat"><span class="stat-label">Max</span><span id="statMax" class="stat-value">—</span></div>
+    <div class="stat"><span class="stat-label">Time Taken</span><span id="statTimeTaken" class="stat-value">—</span></div>
+    <div class="stat"><span class="stat-label">Response Size</span><span id="statResponseSize" class="stat-value">—</span></div>
+    <div class="stat"><span class="stat-label">Timestamp</span><span id="statTimestamp" class="stat-value">—</span></div>
+    <div class="stat" style="max-width:320px"><span class="stat-label">Batch UUID</span><span id="statUuid" class="stat-value" style="font-size:11px;word-break:break-all">—</span></div>
+</div>
+
+<div id="grid" class="ag-theme-alpine"></div>
+
+<script>
+    const gridOptions = {
+        columnDefs: [],
+        rowData: [],
+        defaultColDef: {
+            sortable: true,
+            filter: true,
+            resizable: true,
+            minWidth: 100,
+        },
+        getRowClass: params => params.data?.operationStatus === 'FAILED' ? 'row-failed' : undefined,
+        animateRows: true,
+    };
+
+    const gridDiv = document.getElementById('grid');
+    const grid = agGrid.createGrid(gridDiv, gridOptions);
+
+    let lastJson = null;
+
+    fetch('/batch/operations')
+        .then(r => r.json())
+        .then(body => {
+            const select = document.getElementById('operationType');
+            select.innerHTML = '';
+            const ops = body.data || [];
+            if (ops.length === 0) {
+                select.innerHTML = '<option value="">No operations configured</option>';
+                return;
+            }
+            ops.forEach(op => {
+                const opt = document.createElement('option');
+                opt.value = op.name;
+                opt.textContent = op.name;
+                select.appendChild(opt);
+            });
+            select.disabled = false;
+            updateInputFilePath();
+        })
+        .catch(() => {
+            const select = document.getElementById('operationType');
+            select.innerHTML = '<option value="">Failed to load operations</option>';
+        });
+
+    function updateInputFilePath() {
+        const name = document.getElementById('operationType').value;
+        document.getElementById('inputFilePath').value = name ? `C:/work/data/${name}.txt` : '';
+    }
+
+    document.getElementById('operationType').addEventListener('change', updateInputFilePath);
+
+    async function runBatch() {
+        const operationType = document.getElementById('operationType').value;
+        const inputFilePath = document.getElementById('inputFilePath').value.trim();
+        const statusBar = document.getElementById('statusBar');
+        const btn = document.getElementById('runBtn');
+
+        if (!operationType) {
+            setStatus('Please select an operation type.', true);
+            return;
+        }
+        if (!inputFilePath) {
+            setStatus('Please enter an input file path.', true);
+            return;
+        }
+
+        btn.disabled = true;
+        document.getElementById('exportBtn').disabled = true;
+        document.getElementById('expandBtn').disabled = true;
+        document.getElementById('shrinkBtn').disabled = true;
+        document.getElementById('copyJsonBtn').disabled = true;
+        document.getElementById('clearBtn').disabled = true;
+        lastJson = null;
+        document.getElementById('statsBar').style.display = 'none';
+        setStatus('Running...');
+
+        try {
+            const inputCount = document.getElementById('inputCount').value.trim();
+            const debugMode  = document.getElementById('debugMode').value;
+            let url = `/batch/run?operationType=${encodeURIComponent(operationType)}&inputFilePath=${encodeURIComponent(inputFilePath)}`;
+            if (inputCount) url += `&inputCount=${encodeURIComponent(inputCount)}`;
+            if (debugMode && debugMode !== '0') url += `&debugMode=${encodeURIComponent(debugMode)}`;
+            const response = await fetch(url);
+            const body = await response.json();
+            lastJson = body;
+
+            if (!response.ok) {
+                setStatus(body.message || `HTTP ${response.status}`, true);
+                return;
+            }
+
+            const rows = body.data || [];
+            const meta = body.metadata || {};
+
+            if (rows.length === 0) {
+                setStatus('No results returned.');
+                grid.setGridOption('columnDefs', []);
+                grid.setGridOption('rowData', []);
+                return;
+            }
+
+            if (body.columns && body.columns.length > 0) {
+                grid.setGridOption('columnDefs', body.columns.map(c => ({
+                    field: c.columnName,
+                    headerName: c.displayName,
+                })));
+            } else if (rows.length > 0) {
+                grid.setGridOption('columnDefs', Object.keys(rows[0]).map(k => ({
+                    field: k,
+                    headerName: k,
+                })));
+            }
+
+            grid.setGridOption('rowData', rows);
+            grid.sizeColumnsToFit();
+
+            document.getElementById('exportBtn').disabled = false;
+            document.getElementById('expandBtn').disabled = false;
+            document.getElementById('copyJsonBtn').disabled = false;
+            document.getElementById('shrinkBtn').disabled = false;
+            document.getElementById('clearBtn').disabled = false;
+
+            const { httpStats, summary = {} } = meta;
+            const { processed = 0, succeeded = 0, failed = 0 } = summary;
+            setStatus(`Processed: ${processed} — Succeeded: ${succeeded} — Failed: ${failed}`);
+
+            document.getElementById('statTimestamp').textContent = meta.timestamp || '—';
+            document.getElementById('statUuid').textContent = meta.batchUuid || '—';
+            if (httpStats) {
+                document.getElementById('statMethod').textContent = httpStats.method || '—';
+                document.getElementById('statThreadCount').textContent = httpStats.threadCount ?? '—';
+                document.getElementById('statMin').textContent = httpStats.minMs + ' ms';
+                document.getElementById('statAvg').textContent = Math.round(httpStats.avgMs) + ' ms';
+                document.getElementById('statMax').textContent = httpStats.maxMs + ' ms';
+            }
+            if (summary) {
+                document.getElementById('statTimeTaken').textContent = summary.timeTakenMs + ' ms';
+                document.getElementById('statResponseSize').textContent = summary.responseSizeKb + ' KB';
+            }
+            document.getElementById('statsBar').style.display = 'flex';
+        } catch (err) {
+            setStatus(`Error: ${err.message}`, true);
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    function expandColumns() {
+        grid.autoSizeAllColumns();
+    }
+
+    function shrinkColumns() {
+        grid.sizeColumnsToFit();
+    }
+
+    async function copyJson() {
+        if (!lastJson) return;
+        await navigator.clipboard.writeText(JSON.stringify(lastJson, null, 2));
+        const btn = document.getElementById('copyJsonBtn');
+        const original = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(() => btn.textContent = original, 1500);
+    }
+
+    function clearGrid() {
+        grid.setGridOption('rowData', []);
+        grid.setGridOption('columnDefs', []);
+        lastJson = null;
+        document.getElementById('statMethod').textContent = '—';
+        document.getElementById('statThreadCount').textContent = '—';
+        document.getElementById('statTimestamp').textContent = '—';
+        document.getElementById('statUuid').textContent = '—';
+        document.getElementById('statTimeTaken').textContent = '—';
+        document.getElementById('statResponseSize').textContent = '—';
+        document.getElementById('statsBar').style.display = 'none';
+        document.getElementById('exportBtn').disabled = true;
+        document.getElementById('expandBtn').disabled = true;
+        document.getElementById('shrinkBtn').disabled = true;
+        document.getElementById('copyJsonBtn').disabled = true;
+        document.getElementById('clearBtn').disabled = true;
+        setStatus('');
+    }
+
+    async function showAllOperations() {
+        setStatus('Loading operations...');
+        document.getElementById('statsBar').style.display = 'none';
+        try {
+            const response = await fetch('/batch/operations');
+            const body = await response.json();
+            const rows = body.data || [];
+            if (rows.length === 0) {
+                setStatus('No operations configured.');
+                grid.setGridOption('columnDefs', []);
+                grid.setGridOption('rowData', []);
+                return;
+            }
+            grid.setGridOption('columnDefs', Object.keys(rows[0]).map(k => ({
+                field: k,
+                headerName: k,
+            })));
+            grid.setGridOption('rowData', rows);
+            grid.autoSizeAllColumns();
+            lastJson = body;
+            document.getElementById('exportBtn').disabled = false;
+            document.getElementById('expandBtn').disabled = false;
+            document.getElementById('shrinkBtn').disabled = false;
+            document.getElementById('copyJsonBtn').disabled = false;
+            document.getElementById('clearBtn').disabled = false;
+            setStatus(`Showing ${rows.length} operation(s).`);
+        } catch (err) {
+            setStatus(`Error: ${err.message}`, true);
+        }
+    }
+
+    function exportCsv() {
+        grid.exportDataAsCsv({ fileName: 'batch-results.csv' });
+    }
+
+    function setStatus(msg, isError = false) {
+        const bar = document.getElementById('statusBar');
+        bar.textContent = msg;
+        bar.className = 'status-bar' + (isError ? ' error' : '');
+    }
+
+    document.getElementById('inputFilePath').addEventListener('keydown', e => {
+        if (e.key === 'Enter') runBatch();
+    });
+</script>
+
+</body>
+</html>
