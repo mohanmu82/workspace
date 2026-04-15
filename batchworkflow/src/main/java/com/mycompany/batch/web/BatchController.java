@@ -1,11 +1,14 @@
 package com.mycompany.batch.web;
 
+import com.mycompany.batch.cache.CacheFactory;
 import com.mycompany.batch.config.BatchProperties;
 import com.mycompany.batch.model.RunRequest;
 import com.mycompany.batch.service.BatchService;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -26,10 +29,13 @@ public class BatchController {
 
     private final BatchService batchService;
     private final BatchProperties batchProperties;
+    private final CacheFactory cacheFactory;
 
-    public BatchController(BatchService batchService, BatchProperties batchProperties) {
+    public BatchController(BatchService batchService, BatchProperties batchProperties,
+                           CacheFactory cacheFactory) {
         this.batchService = batchService;
         this.batchProperties = batchProperties;
+        this.cacheFactory = cacheFactory;
     }
 
     // -------------------------------------------------------------------------
@@ -44,58 +50,82 @@ public class BatchController {
             Map<String, Object> entry = new LinkedHashMap<>();
             entry.put("name", name);
 
-            // HTTP properties (flat)
-            entry.put("http.url",          op.getHttp().getUrl());
-            entry.put("http.method",        op.getHttp().getMethod());
-            entry.put("http.contentType",   op.getHttp().getContentType());
-            entry.put("http.bodyTemplate",  op.getHttp().getBodyTemplate());
-            entry.put("http.threadCount",   op.getHttp().getThreadCount());
+            // Activities (if defined)
+            if (!op.getActivity().isEmpty()) {
+                entry.put("activity_count", op.getActivity().size());
+                for (int i = 0; i < op.getActivity().size(); i++) {
+                    var act = op.getActivity().get(i);
+                    String pfx = "activity_" + i + "_";
+                    entry.put(pfx + "name", act.getName());
+                    entry.put(pfx + "type", act.getType());
+                    if ("HTTP".equalsIgnoreCase(act.getType())) {
+                        entry.put(pfx + "http_url",         act.getHttp().getUrl());
+                        entry.put(pfx + "http_method",      act.getHttp().getMethod());
+                        entry.put(pfx + "http_threadCount", act.getHttp().getThreadCount());
+                        entry.put(pfx + "http_timeoutMs",   act.getHttp().getTimeoutMs());
+                        act.getHttp().getHeader().forEach((k, v) -> entry.put(pfx + "http_header_" + k, v));
+                    } else if ("dataextraction".equalsIgnoreCase(act.getType())) {
+                        entry.put(pfx + "dataExtraction_type",  act.getDataExtraction().getType());
+                        entry.put(pfx + "dataExtraction_config",act.getDataExtraction().getConfig());
+                        entry.put(pfx + "dataExtraction_threadCount", act.getDataExtraction().getThreadCount());
+                    }
+                }
+            }
+
+            // Effective HTTP properties (from activity if present, otherwise legacy flat)
+            BatchProperties.HttpProperties http = op.getEffectiveHttp();
+            entry.put("http_url",          http.getUrl());
+            entry.put("http_method",        http.getMethod());
+            entry.put("http_contentType",   http.getContentType());
+            entry.put("http_bodyTemplate",  http.getBodyTemplate());
+            entry.put("http_threadCount",   http.getThreadCount());
+            entry.put("http_timeoutMs",     http.getTimeoutMs());
 
             // Custom HTTP headers (flat)
-            op.getHttp().getHeader().forEach((k, v) -> entry.put("http.header." + k, v));
+            http.getHeader().forEach((k, v) -> entry.put("http_header_" + k, v));
 
-            // XPath properties (flat)
-            entry.put("xpath.config",       op.getXpath().getConfig());
-            entry.put("xpath.threadCount",  op.getXpath().getThreadCount());
+            // XPath properties (flat) — from legacy config
+            entry.put("xpath_config",       op.getXpath().getConfig());
+            entry.put("xpath_threadCount",  op.getXpath().getThreadCount());
 
             // Auth properties (flat)
             String authMethod = op.getAuth().getMethod().trim().toUpperCase();
-            entry.put("auth.method", authMethod);
+            entry.put("auth_method", authMethod);
             switch (authMethod) {
                 case "BASIC" -> {
-                    entry.put("auth.basic.username", op.getAuth().getBasic().getUsername());
-                    entry.put("auth.basic.password", "***");
+                    entry.put("auth_basic_username", op.getAuth().getBasic().getUsername());
+                    entry.put("auth_basic_password", "***");
                 }
                 case "JWT" -> {
-                    entry.put("auth.jwt.url",             op.getAuth().getJwt().getUrl());
-                    entry.put("auth.jwt.applicationName", op.getAuth().getJwt().getApplicationName());
-                    entry.put("auth.jwt.username",        op.getAuth().getJwt().getUsername());
-                    entry.put("auth.jwt.password",        "***");
+                    entry.put("auth_jwt_url",             op.getAuth().getJwt().getUrl());
+                    entry.put("auth_jwt_applicationName", op.getAuth().getJwt().getApplicationName());
+                    entry.put("auth_jwt_username",        op.getAuth().getJwt().getUsername());
+                    entry.put("auth_jwt_password",        "***");
                 }
                 case "KERBEROS" -> {
-                    entry.put("auth.kerberos.username",         op.getAuth().getKerberos().getUsername());
-                    entry.put("auth.kerberos.keytab",           op.getAuth().getKerberos().getKeytab());
-                    entry.put("auth.kerberos.servicePrincipal", op.getAuth().getKerberos().getServicePrincipal());
+                    entry.put("auth_kerberos_username",         op.getAuth().getKerberos().getUsername());
+                    entry.put("auth_kerberos_keytab",           op.getAuth().getKerberos().getKeytab());
+                    entry.put("auth_kerberos_servicePrincipal", op.getAuth().getKerberos().getServicePrincipal());
                 }
             }
 
             // Input source properties (flat)
             String inputType = op.getInputSource().getType();
-            entry.put("inputSource.type", inputType);
+            entry.put("inputSource_type", inputType);
             if ("HTTPCONFIG".equalsIgnoreCase(inputType)) {
-                entry.put("inputSource.httpConfig.url",             op.getInputSource().getHttpConfig().getUrl());
-                entry.put("inputSource.httpConfig.method",          op.getInputSource().getHttpConfig().getMethod());
-                entry.put("inputSource.httpConfig.jsonataTransform",op.getInputSource().getHttpConfig().getJsonataTransform());
+                entry.put("inputSource_httpConfig_url",             op.getInputSource().getHttpConfig().getUrl());
+                entry.put("inputSource_httpConfig_method",          op.getInputSource().getHttpConfig().getMethod());
+                entry.put("inputSource_httpConfig_jsonataTransform",op.getInputSource().getHttpConfig().getJsonataTransform());
             }
 
             // Output data properties (flat)
-            entry.put("outputData.type", op.getOutputData().getType());
+            entry.put("outputData_type", op.getOutputData().getType());
 
             // Data extraction properties (flat)
             String extractType = op.getDataExtraction().getType();
-            entry.put("dataExtraction.type", extractType);
+            entry.put("dataExtraction_type", extractType);
             if ("JSON".equalsIgnoreCase(extractType)) {
-                entry.put("dataExtraction.jsonataTransform", op.getDataExtraction().getJsonataTransform());
+                entry.put("dataExtraction_jsonataTransform", op.getDataExtraction().getJsonataTransform());
             }
 
             data.add(entry);
@@ -103,6 +133,52 @@ public class BatchController {
 
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("data", data);
+        return ResponseEntity.ok(response);
+    }
+
+    // -------------------------------------------------------------------------
+    // GET  /batch/cache          — list all cache names + entry counts
+    // GET  /batch/cache/{name}   — list all entries in one cache
+    // DELETE /batch/cache/{name} — clear one cache
+    // -------------------------------------------------------------------------
+
+    @GetMapping("/cache")
+    public ResponseEntity<Map<String, Object>> listCaches() {
+        List<Map<String, Object>> data = new ArrayList<>();
+        cacheFactory.getAll().forEach((name, entries) -> {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("cacheName",  name);
+            row.put("cacheCount", entries.size());
+            data.add(row);
+        });
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("data", data);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/cache/{name}")
+    public ResponseEntity<Map<String, Object>> listCacheEntries(@PathVariable String name) {
+        List<Map<String, Object>> data = new ArrayList<>();
+        cacheFactory.getEntries(name).forEach((key, entry) -> {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("key",   key);
+            row.put("value", entry.value());
+            row.put("url",   entry.url());
+            data.add(row);
+        });
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("data", data);
+        return ResponseEntity.ok(response);
+    }
+
+    @DeleteMapping("/cache/{name}")
+    public ResponseEntity<Map<String, Object>> clearCache(@PathVariable String name) {
+        cacheFactory.clear(name);
+        Map<String, Object> entry = new LinkedHashMap<>();
+        entry.put("status",  "CLEARED");
+        entry.put("message", "Cache '" + name + "' has been cleared");
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("data", List.of(entry));
         return ResponseEntity.ok(response);
     }
 
@@ -178,8 +254,8 @@ public class BatchController {
 
     /** Shared entry point for all run endpoints. */
     ResponseEntity<Map<String, Object>> executeRun(RunRequest request) throws Exception {
-        if (request.operationType() == null || request.operationType().isBlank()) {
-            return badRequest("operationType is required");
+        if (request.operation() == null || request.operation().isBlank()) {
+            return badRequest("operation is required");
         }
 
         BatchService.BatchResult result;
@@ -195,7 +271,7 @@ public class BatchController {
             String outputFilePath = request.outputFilePath();
             if (outputFilePath == null || outputFilePath.isBlank()) {
                 try {
-                    outputFilePath = batchProperties.getOperation(request.operationType())
+                    outputFilePath = batchProperties.getOperation(request.operation())
                             .getOutputData().getOutputFilePath();
                 } catch (Exception ignored) {}
             }
@@ -207,11 +283,11 @@ public class BatchController {
             } catch (Exception e) {
                 return badRequest("Failed to write output file: " + e.getMessage());
             }
-            return ResponseEntity.ok(buildFileResponse(request.operationType(), result,
+            return ResponseEntity.ok(buildFileResponse(request.operation(), result,
                     Path.of(outputFilePath).toAbsolutePath().toString()));
         }
 
-        return ResponseEntity.ok(buildHttpResponse(request.operationType(), result));
+        return ResponseEntity.ok(buildHttpResponse(request.operation(), result));
     }
 
     private String resolveOutputData(RunRequest request) {
@@ -219,7 +295,7 @@ public class BatchController {
             return request.outputData().trim().toUpperCase();
         }
         try {
-            return batchProperties.getOperation(request.operationType())
+            return batchProperties.getOperation(request.operation())
                     .getOutputData().getType().trim().toUpperCase();
         } catch (Exception e) {
             return "HTTP";
@@ -229,9 +305,10 @@ public class BatchController {
     /** Builds the full JSON response returned to HTTP clients and the WebSocket. */
     Map<String, Object> buildHttpResponse(String operationType, BatchService.BatchResult result) {
         BatchProperties.OperationProperties op = batchProperties.getOperation(operationType);
+        BatchProperties.HttpProperties http = op.getEffectiveHttp();
         Map<String, Object> httpStats = new LinkedHashMap<>();
-        httpStats.put("method",      op.getHttp().getMethod());
-        httpStats.put("threadCount", op.getHttp().getThreadCount());
+        httpStats.put("method",      http.getMethod());
+        httpStats.put("threadCount", http.getThreadCount());
         httpStats.put("minMs",       result.httpStats().minMs());
         httpStats.put("maxMs",       result.httpStats().maxMs());
         httpStats.put("avgMs",       result.httpStats().avgMs());
@@ -294,14 +371,20 @@ public class BatchController {
                     .toList();
         }
         return new RunRequest(
-                params.get("operationType"),
+                params.get("operation"),
                 params.get("inputSource"),
                 params.get("inputFilePath"),
                 ids,
+                null, // raw — not supported via query params
                 parseInputCount(params.get("inputCount")),
                 params.get("outputData"),
                 params.get("outputFilePath"),
-                parseInputCount(params.get("debugMode")));
+                parseInputCount(params.get("debugMode")),
+                parseInputCount(params.get("httpThreadCount")),
+                parseInputCount(params.get("httpTimeoutMs")),
+                null, // filterInput — not supported via query params
+                null  // filterOutput — not supported via query params
+        );
     }
 
     private ResponseEntity<Map<String, Object>> runPsv(Map<String, String> params) throws Exception {

@@ -13,12 +13,12 @@
 
     <groupId>com.mycompany</groupId>
     <artifactId>batchworkflow</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
+    <version>1.0.0</version>
     <name>batchworkflow</name>
     <description>Batch HTTP fetch and XPath extraction service</description>
 
     <properties>
-        <java.version>25</java.version>
+        <java.version>21</java.version>
     </properties>
 
     <dependencies>
@@ -41,6 +41,11 @@
             <groupId>com.dashjoin</groupId>
             <artifactId>jsonata</artifactId>
             <version>0.9.6</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.jayway.jsonpath</groupId>
+            <artifactId>json-path</artifactId>
         </dependency>
 
         <dependency>

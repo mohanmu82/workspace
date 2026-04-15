@@ -3,8 +3,13 @@ C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\auth\HttpAuthP
 C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\auth\JwtAuthProvider.java
 C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\auth\KerberosAuthProvider.java
 C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\BatchApplication.java
+C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\cache\CacheFactory.java
 C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\config\BatchProperties.java
 C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\config\WebSocketConfig.java
+C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\jsonpath\JsonPathColumn.java
+C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\jsonpath\JsonPathExtractor.java
+C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\model\DataRow.java
+C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\model\FilterRule.java
 C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\model\RunRequest.java
 C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\service\BatchService.java
 C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\web\BatchController.java

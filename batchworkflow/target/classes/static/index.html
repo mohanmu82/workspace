@@ -15,51 +15,76 @@
             padding: 24px;
         }
 
-        h1 {
-            font-size: 20px;
-            font-weight: 600;
-            margin-bottom: 20px;
+        h1 { font-size: 20px; font-weight: 600; margin-bottom: 16px; }
+
+        .form-panel {
+            background: #fff;
+            border: 1px solid #dfe1e6;
+            border-radius: 6px;
+            padding: 16px;
+            margin-bottom: 14px;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 12px;
         }
 
-        .toolbar {
+        .form-group {
             display: flex;
-            gap: 10px;
-            align-items: center;
-            margin-bottom: 16px;
+            flex-direction: column;
+            gap: 4px;
         }
 
-        .toolbar input {
-            flex: 1;
-            padding: 8px 12px;
-            font-size: 14px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            outline: none;
+        .form-group.wide { grid-column: 1 / -1; }
+
+        .form-group label {
+            font-size: 11px;
+            font-weight: 600;
+            color: #5e6c84;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
         }
 
-        .toolbar input:focus, .toolbar select:focus {
-            border-color: #4c9aff;
-            box-shadow: 0 0 0 2px rgba(76, 154, 255, 0.25);
-        }
-
-        .toolbar select {
-            padding: 8px 12px;
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            padding: 7px 10px;
             font-size: 14px;
             border: 1px solid #ccc;
             border-radius: 4px;
             outline: none;
             background: #fff;
-            max-width: 200px;
+            font-family: inherit;
         }
 
-        .toolbar select:disabled {
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            border-color: #4c9aff;
+            box-shadow: 0 0 0 2px rgba(76,154,255,0.25);
+        }
+
+        .form-group select:disabled {
             background: #f4f5f7;
             color: #a5adba;
             cursor: not-allowed;
         }
 
+        .form-group textarea {
+            resize: vertical;
+            min-height: 80px;
+            font-size: 13px;
+        }
+
+        .toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
         .toolbar button {
-            padding: 8px 20px;
+            padding: 8px 18px;
             font-size: 14px;
             font-weight: 500;
             background: #0052cc;
@@ -84,7 +109,8 @@
 
         .stats-bar {
             display: none;
-            gap: 24px;
+            flex-wrap: wrap;
+            gap: 12px;
             margin-bottom: 10px;
             font-size: 13px;
         }
@@ -114,27 +140,192 @@
 
         #grid {
             width: 100%;
-            height: calc(100vh - 160px);
+            height: calc(100vh - 340px);
         }
 
         .row-failed { background-color: #ffebe6 !important; color: #bf2600; }
         .row-failed:hover { background-color: #ffbdad !important; }
+
+        .hidden { display: none !important; }
+
+        .row-count-bar {
+            font-size: 12px;
+            color: #5e6c84;
+            text-align: right;
+            margin-bottom: 4px;
+            min-height: 16px;
+        }
+
+        .request-preview-header {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 4px;
+        }
+
+        .request-preview-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: #5e6c84;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            flex: 1;
+        }
+
+        .request-preview-actions { display: flex; gap: 6px; }
+
+        .request-preview-actions button {
+            padding: 3px 10px;
+            font-size: 12px;
+            font-weight: 500;
+            border-radius: 4px;
+            cursor: pointer;
+            border: 1px solid #0052cc;
+            background: #fff;
+            color: #0052cc;
+        }
+
+        .request-preview-actions button:hover { background: #e9f0ff; }
+
+        .request-preview {
+            display: none;
+            width: 100%;
+            background: #1e1e2e;
+            color: #cdd6f4;
+            font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
+            font-size: 12px;
+            border-radius: 6px;
+            padding: 10px 14px;
+            margin-bottom: 12px;
+            border: 1px solid #2d2d3f;
+            border-left: 3px solid #4c9aff;
+            min-height: 80px;
+            max-height: 200px;
+            resize: vertical;
+            overflow: auto;
+            outline: none;
+        }
+
+        .ws-status { font-size: 10px; font-weight: 700; letter-spacing: 0.3px; }
+
+        .cache-mode-bar {
+            display: none;
+            align-items: center;
+            gap: 10px;
+            background: #fff0b3;
+            border: 1px solid #ffc400;
+            border-radius: 4px;
+            padding: 6px 14px;
+            margin-bottom: 10px;
+            font-size: 13px;
+            font-weight: 500;
+            color: #172b4d;
+        }
+
+        .cache-mode-bar button {
+            padding: 4px 12px;
+            font-size: 12px;
+            font-weight: 500;
+            border-radius: 4px;
+            cursor: pointer;
+            border: 1px solid #0052cc;
+            background: #fff;
+            color: #0052cc;
+        }
+
+        .cache-mode-bar button:hover { background: #e9f0ff; }
+        .cache-mode-bar button.danger { border-color: #de350b; color: #de350b; }
+        .cache-mode-bar button.danger:hover { background: #ffebe6; }
     </style>
 </head>
 <body>
 
 <h1>Batch Runner</h1>
 
+<div class="form-panel">
+    <!-- Row 1: Operation + Input Source -->
+    <div class="form-group">
+        <label>Operation</label>
+        <select id="operation" disabled onchange="onOperationChange()">
+            <option value="">Loading operations...</option>
+        </select>
+    </div>
+
+    <div class="form-group">
+        <label>Input Source</label>
+        <select id="inputSource" onchange="onInputSourceChange()">
+            <option value="FILE">FILE</option>
+            <option value="REQUEST">REQUEST</option>
+        </select>
+    </div>
+
+    <div class="form-group" id="inputFileGroup">
+        <label>Input File Path</label>
+        <input id="inputFilePath" type="text" placeholder="C:/work/data/ids.txt" />
+    </div>
+
+    <div class="form-group wide hidden" id="inputIdsGroup">
+        <label>IDs / CSV rows (first line = header, delimiter auto-detected: comma or pipe)</label>
+        <textarea id="requestIds" placeholder="id&#10;38791234&#10;38791235&#10;38791236"></textarea>
+    </div>
+
+    <!-- Row 2: Output + HTTP settings -->
+    <div class="form-group">
+        <label>Output</label>
+        <select id="outputData" onchange="onOutputDataChange()">
+            <option value="HTTP">HTTP Response</option>
+            <option value="FILE">FILE</option>
+        </select>
+    </div>
+
+    <div class="form-group hidden" id="outputFileGroup">
+        <label>Output File Path</label>
+        <input id="outputFilePath" type="text" placeholder="C:/work/data/output.out" />
+    </div>
+
+    <div class="form-group">
+        <label>HTTP Thread Count</label>
+        <input id="httpThreadCount" type="number" value="10" min="1" max="100" />
+    </div>
+
+    <div class="form-group">
+        <label>HTTP Timeout (ms)</label>
+        <input id="httpTimeoutMs" type="number" value="3000" min="100" step="500" />
+    </div>
+
+    <div class="form-group">
+        <label>Max Rows (optional)</label>
+        <input id="inputCount" type="number" placeholder="All rows" min="1" />
+    </div>
+
+    <div class="form-group">
+        <label>Mode</label>
+        <select id="debugMode">
+            <option value="0">Normal</option>
+            <option value="1">Show all (include activity metadata)</option>
+            <option value="-1">Debug (skip extraction)</option>
+        </select>
+    </div>
+
+    <div class="form-group">
+        <label>Request Mode &nbsp;<span id="wsIndicator" class="ws-status"></span></label>
+        <select id="requestMode">
+            <option value="WS" selected>WS (WebSocket)</option>
+            <option value="REST">REST (HTTP)</option>
+        </select>
+    </div>
+</div>
+
+<div class="request-preview-header" id="requestPreviewHeader">
+    <span class="request-preview-label">Last Request</span>
+    <div class="request-preview-actions">
+        <button onclick="validateJson()">Validate JSON</button>
+        <button onclick="sendRawRequest()">Send Request</button>
+    </div>
+</div>
+<textarea class="request-preview" id="requestPreview" spellcheck="false"></textarea>
+
 <div class="toolbar">
-    <select id="operationType" disabled>
-        <option value="">Loading operations...</option>
-    </select>
-    <input id="inputFilePath" type="text" placeholder="Input file path" />
-    <input id="inputCount" type="number" placeholder="Max rows (optional)" min="1" style="max-width: 180px;" />
-    <select id="debugMode" title="Debug mode">
-        <option value="0">Normal</option>
-        <option value="-1">Debug (skip extraction)</option>
-    </select>
     <button id="runBtn" onclick="runBatch()">Run</button>
     <button id="exportBtn" class="secondary" onclick="exportCsv()" disabled>Export CSV</button>
     <button id="expandBtn" class="secondary" onclick="expandColumns()" disabled>Expand Columns</button>
@@ -142,6 +333,13 @@
     <button id="copyJsonBtn" class="secondary" onclick="copyJson()" disabled>Copy JSON</button>
     <button id="clearBtn" class="secondary" onclick="clearGrid()" disabled>Clear</button>
     <button id="showOpsBtn" class="secondary" onclick="showAllOperations()">Show All Operations</button>
+    <button id="showCachesBtn" class="secondary" onclick="loadCacheNames()">Caches</button>
+</div>
+
+<div id="cacheModeBar" class="cache-mode-bar">
+    <span id="cacheModeLabel">Caches</span>
+    <button id="clearCacheBtn" onclick="clearSelectedCache()" class="danger" style="display:none">Clear Cache</button>
+    <button onclick="loadCacheNames()" id="backToCachesBtn" style="display:none">&#8592; All Caches</button>
 </div>
 
 <div id="statusBar" class="status-bar"></div>
@@ -158,31 +356,33 @@
     <div class="stat" style="max-width:320px"><span class="stat-label">Batch UUID</span><span id="statUuid" class="stat-value" style="font-size:11px;word-break:break-all">—</span></div>
 </div>
 
+<div id="rowCountBar" class="row-count-bar"></div>
 <div id="grid" class="ag-theme-alpine"></div>
 
 <script>
     const gridOptions = {
         columnDefs: [],
         rowData: [],
-        defaultColDef: {
-            sortable: true,
-            filter: true,
-            resizable: true,
-            minWidth: 100,
-        },
+        defaultColDef: { sortable: true, filter: true, resizable: true, minWidth: 100 },
         getRowClass: params => params.data?.operationStatus === 'FAILED' ? 'row-failed' : undefined,
         animateRows: true,
+        onRowDataUpdated: updateRowCount,
+        onFilterChanged:  updateRowCount,
+        onRowClicked: params => {
+            if (cacheMode === 'names' && params.data?.cacheName) {
+                loadCacheEntries(params.data.cacheName);
+            }
+        }
     };
 
-    const gridDiv = document.getElementById('grid');
-    const grid = agGrid.createGrid(gridDiv, gridOptions);
-
+    const grid = agGrid.createGrid(document.getElementById('grid'), gridOptions);
     let lastJson = null;
 
+    // Load operations on startup
     fetch('/batch/operations')
         .then(r => r.json())
         .then(body => {
-            const select = document.getElementById('operationType');
+            const select = document.getElementById('operation');
             select.innerHTML = '';
             const ops = body.data || [];
             if (ops.length === 0) {
@@ -196,149 +396,376 @@
                 select.appendChild(opt);
             });
             select.disabled = false;
-            updateInputFilePath();
+            onOperationChange();
         })
         .catch(() => {
-            const select = document.getElementById('operationType');
-            select.innerHTML = '<option value="">Failed to load operations</option>';
+            document.getElementById('operation').innerHTML = '<option value="">Failed to load operations</option>';
         });
 
-    function updateInputFilePath() {
-        const name = document.getElementById('operationType').value;
+    function onOperationChange() {
+        const name = document.getElementById('operation').value;
         document.getElementById('inputFilePath').value = name ? `C:/work/data/${name}.txt` : '';
+        const outPath = document.getElementById('outputFilePath');
+        if (name) outPath.value = `C:/work/data/${name}.out`;
     }
 
-    document.getElementById('operationType').addEventListener('change', updateInputFilePath);
+    function onInputSourceChange() {
+        const src = document.getElementById('inputSource').value;
+        document.getElementById('inputFileGroup').classList.toggle('hidden', src !== 'FILE');
+        document.getElementById('inputIdsGroup').classList.toggle('hidden', src !== 'REQUEST');
+    }
+
+    function onOutputDataChange() {
+        const out = document.getElementById('outputData').value;
+        document.getElementById('outputFileGroup').classList.toggle('hidden', out !== 'FILE');
+    }
 
     async function runBatch() {
-        const operationType = document.getElementById('operationType').value;
-        const inputFilePath = document.getElementById('inputFilePath').value.trim();
-        const statusBar = document.getElementById('statusBar');
-        const btn = document.getElementById('runBtn');
+        const operation      = document.getElementById('operation').value;
+        const inputSource     = document.getElementById('inputSource').value;
+        const inputFilePath   = document.getElementById('inputFilePath').value.trim();
+        const requestIdsRaw   = document.getElementById('requestIds').value.trim();
+        const outputData      = document.getElementById('outputData').value;
+        const outputFilePath  = document.getElementById('outputFilePath').value.trim();
+        const inputCount      = document.getElementById('inputCount').value.trim();
+        const debugMode       = document.getElementById('debugMode').value;
+        const httpThreadCount = document.getElementById('httpThreadCount').value.trim();
+        const httpTimeoutMs   = document.getElementById('httpTimeoutMs').value.trim();
 
-        if (!operationType) {
-            setStatus('Please select an operation type.', true);
-            return;
+        if (!operation) { setStatus('Please select an operation.', true); return; }
+
+        if (inputSource === 'FILE' && !inputFilePath) {
+            setStatus('Please enter an input file path.', true); return;
         }
-        if (!inputFilePath) {
-            setStatus('Please enter an input file path.', true);
-            return;
+        if (inputSource === 'REQUEST' && !requestIdsRaw) {
+            setStatus('Please enter at least one ID.', true); return;
+        }
+        if (outputData === 'FILE' && !outputFilePath) {
+            setStatus('Please enter an output file path.', true); return;
         }
 
-        btn.disabled = true;
-        document.getElementById('exportBtn').disabled = true;
-        document.getElementById('expandBtn').disabled = true;
-        document.getElementById('shrinkBtn').disabled = true;
-        document.getElementById('copyJsonBtn').disabled = true;
-        document.getElementById('clearBtn').disabled = true;
-        lastJson = null;
+        setButtonsDisabled(true);
         document.getElementById('statsBar').style.display = 'none';
+        lastJson = null;
         setStatus('Running...');
 
+        // Build JSON body
+        const body = { operation, debugMode: parseInt(debugMode) };
+
+        if (inputSource === 'FILE') {
+            body.inputSource   = 'FILE';
+            body.inputFilePath = inputFilePath;
+        } else {
+            // Parse textarea as CSV (header on first line, data rows below).
+            // Delimiter auto-detection: comma if header splits into >1 token, else pipe.
+            const lines = requestIdsRaw
+                .split(/\r?\n/)
+                .map(s => s.trim())
+                .filter(s => s.length > 0);
+
+            if (lines.length === 0) {
+                setStatus('Please enter at least one row.', true);
+                setButtonsDisabled(false);
+                return;
+            }
+
+            const headerLine   = lines[0];
+            const commaTokens  = headerLine.split(',');
+            const delimiter    = commaTokens.length > 1 ? ',' : '|';
+            const headers      = (delimiter === ',' ? commaTokens : headerLine.split('|'))
+                                    .map(h => h.trim());
+
+            const raw = lines.slice(1).map(line => {
+                const values = (delimiter === ',' ? line.split(',') : line.split('|'));
+                const row = {};
+                headers.forEach((h, i) => { row[h] = (values[i] || '').trim(); });
+                return row;
+            });
+
+            // If only one column and no data rows yet, fall back to single-id mode
+            body.inputSource = 'REQUEST';
+            if (raw.length > 0) {
+                body.raw = raw;
+            } else {
+                // Header-only — treat header tokens as IDs
+                body.ids = headers;
+            }
+        }
+
+        if (outputData === 'FILE') {
+            body.outputData      = 'FILE';
+            body.outputFilePath  = outputFilePath;
+        }
+
+        if (inputCount)      body.inputCount      = parseInt(inputCount);
+        if (httpThreadCount) body.httpThreadCount  = parseInt(httpThreadCount);
+        if (httpTimeoutMs)   body.httpTimeoutMs    = parseInt(httpTimeoutMs);
+
+        // Show the request JSON before sending
+        const bodyJson = JSON.stringify(body, null, 2);
+        showRequestPreview(bodyJson);
+
         try {
-            const inputCount = document.getElementById('inputCount').value.trim();
-            const debugMode  = document.getElementById('debugMode').value;
-            let url = `/batch/run?operationType=${encodeURIComponent(operationType)}&inputFilePath=${encodeURIComponent(inputFilePath)}`;
-            if (inputCount) url += `&inputCount=${encodeURIComponent(inputCount)}`;
-            if (debugMode && debugMode !== '0') url += `&debugMode=${encodeURIComponent(debugMode)}`;
-            const response = await fetch(url);
-            const body = await response.json();
-            lastJson = body;
-
-            if (!response.ok) {
-                setStatus(body.message || `HTTP ${response.status}`, true);
-                return;
-            }
-
-            const rows = body.data || [];
-            const meta = body.metadata || {};
-
-            if (rows.length === 0) {
-                setStatus('No results returned.');
-                grid.setGridOption('columnDefs', []);
-                grid.setGridOption('rowData', []);
-                return;
-            }
-
-            if (body.columns && body.columns.length > 0) {
-                grid.setGridOption('columnDefs', body.columns.map(c => ({
-                    field: c.columnName,
-                    headerName: c.displayName,
-                })));
-            } else if (rows.length > 0) {
-                grid.setGridOption('columnDefs', Object.keys(rows[0]).map(k => ({
-                    field: k,
-                    headerName: k,
-                })));
-            }
-
-            grid.setGridOption('rowData', rows);
-            grid.sizeColumnsToFit();
-
-            document.getElementById('exportBtn').disabled = false;
-            document.getElementById('expandBtn').disabled = false;
-            document.getElementById('copyJsonBtn').disabled = false;
-            document.getElementById('shrinkBtn').disabled = false;
-            document.getElementById('clearBtn').disabled = false;
-
-            const { httpStats, summary = {} } = meta;
-            const { processed = 0, succeeded = 0, failed = 0 } = summary;
-            setStatus(`Processed: ${processed} — Succeeded: ${succeeded} — Failed: ${failed}`);
-
-            document.getElementById('statTimestamp').textContent = meta.timestamp || '—';
-            document.getElementById('statUuid').textContent = meta.batchUuid || '—';
-            if (httpStats) {
-                document.getElementById('statMethod').textContent = httpStats.method || '—';
-                document.getElementById('statThreadCount').textContent = httpStats.threadCount ?? '—';
-                document.getElementById('statMin').textContent = httpStats.minMs + ' ms';
-                document.getElementById('statAvg').textContent = Math.round(httpStats.avgMs) + ' ms';
-                document.getElementById('statMax').textContent = httpStats.maxMs + ' ms';
-            }
-            if (summary) {
-                document.getElementById('statTimeTaken').textContent = summary.timeTakenMs + ' ms';
-                document.getElementById('statResponseSize').textContent = summary.responseSizeKb + ' KB';
-            }
-            document.getElementById('statsBar').style.display = 'flex';
+            const data = await sendRequest(bodyJson);
+            lastJson = data;
+            handleResponse(data);
         } catch (err) {
             setStatus(`Error: ${err.message}`, true);
         } finally {
-            btn.disabled = false;
+            setButtonsDisabled(false);
         }
     }
 
-    function expandColumns() {
-        grid.autoSizeAllColumns();
+    // -------------------------------------------------------------------------
+    // Shared response renderer — used by runBatch() and sendRawRequest()
+    // -------------------------------------------------------------------------
+
+    function handleResponse(data) {
+        if (data.error) {
+            setStatus(data.message || 'Request failed', true);
+            return;
+        }
+
+        // File output — no grid data, just show summary
+        if (data.outputFile) {
+            setStatus(`Results written to: ${data.outputFile}`);
+            const meta = data.metadata || {};
+            const s    = meta.summary  || {};
+            document.getElementById('statTimestamp').textContent    = meta.timestamp || '—';
+            document.getElementById('statUuid').textContent         = meta.batchUuid || '—';
+            document.getElementById('statTimeTaken').textContent    = (s.timeTakenMs    ?? '—') + ' ms';
+            document.getElementById('statResponseSize').textContent = (s.responseSizeKb ?? '—') + ' KB';
+            document.getElementById('statMethod').textContent       = '—';
+            document.getElementById('statThreadCount').textContent  = '—';
+            document.getElementById('statMin').textContent          = '—';
+            document.getElementById('statAvg').textContent          = '—';
+            document.getElementById('statMax').textContent          = '—';
+            document.getElementById('statsBar').style.display = 'flex';
+            document.getElementById('copyJsonBtn').disabled = false;
+            document.getElementById('clearBtn').disabled    = false;
+            return;
+        }
+
+        const rows = data.data || [];
+        const meta = data.metadata || {};
+
+        if (rows.length === 0) {
+            setStatus('No results returned.');
+            grid.setGridOption('columnDefs', []);
+            grid.setGridOption('rowData', []);
+            return;
+        }
+
+        if (data.columns && data.columns.length > 0) {
+            grid.setGridOption('columnDefs', data.columns.map(c => ({
+                field: c.columnName, headerName: c.displayName
+            })));
+        } else {
+            grid.setGridOption('columnDefs', Object.keys(rows[0]).map(k => ({ field: k, headerName: k })));
+        }
+
+        grid.setGridOption('rowData', rows);
+        grid.sizeColumnsToFit();
+
+        document.getElementById('exportBtn').disabled   = false;
+        document.getElementById('expandBtn').disabled   = false;
+        document.getElementById('shrinkBtn').disabled   = false;
+        document.getElementById('copyJsonBtn').disabled = false;
+        document.getElementById('clearBtn').disabled    = false;
+
+        const { httpStats, summary = {} } = meta;
+        const { processed = 0, succeeded = 0, failed = 0 } = summary;
+        setStatus(`Processed: ${processed} — Succeeded: ${succeeded} — Failed: ${failed}`);
+
+        document.getElementById('statTimestamp').textContent    = meta.timestamp || '—';
+        document.getElementById('statUuid').textContent         = meta.batchUuid  || '—';
+        document.getElementById('statTimeTaken').textContent    = (summary.timeTakenMs    ?? '—') + ' ms';
+        document.getElementById('statResponseSize').textContent = (summary.responseSizeKb ?? '—') + ' KB';
+        if (httpStats) {
+            document.getElementById('statMethod').textContent      = httpStats.method      || '—';
+            document.getElementById('statThreadCount').textContent = httpStats.threadCount ?? '—';
+            document.getElementById('statMin').textContent         = httpStats.minMs  + ' ms';
+            document.getElementById('statAvg').textContent         = Math.round(httpStats.avgMs) + ' ms';
+            document.getElementById('statMax').textContent         = httpStats.maxMs  + ' ms';
+        }
+        document.getElementById('statsBar').style.display = 'flex';
     }
 
-    function shrinkColumns() {
-        grid.sizeColumnsToFit();
+    // -------------------------------------------------------------------------
+    // Persistent WebSocket — one connection for the lifetime of the page
+    // -------------------------------------------------------------------------
+
+    let socket       = null;   // the persistent WebSocket
+    let wsPending    = null;   // { resolve, reject } for the in-flight request
+    let wsReconnectTimer = null;
+
+    function wsUrl() {
+        const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        return `${proto}//${window.location.host}/batch/ws`;
     }
+
+    function wsConnect() {
+        if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
+        setWsIndicator('connecting');
+        socket = new WebSocket(wsUrl());
+
+        socket.onopen = () => setWsIndicator('connected');
+
+        socket.onmessage = e => {
+            if (!wsPending) return;
+            const { resolve, reject } = wsPending;
+            wsPending = null;
+            try   { resolve(JSON.parse(e.data)); }
+            catch { reject(new Error('WebSocket: invalid JSON in response')); }
+        };
+
+        socket.onerror = () => {
+            setWsIndicator('error');
+            if (wsPending) { const { reject } = wsPending; wsPending = null; reject(new Error('WebSocket error')); }
+        };
+
+        socket.onclose = e => {
+            setWsIndicator('disconnected');
+            if (wsPending) {
+                const { reject } = wsPending;
+                wsPending = null;
+                reject(new Error(`WebSocket closed (code ${e.code})`));
+            }
+            // Auto-reconnect (skip if page is being unloaded)
+            wsReconnectTimer = setTimeout(wsConnect, 2000);
+        };
+    }
+
+    function setWsIndicator(state) {
+        const el = document.getElementById('wsIndicator');
+        const map = {
+            connecting:   { color: '#ffab00', text: '● Connecting…' },
+            connected:    { color: '#36b37e', text: '● Connected'   },
+            disconnected: { color: '#de350b', text: '● Disconnected'},
+            error:        { color: '#de350b', text: '● Error'       }
+        };
+        const s = map[state] || { color: '#a5adba', text: '' };
+        el.style.color   = s.color;
+        el.textContent   = s.text;
+    }
+
+    function sendViaWs(bodyJson) {
+        return new Promise((resolve, reject) => {
+            if (!socket || socket.readyState !== WebSocket.OPEN) {
+                reject(new Error('WebSocket is not connected — please wait and retry'));
+                return;
+            }
+            if (wsPending) {
+                reject(new Error('A WebSocket request is already in flight'));
+                return;
+            }
+            wsPending = { resolve, reject };
+            socket.send(bodyJson);
+        });
+    }
+
+    // Connect immediately on page load
+    wsConnect();
+
+    // -------------------------------------------------------------------------
+    // Unified request dispatcher
+    // -------------------------------------------------------------------------
+
+    async function sendRequest(bodyJson) {
+        const mode = document.getElementById('requestMode').value;
+        if (mode === 'WS') return sendViaWs(bodyJson);
+        const response = await fetch('/batch/run', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    bodyJson
+        });
+        const data = await response.json();
+        if (!response.ok) throw Object.assign(
+            new Error(data.message || `HTTP ${response.status}`), { data });
+        return data;
+    }
+
+    // -------------------------------------------------------------------------
+    // Request preview helpers
+    // -------------------------------------------------------------------------
+
+    function showRequestPreview(json) {
+        document.getElementById('requestPreview').value        = json;
+        document.getElementById('requestPreview').style.display = 'block';
+        document.getElementById('requestPreviewHeader').style.display = 'flex';
+    }
+
+    function hideRequestPreview() {
+        document.getElementById('requestPreview').style.display        = 'none';
+        document.getElementById('requestPreviewHeader').style.display  = 'none';
+        document.getElementById('requestPreview').value = '';
+    }
+
+    function validateJson() {
+        const text = document.getElementById('requestPreview').value.trim();
+        if (!text) { setStatus('Request editor is empty.', true); return; }
+        try {
+            JSON.parse(text);
+            setStatus('JSON is valid.', false);
+        } catch (e) {
+            setStatus(`Invalid JSON: ${e.message}`, true);
+        }
+    }
+
+    async function sendRawRequest() {
+        const text = document.getElementById('requestPreview').value.trim();
+        if (!text) { setStatus('Request editor is empty.', true); return; }
+        try { JSON.parse(text); } catch (e) {
+            setStatus(`Fix JSON before sending: ${e.message}`, true);
+            return;
+        }
+        setButtonsDisabled(true);
+        setStatus('Sending…');
+        try {
+            const data = await sendRequest(text);
+            lastJson = data;
+            handleResponse(data);
+        } catch (err) {
+            setStatus(`Error: ${err.message}`, true);
+        } finally {
+            setButtonsDisabled(false);
+        }
+    }
+
+    function setButtonsDisabled(disabled) {
+        // Only lock the Run button while a request is in flight.
+        // The result buttons are enabled/disabled by the success and clear paths.
+        document.getElementById('runBtn').disabled = disabled;
+    }
+
+    function expandColumns()  { grid.autoSizeAllColumns(); }
+    function shrinkColumns()  { grid.sizeColumnsToFit(); }
 
     async function copyJson() {
         if (!lastJson) return;
         await navigator.clipboard.writeText(JSON.stringify(lastJson, null, 2));
         const btn = document.getElementById('copyJsonBtn');
-        const original = btn.textContent;
+        const orig = btn.textContent;
         btn.textContent = 'Copied!';
-        setTimeout(() => btn.textContent = original, 1500);
+        setTimeout(() => btn.textContent = orig, 1500);
     }
 
     function clearGrid() {
         grid.setGridOption('rowData', []);
         grid.setGridOption('columnDefs', []);
+        hideRequestPreview();
         lastJson = null;
-        document.getElementById('statMethod').textContent = '—';
-        document.getElementById('statThreadCount').textContent = '—';
-        document.getElementById('statTimestamp').textContent = '—';
-        document.getElementById('statUuid').textContent = '—';
-        document.getElementById('statTimeTaken').textContent = '—';
-        document.getElementById('statResponseSize').textContent = '—';
+        ['statMethod','statThreadCount','statTimestamp','statUuid',
+         'statTimeTaken','statResponseSize','statMin','statAvg','statMax']
+            .forEach(id => document.getElementById(id).textContent = '—');
         document.getElementById('statsBar').style.display = 'none';
-        document.getElementById('exportBtn').disabled = true;
-        document.getElementById('expandBtn').disabled = true;
-        document.getElementById('shrinkBtn').disabled = true;
-        document.getElementById('copyJsonBtn').disabled = true;
-        document.getElementById('clearBtn').disabled = true;
+        document.getElementById('rowCountBar').textContent = '';
+        hideCacheModeBar();
+        document.getElementById('exportBtn').disabled    = true;
+        document.getElementById('expandBtn').disabled    = true;
+        document.getElementById('shrinkBtn').disabled    = true;
+        document.getElementById('copyJsonBtn').disabled  = true;
+        document.getElementById('clearBtn').disabled     = true;
         setStatus('');
     }
 
@@ -355,26 +782,110 @@
                 grid.setGridOption('rowData', []);
                 return;
             }
-            grid.setGridOption('columnDefs', Object.keys(rows[0]).map(k => ({
-                field: k,
-                headerName: k,
-            })));
+            grid.setGridOption('columnDefs', Object.keys(rows[0]).map(k => ({ field: k, headerName: k })));
             grid.setGridOption('rowData', rows);
             grid.autoSizeAllColumns();
             lastJson = body;
-            document.getElementById('exportBtn').disabled = false;
-            document.getElementById('expandBtn').disabled = false;
-            document.getElementById('shrinkBtn').disabled = false;
-            document.getElementById('copyJsonBtn').disabled = false;
-            document.getElementById('clearBtn').disabled = false;
+            document.getElementById('exportBtn').disabled    = false;
+            document.getElementById('expandBtn').disabled    = false;
+            document.getElementById('shrinkBtn').disabled    = false;
+            document.getElementById('copyJsonBtn').disabled  = false;
+            document.getElementById('clearBtn').disabled     = false;
             setStatus(`Showing ${rows.length} operation(s).`);
         } catch (err) {
             setStatus(`Error: ${err.message}`, true);
         }
     }
 
-    function exportCsv() {
-        grid.exportDataAsCsv({ fileName: 'batch-results.csv' });
+    function exportCsv() { grid.exportDataAsCsv({ fileName: 'batch-results.csv' }); }
+
+    // -------------------------------------------------------------------------
+    // Cache UI
+    // -------------------------------------------------------------------------
+
+    let cacheMode         = null;   // null | 'names' | 'entries'
+    let selectedCacheName = null;
+
+    async function loadCacheNames() {
+        cacheMode = 'names';
+        selectedCacheName = null;
+        setStatus('Loading caches…');
+        document.getElementById('statsBar').style.display = 'none';
+        try {
+            const res  = await fetch('/batch/cache');
+            const body = await res.json();
+            const rows = body.data || [];
+            grid.setGridOption('columnDefs', rows.length > 0
+                ? Object.keys(rows[0]).map(k => ({ field: k, headerName: k }))
+                : []);
+            grid.setGridOption('rowData', rows);
+            grid.autoSizeAllColumns();
+            lastJson = body;
+            document.getElementById('exportBtn').disabled   = false;
+            document.getElementById('expandBtn').disabled   = false;
+            document.getElementById('shrinkBtn').disabled   = false;
+            document.getElementById('copyJsonBtn').disabled = false;
+            document.getElementById('clearBtn').disabled    = false;
+            showCacheModeBar(`${rows.length} cache(s) — click a row to view entries`, false);
+            setStatus('');
+        } catch (err) {
+            setStatus(`Error loading caches: ${err.message}`, true);
+        }
+    }
+
+    async function loadCacheEntries(name) {
+        cacheMode         = 'entries';
+        selectedCacheName = name;
+        setStatus(`Loading entries for cache "${name}"…`);
+        try {
+            const res  = await fetch(`/batch/cache/${encodeURIComponent(name)}`);
+            const body = await res.json();
+            const rows = body.data || [];
+            grid.setGridOption('columnDefs', rows.length > 0
+                ? Object.keys(rows[0]).map(k => ({ field: k, headerName: k }))
+                : [{ field: 'info', headerName: 'Info' }]);
+            grid.setGridOption('rowData', rows.length > 0 ? rows : [{ info: '(cache is empty)' }]);
+            grid.autoSizeAllColumns();
+            lastJson = body;
+            showCacheModeBar(`Cache: "${name}" — ${rows.length} entry(s)`, true);
+            setStatus('');
+        } catch (err) {
+            setStatus(`Error loading cache entries: ${err.message}`, true);
+        }
+    }
+
+    async function clearSelectedCache() {
+        if (!selectedCacheName) return;
+        const name = selectedCacheName;
+        try {
+            const res  = await fetch(`/batch/cache/${encodeURIComponent(name)}`, { method: 'DELETE' });
+            const body = await res.json();
+            lastJson   = body;
+            await loadCacheEntries(name);   // reload — will show empty
+            setStatus(`Cache "${name}" cleared.`);
+        } catch (err) {
+            setStatus(`Error clearing cache: ${err.message}`, true);
+        }
+    }
+
+    function showCacheModeBar(label, showClearAndBack) {
+        document.getElementById('cacheModeLabel').textContent = label;
+        document.getElementById('clearCacheBtn').style.display   = showClearAndBack ? '' : 'none';
+        document.getElementById('backToCachesBtn').style.display = showClearAndBack ? '' : 'none';
+        document.getElementById('cacheModeBar').style.display = 'flex';
+    }
+
+    function hideCacheModeBar() {
+        document.getElementById('cacheModeBar').style.display = 'none';
+        cacheMode = null;
+        selectedCacheName = null;
+    }
+
+    function updateRowCount() {
+        const total    = grid.getDisplayedRowCount();
+        const bar      = document.getElementById('rowCountBar');
+        if (total === 0) { bar.textContent = ''; return; }
+        bar.textContent = `Rows: ${total}`;
     }
 
     function setStatus(msg, isError = false) {
@@ -382,10 +893,6 @@
         bar.textContent = msg;
         bar.className = 'status-bar' + (isError ? ' error' : '');
     }
-
-    document.getElementById('inputFilePath').addEventListener('keydown', e => {
-        if (e.key === 'Enter') runBatch();
-    });
 </script>
 
 </body>

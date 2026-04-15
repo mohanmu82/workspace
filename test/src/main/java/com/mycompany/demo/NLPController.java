@@ -76,7 +76,7 @@ public class NLPController {
 
         for (CoreMap sentence : document.get(CoreAnnotations.SentencesAnnotation.class)) {
             SemanticGraph dependencies = sentence.get(
-                    SemanticGraphCoreAnnotations.CollapsedCCProcessedDependenciesAnnotation.class);
+                    SemanticGraphCoreAnnotations.EnhancedPlusPlusDependenciesAnnotation.class);
 
             List<CoreLabel> tokens = sentence.get(CoreAnnotations.TokensAnnotation.class);
 

@@ -1,0 +1,63 @@
+[
+  {
+    "name": "pubmed",
+    "activity": [
+      {
+        "name": "httpgetpubmeddata",
+        "properties": {
+          "application": "ICE",
+          "dataEnvironment": "PRD"
+        },	        
+        "type": "HTTP",
+        "http": {
+          "url": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id={id}&retmode=xml",
+          "method": "GET",
+          "threadCount": 5,
+          "timeoutMs": 3000,
+          "cache": {
+            "name": "pubmeddata"
+            ,"key" : "pubmed{id}"
+          }          
+        }
+      },
+      {
+        "name": "extractxmlpubmed",
+        "type": "dataextraction",
+        "dataExtraction": {
+          "type": "XPATH",
+          "threadCount": 10,
+          "config": "classpath:pubmed_xpaths.json"
+        }
+      }
+    ],
+    "mandatoryAttributes": "id"
+  },
+  {
+    "name": "zip",
+    "activity": [
+      {
+        "name": "httpgetzipdata",
+        "type": "HTTP",
+        "http": {
+          "url": "https://api.zippopotam.us/us/{id}",
+          "method": "GET",
+          "threadCount": 5,
+          "timeoutMs": 3000,
+          "header": {
+            "Accept": "application/json",
+            "X-Api-Key": "abc123",
+            "X-Correlation-Id": "batch-runner"
+          }
+        }
+      },
+      {
+        "name": "extractjsonzip",
+        "type": "dataextraction",
+        "dataExtraction": {
+          "type": "JSON",
+          "jsonataTransform": "classpath:transforms/zip.jsonata"
+        }
+      }
+    ]
+  }
+]

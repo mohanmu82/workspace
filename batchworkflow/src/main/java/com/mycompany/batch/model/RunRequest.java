@@ -1,37 +1,67 @@
 package com.mycompany.batch.model;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Unified request DTO used by both the REST JSON-body endpoint and the WebSocket handler.
  *
  * <pre>
  * {
- *   "operationType"  : "pubmed",
- *   "inputSource"    : "FILE | HTTPGET | HTTPPOST | HTTPCONFIG",  // overrides operation default
- *   "inputFilePath"  : "/path/to/ids.csv",                        // required for FILE
- *   "ids"            : ["123", "456"],                            // required for HTTPGET / HTTPPOST
- *   "inputCount"     : 100,                                       // optional limit
- *   "outputData"     : "HTTP | FILE",                             // overrides operation default
- *   "outputFilePath" : "/path/to/output.psv"                      // required for FILE output
+ *   "operation"      : "pubmed",
+ *   "inputSource"    : "FILE | REQUEST | HTTP",
+ *   "inputFilePath"  : "/path/to/ids.csv",
+ *   "ids"            : ["123", "456"],
+ *   "raw"            : [{"id":"123","year":"2024"}, {"id":"456","year":"2024"}],
+ *   "inputCount"     : 100,
+ *   "outputData"     : "HTTP | FILE",
+ *   "outputFilePath" : "/path/to/output.psv",
+ *   "debugMode"      : 0,
+ *   "httpThreadCount": 10,
+ *   "httpTimeoutMs"  : 3000,
+ *   "filterInput"    : [{"column":"id","value":"08550","operation":"eq"}],
+ *   "filterOutput"   : [{"column":"status","value":"ACTIVE","operation":"like"}]
  * }
  * </pre>
+ *
+ * <p>For {@code inputSource=REQUEST}, the UI can send either:
+ * <ul>
+ *   <li>{@code ids} — a flat list of string identifiers (each becomes a DataRow with key {@code "id"})</li>
+ *   <li>{@code raw} — a list of pre-parsed row maps (sent when the textarea content is a multi-column
+ *       CSV; each map becomes a DataRow directly)</li>
+ * </ul>
+ * When both are present {@code raw} takes precedence.
+ *
+ * <p>{@code debugMode} values:
+ * <ul>
+ *   <li>0 — normal execution</li>
+ *   <li>-1 — skip HTTP and extraction; return input DataRows as-is</li>
+ *   <li>1 — normal execution + include per-activity timing/URL metadata in each result row</li>
+ * </ul>
+ *
+ * <p>{@code filterInput} — optional list of {@link FilterRule}s applied to DataRows
+ * <em>before</em> activity execution. Rows that do not match are dropped.
+ *
+ * <p>{@code filterOutput} — optional list of {@link FilterRule}s applied to result rows
+ * <em>after</em> activity execution. Rows that do not match are excluded from the response.
  */
 public record RunRequest(
-        String operationType,
+        String operation,
         String inputSource,
         String inputFilePath,
         List<String> ids,
+        /** Pre-parsed rows sent from the REQUEST textarea (multi-column CSV). Takes precedence over {@code ids}. */
+        List<Map<String, Object>> raw,
         Integer inputCount,
         String outputData,
         String outputFilePath,
-        /**
-         * Debug mode flag.
-         * <ul>
-         *   <li>0 (default) — normal execution</li>
-         *   <li>-1 — skip HTTP calls and data extraction; return the resolved
-         *       input identifiers directly in the {@code data} array</li>
-         * </ul>
-         */
-        Integer debugMode) {
+        Integer debugMode,
+        /** Per-run override for HTTP thread pool size. Uses operation default when null. */
+        Integer httpThreadCount,
+        /** Per-run override for HTTP request timeout in milliseconds. Uses operation default when null. */
+        Integer httpTimeoutMs,
+        /** Rows not matching all rules are dropped before activity execution. */
+        List<FilterRule> filterInput,
+        /** Rows not matching all rules are excluded from the response after activity execution. */
+        List<FilterRule> filterOutput) {
 }

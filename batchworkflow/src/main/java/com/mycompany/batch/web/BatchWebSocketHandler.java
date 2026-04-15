@@ -21,21 +21,21 @@ import java.util.Map;
  * <p>Example client message:
  * <pre>{@code
  * {
- *   "operationType": "pubmed",
- *   "inputSource":   "HTTPPOST",
- *   "ids":           ["38000001", "38000002"],
- *   "outputData":    "HTTP"
+ *   "operation":  "pubmed",
+ *   "inputSource":"REQUEST",
+ *   "ids":        ["38000001", "38000002"],
+ *   "outputData": "HTTP"
  * }
  * }</pre>
  *
  * <p>Example client message writing results to a file:
  * <pre>{@code
  * {
- *   "operationType":  "pubmed",
- *   "inputSource":    "FILE",
- *   "inputFilePath":  "/data/ids.csv",
- *   "outputData":     "FILE",
- *   "outputFilePath": "/data/out.psv"
+ *   "operation":     "pubmed",
+ *   "inputSource":   "FILE",
+ *   "inputFilePath": "/data/ids.csv",
+ *   "outputData":    "FILE",
+ *   "outputFilePath":"/data/out.psv"
  * }
  * }</pre>
  */
@@ -63,8 +63,8 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
         try {
             RunRequest request = objectMapper.readValue(message.getPayload(), RunRequest.class);
 
-            if (request.operationType() == null || request.operationType().isBlank()) {
-                throw new IllegalArgumentException("operationType is required");
+            if (request.operation() == null || request.operation().isBlank()) {
+                throw new IllegalArgumentException("operation is required");
             }
 
             BatchService.BatchResult result = batchService.run(request);
@@ -77,9 +77,9 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
                     throw new IllegalArgumentException("outputFilePath is required when outputData=FILE");
                 }
                 batchService.writeToPsv(result, outputFilePath);
-                response = batchController.buildFileResponse(request.operationType(), result, outputFilePath);
+                response = batchController.buildFileResponse(request.operation(), result, outputFilePath);
             } else {
-                response = batchController.buildHttpResponse(request.operationType(), result);
+                response = batchController.buildHttpResponse(request.operation(), result);
             }
 
         } catch (Exception e) {
@@ -96,7 +96,7 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
             return request.outputData().trim().toUpperCase();
         }
         try {
-            return batchProperties.getOperation(request.operationType())
+            return batchProperties.getOperation(request.operation())
                     .getOutputData().getType().trim().toUpperCase();
         } catch (Exception e) {
             return "HTTP";
@@ -108,7 +108,7 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
             return request.outputFilePath();
         }
         try {
-            return batchProperties.getOperation(request.operationType())
+            return batchProperties.getOperation(request.operation())
                     .getOutputData().getOutputFilePath();
         } catch (Exception e) {
             return null;

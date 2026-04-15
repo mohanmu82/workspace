@@ -1,5 +1,10 @@
 package com.mycompany.batch.service;
 
+import com.mycompany.batch.cache.CacheFactory;
+import com.mycompany.batch.jsonpath.JsonPathColumn;
+import com.mycompany.batch.jsonpath.JsonPathExtractor;
+import com.mycompany.batch.model.DataRow;
+import com.mycompany.batch.model.FilterRule;
 import com.mycompany.batch.model.RunRequest;
 import com.mycompany.batch.auth.BasicAuthProvider;
 import com.mycompany.batch.auth.HttpAuthProvider;
@@ -22,12 +27,14 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Objects;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -41,6 +48,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Service
@@ -48,13 +57,18 @@ public class BatchService {
 
     private final ObjectMapper objectMapper;
     private final XPathExtractor xpathExtractor;
+    private final JsonPathExtractor jsonPathExtractor;
+    private final CacheFactory cacheFactory;
     private final BatchProperties batchProperties;
     private final Map<String, HttpAuthProvider> authProviders = new LinkedHashMap<>();
 
     public BatchService(ObjectMapper objectMapper, XPathExtractor xpathExtractor,
+                        JsonPathExtractor jsonPathExtractor, CacheFactory cacheFactory,
                         BatchProperties batchProperties) {
         this.objectMapper = objectMapper;
         this.xpathExtractor = xpathExtractor;
+        this.jsonPathExtractor = jsonPathExtractor;
+        this.cacheFactory = cacheFactory;
         this.batchProperties = batchProperties;
     }
 
@@ -120,23 +134,28 @@ public class BatchService {
     public record PsvResult(int processed, int succeeded, int failed, String outputFile,
                             String batchUuid, String timestamp) {}
 
+    // Pre-loaded per-activity resources (resolved once per runCore call)
+    private record ResolvedActivity(
+            BatchProperties.ActivityProperties config,
+            String resolvedBodyTemplate,        // for HTTP activities
+            Map<String, String> xpathMap,       // XPATH extraction (null otherwise)
+            String jsonataTransform,            // JSON/JSONATA extraction (null otherwise)
+            List<JsonPathColumn> jsonPathColumns // JSONPATH extraction (null otherwise)
+    ) {}
+
     // -------------------------------------------------------------------------
     // Public API — unified RunRequest entry point
     // -------------------------------------------------------------------------
 
-    /**
-     * Primary entry point used by both the REST controller and the WebSocket handler.
-     * Resolves the input source, executes the operation and returns the result.
-     */
     public BatchResult run(RunRequest request) throws Exception {
-        String operationType = request.operationType();
-        BatchProperties.OperationProperties op = batchProperties.getOperation(operationType);
+        String operation = request.operation();
+        BatchProperties.OperationProperties op = batchProperties.getOperation(operation);
 
         String inputSourceType = (request.inputSource() != null && !request.inputSource().isBlank())
                 ? request.inputSource().trim().toUpperCase()
                 : op.getInputSource().getType().trim().toUpperCase();
 
-        List<String> identifiers = switch (inputSourceType) {
+        List<DataRow> rows = switch (inputSourceType) {
             case "FILE" -> {
                 String path = request.inputFilePath();
                 if (path == null || path.isBlank()) {
@@ -145,55 +164,72 @@ public class BatchService {
                 if (!Files.exists(Path.of(path))) {
                     throw new IllegalArgumentException("inputFilePath does not exist: " + path);
                 }
-                yield readIdentifiersFromFile(path, request.inputCount(), op);
+                yield readDataRowsFromFile(path, request.inputCount(), op);
             }
-            case "HTTPGET", "HTTPPOST" -> {
-                List<String> ids = request.ids();
-                if (ids == null || ids.isEmpty()) {
+            // REQUEST: explicit IDs or pre-parsed raw rows
+            // HTTPGET / HTTPPOST kept as legacy aliases for REQUEST
+            case "REQUEST", "HTTPGET", "HTTPPOST" -> {
+                if (request.raw() != null && !request.raw().isEmpty()) {
+                    yield readDataRowsFromRaw(request.raw(), request.inputCount());
+                } else if (request.ids() != null && !request.ids().isEmpty()) {
+                    yield readDataRowsFromRequest(request.ids(), request.inputCount());
+                } else {
                     throw new IllegalArgumentException(
-                            "ids list is required for " + inputSourceType + " input source");
+                            "ids or raw data is required for " + inputSourceType + " input source");
                 }
-                Integer count = request.inputCount();
-                yield count != null ? ids.stream().limit(count).toList() : List.copyOf(ids);
             }
-            case "HTTPCONFIG" -> {
-                List<String> ids = fetchIdentifiersFromHttpConfig(op.getInputSource().getHttpConfig());
-                Integer count = request.inputCount();
-                yield count != null ? ids.stream().limit(count).toList() : ids;
+            // HTTP / HTTPCONFIG: fetch from a configured endpoint; response must have a "data" array
+            case "HTTP", "HTTPCONFIG" -> {
+                yield readDataRowsFromHttp(op.getInputSource().getHttpConfig(), request.inputCount());
             }
             default -> throw new IllegalArgumentException("Unknown inputSource type: " + inputSourceType);
         };
 
-        if (request.debugMode() != null && request.debugMode() == -1) {
-            return debugResult(identifiers);
+        // Apply input filter before execution
+        rows = applyFilterInput(rows, request.filterInput());
+
+        int debugMode = request.debugMode() != null ? request.debugMode() : 0;
+        if (debugMode == -1) {
+            return debugResult(rows);
         }
 
-        return runCore(identifiers, op, operationType);
+        BatchResult result = runCore(rows, op, operation,
+                request.httpThreadCount(), request.httpTimeoutMs(), debugMode);
+
+        // Apply output filter after execution
+        List<Map<String, Object>> filtered = applyFilterOutput(result.results(), request.filterOutput());
+        if (filtered != result.results()) {
+            result = new BatchResult(result.processed(), result.succeeded(), result.failed(),
+                    result.httpStats(), result.columns(), filtered,
+                    result.batchUuid(), result.timestamp(), result.timeTakenMs(), result.responseSizeKb());
+        }
+        return result;
     }
 
     // -------------------------------------------------------------------------
     // Public API — convenience overloads kept for backward compatibility
     // -------------------------------------------------------------------------
 
-    /** File-based run. Validates mandatory-attributes against the file header. */
-    public BatchResult run(String filePath, Integer inputCount, String operationType) throws Exception {
-        BatchProperties.OperationProperties op = batchProperties.getOperation(operationType);
-        List<String> identifiers = readIdentifiersFromFile(filePath, inputCount, op);
-        return runCore(identifiers, op, operationType);
+    /** File-based run. */
+    public BatchResult run(String filePath, Integer inputCount, String operation) throws Exception {
+        BatchProperties.OperationProperties op = batchProperties.getOperation(operation);
+        List<DataRow> rows = readDataRowsFromFile(filePath, inputCount, op);
+        return runCore(rows, op, operation, null, null, 0);
     }
 
-    /** Direct list of identifiers (e.g. already resolved by the caller). */
-    public BatchResult run(List<String> identifiers, String operationType) throws Exception {
-        BatchProperties.OperationProperties op = batchProperties.getOperation(operationType);
-        return runCore(identifiers, op, operationType);
+    /** Direct list of identifiers — each ID becomes a DataRow with key "id". */
+    public BatchResult run(List<String> identifiers, String operation) throws Exception {
+        BatchProperties.OperationProperties op = batchProperties.getOperation(operation);
+        List<DataRow> rows = readDataRowsFromRequest(identifiers, null);
+        return runCore(rows, op, operation, null, null, 0);
     }
 
     /** Runs from file and writes PSV output; returns summary metadata. */
     public PsvResult runToPsv(String inputFilePath, String outputFilePath,
-                              Integer inputCount, String operationType) throws Exception {
-        BatchProperties.OperationProperties op = batchProperties.getOperation(operationType);
-        List<String> identifiers = readIdentifiersFromFile(inputFilePath, inputCount, op);
-        BatchResult batch = runCore(identifiers, op, operationType);
+                              Integer inputCount, String operation) throws Exception {
+        BatchProperties.OperationProperties op = batchProperties.getOperation(operation);
+        List<DataRow> rows = readDataRowsFromFile(inputFilePath, inputCount, op);
+        BatchResult batch = runCore(rows, op, operation, null, null, 0);
         writeToPsv(batch, outputFilePath);
         return new PsvResult(batch.processed(), batch.succeeded(), batch.failed(),
                 Path.of(outputFilePath).toAbsolutePath().toString(),
@@ -205,37 +241,101 @@ public class BatchService {
     // -------------------------------------------------------------------------
 
     /**
-     * Reads identifier lines from a delimited file.
-     * The first line is treated as a header and validated against
-     * {@code mandatory-attributes} if any are configured.
+     * Reads a delimited file and produces one DataRow per data line.
+     *
+     * <ul>
+     *   <li>First non-blank line = header. Delimiter auto-detected: comma if more than one token,
+     *       else pipe.</li>
+     *   <li>Mandatory-attribute validation performed against header columns.</li>
+     *   <li>Each row contains all header→value pairs plus {@code SEQUENCE_NUMBER} (1-based).</li>
+     * </ul>
      */
-    public List<String> readIdentifiersFromFile(String filePath, Integer inputCount,
-                                                BatchProperties.OperationProperties op) throws Exception {
+    public List<DataRow> readDataRowsFromFile(String filePath, Integer inputCount,
+                                              BatchProperties.OperationProperties op) throws Exception {
         List<String> allLines = Files.readAllLines(Path.of(filePath));
-        List<String> headerColumns = allLines.isEmpty() ? List.of()
-                : Arrays.stream(allLines.get(0).split("[,|\\t]"))
-                        .map(String::trim).filter(s -> !s.isBlank()).toList();
+        if (allLines.isEmpty()) return List.of();
 
+        String headerLine      = allLines.get(0);
+        String[] commaTokens   = headerLine.split(",", -1);
+        String   delimiter     = commaTokens.length > 1 ? "," : "|";
+        String[] headers       = delimiter.equals(",") ? commaTokens
+                                  : headerLine.split(Pattern.quote("|"), -1);
+        headers = Arrays.stream(headers).map(String::trim).toArray(String[]::new);
+
+        List<String> headerList = Arrays.asList(headers);
         List<String> missing = op.getMandatoryAttributeList().stream()
-                .filter(attr -> !headerColumns.contains(attr))
-                .toList();
+                .filter(attr -> !headerList.contains(attr)).toList();
         if (!missing.isEmpty()) {
             throw new IllegalArgumentException(
                     "Input file is missing mandatory attribute(s): " + missing
-                            + ". Found headers: " + headerColumns);
+                            + ". Found headers: " + headerList);
         }
 
-        var stream = allLines.stream().skip(1).map(String::trim).filter(s -> !s.isBlank());
-        if (inputCount != null) stream = stream.limit(inputCount);
-        return stream.collect(Collectors.toList());
+        String delimPattern = Pattern.quote(delimiter);
+        List<String> dataLines = allLines.stream()
+                .skip(1).map(String::trim).filter(s -> !s.isBlank())
+                .collect(Collectors.toList());
+        if (inputCount != null) {
+            dataLines = dataLines.stream().limit(inputCount).collect(Collectors.toList());
+        }
+
+        List<DataRow> rows = new ArrayList<>(dataLines.size());
+        int seq = 1;
+        for (String line : dataLines) {
+            String[]  values = line.split(delimPattern, -1);
+            DataRow   row    = new DataRow();
+            for (int i = 0; i < headers.length; i++) {
+                row.getData().put(headers[i], i < values.length ? values[i].trim() : "");
+            }
+            row.getData().put("SEQUENCE_NUMBER", seq++);
+            rows.add(row);
+        }
+        return rows;
     }
 
     /**
-     * Calls the configured HTTPCONFIG URL, optionally applies a JSONata transform,
-     * and returns the resulting list of string identifiers.
+     * Converts a list of plain string IDs into DataRows.
+     * Each row has key {@code "id"} plus {@code SEQUENCE_NUMBER}.
      */
-    public List<String> fetchIdentifiersFromHttpConfig(
-            BatchProperties.HttpConfigSourceProperties config) throws Exception {
+    public List<DataRow> readDataRowsFromRequest(List<String> ids, Integer inputCount) {
+        List<String> list = inputCount != null ? ids.stream().limit(inputCount).toList() : ids;
+        List<DataRow> rows = new ArrayList<>(list.size());
+        int seq = 1;
+        for (String id : list) {
+            DataRow row = new DataRow();
+            row.getData().put("id", id);
+            row.getData().put("SEQUENCE_NUMBER", seq++);
+            rows.add(row);
+        }
+        return rows;
+    }
+
+    /**
+     * Converts a list of pre-parsed row maps into DataRows (used when the UI sends a CSV textarea
+     * as a {@code raw} JSON array). Each map becomes a DataRow with {@code SEQUENCE_NUMBER} added.
+     */
+    public List<DataRow> readDataRowsFromRaw(List<Map<String, Object>> rawData, Integer inputCount) {
+        List<Map<String, Object>> list = inputCount != null
+                ? rawData.stream().limit(inputCount).toList()
+                : rawData;
+        List<DataRow> rows = new ArrayList<>(list.size());
+        int seq = 1;
+        for (Map<String, Object> rawRow : list) {
+            DataRow row = new DataRow();
+            row.getData().putAll(rawRow);
+            row.getData().put("SEQUENCE_NUMBER", seq++);
+            rows.add(row);
+        }
+        return rows;
+    }
+
+    /**
+     * Calls the configured HTTP endpoint and returns one DataRow per element in the
+     * {@code "data"} array of the JSON response. Each row additionally contains {@code SEQUENCE_NUMBER}.
+     */
+    @SuppressWarnings("unchecked")
+    public List<DataRow> readDataRowsFromHttp(BatchProperties.HttpConfigSourceProperties config,
+                                              Integer inputCount) throws Exception {
         HttpClient client = HttpClient.newBuilder().build();
         HttpRequest.Builder builder = HttpRequest.newBuilder().uri(URI.create(config.getUrl()));
         if ("POST".equalsIgnoreCase(config.getMethod())) {
@@ -246,42 +346,54 @@ public class BatchService {
 
         HttpResponse<String> response = client.send(builder.build(), HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new RuntimeException("HTTPCONFIG source returned HTTP " + response.statusCode());
+            throw new RuntimeException("HTTP input source returned HTTP " + response.statusCode());
         }
 
-        Object parsed = objectMapper.readValue(response.body(), Object.class);
-
-        String transform = resolveJsonataExpression(config.getJsonataTransform());
-        if (transform != null && !transform.isBlank()) {
-            parsed = Jsonata.jsonata(transform).evaluate(parsed);
+        Map<String, Object> parsed = objectMapper.readValue(
+                response.body(), new TypeReference<Map<String, Object>>() {});
+        Object dataObj = parsed.get("data");
+        if (!(dataObj instanceof List<?>)) {
+            throw new RuntimeException(
+                    "HTTP input source: expected a 'data' array in the JSON response");
         }
 
-        if (parsed instanceof List<?> list) {
-            return list.stream()
-                    .map(item -> item != null ? item.toString() : "")
-                    .filter(s -> !s.isBlank())
-                    .collect(Collectors.toList());
+        List<Object> dataArray = (List<Object>) dataObj;
+        if (inputCount != null) {
+            dataArray = dataArray.stream().limit(inputCount).toList();
         }
-        throw new RuntimeException("HTTPCONFIG source: expected JSON array, got: "
-                + (parsed == null ? "null" : parsed.getClass().getSimpleName()));
+
+        List<DataRow> rows = new ArrayList<>(dataArray.size());
+        int seq = 1;
+        for (Object item : dataArray) {
+            if (item instanceof Map<?, ?> m) {
+                DataRow row = new DataRow();
+                row.getData().putAll((Map<String, Object>) m);
+                row.getData().put("SEQUENCE_NUMBER", seq++);
+                rows.add(row);
+            }
+        }
+        return rows;
     }
 
     // -------------------------------------------------------------------------
     // File output helper
     // -------------------------------------------------------------------------
 
-    /** Writes a {@link BatchResult} to a pipe-separated-values file. */
     public void writeToPsv(BatchResult batch, String outputFilePath) throws Exception {
+        if (batch.results().isEmpty()) {
+            Files.writeString(Path.of(outputFilePath), "");
+            return;
+        }
+
         SequencedSet<String> columns = new LinkedHashSet<>();
-        columns.add("identifier");
+        batch.results().get(0).keySet().forEach(columns::add);
         for (Map<String, Object> row : batch.results()) {
             if (!"FAILED".equals(row.get("operationStatus"))) {
-                row.keySet().stream()
-                        .filter(k -> !k.equals("identifier"))
-                        .forEach(columns::add);
+                row.keySet().forEach(columns::add);
                 break;
             }
         }
+        columns.add("errorMessage");
 
         Path outputPath = Path.of(outputFilePath);
         try (BufferedWriter writer = Files.newBufferedWriter(outputPath)) {
@@ -291,10 +403,6 @@ public class BatchService {
                 List<String> line = new ArrayList<>();
                 for (String col : columns) {
                     Object val = row.get(col);
-                    if (val == null && "FAILED".equals(row.get("operationStatus"))) {
-                        val = col.equals("identifier") ? row.get("identifier")
-                                : "ERROR: " + row.get("errorMessage");
-                    }
                     line.add(val != null ? val.toString() : "");
                 }
                 writer.write(String.join("|", line));
@@ -304,114 +412,443 @@ public class BatchService {
     }
 
     // -------------------------------------------------------------------------
-    // Debug mode (skip extraction)
+    // Debug mode
     // -------------------------------------------------------------------------
 
-    /** Returns input identifiers as plain objects without making any HTTP calls. */
-    private BatchResult debugResult(List<String> identifiers) {
-        List<Map<String, Object>> results = identifiers.stream()
-                .map(id -> {
-                    Map<String, Object> row = new LinkedHashMap<>();
-                    row.put("identifier", id);
-                    return row;
-                })
+    private BatchResult debugResult(List<DataRow> rows) {
+        List<Map<String, Object>> results = rows.stream()
+                .map(row -> new LinkedHashMap<>(row.getData()))
                 .collect(Collectors.toList());
 
-        String batchUuid = UUID.randomUUID().toString();
-        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+        String batchUuid  = UUID.randomUUID().toString();
+        String timestamp  = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+        List<ColumnDef> columns = results.isEmpty() ? List.of() : buildColumnDefsFromResults(results);
 
-        return new BatchResult(
-                identifiers.size(), identifiers.size(), 0,
-                new HttpStats(0, 0, 0),
-                List.of(new ColumnDef("identifier", "string", "Identifier")),
-                results, batchUuid, timestamp, 0L, 0.0);
+        return new BatchResult(rows.size(), rows.size(), 0,
+                new HttpStats(0, 0, 0), columns, results, batchUuid, timestamp, 0L, 0.0);
     }
 
     // -------------------------------------------------------------------------
     // Core execution
     // -------------------------------------------------------------------------
 
-    private BatchResult runCore(List<String> identifiers,
+    private BatchResult runCore(List<DataRow> rows,
                                 BatchProperties.OperationProperties op,
-                                String operationType) throws Exception {
-        String extractionType = op.getDataExtraction().getType().trim().toUpperCase();
+                                String operation,
+                                Integer threadCountOverride,
+                                Integer timeoutMsOverride,
+                                int debugMode) throws Exception {
 
-        List<XPathColumn> xpathColumns = List.of();
-        Map<String, String> xpathMap = Map.of();
+        List<BatchProperties.ActivityProperties> activities =
+                op.getActivity() != null ? op.getActivity() : List.of();
+        boolean useActivities = !activities.isEmpty();
 
-        if ("XPATH".equals(extractionType)) {
-            xpathColumns = loadXPaths(op.getXpath().getConfig());
-            xpathMap = xpathColumns.stream()
-                    .collect(Collectors.toMap(XPathColumn::getColumnName, XPathColumn::getXpath,
-                            (a, b) -> a, LinkedHashMap::new));
-        }
-
-        ExecutorService httpPool = Executors.newFixedThreadPool(op.getHttp().getThreadCount());
-        ExecutorService xpathPool = Executors.newFixedThreadPool(op.getXpath().getThreadCount());
-        HttpClient httpClient = HttpClient.newBuilder().build();
-
-        AtomicInteger succeeded = new AtomicInteger();
-        AtomicInteger failed = new AtomicInteger();
+        AtomicInteger succeeded       = new AtomicInteger();
+        AtomicInteger failed          = new AtomicInteger();
         List<Map<String, Object>> results = new CopyOnWriteArrayList<>();
-        List<Long> httpDurationsMs = new CopyOnWriteArrayList<>();
+        List<Long> httpDurationsMs    = new CopyOnWriteArrayList<>();
         AtomicLong totalResponseBytes = new AtomicLong();
 
-        String authHeader = authProviders.get(operationType).getAuthorizationHeader();
-
-        long batchStart = System.currentTimeMillis();
-        final String resolvedBodyTemplate = resolveJsonataExpression(op.getHttp().getBodyTemplate());
+        String authHeader = authProviders.get(operation).getAuthorizationHeader();
+        long batchStart   = System.currentTimeMillis();
 
         List<CompletableFuture<Void>> futures;
 
-        if ("JSON".equals(extractionType)) {
-            final String jsonataTransform = resolveJsonataExpression(op.getDataExtraction().getJsonataTransform());
-            futures = identifiers.stream()
-                    .map(id -> processOneJson(id, httpClient, httpPool, jsonataTransform,
-                            succeeded, failed, results, httpDurationsMs, totalResponseBytes, authHeader, op, resolvedBodyTemplate))
+        if (useActivities) {
+            // --- Activity-based path ---
+
+            // Determine effective thread count and timeout from the HTTP activity
+            int activityHttpThreads = activities.stream()
+                    .filter(a -> "HTTP".equalsIgnoreCase(a.getType()))
+                    .findFirst()
+                    .map(a -> a.getHttp().getThreadCount())
+                    .orElse(op.getHttp().getThreadCount());
+            int effectiveThreadCount = threadCountOverride != null ? threadCountOverride : activityHttpThreads;
+
+            int activityTimeoutMs = activities.stream()
+                    .filter(a -> "HTTP".equalsIgnoreCase(a.getType()))
+                    .findFirst()
+                    .map(a -> a.getHttp().getTimeoutMs())
+                    .orElse(op.getHttp().getTimeoutMs());
+            int effectiveTimeoutMs = timeoutMsOverride != null ? timeoutMsOverride : activityTimeoutMs;
+
+            int xpathThreadCount = activities.stream()
+                    .filter(a -> "dataextraction".equalsIgnoreCase(a.getType()))
+                    .filter(a -> "XPATH".equalsIgnoreCase(a.getDataExtraction().getType()))
+                    .findFirst()
+                    .map(a -> a.getDataExtraction().getThreadCount())
+                    .orElse(op.getXpath().getThreadCount());
+
+            ExecutorService httpPool  = Executors.newFixedThreadPool(effectiveThreadCount);
+            ExecutorService xpathPool = Executors.newFixedThreadPool(xpathThreadCount);
+            HttpClient httpClient     = HttpClient.newBuilder().build();
+
+            // Pre-load activity resources (classpath files, etc.) once for all rows
+            List<ResolvedActivity> resolvedActivities = preloadActivities(activities, effectiveTimeoutMs);
+
+            boolean includeMetadata = debugMode == 1;
+            Map<String, String> opProperties = op.getProperties();
+
+            futures = rows.stream()
+                    .map(row -> processOneRowWithActivities(
+                            row, resolvedActivities, httpClient, httpPool, xpathPool,
+                            succeeded, failed, results, httpDurationsMs, totalResponseBytes,
+                            authHeader, includeMetadata, opProperties))
                     .collect(Collectors.toList());
+
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+            long timeTakenMs = System.currentTimeMillis() - batchStart;
+            httpPool.shutdown();
+            xpathPool.shutdown();
+
+            LongSummaryStatistics stats = httpDurationsMs.stream().mapToLong(Long::longValue).summaryStatistics();
+            HttpStats httpStats = httpDurationsMs.isEmpty() ? new HttpStats(0, 0, 0)
+                    : new HttpStats(stats.getMin(), stats.getMax(), stats.getAverage());
+
+            List<Map<String, Object>> sanitizedResults = sanitizeKeys(new ArrayList<>(results));
+            List<ColumnDef> columns = buildColumnDefsFromResults(sanitizedResults);
+            columns = applyColumnTemplate(columns, op.getColumnTemplate());
+
+            String batchUuid = UUID.randomUUID().toString();
+            String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+            double responseSizeKb = totalResponseBytes.get() / 1024.0;
+
+            return new BatchResult(rows.size(), succeeded.get(), failed.get(),
+                    httpStats, columns, sanitizedResults, batchUuid, timestamp, timeTakenMs, responseSizeKb);
+
         } else {
-            final Map<String, String> finalXpathMap = Map.copyOf(xpathMap);
-            futures = identifiers.stream()
-                    .map(id -> processOneXpath(id, httpClient, httpPool, finalXpathMap, xpathPool,
-                            succeeded, failed, results, httpDurationsMs, totalResponseBytes, authHeader, op, resolvedBodyTemplate))
-                    .collect(Collectors.toList());
+            // --- Legacy path (no activity array defined) ---
+
+            String extractionType = op.getDataExtraction().getType().trim().toUpperCase();
+
+            List<XPathColumn> xpathColumns = List.of();
+            Map<String, String> xpathMap   = Map.of();
+            if ("XPATH".equals(extractionType)) {
+                xpathColumns = loadXPaths(op.getXpath().getConfig());
+                xpathMap = xpathColumns.stream()
+                        .collect(Collectors.toMap(XPathColumn::getColumnName, XPathColumn::getXpath,
+                                (a, b) -> a, LinkedHashMap::new));
+            }
+
+            int effectiveThreadCount = threadCountOverride != null ? threadCountOverride : op.getHttp().getThreadCount();
+            int effectiveTimeoutMs   = timeoutMsOverride   != null ? timeoutMsOverride   : op.getHttp().getTimeoutMs();
+
+            ExecutorService httpPool  = Executors.newFixedThreadPool(effectiveThreadCount);
+            ExecutorService xpathPool = Executors.newFixedThreadPool(op.getXpath().getThreadCount());
+            HttpClient httpClient     = HttpClient.newBuilder().build();
+
+            final String resolvedBodyTemplate = resolveJsonataExpression(op.getHttp().getBodyTemplate());
+
+            if ("JSON".equals(extractionType)) {
+                final String jsonataTransform = resolveJsonataExpression(op.getDataExtraction().getJsonataTransform());
+                futures = rows.stream()
+                        .map(row -> processOneJson(row.getData(), httpClient, httpPool, jsonataTransform,
+                                succeeded, failed, results, httpDurationsMs, totalResponseBytes,
+                                authHeader, op, resolvedBodyTemplate, effectiveTimeoutMs))
+                        .collect(Collectors.toList());
+            } else {
+                final Map<String, String> finalXpathMap = Map.copyOf(xpathMap);
+                futures = rows.stream()
+                        .map(row -> processOneXpath(row.getData(), httpClient, httpPool, finalXpathMap, xpathPool,
+                                succeeded, failed, results, httpDurationsMs, totalResponseBytes,
+                                authHeader, op, resolvedBodyTemplate, effectiveTimeoutMs))
+                        .collect(Collectors.toList());
+            }
+
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+            long timeTakenMs = System.currentTimeMillis() - batchStart;
+            httpPool.shutdown();
+            xpathPool.shutdown();
+
+            LongSummaryStatistics stats = httpDurationsMs.stream().mapToLong(Long::longValue).summaryStatistics();
+            HttpStats httpStats = httpDurationsMs.isEmpty() ? new HttpStats(0, 0, 0)
+                    : new HttpStats(stats.getMin(), stats.getMax(), stats.getAverage());
+
+            List<Map<String, Object>> sanitizedResults = sanitizeKeys(new ArrayList<>(results));
+            List<ColumnDef> columns = buildColumnDefsFromResults(sanitizedResults);
+            columns = applyColumnTemplate(columns, op.getColumnTemplate());
+
+            String batchUuid = UUID.randomUUID().toString();
+            String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+            double responseSizeKb = totalResponseBytes.get() / 1024.0;
+
+            return new BatchResult(rows.size(), succeeded.get(), failed.get(),
+                    httpStats, columns, sanitizedResults, batchUuid, timestamp, timeTakenMs, responseSizeKb);
         }
-
-        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
-        long timeTakenMs = System.currentTimeMillis() - batchStart;
-        httpPool.shutdown();
-        xpathPool.shutdown();
-
-        LongSummaryStatistics stats = httpDurationsMs.stream()
-                .mapToLong(Long::longValue).summaryStatistics();
-        HttpStats httpStats = httpDurationsMs.isEmpty() ? new HttpStats(0, 0, 0)
-                : new HttpStats(stats.getMin(), stats.getMax(), stats.getAverage());
-
-        List<ColumnDef> columns = "JSON".equals(extractionType)
-                ? buildColumnDefsFromResults(results)
-                : buildColumnDefs(xpathColumns);
-
-        String batchUuid = UUID.randomUUID().toString();
-        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
-
-        double responseSizeKb = totalResponseBytes.get() / 1024.0;
-
-        return new BatchResult(identifiers.size(), succeeded.get(), failed.get(),
-                httpStats, columns, results, batchUuid, timestamp, timeTakenMs, responseSizeKb);
     }
 
     // -------------------------------------------------------------------------
-    // Per-record processing — XPath extraction
+    // Activity pre-loading
+    // -------------------------------------------------------------------------
+
+    /**
+     * Pre-loads classpath/filesystem resources for each activity so they are resolved once
+     * rather than on every row. Returns one {@link ResolvedActivity} per input activity.
+     */
+    private List<ResolvedActivity> preloadActivities(
+            List<BatchProperties.ActivityProperties> activities,
+            int defaultTimeoutMs) throws Exception {
+        List<ResolvedActivity> resolved = new ArrayList<>(activities.size());
+        for (BatchProperties.ActivityProperties act : activities) {
+            String type = act.getType() == null ? "" : act.getType().trim();
+            if ("HTTP".equalsIgnoreCase(type)) {
+                String bodyTemplate = resolveJsonataExpression(act.getHttp().getBodyTemplate());
+                resolved.add(new ResolvedActivity(act, bodyTemplate, null, null, null));
+            } else if ("dataextraction".equalsIgnoreCase(type)) {
+                String extractType = act.getDataExtraction().getType().trim().toUpperCase();
+                if ("XPATH".equals(extractType)) {
+                    String config = act.getDataExtraction().getConfig();
+                    if (config == null || config.isBlank()) {
+                        throw new IllegalStateException(
+                                "Activity '" + act.getName() + "': dataExtraction.config is required for XPATH extraction");
+                    }
+                    Map<String, String> xpathMap = loadXPathMap(config);
+                    resolved.add(new ResolvedActivity(act, null, xpathMap, null, null));
+                } else if ("JSONPATH".equals(extractType)) {
+                    String config = act.getDataExtraction().getConfig();
+                    if (config == null || config.isBlank()) {
+                        throw new IllegalStateException(
+                                "Activity '" + act.getName() + "': dataExtraction.config is required for JSONPATH extraction");
+                    }
+                    List<JsonPathColumn> cols = loadJsonPathColumns(config);
+                    resolved.add(new ResolvedActivity(act, null, null, null, cols));
+                } else {
+                    // JSON or JSONATA — JSONata transform
+                    String transform = resolveJsonataExpression(act.getDataExtraction().getJsonataTransform());
+                    resolved.add(new ResolvedActivity(act, null, null, transform, null));
+                }
+            } else {
+                resolved.add(new ResolvedActivity(act, null, null, null, null));
+            }
+        }
+        return resolved;
+    }
+
+    // -------------------------------------------------------------------------
+    // Activity-based per-row processing
+    // -------------------------------------------------------------------------
+
+    private CompletableFuture<Void> processOneRowWithActivities(
+            DataRow inputRow,
+            List<ResolvedActivity> activities,
+            HttpClient httpClient,
+            ExecutorService httpPool,
+            ExecutorService xpathPool,
+            AtomicInteger succeeded, AtomicInteger failed,
+            List<Map<String, Object>> results,
+            List<Long> httpDurationsMs, AtomicLong totalResponseBytes,
+            String authHeader,
+            boolean includeMetadata,
+            Map<String, String> opProperties) {
+
+        // Chain activities as CompletableFuture stages
+        CompletableFuture<DataRow> chain = CompletableFuture.completedFuture(inputRow);
+
+        for (ResolvedActivity activity : activities) {
+            String type = activity.config().getType() == null ? "" : activity.config().getType().trim();
+            if ("HTTP".equalsIgnoreCase(type)) {
+                chain = chain.thenCompose(row -> executeHttpActivity(
+                        row, activity, httpClient, httpPool,
+                        httpDurationsMs, totalResponseBytes, authHeader, opProperties));
+            } else if ("dataextraction".equalsIgnoreCase(type)) {
+                chain = chain.thenCompose(row -> executeExtractionActivity(row, activity, xpathPool));
+            }
+        }
+
+        return chain.thenAccept(row -> {
+            List<Map<String, Object>> expandedRows = row.getExpandedRows();
+            if (expandedRows != null && !expandedRows.isEmpty()) {
+                // JSON extraction produced multiple output rows — expand them
+                for (Map<String, Object> expandedData : expandedRows) {
+                    Map<String, Object> resultMap = row.toResponseMap(includeMetadata);
+                    resultMap.putAll(expandedData);
+                    resultMap.put("operationStatus", "SUCCESS");
+                    results.add(resultMap);
+                }
+            } else {
+                Map<String, Object> resultMap = row.toResponseMap(includeMetadata);
+                resultMap.put("operationStatus", "SUCCESS");
+                results.add(resultMap);
+            }
+            succeeded.incrementAndGet();
+        }).exceptionally(ex -> {
+            failed.incrementAndGet();
+            Throwable cause   = ex.getCause() != null ? ex.getCause() : ex;
+            String    message = cause.getMessage() != null ? cause.getMessage() : cause.getClass().getSimpleName();
+            // Use input row data only (no metadata) for FAILED rows
+            Map<String, Object> resultMap = new LinkedHashMap<>(inputRow.getData());
+            resultMap.put("operationStatus", "FAILED");
+            resultMap.put("errorMessage", message);
+            results.add(resultMap);
+            return null;
+        });
+    }
+
+    /** Makes the HTTP call for one DataRow, captures timing + URL in metadata, stores response body. */
+    private CompletableFuture<DataRow> executeHttpActivity(
+            DataRow row,
+            ResolvedActivity activity,
+            HttpClient httpClient,
+            ExecutorService httpPool,
+            List<Long> httpDurationsMs, AtomicLong totalResponseBytes,
+            String authHeader,
+            Map<String, String> opProperties) {
+
+        BatchProperties.HttpProperties httpConfig = activity.config().getHttp();
+        String resolvedUrl;
+        String resolvedBody;
+        try {
+            resolvedUrl  = resolveTemplate(httpConfig.getUrl(), row.getData(), opProperties);
+            resolvedBody = activity.resolvedBodyTemplate() != null
+                    ? resolveTemplate(activity.resolvedBodyTemplate(), row.getData(), opProperties)
+                    : "";
+        } catch (IllegalArgumentException e) {
+            CompletableFuture<DataRow> f = new CompletableFuture<>();
+            f.completeExceptionally(e);
+            return f;
+        }
+
+        // --- Cache check (synchronous, fast path) ---
+        String activityName = activity.config().getName();
+        BatchProperties.CacheProperties cacheConfig = httpConfig.getCache();
+        String cacheName = null;
+        String resolvedCacheKey = null;
+        if (cacheConfig != null && !cacheConfig.getName().isBlank()) {
+            try {
+                cacheName        = cacheConfig.getName();
+                resolvedCacheKey = resolveTemplate(cacheConfig.getKey(), row.getData(), opProperties);
+                String cached    = cacheFactory.get(cacheName, resolvedCacheKey);
+                if (cached != null) {
+                    totalResponseBytes.addAndGet(cached.length());
+                    row.setResponseBody(cached);
+                    httpDurationsMs.add(0L);
+                    row.getMetadata().put(activityName + ".timetakenmillis", 0L);
+                    row.getMetadata().put(activityName + ".httpurl", resolvedUrl + " [CACHED]");
+                    return CompletableFuture.completedFuture(row);
+                }
+            } catch (IllegalArgumentException e) {
+                CompletableFuture<DataRow> f = new CompletableFuture<>();
+                f.completeExceptionally(e);
+                return f;
+            }
+        }
+
+        HttpRequest request = buildRequestFromHttpConfig(resolvedUrl, authHeader, httpConfig, resolvedBody);
+
+        final String finalCacheName       = cacheName;
+        final String finalResolvedCacheKey = resolvedCacheKey;
+        final String finalResolvedUrl      = resolvedUrl;
+
+        return CompletableFuture.supplyAsync(() -> {
+            long start = System.currentTimeMillis();
+            try {
+                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                    throw new RuntimeException("HTTP " + response.statusCode());
+                }
+                String body = response.body();
+                totalResponseBytes.addAndGet(body.length());
+                if (finalCacheName != null) {
+                    cacheFactory.save(finalCacheName, finalResolvedCacheKey, body, finalResolvedUrl);
+                }
+                row.setResponseBody(body);
+                return row;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Interrupted while calling HTTP endpoint", e);
+            } catch (Exception e) {
+                throw new RuntimeException(e.getMessage(), e);
+            } finally {
+                long elapsed = System.currentTimeMillis() - start;
+                httpDurationsMs.add(elapsed);
+                row.getMetadata().put(activityName + ".timetakenmillis", elapsed);
+                row.getMetadata().put(activityName + ".httpurl", finalResolvedUrl);
+            }
+        }, httpPool);
+    }
+
+    /** Runs extraction (XPATH or JSON) against the response body stored in the DataRow. */
+    private CompletableFuture<DataRow> executeExtractionActivity(
+            DataRow row, ResolvedActivity activity, ExecutorService xpathPool) {
+
+        String responseBody = row.getResponseBody();
+        if (responseBody == null) {
+            CompletableFuture<DataRow> f = new CompletableFuture<>();
+            f.completeExceptionally(new IllegalStateException(
+                    "Activity '" + activity.config().getName() + "' requires an HTTP response body "
+                            + "from a preceding HTTP activity"));
+            return f;
+        }
+
+        String extractionType = activity.config().getDataExtraction().getType().trim().toUpperCase();
+
+        if ("XPATH".equals(extractionType)) {
+            return xpathExtractor.extractAsync(responseBody, activity.xpathMap(), xpathPool)
+                    .thenApply(attributes -> {
+                        row.getData().putAll(attributes);
+                        return row;
+                    });
+        }
+
+        if ("JSON".equals(extractionType) || "JSONATA".equals(extractionType)) {
+            try {
+                List<Map<String, Object>> extracted = extractJson(responseBody, activity.jsonataTransform());
+                if (extracted.size() <= 1) {
+                    if (!extracted.isEmpty()) {
+                        row.getData().putAll(extracted.get(0));
+                    }
+                } else {
+                    // Multiple output rows — store for expansion in the outer thenAccept
+                    row.setExpandedRows(extracted);
+                }
+                return CompletableFuture.completedFuture(row);
+            } catch (Exception e) {
+                CompletableFuture<DataRow> f = new CompletableFuture<>();
+                f.completeExceptionally(new RuntimeException("JSON/JSONATA extraction failed: " + e.getMessage(), e));
+                return f;
+            }
+        }
+
+        if ("JSONPATH".equals(extractionType)) {
+            try {
+                Map<String, String> extracted = jsonPathExtractor.extract(responseBody, activity.jsonPathColumns());
+                row.getData().putAll(extracted);
+                return CompletableFuture.completedFuture(row);
+            } catch (Exception e) {
+                CompletableFuture<DataRow> f = new CompletableFuture<>();
+                f.completeExceptionally(new RuntimeException("JSONPATH extraction failed: " + e.getMessage(), e));
+                return f;
+            }
+        }
+
+        CompletableFuture<DataRow> f = new CompletableFuture<>();
+        f.completeExceptionally(new IllegalArgumentException(
+                "Unknown extraction type: " + activity.config().getDataExtraction().getType()));
+        return f;
+    }
+
+    // -------------------------------------------------------------------------
+    // Legacy per-record processing (used when no activity array is defined)
     // -------------------------------------------------------------------------
 
     private CompletableFuture<Void> processOneXpath(
-            String id, HttpClient httpClient, ExecutorService httpPool,
+            Map<String, Object> row, HttpClient httpClient, ExecutorService httpPool,
             Map<String, String> xpaths, ExecutorService xpathPool,
             AtomicInteger succeeded, AtomicInteger failed, List<Map<String, Object>> results,
             List<Long> httpDurationsMs, AtomicLong totalResponseBytes, String authHeader,
-            BatchProperties.OperationProperties op, String resolvedBodyTemplate) {
+            BatchProperties.OperationProperties op, String resolvedBodyTemplate, int timeoutMs) {
 
-        HttpRequest request = buildRequest(id, authHeader, op, resolvedBodyTemplate);
+        HttpRequest request;
+        try {
+            request = buildRequest(row, authHeader, op, resolvedBodyTemplate, timeoutMs);
+        } catch (IllegalArgumentException e) {
+            failed.incrementAndGet();
+            Map<String, Object> entry = new LinkedHashMap<>(row);
+            entry.put("operationStatus", "FAILED");
+            entry.put("errorMessage", e.getMessage());
+            results.add(entry);
+            return CompletableFuture.completedFuture(null);
+        }
 
         return CompletableFuture
                 .supplyAsync(() -> {
@@ -420,15 +857,14 @@ public class BatchService {
                         HttpResponse<String> response = httpClient.send(
                                 request, HttpResponse.BodyHandlers.ofString());
                         if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                            throw new RuntimeException("HTTP " + response.statusCode()
-                                    + " for identifier '" + id + "'");
+                            throw new RuntimeException("HTTP " + response.statusCode());
                         }
                         String body = response.body();
                         totalResponseBytes.addAndGet(body.length());
                         return body;
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
-                        throw new RuntimeException("Interrupted while calling HTTP endpoint for '" + id + "'", e);
+                        throw new RuntimeException("Interrupted while calling HTTP endpoint", e);
                     } catch (Exception e) {
                         throw new RuntimeException(e.getMessage(), e);
                     } finally {
@@ -437,8 +873,7 @@ public class BatchService {
                 }, httpPool)
                 .thenCompose(xml -> xpathExtractor.extractAsync(xml, xpaths, xpathPool))
                 .thenAccept(attributes -> {
-                    Map<String, Object> entry = new LinkedHashMap<>();
-                    entry.put("identifier", id);
+                    Map<String, Object> entry = new LinkedHashMap<>(row);
                     entry.put("operationStatus", "SUCCESS");
                     entry.putAll(attributes);
                     results.add(entry);
@@ -448,8 +883,7 @@ public class BatchService {
                     failed.incrementAndGet();
                     Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
                     String message = cause.getMessage() != null ? cause.getMessage() : cause.getClass().getSimpleName();
-                    Map<String, Object> entry = new LinkedHashMap<>();
-                    entry.put("identifier", id);
+                    Map<String, Object> entry = new LinkedHashMap<>(row);
                     entry.put("operationStatus", "FAILED");
                     entry.put("errorMessage", message);
                     results.add(entry);
@@ -457,23 +891,24 @@ public class BatchService {
                 });
     }
 
-    // -------------------------------------------------------------------------
-    // Per-record processing — JSON extraction
-    // -------------------------------------------------------------------------
-
-    /**
-     * Makes the HTTP call, parses the JSON response, applies an optional JSONata transform,
-     * then adds one result row per element in the resulting JSON array.
-     * A single identifier can therefore produce zero or more output rows.
-     */
     private CompletableFuture<Void> processOneJson(
-            String id, HttpClient httpClient, ExecutorService httpPool,
+            Map<String, Object> row, HttpClient httpClient, ExecutorService httpPool,
             String jsonataTransform,
             AtomicInteger succeeded, AtomicInteger failed, List<Map<String, Object>> results,
             List<Long> httpDurationsMs, AtomicLong totalResponseBytes, String authHeader,
-            BatchProperties.OperationProperties op, String resolvedBodyTemplate) {
+            BatchProperties.OperationProperties op, String resolvedBodyTemplate, int timeoutMs) {
 
-        HttpRequest request = buildRequest(id, authHeader, op, resolvedBodyTemplate);
+        HttpRequest request;
+        try {
+            request = buildRequest(row, authHeader, op, resolvedBodyTemplate, timeoutMs);
+        } catch (IllegalArgumentException e) {
+            failed.incrementAndGet();
+            Map<String, Object> entry = new LinkedHashMap<>(row);
+            entry.put("operationStatus", "FAILED");
+            entry.put("errorMessage", e.getMessage());
+            results.add(entry);
+            return CompletableFuture.completedFuture(null);
+        }
 
         return CompletableFuture
                 .supplyAsync(() -> {
@@ -482,15 +917,14 @@ public class BatchService {
                         HttpResponse<String> response = httpClient.send(
                                 request, HttpResponse.BodyHandlers.ofString());
                         if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                            throw new RuntimeException("HTTP " + response.statusCode()
-                                    + " for identifier '" + id + "'");
+                            throw new RuntimeException("HTTP " + response.statusCode());
                         }
                         String body = response.body();
                         totalResponseBytes.addAndGet(body.length());
                         return body;
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
-                        throw new RuntimeException("Interrupted while calling HTTP endpoint for '" + id + "'", e);
+                        throw new RuntimeException("Interrupted while calling HTTP endpoint", e);
                     } catch (Exception e) {
                         throw new RuntimeException(e.getMessage(), e);
                     } finally {
@@ -499,19 +933,17 @@ public class BatchService {
                 }, httpPool)
                 .thenAccept(responseBody -> {
                     try {
-                        List<Map<String, Object>> rows = extractJson(responseBody, jsonataTransform);
-                        for (Map<String, Object> row : rows) {
-                            Map<String, Object> entry = new LinkedHashMap<>();
-                            entry.put("identifier", id);
+                        List<Map<String, Object>> extractedRows = extractJson(responseBody, jsonataTransform);
+                        for (Map<String, Object> extracted : extractedRows) {
+                            Map<String, Object> entry = new LinkedHashMap<>(row);
                             entry.put("operationStatus", "SUCCESS");
-                            entry.putAll(row);
+                            entry.putAll(extracted);
                             results.add(entry);
                         }
                         succeeded.incrementAndGet();
                     } catch (Exception e) {
                         failed.incrementAndGet();
-                        Map<String, Object> entry = new LinkedHashMap<>();
-                        entry.put("identifier", id);
+                        Map<String, Object> entry = new LinkedHashMap<>(row);
                         entry.put("operationStatus", "FAILED");
                         entry.put("errorMessage", "JSON extraction failed: " + e.getMessage());
                         results.add(entry);
@@ -521,8 +953,7 @@ public class BatchService {
                     failed.incrementAndGet();
                     Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
                     String message = cause.getMessage() != null ? cause.getMessage() : cause.getClass().getSimpleName();
-                    Map<String, Object> entry = new LinkedHashMap<>();
-                    entry.put("identifier", id);
+                    Map<String, Object> entry = new LinkedHashMap<>(row);
                     entry.put("operationStatus", "FAILED");
                     entry.put("errorMessage", message);
                     results.add(entry);
@@ -534,40 +965,31 @@ public class BatchService {
     // JSON extraction helper
     // -------------------------------------------------------------------------
 
-    /**
-     * Parses {@code responseBody} as JSON, applies an optional JSONata transform,
-     * then returns the result as a list of flat key→value maps.
-     * A JSON object is wrapped in a single-element list; a JSON array yields one map per element.
-     */
     @SuppressWarnings("unchecked")
     private List<Map<String, Object>> extractJson(String responseBody,
                                                   String jsonataTransform) throws Exception {
         Object parsed = objectMapper.readValue(responseBody, Object.class);
-
         if (jsonataTransform != null && !jsonataTransform.isBlank()) {
             parsed = Jsonata.jsonata(jsonataTransform).evaluate(parsed);
         }
-
         if (parsed instanceof List<?> list) {
             List<Map<String, Object>> result = new ArrayList<>();
             for (Object item : list) {
                 if (item instanceof Map<?, ?> map) {
-                    Map<String, Object> row = new LinkedHashMap<>();
-                    ((Map<String, Object>) map).forEach(row::put);
-                    result.add(row);
+                    Map<String, Object> r = new LinkedHashMap<>();
+                    ((Map<String, Object>) map).forEach(r::put);
+                    result.add(r);
                 } else if (item != null) {
                     result.add(Map.of("value", item));
                 }
             }
             return result;
         }
-
         if (parsed instanceof Map<?, ?> map) {
-            Map<String, Object> row = new LinkedHashMap<>();
-            ((Map<String, Object>) map).forEach(row::put);
-            return List.of(row);
+            Map<String, Object> r = new LinkedHashMap<>();
+            ((Map<String, Object>) map).forEach(r::put);
+            return List.of(r);
         }
-
         throw new RuntimeException("JSON extraction: expected an array or object, got: "
                 + (parsed == null ? "null" : parsed.getClass().getSimpleName()));
     }
@@ -576,20 +998,10 @@ public class BatchService {
     // Column definition builders
     // -------------------------------------------------------------------------
 
-    private List<ColumnDef> buildColumnDefs(List<XPathColumn> xpathColumns) {
-        List<ColumnDef> columns = new ArrayList<>();
-        columns.add(new ColumnDef("identifier", "string", "Identifier"));
-        columns.add(new ColumnDef("operationStatus", "string", "Operation Status"));
-        xpathColumns.forEach(c -> columns.add(new ColumnDef(c.getColumnName(), c.getColumnType(), c.getDisplayName())));
-        columns.add(new ColumnDef("errorMessage", "string", "Error Message"));
-        return columns;
-    }
-
-    /** Derives column definitions dynamically from the first successful result row. */
     private List<ColumnDef> buildColumnDefsFromResults(List<Map<String, Object>> results) {
+        if (results.isEmpty()) return List.of();
         SequencedSet<String> keys = new LinkedHashSet<>();
-        keys.add("identifier");
-        keys.add("operationStatus");
+        results.get(0).keySet().forEach(keys::add);
         for (Map<String, Object> row : results) {
             if (!"FAILED".equals(row.get("operationStatus"))) {
                 row.keySet().forEach(keys::add);
@@ -602,26 +1014,95 @@ public class BatchService {
                 .toList();
     }
 
+    /**
+     * Reorders/filters the derived column list according to the operation's {@code columnTemplate}.
+     * If no template is configured the original list is returned unchanged.
+     */
+    private List<ColumnDef> applyColumnTemplate(List<ColumnDef> columns,
+                                                BatchProperties.ColumnTemplateProperties template) throws Exception {
+        if (template == null || template.getSource() == null || template.getSource().isBlank()) {
+            return columns;
+        }
+        List<String> orderedNames = loadColumnNames(template.getSource());
+        if (orderedNames.isEmpty()) return columns;
+
+        Map<String, ColumnDef> defMap = columns.stream()
+                .collect(Collectors.toMap(ColumnDef::columnName, c -> c, (a, b) -> a, LinkedHashMap::new));
+
+        return orderedNames.stream()
+                .filter(defMap::containsKey) // only include columns that actually exist in results
+                .map(defMap::get)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Loads a column name list from:
+     * <ul>
+     *   <li>{@code classpath:...} — one column name per line from a classpath resource</li>
+     *   <li>A filesystem path — one column name per line from a file</li>
+     *   <li>Anything else — treated as a comma-separated inline list</li>
+     * </ul>
+     */
+    private List<String> loadColumnNames(String source) throws Exception {
+        if (source.startsWith("classpath:")) {
+            String resource = source.substring("classpath:".length());
+            try (InputStream is = getClass().getClassLoader().getResourceAsStream(resource)) {
+                if (is == null) throw new FileNotFoundException("Column template not found on classpath: " + resource);
+                return Arrays.stream(new String(is.readAllBytes()).split("\\r?\\n"))
+                        .map(String::trim).filter(s -> !s.isBlank()).collect(Collectors.toList());
+            }
+        }
+        Path path = Path.of(source);
+        if (Files.exists(path)) {
+            return Files.readAllLines(path).stream()
+                    .map(String::trim).filter(s -> !s.isBlank()).collect(Collectors.toList());
+        }
+        return Arrays.stream(source.split(","))
+                .map(String::trim).filter(s -> !s.isBlank()).collect(Collectors.toList());
+    }
+
     private static String toDisplayName(String key) {
+        if (key.equals(key.toUpperCase())) return key;
         String spaced = key.replaceAll("([A-Z])", " $1").trim();
         return Character.toUpperCase(spaced.charAt(0)) + spaced.substring(1);
     }
 
     // -------------------------------------------------------------------------
-    // Shared helpers
+    // Shared HTTP request builders
     // -------------------------------------------------------------------------
 
-    private HttpRequest buildRequest(String id, String authHeader,
+    /** Legacy request builder for the non-activity path. */
+    private HttpRequest buildRequest(Map<String, Object> row, String authHeader,
                                      BatchProperties.OperationProperties op,
-                                     String resolvedBodyTemplate) {
+                                     String resolvedBodyTemplate, int timeoutMs) {
         BatchProperties.HttpProperties http = op.getHttp();
-        HttpRequest.Builder builder = HttpRequest.newBuilder();
+        String resolvedUrl  = resolveTemplate(http.getUrl(), row);
+        String resolvedBody = resolvedBodyTemplate != null ? resolveTemplate(resolvedBodyTemplate, row) : "";
+        return buildRequestFromHttpConfig(resolvedUrl, authHeader, http, resolvedBody, timeoutMs,
+                http.getTimeoutMs());
+    }
+
+    /** Builds an {@link HttpRequest} from a pre-resolved URL + body. */
+    private HttpRequest buildRequestFromHttpConfig(
+            String resolvedUrl, String authHeader,
+            BatchProperties.HttpProperties http, String resolvedBody) {
+        return buildRequestFromHttpConfig(resolvedUrl, authHeader, http, resolvedBody,
+                http.getTimeoutMs(), http.getTimeoutMs());
+    }
+
+    private HttpRequest buildRequestFromHttpConfig(
+            String resolvedUrl, String authHeader,
+            BatchProperties.HttpProperties http, String resolvedBody,
+            int timeoutMs, int ignored) {
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
+                .timeout(Duration.ofMillis(timeoutMs))
+                .uri(URI.create(resolvedUrl));
+
         if (http.getMethod().equalsIgnoreCase("GET")) {
-            builder.uri(URI.create(http.getUrl().replace("{id}", id))).GET();
+            builder.GET();
         } else {
-            builder.uri(URI.create(http.getUrl().replace("{id}", id)))
-                   .header("Content-Type", http.getContentType())
-                   .POST(HttpRequest.BodyPublishers.ofString(resolvedBodyTemplate.replace("{id}", id)));
+            builder.header("Content-Type", http.getContentType())
+                   .POST(HttpRequest.BodyPublishers.ofString(resolvedBody != null ? resolvedBody : ""));
         }
         http.getHeader().forEach(builder::header);
         if (authHeader != null) {
@@ -630,29 +1111,117 @@ public class BatchService {
         return builder.build();
     }
 
+    // -------------------------------------------------------------------------
+    // Filter helpers
+    // -------------------------------------------------------------------------
+
     /**
-     * Resolves a JSONata transform value to the actual expression string.
-     * <ul>
-     *   <li>{@code classpath:transforms/myop.jsonata} — loaded from the classpath</li>
-     *   <li>{@code C:/work/config/myop.jsonata} — loaded from the filesystem</li>
-     *   <li>Any other value — used as-is (inline expression)</li>
-     * </ul>
+     * Drops DataRows that do not match every rule in {@code filters}.
+     * If {@code filters} is null or empty the original list is returned unchanged.
+     * Rules whose {@code column} is absent from the row are skipped (row passes through).
      */
+    private static List<DataRow> applyFilterInput(List<DataRow> rows, List<FilterRule> filters) {
+        if (filters == null || filters.isEmpty()) return rows;
+        return rows.stream()
+                .filter(row -> matchesAll(row.getData(), filters))
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Drops result maps that do not match every rule in {@code filters}.
+     * If {@code filters} is null or empty the original list is returned unchanged.
+     */
+    private static List<Map<String, Object>> applyFilterOutput(List<Map<String, Object>> results,
+                                                               List<FilterRule> filters) {
+        if (filters == null || filters.isEmpty()) return results;
+        return results.stream()
+                .filter(row -> matchesAll(row, filters))
+                .collect(Collectors.toList());
+    }
+
+    private static boolean matchesAll(Map<String, Object> data, List<FilterRule> filters) {
+        for (FilterRule f : filters) {
+            if (f.getColumn() == null || !data.containsKey(f.getColumn())) continue;
+            String rowValue    = Objects.toString(data.get(f.getColumn()), "");
+            String filterValue = f.getValue() != null ? f.getValue() : "";
+            String op          = f.getOperation() != null ? f.getOperation().toLowerCase() : "eq";
+            boolean matches = switch (op) {
+                case "like" -> rowValue.matches(filterValue);
+                default     -> rowValue.equals(filterValue);
+            };
+            if (!matches) return false;
+        }
+        return true;
+    }
+
+    // -------------------------------------------------------------------------
+    // Key sanitisation (dot → underscore in result map keys)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Returns a new list where every key in every result map has {@code '.'} replaced by {@code '_'}.
+     * Applied in {@link #runCore} so that column defs are built from the sanitised keys.
+     */
+    private static List<Map<String, Object>> sanitizeKeys(List<Map<String, Object>> results) {
+        List<Map<String, Object>> sanitized = new ArrayList<>(results.size());
+        for (Map<String, Object> row : results) {
+            Map<String, Object> newRow = new LinkedHashMap<>();
+            row.forEach((k, v) -> newRow.put(k.replace('.', '_'), v));
+            sanitized.add(newRow);
+        }
+        return sanitized;
+    }
+
+    /**
+     * Replaces all {@code {key}} placeholders in {@code template} with values from {@code row}.
+     * If a key is not found in the row, {@code fallback} (operation-level properties) is consulted.
+     *
+     * @throws IllegalArgumentException if any placeholder key is absent from both sources.
+     */
+    static String resolveTemplate(String template, Map<String, Object> row,
+                                  Map<String, String> fallback) {
+        if (template == null || template.isBlank()) return template;
+        Matcher m = Pattern.compile("\\{([^}]+)\\}").matcher(template);
+        StringBuffer sb = new StringBuffer();
+        while (m.find()) {
+            String key = m.group(1);
+            Object val = row.get(key);
+            if (val == null && fallback != null) val = fallback.get(key);
+            if (val == null) {
+                throw new IllegalArgumentException(
+                        "Template references key '" + key + "' which is not present in the DataRow"
+                                + (fallback != null && !fallback.isEmpty()
+                                        ? " or operation properties" : "")
+                                + ". Available row keys: " + row.keySet()
+                                + (fallback != null && !fallback.isEmpty()
+                                        ? ", properties: " + fallback.keySet() : ""));
+            }
+            m.appendReplacement(sb, Matcher.quoteReplacement(val.toString()));
+        }
+        m.appendTail(sb);
+        return sb.toString();
+    }
+
+    /** Convenience overload — no operation-level property fallback. */
+    static String resolveTemplate(String template, Map<String, Object> row) {
+        return resolveTemplate(template, row, null);
+    }
+
+    // -------------------------------------------------------------------------
+    // Resource loaders
+    // -------------------------------------------------------------------------
+
     private String resolveJsonataExpression(String value) throws Exception {
         if (value == null || value.isBlank()) return value;
         if (value.startsWith("classpath:")) {
             String resource = value.substring("classpath:".length());
             try (InputStream is = getClass().getClassLoader().getResourceAsStream(resource)) {
-                if (is == null) {
-                    throw new FileNotFoundException("JSONata file not found on classpath: " + resource);
-                }
+                if (is == null) throw new FileNotFoundException("JSONata file not found on classpath: " + resource);
                 return new String(is.readAllBytes()).strip();
             }
         }
         Path path = Path.of(value);
-        if (Files.exists(path)) {
-            return Files.readString(path).strip();
-        }
+        if (Files.exists(path)) return Files.readString(path).strip();
         return value;
     }
 
@@ -661,14 +1230,34 @@ public class BatchService {
         if (xpathsConfig.startsWith("classpath:")) {
             String resource = xpathsConfig.substring("classpath:".length());
             is = getClass().getClassLoader().getResourceAsStream(resource);
-            if (is == null) {
-                throw new FileNotFoundException("XPath config not found on classpath: " + resource);
-            }
+            if (is == null) throw new FileNotFoundException("XPath config not found on classpath: " + resource);
         } else {
             is = new FileInputStream(xpathsConfig);
         }
         try (is) {
             return objectMapper.readValue(is, new TypeReference<List<XPathColumn>>() {});
         }
+    }
+
+    /** Loads a JSONPATH column config file (classpath or filesystem). */
+    private List<JsonPathColumn> loadJsonPathColumns(String config) throws Exception {
+        InputStream is;
+        if (config.startsWith("classpath:")) {
+            String resource = config.substring("classpath:".length());
+            is = getClass().getClassLoader().getResourceAsStream(resource);
+            if (is == null) throw new FileNotFoundException("JSONPATH config not found on classpath: " + resource);
+        } else {
+            is = new java.io.FileInputStream(config);
+        }
+        try (is) {
+            return objectMapper.readValue(is, new TypeReference<List<JsonPathColumn>>() {});
+        }
+    }
+
+    /** Loads XPath columns and returns them as a {@code columnName → xpath} map. */
+    private Map<String, String> loadXPathMap(String xpathsConfig) throws Exception {
+        return loadXPaths(xpathsConfig).stream()
+                .collect(Collectors.toMap(XPathColumn::getColumnName, XPathColumn::getXpath,
+                        (a, b) -> a, LinkedHashMap::new));
     }
 }

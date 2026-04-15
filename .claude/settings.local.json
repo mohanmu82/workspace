@@ -7,7 +7,13 @@
       "Bash(sed -i 's/^package com\\\\.mycompany\\\\.batch;$/package com.mycompany.batch.web;/' /c/work/workspace/batchworkflow/src/main/java/com/mycompany/batch/web/BatchController.java /c/work/workspace/batchworkflow/src/main/java/com/mycompany/batch/web/BatchWebSocketHandler.java /c/work/workspace/batchworkflow/src/main/java/com/mycompany/batch/web/RunRequest.java)",
       "Bash(sed -i 's/^package com\\\\.mycompany\\\\.batch;$/package com.mycompany.batch.service;/' /c/work/workspace/batchworkflow/src/main/java/com/mycompany/batch/service/BatchService.java)",
       "Bash(sed -i 's/^package com\\\\.mycompany\\\\.batch;$/package com.mycompany.batch.auth;/' /c/work/workspace/batchworkflow/src/main/java/com/mycompany/batch/auth/HttpAuthProvider.java /c/work/workspace/batchworkflow/src/main/java/com/mycompany/batch/auth/BasicAuthProvider.java /c/work/workspace/batchworkflow/src/main/java/com/mycompany/batch/auth/JwtAuthProvider.java /c/work/workspace/batchworkflow/src/main/java/com/mycompany/batch/auth/KerberosAuthProvider.java)",
-      "Bash(sed -i 's/^package com\\\\.mycompany\\\\.batch;$/package com.mycompany.batch.xpath;/' /c/work/workspace/batchworkflow/src/main/java/com/mycompany/batch/xpath/XPathColumn.java /c/work/workspace/batchworkflow/src/main/java/com/mycompany/batch/xpath/XPathExtractor.java)"
+      "Bash(sed -i 's/^package com\\\\.mycompany\\\\.batch;$/package com.mycompany.batch.xpath;/' /c/work/workspace/batchworkflow/src/main/java/com/mycompany/batch/xpath/XPathColumn.java /c/work/workspace/batchworkflow/src/main/java/com/mycompany/batch/xpath/XPathExtractor.java)",
+      "Bash(powershell -Command ':*)",
+      "Bash(\"C:/work/java/jdk-21.0.10+7/bin/java\" -version)",
+      "Bash(\"C:/work/apache-maven-3.9.14/bin/mvn\" compile *)",
+      "Bash(JAVA_HOME=\"C:/work/java/jdk-21.0.10+7\" \"C:/work/apache-maven-3.9.14/bin/mvn\" compile)",
+      "Bash(JAVA_HOME=\"C:/work/java/jdk-21.0.10+7\" \"C:/work/apache-maven-3.9.14/bin/mvn\" build)",
+      "Bash(JAVA_HOME=\"C:/work/java/jdk-21.0.10+7\" \"C:/work/apache-maven-3.9.14/bin/mvn\" compile -X)"
     ]
   }
 }
