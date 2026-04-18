@@ -31,7 +31,7 @@
       }
     ],
     "mandatoryAttributes": "id",
-    "enricher": {
+    "enricherTODO": {
       "type": "post",
       "enhancer": "classpath:enricher/pubmed_enricher.json"
     },
