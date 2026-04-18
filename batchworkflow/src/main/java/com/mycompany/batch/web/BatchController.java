@@ -374,6 +374,7 @@ public class BatchController {
                 params.get("operation"),
                 params.get("inputSource"),
                 params.get("inputFilePath"),
+                params.get("inputHttpUrl"),  // mandatory when inputSource=HTTPCONFIG
                 ids,
                 null, // raw — not supported via query params
                 parseInputCount(params.get("inputCount")),
@@ -383,7 +384,8 @@ public class BatchController {
                 parseInputCount(params.get("httpThreadCount")),
                 parseInputCount(params.get("httpTimeoutMs")),
                 null, // filterInput — not supported via query params
-                null  // filterOutput — not supported via query params
+                null, // filterOutput — not supported via query params
+                null  // executionMode — defaults to SYNC
         );
     }
 

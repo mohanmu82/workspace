@@ -48,6 +48,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -151,42 +152,7 @@ public class BatchService {
         String operation = request.operation();
         BatchProperties.OperationProperties op = batchProperties.getOperation(operation);
 
-        String inputSourceType = (request.inputSource() != null && !request.inputSource().isBlank())
-                ? request.inputSource().trim().toUpperCase()
-                : op.getInputSource().getType().trim().toUpperCase();
-
-        List<DataRow> rows = switch (inputSourceType) {
-            case "FILE" -> {
-                String path = request.inputFilePath();
-                if (path == null || path.isBlank()) {
-                    throw new IllegalArgumentException("inputFilePath is required for FILE input source");
-                }
-                if (!Files.exists(Path.of(path))) {
-                    throw new IllegalArgumentException("inputFilePath does not exist: " + path);
-                }
-                yield readDataRowsFromFile(path, request.inputCount(), op);
-            }
-            // REQUEST: explicit IDs or pre-parsed raw rows
-            // HTTPGET / HTTPPOST kept as legacy aliases for REQUEST
-            case "REQUEST", "HTTPGET", "HTTPPOST" -> {
-                if (request.raw() != null && !request.raw().isEmpty()) {
-                    yield readDataRowsFromRaw(request.raw(), request.inputCount());
-                } else if (request.ids() != null && !request.ids().isEmpty()) {
-                    yield readDataRowsFromRequest(request.ids(), request.inputCount());
-                } else {
-                    throw new IllegalArgumentException(
-                            "ids or raw data is required for " + inputSourceType + " input source");
-                }
-            }
-            // HTTP / HTTPCONFIG: fetch from a configured endpoint; response must have a "data" array
-            case "HTTP", "HTTPCONFIG" -> {
-                yield readDataRowsFromHttp(op.getInputSource().getHttpConfig(), request.inputCount());
-            }
-            default -> throw new IllegalArgumentException("Unknown inputSource type: " + inputSourceType);
-        };
-
-        // Apply input filter before execution
-        rows = applyFilterInput(rows, request.filterInput());
+        List<DataRow> rows = buildInputRows(request);
 
         int debugMode = request.debugMode() != null ? request.debugMode() : 0;
         if (debugMode == -1) {
@@ -204,6 +170,96 @@ public class BatchService {
                     result.batchUuid(), result.timestamp(), result.timeTakenMs(), result.responseSizeKb());
         }
         return result;
+    }
+
+    /**
+     * Parses the input rows from a {@link RunRequest} and applies {@code filterInput}.
+     * Used by the ASYNC WebSocket handler to obtain the row count for the ACK message
+     * before kicking off background processing.
+     */
+    public List<DataRow> buildInputRows(RunRequest request) throws Exception {
+        String operation = request.operation();
+        BatchProperties.OperationProperties op = batchProperties.getOperation(operation);
+
+        String inputSourceType = (request.inputSource() != null && !request.inputSource().isBlank())
+                ? request.inputSource().trim().toUpperCase()
+                : op.getInputSource().getType().trim().toUpperCase();
+
+        List<DataRow> rows = switch (inputSourceType) {
+            case "FILE" -> {
+                String path = request.inputFilePath();
+                if (path == null || path.isBlank()) {
+                    throw new IllegalArgumentException("inputFilePath is required for FILE input source");
+                }
+                if (!Files.exists(Path.of(path))) {
+                    throw new IllegalArgumentException("inputFilePath does not exist: " + path);
+                }
+                yield readDataRowsFromFile(path, request.inputCount(), op);
+            }
+            case "REQUEST", "HTTPGET", "HTTPPOST" -> {
+                if (request.raw() != null && !request.raw().isEmpty()) {
+                    yield readDataRowsFromRaw(request.raw(), request.inputCount());
+                } else if (request.ids() != null && !request.ids().isEmpty()) {
+                    yield readDataRowsFromRequest(request.ids(), request.inputCount());
+                } else {
+                    throw new IllegalArgumentException(
+                            "ids or raw data is required for " + inputSourceType + " input source");
+                }
+            }
+            case "HTTP", "HTTPCONFIG" -> {
+                BatchProperties.HttpConfigSourceProperties httpCfg = op.getInputSource().getHttpConfig();
+                if (request.inputHttpUrl() != null && !request.inputHttpUrl().isBlank()) {
+                    // Request-supplied URL overrides (and is mandatory for HTTPCONFIG from the UI)
+                    BatchProperties.HttpConfigSourceProperties override =
+                            new BatchProperties.HttpConfigSourceProperties();
+                    override.setUrl(request.inputHttpUrl().trim());
+                    override.setMethod(httpCfg.getMethod());
+                    override.setJsonataTransform(httpCfg.getJsonataTransform());
+                    httpCfg = override;
+                } else if (httpCfg.getUrl() == null || httpCfg.getUrl().isBlank()) {
+                    throw new IllegalArgumentException(
+                            "inputHttpUrl is required in the request when inputSource=HTTPCONFIG "
+                                    + "and no url is configured in operations.json");
+                }
+                yield readDataRowsFromHttp(httpCfg, request.inputCount());
+            }
+            default -> throw new IllegalArgumentException("Unknown inputSource type: " + inputSourceType);
+        };
+
+        return applyFilterInput(rows, request.filterInput());
+    }
+
+    /**
+     * Processes rows asynchronously, streaming each completed result row to {@code rowCallback}
+     * as soon as it finishes (after applying {@code filterOutput} per row).
+     *
+     * <p>The returned {@link CompletableFuture} completes when all rows are done. The
+     * {@link BatchResult} it carries has an empty {@code results} list — rows have already
+     * been streamed — but carries the full batch metadata (columns, stats, uuid, etc.).
+     *
+     * <p>Callers should send an ACK to the client <em>before</em> calling this method.
+     */
+    public CompletableFuture<BatchResult> runAsync(List<DataRow> rows, RunRequest request,
+                                                    Consumer<Map<String, Object>> rowCallback) throws Exception {
+        String operation = request.operation();
+        BatchProperties.OperationProperties op = batchProperties.getOperation(operation);
+
+        int debugMode = request.debugMode() != null ? request.debugMode() : 0;
+        if (debugMode == -1) {
+            // Debug — no HTTP; stream immediately then return
+            BatchResult r = debugResult(rows);
+            for (Map<String, Object> row : r.results()) {
+                rowCallback.accept(row);
+            }
+            return CompletableFuture.completedFuture(
+                    new BatchResult(r.processed(), r.succeeded(), r.failed(),
+                            r.httpStats(), r.columns(), List.of(),
+                            r.batchUuid(), r.timestamp(), r.timeTakenMs(), r.responseSizeKb()));
+        }
+
+        return runCoreAsync(rows, op, operation,
+                request.httpThreadCount(), request.httpTimeoutMs(), debugMode,
+                request.filterOutput(), rowCallback);
     }
 
     // -------------------------------------------------------------------------
@@ -493,7 +549,7 @@ public class BatchService {
                     .map(row -> processOneRowWithActivities(
                             row, resolvedActivities, httpClient, httpPool, xpathPool,
                             succeeded, failed, results, httpDurationsMs, totalResponseBytes,
-                            authHeader, includeMetadata, opProperties))
+                            authHeader, includeMetadata, opProperties, null, null))
                     .collect(Collectors.toList());
 
             CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
@@ -578,6 +634,102 @@ public class BatchService {
     }
 
     // -------------------------------------------------------------------------
+    // Async core execution (activity-based path only)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Activity-based async execution. Each completed row is sanitised and streamed to
+     * {@code rowCallback} immediately (after per-row {@code filterOutput} check).
+     * The returned future resolves with metadata-only {@link BatchResult} (empty results list).
+     */
+    private CompletableFuture<BatchResult> runCoreAsync(
+            List<DataRow> rows,
+            BatchProperties.OperationProperties op,
+            String operation,
+            Integer threadCountOverride,
+            Integer timeoutMsOverride,
+            int debugMode,
+            List<FilterRule> filterOutput,
+            Consumer<Map<String, Object>> rowCallback) throws Exception {
+
+        List<BatchProperties.ActivityProperties> activities =
+                op.getActivity() != null ? op.getActivity() : List.of();
+
+        AtomicInteger succeeded       = new AtomicInteger();
+        AtomicInteger failed          = new AtomicInteger();
+        List<Map<String, Object>> results = new CopyOnWriteArrayList<>();   // for column-def derivation
+        List<Long> httpDurationsMs    = new CopyOnWriteArrayList<>();
+        AtomicLong totalResponseBytes = new AtomicLong();
+
+        String authHeader = authProviders.get(operation).getAuthorizationHeader();
+        long batchStart   = System.currentTimeMillis();
+
+        int activityHttpThreads = activities.stream()
+                .filter(a -> "HTTP".equalsIgnoreCase(a.getType()))
+                .findFirst()
+                .map(a -> a.getHttp().getThreadCount())
+                .orElse(op.getHttp().getThreadCount());
+        int effectiveThreadCount = threadCountOverride != null ? threadCountOverride : activityHttpThreads;
+
+        int activityTimeoutMs = activities.stream()
+                .filter(a -> "HTTP".equalsIgnoreCase(a.getType()))
+                .findFirst()
+                .map(a -> a.getHttp().getTimeoutMs())
+                .orElse(op.getHttp().getTimeoutMs());
+        int effectiveTimeoutMs = timeoutMsOverride != null ? timeoutMsOverride : activityTimeoutMs;
+
+        int xpathThreadCount = activities.stream()
+                .filter(a -> "dataextraction".equalsIgnoreCase(a.getType()))
+                .filter(a -> "XPATH".equalsIgnoreCase(a.getDataExtraction().getType()))
+                .findFirst()
+                .map(a -> a.getDataExtraction().getThreadCount())
+                .orElse(op.getXpath().getThreadCount());
+
+        ExecutorService httpPool  = Executors.newFixedThreadPool(effectiveThreadCount);
+        ExecutorService xpathPool = Executors.newFixedThreadPool(xpathThreadCount);
+        HttpClient httpClient     = HttpClient.newBuilder().build();
+
+        List<ResolvedActivity> resolvedActivities = preloadActivities(activities, effectiveTimeoutMs);
+
+        boolean includeMetadata = debugMode == 1;
+        Map<String, String> opProperties = op.getProperties();
+
+        List<CompletableFuture<Void>> futures = rows.stream()
+                .map(row -> processOneRowWithActivities(
+                        row, resolvedActivities, httpClient, httpPool, xpathPool,
+                        succeeded, failed, results, httpDurationsMs, totalResponseBytes,
+                        authHeader, includeMetadata, opProperties,
+                        filterOutput, rowCallback))
+                .collect(Collectors.toList());
+
+        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                .thenApply(v -> {
+                    long timeTakenMs = System.currentTimeMillis() - batchStart;
+                    httpPool.shutdown();
+                    xpathPool.shutdown();
+
+                    LongSummaryStatistics stats = httpDurationsMs.stream()
+                            .mapToLong(Long::longValue).summaryStatistics();
+                    HttpStats httpStats = httpDurationsMs.isEmpty() ? new HttpStats(0, 0, 0)
+                            : new HttpStats(stats.getMin(), stats.getMax(), stats.getAverage());
+
+                    // Derive columns from locally-accumulated results (not streamed to client)
+                    List<Map<String, Object>> sanitizedForCols = sanitizeKeys(new ArrayList<>(results));
+                    List<ColumnDef> columns = buildColumnDefsFromResults(sanitizedForCols);
+                    try { columns = applyColumnTemplate(columns, op.getColumnTemplate()); }
+                    catch (Exception ignored) {}
+
+                    String batchUuid = UUID.randomUUID().toString();
+                    String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+                    double responseSizeKb = totalResponseBytes.get() / 1024.0;
+
+                    // results list intentionally empty — rows were already streamed via rowCallback
+                    return new BatchResult(rows.size(), succeeded.get(), failed.get(),
+                            httpStats, columns, List.of(), batchUuid, timestamp, timeTakenMs, responseSizeKb);
+                });
+    }
+
+    // -------------------------------------------------------------------------
     // Activity pre-loading
     // -------------------------------------------------------------------------
 
@@ -639,7 +791,9 @@ public class BatchService {
             List<Long> httpDurationsMs, AtomicLong totalResponseBytes,
             String authHeader,
             boolean includeMetadata,
-            Map<String, String> opProperties) {
+            Map<String, String> opProperties,
+            List<FilterRule> filterOutput,          // nullable — only used when rowCallback != null
+            Consumer<Map<String, Object>> rowCallback) { // nullable — ASYNC streaming
 
         // Chain activities as CompletableFuture stages
         CompletableFuture<DataRow> chain = CompletableFuture.completedFuture(inputRow);
@@ -664,11 +818,23 @@ public class BatchService {
                     resultMap.putAll(expandedData);
                     resultMap.put("operationStatus", "SUCCESS");
                     results.add(resultMap);
+                    if (rowCallback != null) {
+                        Map<String, Object> sanitized = sanitizeRow(resultMap);
+                        if (matchesAll(sanitized, filterOutput != null ? filterOutput : List.of())) {
+                            rowCallback.accept(sanitized);
+                        }
+                    }
                 }
             } else {
                 Map<String, Object> resultMap = row.toResponseMap(includeMetadata);
                 resultMap.put("operationStatus", "SUCCESS");
                 results.add(resultMap);
+                if (rowCallback != null) {
+                    Map<String, Object> sanitized = sanitizeRow(resultMap);
+                    if (matchesAll(sanitized, filterOutput != null ? filterOutput : List.of())) {
+                        rowCallback.accept(sanitized);
+                    }
+                }
             }
             succeeded.incrementAndGet();
         }).exceptionally(ex -> {
@@ -680,8 +846,18 @@ public class BatchService {
             resultMap.put("operationStatus", "FAILED");
             resultMap.put("errorMessage", message);
             results.add(resultMap);
+            if (rowCallback != null) {
+                rowCallback.accept(sanitizeRow(resultMap)); // stream FAILED rows too
+            }
             return null;
         });
+    }
+
+    /** Returns a copy of {@code row} with every key's {@code '.'} replaced by {@code '_'}. */
+    private static Map<String, Object> sanitizeRow(Map<String, Object> row) {
+        Map<String, Object> sanitized = new LinkedHashMap<>();
+        row.forEach((k, v) -> sanitized.put(k.replace('.', '_'), v));
+        return sanitized;
     }
 
     /** Makes the HTTP call for one DataRow, captures timing + URL in metadata, stores response body. */

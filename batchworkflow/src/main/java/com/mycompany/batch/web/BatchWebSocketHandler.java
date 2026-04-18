@@ -1,6 +1,7 @@
 package com.mycompany.batch.web;
 
 import com.mycompany.batch.config.BatchProperties;
+import com.mycompany.batch.model.DataRow;
 import com.mycompany.batch.model.RunRequest;
 import com.mycompany.batch.service.BatchService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -10,33 +11,35 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * WebSocket endpoint registered at {@code /batch/ws}.
  *
- * <p>Accepts a JSON message with the same shape as {@link RunRequest} and returns
- * the same JSON structure as the REST {@code POST /batch/run} endpoint.
+ * <p>Supports two execution modes controlled by {@code executionMode} in the request:
  *
- * <p>Example client message:
- * <pre>{@code
- * {
- *   "operation":  "pubmed",
- *   "inputSource":"REQUEST",
- *   "ids":        ["38000001", "38000002"],
- *   "outputData": "HTTP"
- * }
- * }</pre>
+ * <h3>SYNC (default)</h3>
+ * Behaves identically to the REST endpoint: processes all rows, then sends a single
+ * response JSON with the complete result set.
  *
- * <p>Example client message writing results to a file:
+ * <h3>ASYNC</h3>
+ * Immediately sends an ACK message, then streams each completed row individually as
+ * it finishes, followed by a final "done" message containing batch metadata.
+ *
  * <pre>{@code
- * {
- *   "operation":     "pubmed",
- *   "inputSource":   "FILE",
- *   "inputFilePath": "/data/ids.csv",
- *   "outputData":    "FILE",
- *   "outputFilePath":"/data/out.psv"
- * }
+ * // ACK
+ * {"type":"ack","batchUuid":"…","rowCount":5,"message":"batch … processing asynchronously with 5 rows"}
+ *
+ * // Per-row (one message per completed DataRow)
+ * {"type":"row","batchUuid":"…","row":{…}}
+ *
+ * // Completion
+ * {"type":"done","batchUuid":"…","metadata":{…},"columns":[…]}
+ *
+ * // Error (unexpected failure)
+ * {"type":"error","batchUuid":"…","message":"…"}
  * }</pre>
  */
 @Component
@@ -59,7 +62,6 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
 
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
-        Map<String, Object> response;
         try {
             RunRequest request = objectMapper.readValue(message.getPayload(), RunRequest.class);
 
@@ -67,29 +69,119 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
                 throw new IllegalArgumentException("operation is required");
             }
 
-            BatchService.BatchResult result = batchService.run(request);
-
-            String outputData = resolveOutputData(request);
-
-            if ("FILE".equals(outputData)) {
-                String outputFilePath = resolveOutputFilePath(request);
-                if (outputFilePath == null || outputFilePath.isBlank()) {
-                    throw new IllegalArgumentException("outputFilePath is required when outputData=FILE");
-                }
-                batchService.writeToPsv(result, outputFilePath);
-                response = batchController.buildFileResponse(request.operation(), result, outputFilePath);
+            if ("ASYNC".equalsIgnoreCase(request.executionMode())) {
+                handleAsync(session, request);
             } else {
-                response = batchController.buildHttpResponse(request.operation(), result);
+                handleSync(session, request);
             }
 
         } catch (Exception e) {
-            response = new LinkedHashMap<>();
-            response.put("error",   true);
-            response.put("message", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+            Map<String, Object> err = new LinkedHashMap<>();
+            err.put("error",   true);
+            err.put("message", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+            sendWsSafe(session, objectMapper.writeValueAsString(err));
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // SYNC path — process everything, send one response
+    // -------------------------------------------------------------------------
+
+    private void handleSync(WebSocketSession session, RunRequest request) throws Exception {
+        Map<String, Object> response;
+        BatchService.BatchResult result = batchService.run(request);
+        String outputData = resolveOutputData(request);
+
+        if ("FILE".equals(outputData)) {
+            String outputFilePath = resolveOutputFilePath(request);
+            if (outputFilePath == null || outputFilePath.isBlank()) {
+                throw new IllegalArgumentException("outputFilePath is required when outputData=FILE");
+            }
+            batchService.writeToPsv(result, outputFilePath);
+            response = batchController.buildFileResponse(request.operation(), result, outputFilePath);
+        } else {
+            response = batchController.buildHttpResponse(request.operation(), result);
         }
 
-        session.sendMessage(new TextMessage(objectMapper.writeValueAsString(response)));
+        sendWsSafe(session, objectMapper.writeValueAsString(response));
     }
+
+    // -------------------------------------------------------------------------
+    // ASYNC path — ACK immediately, stream rows, send done
+    // -------------------------------------------------------------------------
+
+    private void handleAsync(WebSocketSession session, RunRequest request) throws Exception {
+        // Build input rows synchronously so we know the count for the ACK
+        List<DataRow> rows = batchService.buildInputRows(request);
+        String batchUuid = UUID.randomUUID().toString();
+
+        // Send ACK before any processing starts
+        Map<String, Object> ack = new LinkedHashMap<>();
+        ack.put("type",      "ack");
+        ack.put("batchUuid", batchUuid);
+        ack.put("rowCount",  rows.size());
+        ack.put("message",   "batch " + batchUuid
+                + " processing asynchronously with " + rows.size() + " rows");
+        sendWsSafe(session, objectMapper.writeValueAsString(ack));
+
+        // Kick off async processing — handler returns immediately after this call
+        batchService.runAsync(rows, request, row -> {
+            try {
+                Map<String, Object> msg = new LinkedHashMap<>();
+                msg.put("type",      "row");
+                msg.put("batchUuid", batchUuid);
+                msg.put("row",       row);
+                sendWsSafe(session, objectMapper.writeValueAsString(msg));
+            } catch (Exception ignored) {}
+        }).thenAccept(result -> {
+            try {
+                Map<String, Object> meta = new LinkedHashMap<>();
+                meta.put("processed",      result.processed());
+                meta.put("succeeded",      result.succeeded());
+                meta.put("failed",         result.failed());
+                meta.put("timeTakenMs",    result.timeTakenMs());
+                meta.put("responseSizeKb", result.responseSizeKb());
+                meta.put("timestamp",      result.timestamp());
+                meta.put("batchUuid",      batchUuid);
+
+                Map<String, Object> done = new LinkedHashMap<>();
+                done.put("type",      "done");
+                done.put("batchUuid", batchUuid);
+                done.put("metadata",  meta);
+                done.put("columns",   result.columns());
+                sendWsSafe(session, objectMapper.writeValueAsString(done));
+            } catch (Exception ignored) {}
+        }).exceptionally(ex -> {
+            try {
+                Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
+                Map<String, Object> err = new LinkedHashMap<>();
+                err.put("type",      "error");
+                err.put("batchUuid", batchUuid);
+                err.put("message",   cause.getMessage() != null
+                        ? cause.getMessage() : cause.getClass().getSimpleName());
+                sendWsSafe(session, objectMapper.writeValueAsString(err));
+            } catch (Exception ignored) {}
+            return null;
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    // Thread-safe WebSocket send (called from thread-pool threads in ASYNC mode)
+    // -------------------------------------------------------------------------
+
+    private void sendWsSafe(WebSocketSession session, String text) {
+        try {
+            synchronized (session) {
+                if (session.isOpen()) {
+                    session.sendMessage(new TextMessage(text));
+                }
+            }
+        } catch (Exception ignored) {}
+    }
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
 
     private String resolveOutputData(RunRequest request) {
         if (request.outputData() != null && !request.outputData().isBlank()) {

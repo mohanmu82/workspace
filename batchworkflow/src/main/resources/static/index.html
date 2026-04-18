@@ -314,6 +314,14 @@
             <option value="REST">REST (HTTP)</option>
         </select>
     </div>
+
+    <div class="form-group">
+        <label>Execution Mode</label>
+        <select id="executionMode" onchange="onExecutionModeChange()">
+            <option value="SYNC" selected>SYNC</option>
+            <option value="ASYNC">ASYNC</option>
+        </select>
+    </div>
 </div>
 
 <div class="request-preview-header" id="requestPreviewHeader">
@@ -420,6 +428,18 @@
         document.getElementById('outputFileGroup').classList.toggle('hidden', out !== 'FILE');
     }
 
+    function onExecutionModeChange() {
+        const mode = document.getElementById('executionMode').value;
+        const requestModeEl = document.getElementById('requestMode');
+        if (mode === 'ASYNC') {
+            // ASYNC requires WebSocket — lock the transport selector
+            requestModeEl.value    = 'WS';
+            requestModeEl.disabled = true;
+        } else {
+            requestModeEl.disabled = false;
+        }
+    }
+
     async function runBatch() {
         const operation      = document.getElementById('operation').value;
         const inputSource     = document.getElementById('inputSource').value;
@@ -431,6 +451,7 @@
         const debugMode       = document.getElementById('debugMode').value;
         const httpThreadCount = document.getElementById('httpThreadCount').value.trim();
         const httpTimeoutMs   = document.getElementById('httpTimeoutMs').value.trim();
+        const executionMode   = document.getElementById('executionMode').value;
 
         if (!operation) { setStatus('Please select an operation.', true); return; }
 
@@ -500,19 +521,24 @@
         if (inputCount)      body.inputCount      = parseInt(inputCount);
         if (httpThreadCount) body.httpThreadCount  = parseInt(httpThreadCount);
         if (httpTimeoutMs)   body.httpTimeoutMs    = parseInt(httpTimeoutMs);
+        if (executionMode === 'ASYNC') body.executionMode = 'ASYNC';
 
         // Show the request JSON before sending
         const bodyJson = JSON.stringify(body, null, 2);
         showRequestPreview(bodyJson);
 
-        try {
-            const data = await sendRequest(bodyJson);
-            lastJson = data;
-            handleResponse(data);
-        } catch (err) {
-            setStatus(`Error: ${err.message}`, true);
-        } finally {
-            setButtonsDisabled(false);
+        if (executionMode === 'ASYNC') {
+            runBatchAsync(bodyJson);   // fire-and-forget; streams rows back via WS
+        } else {
+            try {
+                const data = await sendRequest(bodyJson);
+                lastJson = data;
+                handleResponse(data);
+            } catch (err) {
+                setStatus(`Error: ${err.message}`, true);
+            } finally {
+                setButtonsDisabled(false);
+            }
         }
     }
 
@@ -595,8 +621,9 @@
     // Persistent WebSocket — one connection for the lifetime of the page
     // -------------------------------------------------------------------------
 
-    let socket       = null;   // the persistent WebSocket
-    let wsPending    = null;   // { resolve, reject } for the in-flight request
+    let socket           = null;   // the persistent WebSocket
+    let wsPending        = null;   // { resolve, reject } for the in-flight SYNC request
+    let wsStreamHandler  = null;   // function(msg) — set during ASYNC run, cleared on done/error
     let wsReconnectTimer = null;
 
     function wsUrl() {
@@ -612,16 +639,30 @@
         socket.onopen = () => setWsIndicator('connected');
 
         socket.onmessage = e => {
+            let msg;
+            try { msg = JSON.parse(e.data); } catch { return; }
+
+            // ASYNC streaming messages are dispatched to the stream handler
+            if (wsStreamHandler && msg.type) {
+                wsStreamHandler(msg);
+                return;
+            }
+
+            // SYNC request/response
             if (!wsPending) return;
             const { resolve, reject } = wsPending;
             wsPending = null;
-            try   { resolve(JSON.parse(e.data)); }
-            catch { reject(new Error('WebSocket: invalid JSON in response')); }
+            if (msg.error) reject(new Error(msg.message || 'WebSocket error response'));
+            else           resolve(msg);
         };
 
         socket.onerror = () => {
             setWsIndicator('error');
             if (wsPending) { const { reject } = wsPending; wsPending = null; reject(new Error('WebSocket error')); }
+            if (wsStreamHandler) {
+                wsStreamHandler({ type: 'error', message: 'WebSocket error' });
+                wsStreamHandler = null;
+            }
         };
 
         socket.onclose = e => {
@@ -630,6 +671,10 @@
                 const { reject } = wsPending;
                 wsPending = null;
                 reject(new Error(`WebSocket closed (code ${e.code})`));
+            }
+            if (wsStreamHandler) {
+                wsStreamHandler({ type: 'error', message: `WebSocket closed (code ${e.code})` });
+                wsStreamHandler = null;
             }
             // Auto-reconnect (skip if page is being unloaded)
             wsReconnectTimer = setTimeout(wsConnect, 2000);
@@ -666,6 +711,112 @@
 
     // Connect immediately on page load
     wsConnect();
+
+    // -------------------------------------------------------------------------
+    // ASYNC batch — streams rows into the grid as they arrive
+    // -------------------------------------------------------------------------
+
+    function runBatchAsync(bodyJson) {
+        if (!socket || socket.readyState !== WebSocket.OPEN) {
+            setStatus('WebSocket is not connected — please wait and retry.', true);
+            setButtonsDisabled(false);
+            return;
+        }
+        if (wsStreamHandler) {
+            setStatus('An ASYNC batch is already in progress.', true);
+            setButtonsDisabled(false);
+            return;
+        }
+
+        let rowCount    = 0;
+        let asyncUuid   = null;
+        let colsApplied = false;
+
+        // Clear the grid and prepare for streaming
+        grid.setGridOption('columnDefs', []);
+        grid.setGridOption('rowData', []);
+        document.getElementById('statsBar').style.display = 'none';
+        document.getElementById('exportBtn').disabled  = true;
+        document.getElementById('expandBtn').disabled  = true;
+        document.getElementById('shrinkBtn').disabled  = true;
+        document.getElementById('copyJsonBtn').disabled = true;
+        document.getElementById('clearBtn').disabled   = true;
+
+        wsStreamHandler = msg => {
+            switch (msg.type) {
+
+                case 'ack':
+                    asyncUuid = msg.batchUuid;
+                    setStatus(`${msg.message}`);
+                    break;
+
+                case 'row': {
+                    const row = msg.row || {};
+                    // Apply column defs from the first row we see
+                    if (!colsApplied) {
+                        colsApplied = true;
+                        grid.setGridOption('columnDefs',
+                            Object.keys(row).map(k => ({ field: k, headerName: k })));
+                    }
+                    appendRowToGrid(row);
+                    rowCount++;
+                    setStatus(`Receiving… ${rowCount} row(s) so far`);
+                    break;
+                }
+
+                case 'done': {
+                    wsStreamHandler = null;
+                    setButtonsDisabled(false);
+
+                    const meta = msg.metadata || {};
+                    const cols = msg.columns  || [];
+
+                    // Replace auto-derived column defs with the server's typed defs if available
+                    if (cols.length > 0) {
+                        grid.setGridOption('columnDefs',
+                            cols.map(c => ({ field: c.columnName, headerName: c.displayName })));
+                    }
+                    grid.sizeColumnsToFit();
+
+                    document.getElementById('exportBtn').disabled   = false;
+                    document.getElementById('expandBtn').disabled   = false;
+                    document.getElementById('shrinkBtn').disabled   = false;
+                    document.getElementById('copyJsonBtn').disabled = false;
+                    document.getElementById('clearBtn').disabled    = false;
+
+                    setStatus(`Processed: ${meta.processed ?? rowCount} — Succeeded: ${meta.succeeded ?? '?'} — Failed: ${meta.failed ?? '?'}`);
+
+                    document.getElementById('statTimestamp').textContent    = meta.timestamp      || '—';
+                    document.getElementById('statUuid').textContent         = meta.batchUuid      || asyncUuid || '—';
+                    document.getElementById('statTimeTaken').textContent    = (meta.timeTakenMs    ?? '—') + ' ms';
+                    document.getElementById('statResponseSize').textContent = (meta.responseSizeKb ?? '—') + ' KB';
+                    document.getElementById('statMethod').textContent       = '—';
+                    document.getElementById('statThreadCount').textContent  = '—';
+                    document.getElementById('statMin').textContent          = '—';
+                    document.getElementById('statAvg').textContent          = '—';
+                    document.getElementById('statMax').textContent          = '—';
+                    document.getElementById('statsBar').style.display = 'flex';
+                    break;
+                }
+
+                case 'error':
+                    wsStreamHandler = null;
+                    setButtonsDisabled(false);
+                    setStatus(`ASYNC error: ${msg.message}`, true);
+                    break;
+
+                default:
+                    break;
+            }
+        };
+
+        socket.send(bodyJson);
+    }
+
+    /** Appends a single row to the grid without replacing existing rows. */
+    function appendRowToGrid(row) {
+        grid.applyTransaction({ add: [row] });
+    }
 
     // -------------------------------------------------------------------------
     // Unified request dispatcher

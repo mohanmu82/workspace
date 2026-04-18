@@ -9,8 +9,9 @@ import java.util.Map;
  * <pre>
  * {
  *   "operation"      : "pubmed",
- *   "inputSource"    : "FILE | REQUEST | HTTP",
+ *   "inputSource"    : "FILE | REQUEST | HTTPCONFIG",
  *   "inputFilePath"  : "/path/to/ids.csv",
+ *   "inputHttpUrl"   : "http://some-api/ids",
  *   "ids"            : ["123", "456"],
  *   "raw"            : [{"id":"123","year":"2024"}, {"id":"456","year":"2024"}],
  *   "inputCount"     : 100,
@@ -49,6 +50,12 @@ public record RunRequest(
         String operation,
         String inputSource,
         String inputFilePath,
+        /**
+         * Mandatory when {@code inputSource=HTTPCONFIG}: the URL that returns the input rows
+         * as a JSON object containing a {@code "data"} array. Overrides any URL configured in
+         * {@code operations.json} for that operation.
+         */
+        String inputHttpUrl,
         List<String> ids,
         /** Pre-parsed rows sent from the REQUEST textarea (multi-column CSV). Takes precedence over {@code ids}. */
         List<Map<String, Object>> raw,
@@ -63,5 +70,12 @@ public record RunRequest(
         /** Rows not matching all rules are dropped before activity execution. */
         List<FilterRule> filterInput,
         /** Rows not matching all rules are excluded from the response after activity execution. */
-        List<FilterRule> filterOutput) {
+        List<FilterRule> filterOutput,
+        /**
+         * "SYNC" (default) or "ASYNC".
+         * ASYNC: the WebSocket handler sends an immediate ACK then streams each result row
+         * individually as it completes, followed by a final "done" metadata message.
+         * Only meaningful when requestMode=WS; ignored for REST requests.
+         */
+        String executionMode) {
 }
