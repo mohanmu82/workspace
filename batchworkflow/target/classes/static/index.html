@@ -251,6 +251,13 @@
         </select>
     </div>
 
+    <div class="form-group hidden" id="aliasGroup">
+        <label>Alias</label>
+        <select id="alias" onchange="onAliasChange()">
+            <option value="">-- Select Alias --</option>
+        </select>
+    </div>
+
     <div class="form-group">
         <label>Input Source</label>
         <select id="inputSource" onchange="onInputSourceChange()">
@@ -385,6 +392,7 @@
 
     const grid = agGrid.createGrid(document.getElementById('grid'), gridOptions);
     let lastJson = null;
+    let opAliases = {};   // opName -> string[]
 
     // Load operations on startup
     fetch('/batch/operations')
@@ -402,6 +410,9 @@
                 opt.value = op.name;
                 opt.textContent = op.name;
                 select.appendChild(opt);
+                if (op.aliases && op.aliases.length > 0) {
+                    opAliases[op.name] = op.aliases;
+                }
             });
             select.disabled = false;
             onOperationChange();
@@ -415,6 +426,23 @@
         document.getElementById('inputFilePath').value = name ? `C:/work/data/${name}.txt` : '';
         const outPath = document.getElementById('outputFilePath');
         if (name) outPath.value = `C:/work/data/${name}.out`;
+
+        // Populate alias dropdown
+        const aliases = opAliases[name] || [];
+        const aliasSelect = document.getElementById('alias');
+        aliasSelect.innerHTML = '<option value="">-- Select Alias --</option>';
+        aliases.forEach(a => {
+            const opt = document.createElement('option');
+            opt.value = a;
+            opt.textContent = a;
+            aliasSelect.appendChild(opt);
+        });
+        document.getElementById('aliasGroup').classList.toggle('hidden', aliases.length === 0);
+    }
+
+    function onAliasChange() {
+        const alias = document.getElementById('alias').value;
+        if (alias) runBatch();
     }
 
     function onInputSourceChange() {
@@ -522,6 +550,9 @@
         if (httpThreadCount) body.httpThreadCount  = parseInt(httpThreadCount);
         if (httpTimeoutMs)   body.httpTimeoutMs    = parseInt(httpTimeoutMs);
         if (executionMode === 'ASYNC') body.executionMode = 'ASYNC';
+
+        const aliasVal = document.getElementById('alias').value;
+        if (aliasVal) body.alias = aliasVal;
 
         // Show the request JSON before sending
         const bodyJson = JSON.stringify(body, null, 2);

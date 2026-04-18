@@ -22,6 +22,7 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/batch")
@@ -126,6 +127,15 @@ public class BatchController {
             entry.put("dataExtraction_type", extractType);
             if ("JSON".equalsIgnoreCase(extractType)) {
                 entry.put("dataExtraction_jsonataTransform", op.getDataExtraction().getJsonataTransform());
+            }
+
+            // Alias names
+            List<String> aliasNames = op.getAlias().stream()
+                    .map(BatchProperties.AliasProperties::getName)
+                    .filter(n -> n != null && !n.isBlank())
+                    .collect(Collectors.toList());
+            if (!aliasNames.isEmpty()) {
+                entry.put("aliases", aliasNames);
             }
 
             data.add(entry);
