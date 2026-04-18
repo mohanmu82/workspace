@@ -9,6 +9,7 @@ import java.util.Map;
  * <pre>
  * {
  *   "operation"      : "pubmed",
+ *   "alias"          : "TECH",
  *   "inputSource"    : "FILE | REQUEST | HTTPCONFIG",
  *   "inputFilePath"  : "/path/to/ids.csv",
  *   "inputHttpUrl"   : "http://some-api/ids",
@@ -77,5 +78,12 @@ public record RunRequest(
          * individually as it completes, followed by a final "done" metadata message.
          * Only meaningful when requestMode=WS; ignored for REST requests.
          */
-        String executionMode) {
+        String executionMode,
+        /**
+         * Optional name of a pre-configured request preset defined in {@code operations.json}
+         * under {@code alias[].name}. When supplied, the alias's {@code request} fields are
+         * used as defaults for any fields not explicitly set in this request.
+         * Incoming request fields always take precedence over alias values.
+         */
+        String alias) {
 }

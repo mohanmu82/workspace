@@ -75,6 +75,10 @@ public class BatchProperties {
         private ColumnTemplateProperties columnTemplate;     // null → derive from results
         /** Operation-level default values used as fallback when resolving {placeholder} templates. */
         private Map<String, String>      properties  = new LinkedHashMap<>();
+        /** Named request presets — selected at runtime via {@code "alias":"NAME"} in the request. */
+        private List<AliasProperties>    alias       = new ArrayList<>();
+        /** Optional enricher — adds derived attributes before or after the activity chain. */
+        private EnricherProperties       enricher;
 
         public String getName()           { return name; }
         public void   setName(String name){ this.name = name; }
@@ -111,6 +115,12 @@ public class BatchProperties {
             this.properties.clear();
             if (p != null) this.properties.putAll(p);
         }
+
+        public List<AliasProperties> getAlias()                              { return alias; }
+        public void setAlias(List<AliasProperties> alias)                    { this.alias = alias != null ? alias : new ArrayList<>(); }
+
+        public EnricherProperties getEnricher()                              { return enricher; }
+        public void setEnricher(EnricherProperties e)                        { this.enricher = e; }
 
         public List<String> getMandatoryAttributeList() {
             if (mandatoryAttributes == null || mandatoryAttributes.isBlank()) return List.of();
@@ -230,6 +240,44 @@ public class BatchProperties {
 
         public DataExtractionProperties getDataExtraction()                       { return dataExtraction; }
         public void setDataExtraction(DataExtractionProperties dataExtraction)    { this.dataExtraction = dataExtraction; }
+    }
+
+    // -------------------------------------------------------------------------
+    // Alias (named request presets)
+    // -------------------------------------------------------------------------
+
+    public static class AliasProperties {
+
+        private String              name    = "";
+        /** Partial RunRequest fields stored as a plain map so any subset can be specified. */
+        private Map<String, Object> request = new LinkedHashMap<>();
+
+        public String getName()               { return name; }
+        public void   setName(String name)    { this.name = name; }
+
+        public Map<String, Object> getRequest()                { return request; }
+        public void setRequest(Map<String, Object> r)          {
+            this.request.clear();
+            if (r != null) this.request.putAll(r);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Enricher (optional — pre or post activity chain)
+    // -------------------------------------------------------------------------
+
+    public static class EnricherProperties {
+
+        /** {@code "pre"} — apply before activities; {@code "post"} — apply after activities. */
+        private String type     = "post";
+        /** {@code classpath:} or filesystem path to the enricher JSON config file. */
+        private String enhancer = "";
+
+        public String getType()               { return type; }
+        public void   setType(String type)    { this.type = type; }
+
+        public String getEnhancer()           { return enhancer; }
+        public void   setEnhancer(String e)   { this.enhancer = e; }
     }
 
     // -------------------------------------------------------------------------

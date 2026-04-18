@@ -6,6 +6,12 @@ C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\BatchApplicati
 C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\cache\CacheFactory.java
 C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\config\BatchProperties.java
 C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\config\WebSocketConfig.java
+C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\enricher\DataAttributeDef.java
+C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\enricher\DatasetCacheDef.java
+C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\enricher\DatasetDef.java
+C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\enricher\DataSourceDef.java
+C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\enricher\EnricherConfig.java
+C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\enricher\EnricherService.java
 C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\jsonpath\JsonPathColumn.java
 C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\jsonpath\JsonPathExtractor.java
 C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\model\DataRow.java

@@ -1,6 +1,8 @@
 package com.mycompany.batch.service;
 
 import com.mycompany.batch.cache.CacheFactory;
+import com.mycompany.batch.enricher.EnricherConfig;
+import com.mycompany.batch.enricher.EnricherService;
 import com.mycompany.batch.jsonpath.JsonPathColumn;
 import com.mycompany.batch.jsonpath.JsonPathExtractor;
 import com.mycompany.batch.model.DataRow;
@@ -60,16 +62,18 @@ public class BatchService {
     private final XPathExtractor xpathExtractor;
     private final JsonPathExtractor jsonPathExtractor;
     private final CacheFactory cacheFactory;
+    private final EnricherService enricherService;
     private final BatchProperties batchProperties;
     private final Map<String, HttpAuthProvider> authProviders = new LinkedHashMap<>();
 
     public BatchService(ObjectMapper objectMapper, XPathExtractor xpathExtractor,
                         JsonPathExtractor jsonPathExtractor, CacheFactory cacheFactory,
-                        BatchProperties batchProperties) {
+                        EnricherService enricherService, BatchProperties batchProperties) {
         this.objectMapper = objectMapper;
         this.xpathExtractor = xpathExtractor;
         this.jsonPathExtractor = jsonPathExtractor;
         this.cacheFactory = cacheFactory;
+        this.enricherService = enricherService;
         this.batchProperties = batchProperties;
     }
 
@@ -145,10 +149,69 @@ public class BatchService {
     ) {}
 
     // -------------------------------------------------------------------------
+    // Alias resolution — merges preset fields into the incoming request
+    // -------------------------------------------------------------------------
+
+    /**
+     * Looks up the alias named {@code request.alias()} in the operation's alias list and
+     * returns a new {@link RunRequest} where alias values fill in any fields that are
+     * {@code null} / blank / empty in the incoming request.
+     * Incoming fields always win. Returns the original request unchanged if no alias is set.
+     */
+    public RunRequest resolveAlias(RunRequest req) {
+        if (req.alias() == null || req.alias().isBlank()) return req;
+
+        BatchProperties.OperationProperties op = batchProperties.getOperation(req.operation());
+
+        BatchProperties.AliasProperties aliasProps = op.getAlias().stream()
+                .filter(a -> a.getName().equalsIgnoreCase(req.alias().trim()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Unknown alias '" + req.alias() + "' for operation '" + req.operation()
+                                + "'. Available: "
+                                + op.getAlias().stream()
+                                        .map(BatchProperties.AliasProperties::getName).toList()));
+
+        // Deserialise the alias request map into a RunRequest so we get typed fields
+        // (e.g. List<FilterRule> instead of List<Map<String,Object>>).
+        // Fields absent from the map are null in the resulting record.
+        RunRequest a = objectMapper.convertValue(aliasProps.getRequest(), RunRequest.class);
+
+        return new RunRequest(
+                req.operation(),
+                mergeStr(req.inputSource(),    a.inputSource()),
+                mergeStr(req.inputFilePath(),  a.inputFilePath()),
+                mergeStr(req.inputHttpUrl(),   a.inputHttpUrl()),
+                mergeList(req.ids(),           a.ids()),
+                mergeList(req.raw(),           a.raw()),
+                req.inputCount()      != null ? req.inputCount()      : a.inputCount(),
+                mergeStr(req.outputData(),     a.outputData()),
+                mergeStr(req.outputFilePath(), a.outputFilePath()),
+                req.debugMode()       != null ? req.debugMode()       : a.debugMode(),
+                req.httpThreadCount() != null ? req.httpThreadCount() : a.httpThreadCount(),
+                req.httpTimeoutMs()   != null ? req.httpTimeoutMs()   : a.httpTimeoutMs(),
+                mergeList(req.filterInput(),   a.filterInput()),
+                mergeList(req.filterOutput(),  a.filterOutput()),
+                mergeStr(req.executionMode(),  a.executionMode()),
+                req.alias());
+    }
+
+    /** Returns {@code a} if non-null and non-blank, otherwise {@code b}. */
+    private static String mergeStr(String a, String b) {
+        return (a != null && !a.isBlank()) ? a : b;
+    }
+
+    /** Returns {@code a} if non-null and non-empty, otherwise {@code b}. */
+    private static <T> List<T> mergeList(List<T> a, List<T> b) {
+        return (a != null && !a.isEmpty()) ? a : b;
+    }
+
+    // -------------------------------------------------------------------------
     // Public API — unified RunRequest entry point
     // -------------------------------------------------------------------------
 
     public BatchResult run(RunRequest request) throws Exception {
+        request = resolveAlias(request);
         String operation = request.operation();
         BatchProperties.OperationProperties op = batchProperties.getOperation(operation);
 
@@ -159,10 +222,14 @@ public class BatchService {
             return debugResult(rows);
         }
 
+        applyPreEnricher(rows, op.getEnricher());
+
         BatchResult result = runCore(rows, op, operation,
                 request.httpThreadCount(), request.httpTimeoutMs(), debugMode);
 
-        // Apply output filter after execution
+        applyPostEnricher(result.results(), op.getEnricher());
+
+        // Apply output filter after execution (and after post-enrichment)
         List<Map<String, Object>> filtered = applyFilterOutput(result.results(), request.filterOutput());
         if (filtered != result.results()) {
             result = new BatchResult(result.processed(), result.succeeded(), result.failed(),
@@ -178,6 +245,7 @@ public class BatchService {
      * before kicking off background processing.
      */
     public List<DataRow> buildInputRows(RunRequest request) throws Exception {
+        request = resolveAlias(request);
         String operation = request.operation();
         BatchProperties.OperationProperties op = batchProperties.getOperation(operation);
 
@@ -241,25 +309,38 @@ public class BatchService {
      */
     public CompletableFuture<BatchResult> runAsync(List<DataRow> rows, RunRequest request,
                                                     Consumer<Map<String, Object>> rowCallback) throws Exception {
+        request = resolveAlias(request);
         String operation = request.operation();
         BatchProperties.OperationProperties op = batchProperties.getOperation(operation);
+        BatchProperties.EnricherProperties enricherProps = op.getEnricher();
 
         int debugMode = request.debugMode() != null ? request.debugMode() : 0;
         if (debugMode == -1) {
-            // Debug — no HTTP; stream immediately then return
             BatchResult r = debugResult(rows);
-            for (Map<String, Object> row : r.results()) {
-                rowCallback.accept(row);
-            }
+            for (Map<String, Object> row : r.results()) rowCallback.accept(row);
             return CompletableFuture.completedFuture(
                     new BatchResult(r.processed(), r.succeeded(), r.failed(),
                             r.httpStats(), r.columns(), List.of(),
                             r.batchUuid(), r.timestamp(), r.timeTakenMs(), r.responseSizeKb()));
         }
 
+        // Pre-enrichment — runs before any activity futures are submitted
+        applyPreEnricher(rows, enricherProps);
+
+        // Post-enrichment — wrap the callback so each streamed row is enriched before being sent
+        Consumer<Map<String, Object>> effectiveCallback = rowCallback;
+        if (enricherProps != null && "post".equalsIgnoreCase(enricherProps.getType())) {
+            EnricherConfig cfg = enricherService.loadConfig(enricherProps.getEnhancer());
+            Map<String, Map<String, Map<String, Object>>> datasets = enricherService.loadDatasets(cfg);
+            effectiveCallback = row -> {
+                enricherService.enrichRow(row, cfg.getData(), datasets);
+                rowCallback.accept(row);
+            };
+        }
+
         return runCoreAsync(rows, op, operation,
                 request.httpThreadCount(), request.httpTimeoutMs(), debugMode,
-                request.filterOutput(), rowCallback);
+                request.filterOutput(), effectiveCallback);
     }
 
     // -------------------------------------------------------------------------
@@ -1285,6 +1366,26 @@ public class BatchService {
             builder.header("Authorization", authHeader);
         }
         return builder.build();
+    }
+
+    // -------------------------------------------------------------------------
+    // Enricher helpers
+    // -------------------------------------------------------------------------
+
+    private void applyPreEnricher(List<DataRow> rows,
+                                   BatchProperties.EnricherProperties props) throws Exception {
+        if (props == null || !"pre".equalsIgnoreCase(props.getType())) return;
+        EnricherConfig cfg = enricherService.loadConfig(props.getEnhancer());
+        Map<String, Map<String, Map<String, Object>>> datasets = enricherService.loadDatasets(cfg);
+        rows.forEach(row -> enricherService.enrichRow(row.getData(), cfg.getData(), datasets));
+    }
+
+    private void applyPostEnricher(List<Map<String, Object>> results,
+                                    BatchProperties.EnricherProperties props) throws Exception {
+        if (props == null || !"post".equalsIgnoreCase(props.getType())) return;
+        EnricherConfig cfg = enricherService.loadConfig(props.getEnhancer());
+        Map<String, Map<String, Map<String, Object>>> datasets = enricherService.loadDatasets(cfg);
+        results.forEach(row -> enricherService.enrichRow(row, cfg.getData(), datasets));
     }
 
     // -------------------------------------------------------------------------

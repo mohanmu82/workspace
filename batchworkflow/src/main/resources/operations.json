@@ -30,7 +30,34 @@
         }
       }
     ],
-    "mandatoryAttributes": "id"
+    "mandatoryAttributes": "id",
+    "enricher": {
+      "type": "post",
+      "enhancer": "classpath:enricher/pubmed_enricher.json"
+    },
+    "alias": [
+      {
+        "name": "TECH",
+        "request": {
+          "inputSource": "FILE",
+          "inputFilePath": "C:/work/data/pubmed.txt",
+          "inputCount": 10,
+          "filterInput": [
+            { "column": "id", "value": "11748935", "operation": "eq" }
+          ]
+        }
+      },
+      {
+        "name": "ASYNC_ALL",
+        "request": {
+          "inputSource": "FILE",
+          "inputFilePath": "C:/work/data/pubmed.txt",
+          "executionMode": "ASYNC",
+          "httpThreadCount": 10,
+          "httpTimeoutMs": 5000
+        }
+      }
+    ]
   },
   {
     "name": "zip",

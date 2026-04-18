@@ -385,7 +385,8 @@ public class BatchController {
                 parseInputCount(params.get("httpTimeoutMs")),
                 null, // filterInput — not supported via query params
                 null, // filterOutput — not supported via query params
-                null  // executionMode — defaults to SYNC
+                null, // executionMode — defaults to SYNC
+                params.get("alias")
         );
     }
 

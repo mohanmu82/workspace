@@ -111,6 +111,8 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
     // -------------------------------------------------------------------------
 
     private void handleAsync(WebSocketSession session, RunRequest request) throws Exception {
+        // Resolve alias first so all preset fields are visible to buildInputRows and runAsync
+        request = batchService.resolveAlias(request);
         // Build input rows synchronously so we know the count for the ACK
         List<DataRow> rows = batchService.buildInputRows(request);
         String batchUuid = UUID.randomUUID().toString();
