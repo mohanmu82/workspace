@@ -9,6 +9,7 @@ import com.mycompany.batch.model.DataRow;
 import com.mycompany.batch.model.FilterRule;
 import com.mycompany.batch.model.RunRequest;
 import com.mycompany.batch.auth.BasicAuthProvider;
+import com.mycompany.batch.auth.DigestAuthProvider;
 import com.mycompany.batch.auth.HttpAuthProvider;
 import com.mycompany.batch.auth.JwtAuthProvider;
 import com.mycompany.batch.auth.KerberosAuthProvider;
@@ -117,6 +118,15 @@ public class BatchService {
                 }
                 yield new KerberosAuthProvider(auth.getKerberos().getUsername(),
                         auth.getKerberos().getKeytab(), auth.getKerberos().getServicePrincipal());
+            }
+            case "DIGEST" -> {
+                if (auth.getDigest().getUrl().isBlank() || auth.getDigest().getUsername().isBlank()
+                        || auth.getDigest().getPassword().isBlank()) {
+                    throw new IllegalStateException(
+                            "DIGEST auth for '" + operationName + "' requires digest.url, digest.username and digest.password");
+                }
+                yield new DigestAuthProvider(auth.getDigest().getUsername(), auth.getDigest().getPassword(),
+                        auth.getDigest().getUrl(), objectMapper);
             }
             default -> () -> null;
         };

@@ -1,4 +1,3 @@
-[
   {
     "name": "pubmed",
     "activity": [
@@ -26,7 +25,7 @@
         "dataExtraction": {
           "type": "XPATH",
           "threadCount": 10,
-          "config": "classpath:pubmed_xpaths.json"
+          "config": "classpath:xpaths/pubmed_xpaths.json"
         }
       }
     ],
@@ -74,33 +73,4 @@
         }
       }
     ]	    
-  },
-  {
-    "name": "zip",
-    "activity": [
-      {
-        "name": "httpgetzipdata",
-        "type": "HTTP",
-        "http": {
-          "url": "https://api.zippopotam.us/us/{id}",
-          "method": "GET",
-          "threadCount": 5,
-          "timeoutMs": 3000,
-          "header": {
-            "Accept": "application/json",
-            "X-Api-Key": "abc123",
-            "X-Correlation-Id": "batch-runner"
-          }
-        }
-      },
-      {
-        "name": "extractjsonzip",
-        "type": "dataextraction",
-        "dataExtraction": {
-          "type": "JSON",
-          "jsonataTransform": "classpath:transforms/zip.jsonata"
-        }
-      }
-    ]
   }
-]

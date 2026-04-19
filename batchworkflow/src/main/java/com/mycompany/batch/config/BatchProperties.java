@@ -1,10 +1,11 @@
 package com.mycompany.batch.config;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
@@ -38,19 +39,19 @@ public class BatchProperties {
 
     @PostConstruct
     void loadFromJson() throws Exception {
-        try (InputStream is = getClass().getClassLoader().getResourceAsStream("operations.json")) {
-            if (is == null) return;
-            List<OperationProperties> list =
-                    objectMapper.readValue(is, new TypeReference<List<OperationProperties>>() {});
-            operations.clear();
-            for (OperationProperties op : list) {
+        Resource[] resources = new PathMatchingResourcePatternResolver()
+                .getResources("classpath:operations/*.json");
+        operations.clear();
+        for (Resource resource : resources) {
+            try (InputStream is = resource.getInputStream()) {
+                OperationProperties op = objectMapper.readValue(is, OperationProperties.class);
                 if (op.getName() == null || op.getName().isBlank()) {
                     throw new IllegalStateException(
-                            "Every operation in operations.json must have a non-blank 'name' field");
+                            "Operation file '" + resource.getFilename() + "' must have a non-blank 'name' field");
                 }
                 if (operations.containsKey(op.getName())) {
                     throw new IllegalStateException(
-                            "Duplicate operation name in operations.json: '" + op.getName() + "'");
+                            "Duplicate operation name '" + op.getName() + "' found in: " + resource.getFilename());
                 }
                 operations.put(op.getName(), op);
             }
@@ -493,10 +494,11 @@ public class BatchProperties {
 
     public static class AuthProperties {
 
-        private String           method   = "NONE";
-        private BasicProperties  basic    = new BasicProperties();
-        private JwtProperties    jwt      = new JwtProperties();
+        private String             method   = "NONE";
+        private BasicProperties    basic    = new BasicProperties();
+        private JwtProperties      jwt      = new JwtProperties();
         private KerberosProperties kerberos = new KerberosProperties();
+        private DigestProperties   digest   = new DigestProperties();
 
         public String getMethod()                   { return method; }
         public void   setMethod(String method)      { this.method = method; }
@@ -509,6 +511,21 @@ public class BatchProperties {
 
         public KerberosProperties getKerberos()               { return kerberos; }
         public void setKerberos(KerberosProperties kerberos)  { this.kerberos = kerberos; }
+
+        public DigestProperties getDigest()                   { return digest; }
+        public void setDigest(DigestProperties digest)        { this.digest = digest; }
+    }
+
+    public static class DigestProperties {
+        private String username = "";
+        private String password = "";
+        private String url      = "";
+        public String getUsername()                  { return username; }
+        public void   setUsername(String username)   { this.username = username; }
+        public String getPassword()                  { return password; }
+        public void   setPassword(String password)   { this.password = password; }
+        public String getUrl()                       { return url; }
+        public void   setUrl(String url)             { this.url = url; }
     }
 
     public static class BasicProperties {

@@ -1,4 +1,5 @@
 C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\auth\BasicAuthProvider.java
+C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\auth\DigestAuthProvider.java
 C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\auth\HttpAuthProvider.java
 C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\auth\JwtAuthProvider.java
 C:\work\workspace\batchworkflow\src\main\java\com\mycompany\batch\auth\KerberosAuthProvider.java

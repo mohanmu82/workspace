@@ -18,7 +18,6 @@ com\mycompany\batch\service\BatchService$ResolvedActivity.class
 com\mycompany\batch\auth\HttpAuthProvider.class
 com\mycompany\batch\config\BatchProperties$XPathProperties.class
 com\mycompany\batch\service\BatchService$2.class
-com\mycompany\batch\config\BatchProperties$1.class
 com\mycompany\batch\BatchApplication.class
 com\mycompany\batch\config\BatchProperties$HttpProperties.class
 com\mycompany\batch\config\BatchProperties$CacheProperties.class

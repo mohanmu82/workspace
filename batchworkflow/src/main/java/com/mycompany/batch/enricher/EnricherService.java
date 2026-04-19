@@ -283,6 +283,21 @@ public class EnricherService {
                 yield result != null ? result.toString() : "";
             }
 
+            case "tokenize" -> {
+                String input     = resolveExpr(attr.getString(), rowData, sys);
+                String delimiter = attr.getDelimiter() != null ? attr.getDelimiter() : ".";
+                int    index     = attr.getToken() != null ? Integer.parseInt(attr.getToken().trim()) : 1;
+                String[] parts   = input.split(Pattern.quote(delimiter), -1);
+                if (index < 1 || index > parts.length)
+                    throw new RuntimeException("Token index " + index + " out of range (1–" + parts.length + ")");
+                yield parts[index - 1];
+            }
+
+            case "base64decode" -> {
+                String input = resolveExpr(attr.getString(), rowData, sys);
+                yield new String(java.util.Base64.getDecoder().decode(input.trim()));
+            }
+
             default -> throw new IllegalArgumentException("Unknown enricher type: " + attr.getType());
         };
     }

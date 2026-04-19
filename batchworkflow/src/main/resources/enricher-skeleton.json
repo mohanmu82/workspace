@@ -1,0 +1,97 @@
+{
+  "dataset": [
+    {
+      "name": "FX_RATES.${DATESTAMP}",
+      "key": "currency",
+      "dataSource": {
+        "inputSource": "FILE",
+        "inputFilePath": "C:/work/data/fx_rates_${DATESTAMP}.txt",
+        "cache": {
+          "name": "fx-rate-cache",
+          "key": "fx-${DATESTAMP}"
+        }
+      }
+    },
+    {
+      "name": "ACCOUNT_DATA",
+      "key": "accountId",
+      "dataSource": {
+        "inputSource": "HTTPCONFIG",
+        "inputHttpUrl": "http://api.example.com/accounts",
+        "cache": {
+          "name": "account-cache",
+          "key": "accounts-${DATESTAMP}"
+        }
+      }
+    }
+  ],
+
+  "data": [
+    {
+      "name": "fullLabel",
+      "type": "replace",
+      "value": "${firstName} ${lastName} (${accountId})",
+      "onError": "UNKNOWN"
+    },
+    {
+      "name": "totalAmount",
+      "type": "sum",
+      "value": "${baseAmount}+${taxAmount}+${feeAmount}",
+      "onError": "0"
+    },
+    {
+      "name": "unitPrice",
+      "type": "divide",
+      "value": "${totalAmount}/${quantity}",
+      "onError": "0"
+    },
+    {
+      "name": "fxRate",
+      "type": "lookup",
+      "key": "${currency}",
+      "dataset": "FX_RATES.${DATESTAMP}",
+      "attribute": "rate",
+      "onError": "1.0"
+    },
+    {
+      "name": "accountName",
+      "type": "lookup",
+      "key": "${accountId}",
+      "dataset": "ACCOUNT_DATA",
+      "attribute": "name",
+      "onError": "UNKNOWN_ACCOUNT"
+    },
+    {
+      "name": "summary",
+      "type": "filecontents",
+      "value": "C:/work/templates/summary_${accountId}.json",
+      "onError": "{}"
+    },
+    {
+      "name": "statusLabel",
+      "type": "springexl",
+      "value": "#{status == 'A' ? 'Active' : status == 'I' ? 'Inactive' : 'Unknown'}",
+      "onError": "Unknown"
+    },
+    {
+      "name": "errorMessage",
+      "type": "replace",
+      "value": "Error on ${DATESTAMP}: ${errorMessage}",
+      "onError": null
+    },
+    {
+      "name": "decimalPart",
+      "type": "tokenize",
+      "string": "${amount}",
+      "delimiter": ".",
+      "token": "2",
+      "onError": "00"
+    },
+    {
+      "name": "decodedPayload",
+      "type": "base64decode",
+      "string": "${encodedField}",
+      "onError": "DECODE_ERROR"
+    }
+  ]
+}
