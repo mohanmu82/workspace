@@ -5,6 +5,12 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 
+import org.springframework.context.expression.MapAccessor;
+import org.springframework.expression.Expression;
+import org.springframework.expression.ExpressionParser;
+import org.springframework.expression.spel.standard.SpelExpressionParser;
+import org.springframework.expression.spel.support.StandardEvaluationContext;
+
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.InputStream;
@@ -195,8 +201,12 @@ public class EnricherService {
                 rowData.put(attr.getName(), compute(attr, rowData, datasets, sys));
             } catch (Exception e) {
                 if (attr.getOnError() != null) {
+                    Throwable cause = e.getCause() != null ? e.getCause() : e;
+                    String errMsg = cause.getMessage() != null ? cause.getMessage() : cause.getClass().getSimpleName();
+                    Map<String, String> sysWithError = new LinkedHashMap<>(sys);
+                    sysWithError.put("errorMessage", errMsg);
                     try {
-                        rowData.put(attr.getName(), resolveExpr(attr.getOnError(), rowData, sys));
+                        rowData.put(attr.getName(), resolveExpr(attr.getOnError(), rowData, sysWithError));
                     } catch (Exception ignored) {
                         rowData.put(attr.getName(), attr.getOnError());
                     }
@@ -213,7 +223,7 @@ public class EnricherService {
     private String compute(DataAttributeDef attr,
                            Map<String, Object> rowData,
                            Map<String, Map<String, Map<String, Object>>> datasets,
-                           Map<String, String> sys) {
+                           Map<String, String> sys) throws Exception {
         return switch (attr.getType().toLowerCase()) {
 
             case "replace" -> resolveExpr(attr.getValue(), rowData, sys);
@@ -251,6 +261,26 @@ public class EnricherService {
                     throw new RuntimeException("Attribute '" + attrName + "' not in dataset row");
 
                 yield val.toString();
+            }
+
+            case "filecontents" -> {
+                String resolvedPath = resolveExpr(attr.getValue(), rowData, sys);
+                String raw = Files.readString(Path.of(resolvedPath));
+                yield resolveExpr(raw, rowData, sys);
+            }
+
+            case "springexl" -> {
+                String spel = attr.getValue() != null ? attr.getValue().trim() : "";
+                if (spel.startsWith("#{") && spel.endsWith("}")) {
+                    spel = spel.substring(2, spel.length() - 1);
+                }
+                ExpressionParser parser = new SpelExpressionParser();
+                StandardEvaluationContext ctx = new StandardEvaluationContext(rowData);
+                ctx.addPropertyAccessor(new MapAccessor());
+                rowData.forEach(ctx::setVariable);
+                Expression exp = parser.parseExpression(spel);
+                Object result = exp.getValue(ctx);
+                yield result != null ? result.toString() : "";
             }
 
             default -> throw new IllegalArgumentException("Unknown enricher type: " + attr.getType());

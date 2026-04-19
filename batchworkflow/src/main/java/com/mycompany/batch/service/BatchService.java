@@ -179,21 +179,22 @@ public class BatchService {
 
         return new RunRequest(
                 req.operation(),
-                mergeStr(req.inputSource(),    a.inputSource()),
-                mergeStr(req.inputFilePath(),  a.inputFilePath()),
-                mergeStr(req.inputHttpUrl(),   a.inputHttpUrl()),
-                mergeList(req.ids(),           a.ids()),
-                mergeList(req.raw(),           a.raw()),
+                mergeStr(req.inputSource(),       a.inputSource()),
+                mergeStr(req.inputFilePath(),     a.inputFilePath()),
+                mergeStr(req.inputHttpUrl(),      a.inputHttpUrl()),
+                mergeList(req.ids(),              a.ids()),
+                mergeList(req.raw(),              a.raw()),
                 req.inputCount()      != null ? req.inputCount()      : a.inputCount(),
-                mergeStr(req.outputData(),     a.outputData()),
-                mergeStr(req.outputFilePath(), a.outputFilePath()),
+                mergeStr(req.outputData(),        a.outputData()),
+                mergeStr(req.outputFilePath(),    a.outputFilePath()),
                 req.debugMode()       != null ? req.debugMode()       : a.debugMode(),
                 req.httpThreadCount() != null ? req.httpThreadCount() : a.httpThreadCount(),
                 req.httpTimeoutMs()   != null ? req.httpTimeoutMs()   : a.httpTimeoutMs(),
-                mergeList(req.filterInput(),   a.filterInput()),
-                mergeList(req.filterOutput(),  a.filterOutput()),
-                mergeStr(req.executionMode(),  a.executionMode()),
-                req.alias());
+                mergeList(req.filterInput(),      a.filterInput()),
+                mergeList(req.filterOutput(),     a.filterOutput()),
+                mergeStr(req.executionMode(),     a.executionMode()),
+                req.alias(),
+                mergeStr(req.responseProcessor(), a.responseProcessor()));
     }
 
     /** Returns {@code a} if non-null and non-blank, otherwise {@code b}. */
@@ -224,10 +225,19 @@ public class BatchService {
 
         applyPreEnricher(rows, op.getEnricher());
 
+        BatchProperties.ResponseProcessorProperties responseProc =
+                resolveResponseProcessor(op, request.responseProcessor());
         BatchResult result = runCore(rows, op, operation,
-                request.httpThreadCount(), request.httpTimeoutMs(), debugMode);
+                request.httpThreadCount(), request.httpTimeoutMs(), debugMode, responseProc);
 
         applyPostEnricher(result.results(), op.getEnricher());
+
+        // Rebuild columns after post-enrichment so enriched attributes appear in the grid
+        List<ColumnDef> enrichedColumns = buildColumnDefsFromResults(result.results());
+        enrichedColumns = applyColumnTemplate(enrichedColumns, op.getColumnTemplate());
+        result = new BatchResult(result.processed(), result.succeeded(), result.failed(),
+                result.httpStats(), enrichedColumns, result.results(),
+                result.batchUuid(), result.timestamp(), result.timeTakenMs(), result.responseSizeKb());
 
         // Apply output filter after execution (and after post-enrichment)
         List<Map<String, Object>> filtered = applyFilterOutput(result.results(), request.filterOutput());
@@ -338,9 +348,11 @@ public class BatchService {
             };
         }
 
+        BatchProperties.ResponseProcessorProperties responseProc =
+                resolveResponseProcessor(op, request.responseProcessor());
         return runCoreAsync(rows, op, operation,
                 request.httpThreadCount(), request.httpTimeoutMs(), debugMode,
-                request.filterOutput(), effectiveCallback);
+                request.filterOutput(), effectiveCallback, responseProc);
     }
 
     // -------------------------------------------------------------------------
@@ -351,14 +363,14 @@ public class BatchService {
     public BatchResult run(String filePath, Integer inputCount, String operation) throws Exception {
         BatchProperties.OperationProperties op = batchProperties.getOperation(operation);
         List<DataRow> rows = readDataRowsFromFile(filePath, inputCount, op);
-        return runCore(rows, op, operation, null, null, 0);
+        return runCore(rows, op, operation, null, null, 0, null);
     }
 
     /** Direct list of identifiers — each ID becomes a DataRow with key "id". */
     public BatchResult run(List<String> identifiers, String operation) throws Exception {
         BatchProperties.OperationProperties op = batchProperties.getOperation(operation);
         List<DataRow> rows = readDataRowsFromRequest(identifiers, null);
-        return runCore(rows, op, operation, null, null, 0);
+        return runCore(rows, op, operation, null, null, 0, null);
     }
 
     /** Runs from file and writes PSV output; returns summary metadata. */
@@ -366,7 +378,7 @@ public class BatchService {
                               Integer inputCount, String operation) throws Exception {
         BatchProperties.OperationProperties op = batchProperties.getOperation(operation);
         List<DataRow> rows = readDataRowsFromFile(inputFilePath, inputCount, op);
-        BatchResult batch = runCore(rows, op, operation, null, null, 0);
+        BatchResult batch = runCore(rows, op, operation, null, null, 0, null);
         writeToPsv(batch, outputFilePath);
         return new PsvResult(batch.processed(), batch.succeeded(), batch.failed(),
                 Path.of(outputFilePath).toAbsolutePath().toString(),
@@ -574,7 +586,8 @@ public class BatchService {
                                 String operation,
                                 Integer threadCountOverride,
                                 Integer timeoutMsOverride,
-                                int debugMode) throws Exception {
+                                int debugMode,
+                                BatchProperties.ResponseProcessorProperties responseProc) throws Exception {
 
         List<BatchProperties.ActivityProperties> activities =
                 op.getActivity() != null ? op.getActivity() : List.of();
@@ -642,7 +655,8 @@ public class BatchService {
             HttpStats httpStats = httpDurationsMs.isEmpty() ? new HttpStats(0, 0, 0)
                     : new HttpStats(stats.getMin(), stats.getMax(), stats.getAverage());
 
-            List<Map<String, Object>> sanitizedResults = sanitizeKeys(new ArrayList<>(results));
+            List<Map<String, Object>> rawResults = applyResponseProcessor(new ArrayList<>(results), responseProc);
+            List<Map<String, Object>> sanitizedResults = sanitizeKeys(rawResults);
             List<ColumnDef> columns = buildColumnDefsFromResults(sanitizedResults);
             columns = applyColumnTemplate(columns, op.getColumnTemplate());
 
@@ -731,7 +745,8 @@ public class BatchService {
             Integer timeoutMsOverride,
             int debugMode,
             List<FilterRule> filterOutput,
-            Consumer<Map<String, Object>> rowCallback) throws Exception {
+            Consumer<Map<String, Object>> rowCallback,
+            BatchProperties.ResponseProcessorProperties responseProc) throws Exception {
 
         List<BatchProperties.ActivityProperties> activities =
                 op.getActivity() != null ? op.getActivity() : List.of();
@@ -766,6 +781,20 @@ public class BatchService {
                 .map(a -> a.getDataExtraction().getThreadCount())
                 .orElse(op.getXpath().getThreadCount());
 
+        final String rpType = responseProc != null ? responseProc.getType().trim().toLowerCase() : "";
+        final String rpName = responseProc != null ? responseProc.getName() : "";
+
+        // For aggregation: suppress per-row streaming — rows are aggregated and sent in thenApply.
+        // For attribute: parse the attribute's JSON content and stream that as the row.
+        final Consumer<Map<String, Object>> effectiveRowCallback;
+        if ("aggregation".equals(rpType)) {
+            effectiveRowCallback = null;   // suppress individual row streaming
+        } else if ("attribute".equals(rpType)) {
+            effectiveRowCallback = row -> rowCallback.accept(expandAttributeAsJson(row, rpName));
+        } else {
+            effectiveRowCallback = rowCallback;
+        }
+
         ExecutorService httpPool  = Executors.newFixedThreadPool(effectiveThreadCount);
         ExecutorService xpathPool = Executors.newFixedThreadPool(xpathThreadCount);
         HttpClient httpClient     = HttpClient.newBuilder().build();
@@ -780,7 +809,7 @@ public class BatchService {
                         row, resolvedActivities, httpClient, httpPool, xpathPool,
                         succeeded, failed, results, httpDurationsMs, totalResponseBytes,
                         authHeader, includeMetadata, opProperties,
-                        filterOutput, rowCallback))
+                        filterOutput, effectiveRowCallback))
                 .collect(Collectors.toList());
 
         return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
@@ -794,8 +823,17 @@ public class BatchService {
                     HttpStats httpStats = httpDurationsMs.isEmpty() ? new HttpStats(0, 0, 0)
                             : new HttpStats(stats.getMin(), stats.getMax(), stats.getAverage());
 
-                    // Derive columns from locally-accumulated results (not streamed to client)
-                    List<Map<String, Object>> sanitizedForCols = sanitizeKeys(new ArrayList<>(results));
+                    List<Map<String, Object>> sanitizedForCols = sanitizeKeys(
+                            applyResponseProcessor(new ArrayList<>(results), responseProc));
+
+                    // Apply post-enrichment so enriched attributes appear in column defs
+                    try { applyPostEnricher(sanitizedForCols, op.getEnricher()); } catch (Exception ignored) {}
+
+                    // For aggregation: stream aggregated rows now (individual rows were suppressed above)
+                    if ("aggregation".equals(rpType)) {
+                        sanitizedForCols.forEach(rowCallback);
+                    }
+
                     List<ColumnDef> columns = buildColumnDefsFromResults(sanitizedForCols);
                     try { columns = applyColumnTemplate(columns, op.getColumnTemplate()); }
                     catch (Exception ignored) {}
@@ -804,7 +842,6 @@ public class BatchService {
                     String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
                     double responseSizeKb = totalResponseBytes.get() / 1024.0;
 
-                    // results list intentionally empty — rows were already streamed via rowCallback
                     return new BatchResult(rows.size(), succeeded.get(), failed.get(),
                             httpStats, columns, List.of(), batchUuid, timestamp, timeTakenMs, responseSizeKb);
                 });
@@ -1386,6 +1423,91 @@ public class BatchService {
         EnricherConfig cfg = enricherService.loadConfig(props.getEnhancer());
         Map<String, Map<String, Map<String, Object>>> datasets = enricherService.loadDatasets(cfg);
         results.forEach(row -> enricherService.enrichRow(row, cfg.getData(), datasets));
+    }
+
+    // -------------------------------------------------------------------------
+    // Response processor
+    // -------------------------------------------------------------------------
+
+    /**
+     * Parses the value of {@code attrName} in {@code row} as a JSON string.
+     * If the value is a valid JSON object its fields become the result row directly.
+     * Otherwise falls back to returning {@code {attrName: value}}.
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> expandAttributeAsJson(Map<String, Object> row, String attrName) {
+        Object val = row.get(attrName);
+        String json = val != null ? val.toString().trim() : "";
+        try {
+            Object parsed = objectMapper.readValue(json, Object.class);
+            if (parsed instanceof Map<?, ?> map) {
+                Map<String, Object> out = new LinkedHashMap<>();
+                ((Map<String, Object>) map).forEach(out::put);
+                return out;
+            }
+        } catch (Exception ignored) {}
+        Map<String, Object> fallback = new LinkedHashMap<>();
+        fallback.put(attrName, val);
+        return fallback;
+    }
+
+    private static BatchProperties.ResponseProcessorProperties resolveResponseProcessor(
+            BatchProperties.OperationProperties op, String name) {
+        if (name == null || name.isBlank() || op.getResponseProcessor().isEmpty()) return null;
+        return op.getResponseProcessor().stream()
+                .filter(e -> name.trim().equalsIgnoreCase(e.getName()))
+                .findFirst()
+                .map(BatchProperties.ResponseProcessorEntryProperties::getResponseProcessor)
+                .orElse(null);
+    }
+
+    /**
+     * Applies the optional response-processor activity to the full result set.
+     * <ul>
+     *   <li>{@code attribute} — each row is reduced to just the named attribute value
+     *       (plus {@code operationStatus} / {@code errorMessage}).</li>
+     *   <li>{@code aggregation} — rows are grouped by the named attribute; all other
+     *       string-valued attributes are concatenated with {@code ,}.</li>
+     * </ul>
+     * Returns the original list unchanged when {@code proc} is {@code null}.
+     */
+    private List<Map<String, Object>> applyResponseProcessor(
+            List<Map<String, Object>> rows,
+            BatchProperties.ResponseProcessorProperties proc) {
+
+        if (proc == null) return rows;
+        String rpType = proc.getType().trim().toLowerCase();
+        String rpName = proc.getName();
+
+        if ("attribute".equals(rpType)) {
+            return rows.stream()
+                    .map(row -> expandAttributeAsJson(row, rpName))
+                    .collect(Collectors.toList());
+        }
+
+        if ("aggregation".equals(rpType)) {
+            Map<String, Map<String, Object>> grouped = new LinkedHashMap<>();
+            for (Map<String, Object> row : rows) {
+                Object keyVal = row.get(rpName);
+                String keyStr = keyVal != null ? keyVal.toString() : "(null)";
+                grouped.compute(keyStr, (k, agg) -> {
+                    if (agg == null) return new LinkedHashMap<>(row);
+                    for (Map.Entry<String, Object> e : row.entrySet()) {
+                        if (e.getKey().equals(rpName) || e.getKey().equals("operationStatus")
+                                || e.getKey().equals("errorMessage")) continue;
+                        Object existing = agg.get(e.getKey());
+                        Object incoming = e.getValue();
+                        if (incoming == null) continue;
+                        agg.put(e.getKey(), existing == null ? incoming
+                                : existing.toString() + "," + incoming);
+                    }
+                    return agg;
+                });
+            }
+            return new ArrayList<>(grouped.values());
+        }
+
+        return rows;
     }
 
     // -------------------------------------------------------------------------

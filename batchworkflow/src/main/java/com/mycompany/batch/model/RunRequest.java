@@ -85,5 +85,12 @@ public record RunRequest(
          * used as defaults for any fields not explicitly set in this request.
          * Incoming request fields always take precedence over alias values.
          */
-        String alias) {
+        String alias,
+        /**
+         * Optional name of a response processor defined in {@code operations.json}
+         * under {@code responseProcessor[].name}. Selects how the result rows are
+         * transformed before being returned: {@code "attribute"} (single field per row)
+         * or {@code "aggregation"} (group-by with string concatenation).
+         */
+        String responseProcessor) {
 }

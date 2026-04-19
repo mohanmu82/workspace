@@ -138,6 +138,15 @@ public class BatchController {
                 entry.put("aliases", aliasNames);
             }
 
+            // Response processor names
+            List<String> rpNames = op.getResponseProcessor().stream()
+                    .map(BatchProperties.ResponseProcessorEntryProperties::getName)
+                    .filter(n -> n != null && !n.isBlank())
+                    .collect(Collectors.toList());
+            if (!rpNames.isEmpty()) {
+                entry.put("responseProcessors", rpNames);
+            }
+
             data.add(entry);
         });
 
@@ -159,6 +168,10 @@ public class BatchController {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("cacheName",  name);
             row.put("cacheCount", entries.size());
+            long totalBytes = entries.values().stream()
+                    .mapToLong(e -> e.value() != null ? e.value().length() : 0L)
+                    .sum();
+            row.put("cacheSizeMb", Math.round(totalBytes / 1024.0 / 1024.0 * 100.0) / 100.0);
             data.add(row);
         });
         Map<String, Object> response = new LinkedHashMap<>();
@@ -297,7 +310,7 @@ public class BatchController {
                     Path.of(outputFilePath).toAbsolutePath().toString()));
         }
 
-        return ResponseEntity.ok(buildHttpResponse(request.operation(), result));
+        return ResponseEntity.ok(buildHttpResponse(request.operation(), result, request.httpThreadCount()));
     }
 
     private String resolveOutputData(RunRequest request) {
@@ -313,12 +326,13 @@ public class BatchController {
     }
 
     /** Builds the full JSON response returned to HTTP clients and the WebSocket. */
-    Map<String, Object> buildHttpResponse(String operationType, BatchService.BatchResult result) {
+    Map<String, Object> buildHttpResponse(String operationType, BatchService.BatchResult result,
+                                          Integer threadCountOverride) {
         BatchProperties.OperationProperties op = batchProperties.getOperation(operationType);
         BatchProperties.HttpProperties http = op.getEffectiveHttp();
         Map<String, Object> httpStats = new LinkedHashMap<>();
         httpStats.put("method",      http.getMethod());
-        httpStats.put("threadCount", http.getThreadCount());
+        httpStats.put("threadCount", threadCountOverride != null ? threadCountOverride : http.getThreadCount());
         httpStats.put("minMs",       result.httpStats().minMs());
         httpStats.put("maxMs",       result.httpStats().maxMs());
         httpStats.put("avgMs",       result.httpStats().avgMs());
@@ -396,7 +410,8 @@ public class BatchController {
                 null, // filterInput — not supported via query params
                 null, // filterOutput — not supported via query params
                 null, // executionMode — defaults to SYNC
-                params.get("alias")
+                params.get("alias"),
+                params.get("responseProcessor")
         );
     }
 

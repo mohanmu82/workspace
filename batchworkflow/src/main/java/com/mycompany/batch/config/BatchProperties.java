@@ -79,6 +79,8 @@ public class BatchProperties {
         private List<AliasProperties>    alias       = new ArrayList<>();
         /** Optional enricher — adds derived attributes before or after the activity chain. */
         private EnricherProperties       enricher;
+        /** Named response processors — selected at runtime via {@code "responseProcessor":"NAME"} in the request. */
+        private List<ResponseProcessorEntryProperties> responseProcessor = new ArrayList<>();
 
         public String getName()           { return name; }
         public void   setName(String name){ this.name = name; }
@@ -121,6 +123,9 @@ public class BatchProperties {
 
         public EnricherProperties getEnricher()                              { return enricher; }
         public void setEnricher(EnricherProperties e)                        { this.enricher = e; }
+
+        public List<ResponseProcessorEntryProperties> getResponseProcessor()                              { return responseProcessor; }
+        public void setResponseProcessor(List<ResponseProcessorEntryProperties> rp)                      { this.responseProcessor = rp != null ? rp : new ArrayList<>(); }
 
         public List<String> getMandatoryAttributeList() {
             if (mandatoryAttributes == null || mandatoryAttributes.isBlank()) return List.of();
@@ -224,10 +229,12 @@ public class BatchProperties {
 
     public static class ActivityProperties {
 
-        private String                   name           = "";
-        private String                   type           = "";  // "HTTP" | "dataextraction"
-        private HttpProperties           http           = new HttpProperties();
-        private DataExtractionProperties dataExtraction = new DataExtractionProperties();
+        private String                       name              = "";
+        private String                       type              = "";  // "HTTP" | "dataextraction"
+        private HttpProperties               http              = new HttpProperties();
+        private DataExtractionProperties     dataExtraction    = new DataExtractionProperties();
+        /** Operation-level property overrides visible inside this activity. */
+        private Map<String, String>          properties        = new LinkedHashMap<>();
 
         public String getName()                    { return name; }
         public void   setName(String name)         { this.name = name; }
@@ -240,6 +247,41 @@ public class BatchProperties {
 
         public DataExtractionProperties getDataExtraction()                       { return dataExtraction; }
         public void setDataExtraction(DataExtractionProperties dataExtraction)    { this.dataExtraction = dataExtraction; }
+
+        public Map<String, String> getProperties()                   { return properties; }
+        public void setProperties(Map<String, String> p) {
+            this.properties.clear();
+            if (p != null) this.properties.putAll(p);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Response processor (operation-level list — selected at runtime by name)
+    // -------------------------------------------------------------------------
+
+    public static class ResponseProcessorEntryProperties {
+        /** Name used to select this processor via the {@code responseProcessor} request field. */
+        private String                      name              = "";
+        private ResponseProcessorProperties responseProcessor;
+
+        public String getName()                              { return name; }
+        public void   setName(String name)                   { this.name = name != null ? name : ""; }
+
+        public ResponseProcessorProperties getResponseProcessor()          { return responseProcessor; }
+        public void setResponseProcessor(ResponseProcessorProperties rp)   { this.responseProcessor = rp; }
+    }
+
+    public static class ResponseProcessorProperties {
+        /** {@code "attribute"} — return only the named attribute per row.
+         *  {@code "aggregation"} — group rows by the named attribute; append string values. */
+        private String type = "";
+        private String name = "";
+
+        public String getType()            { return type; }
+        public void   setType(String type) { this.type = type != null ? type : ""; }
+
+        public String getName()            { return name; }
+        public void   setName(String name) { this.name = name != null ? name : ""; }
     }
 
     // -------------------------------------------------------------------------

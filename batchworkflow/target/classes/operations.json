@@ -31,9 +31,9 @@
       }
     ],
     "mandatoryAttributes": "id",
-    "enricherTODO": {
+    "enricher": {
       "type": "post",
-      "enhancer": "classpath:enricher/pubmed_enricher.json"
+      "enhancer": "classpath:enricher/pubmedbasic_enricher.json"
     },
     "alias": [
       {
@@ -57,7 +57,23 @@
           "httpTimeoutMs": 5000
         }
       }
-    ]
+    ],
+    "responseProcessor": [
+      {
+        "name": "attribute12",
+        "responseProcessor": {
+          "type": "attribute",
+          "name": "attribute12"
+        }
+      },
+      {
+        "name": "status",
+        "responseProcessor": {
+          "type": "aggregation",
+          "name": "status"
+        }
+      }
+    ]	    
   },
   {
     "name": "zip",

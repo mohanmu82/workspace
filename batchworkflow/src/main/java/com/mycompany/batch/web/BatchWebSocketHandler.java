@@ -100,7 +100,7 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
             batchService.writeToPsv(result, outputFilePath);
             response = batchController.buildFileResponse(request.operation(), result, outputFilePath);
         } else {
-            response = batchController.buildHttpResponse(request.operation(), result);
+            response = batchController.buildHttpResponse(request.operation(), result, request.httpThreadCount());
         }
 
         sendWsSafe(session, objectMapper.writeValueAsString(response));
@@ -111,10 +111,8 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
     // -------------------------------------------------------------------------
 
     private void handleAsync(WebSocketSession session, RunRequest request) throws Exception {
-        // Resolve alias first so all preset fields are visible to buildInputRows and runAsync
-        request = batchService.resolveAlias(request);
-        // Build input rows synchronously so we know the count for the ACK
-        List<DataRow> rows = batchService.buildInputRows(request);
+        final RunRequest resolvedReq = batchService.resolveAlias(request);
+        final List<DataRow> rows = batchService.buildInputRows(resolvedReq);
         String batchUuid = UUID.randomUUID().toString();
 
         // Send ACK before any processing starts
@@ -127,7 +125,7 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
         sendWsSafe(session, objectMapper.writeValueAsString(ack));
 
         // Kick off async processing — handler returns immediately after this call
-        batchService.runAsync(rows, request, row -> {
+        batchService.runAsync(rows, resolvedReq, row -> {
             try {
                 Map<String, Object> msg = new LinkedHashMap<>();
                 msg.put("type",      "row");
@@ -145,6 +143,7 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
                 meta.put("responseSizeKb", result.responseSizeKb());
                 meta.put("timestamp",      result.timestamp());
                 meta.put("batchUuid",      batchUuid);
+                if (resolvedReq.httpThreadCount() != null) meta.put("threadCount", resolvedReq.httpThreadCount());
 
                 Map<String, Object> done = new LinkedHashMap<>();
                 done.put("type",      "done");

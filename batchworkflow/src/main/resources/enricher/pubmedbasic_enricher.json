@@ -1,0 +1,10 @@
+{
+  "data": [
+		{
+			"name": "attribute12"
+			,"type": "filecontents"
+			,"value": "C:\\work\\data\\sample.json"	
+			,"onError": "${errorMessage}"	
+		}  
+  ]
+}
