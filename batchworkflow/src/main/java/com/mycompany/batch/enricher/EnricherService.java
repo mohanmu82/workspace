@@ -197,8 +197,9 @@ public class EnricherService {
                           Map<String, Map<String, Map<String, Object>>> datasets) {
         Map<String, String> sys = systemVars();
         for (DataAttributeDef attr : attrs) {
+            String key = attr.getName().toUpperCase();
             try {
-                rowData.put(attr.getName(), compute(attr, rowData, datasets, sys));
+                rowData.put(key, compute(attr, rowData, datasets, sys));
             } catch (Exception e) {
                 if (attr.getOnError() != null) {
                     Throwable cause = e.getCause() != null ? e.getCause() : e;
@@ -206,9 +207,9 @@ public class EnricherService {
                     Map<String, String> sysWithError = new LinkedHashMap<>(sys);
                     sysWithError.put("errorMessage", errMsg);
                     try {
-                        rowData.put(attr.getName(), resolveExpr(attr.getOnError(), rowData, sysWithError));
+                        rowData.put(key, resolveExpr(attr.getOnError(), rowData, sysWithError));
                     } catch (Exception ignored) {
-                        rowData.put(attr.getName(), attr.getOnError());
+                        rowData.put(key, attr.getOnError());
                     }
                 }
                 // no onError → attribute simply not added
@@ -298,6 +299,23 @@ public class EnricherService {
                 yield new String(java.util.Base64.getDecoder().decode(input.trim()));
             }
 
+            case "cascade" -> {
+                String cascadeExpr = attr.getString() != null ? attr.getString() : attr.getValue();
+                String[] candidates = cascadeExpr != null
+                        ? cascadeExpr.split(Pattern.quote("|"), -1) : new String[0];
+                for (String candidate : candidates) {
+                    String key = candidate.trim();
+                    Object val = rowData.get(key);
+                    if (val == null) {
+                        for (Map.Entry<String, Object> entry : rowData.entrySet()) {
+                            if (entry.getKey().equalsIgnoreCase(key)) { val = entry.getValue(); break; }
+                        }
+                    }
+                    if (val != null && !val.toString().isEmpty()) yield val.toString();
+                }
+                throw new RuntimeException("cascade: no non-empty value found in candidates: " + cascadeExpr);
+            }
+
             default -> throw new IllegalArgumentException("Unknown enricher type: " + attr.getType());
         };
     }
@@ -314,15 +332,19 @@ public class EnricherService {
                                       Map<String, Object> rowData,
                                       Map<String, String> sys) {
         if (template == null) return "";
+        Map<String, Object> ci = new java.util.TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        ci.putAll(rowData);
+        Map<String, String> ciSys = new java.util.TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        ciSys.putAll(sys);
         Matcher      m  = PLACEHOLDER.matcher(template);
         StringBuffer sb = new StringBuffer();
         while (m.find()) {
             String key = m.group(1);
-            Object val = rowData.get(key);
-            if (val == null) val = sys.get(key);
+            Object val = ci.get(key);
+            if (val == null) val = ciSys.get(key);
             if (val == null)
                 throw new IllegalArgumentException(
-                        "Enricher: placeholder '${" + key + "}' not found in row or system vars");
+                        "Template references key '" + key + "' which is not present in the DataRow. Available row keys: " + rowData.keySet());
             m.appendReplacement(sb, Matcher.quoteReplacement(val.toString()));
         }
         m.appendTail(sb);

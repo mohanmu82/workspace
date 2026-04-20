@@ -1,0 +1,10 @@
+{
+  "data": [
+		{
+			"name": "ID"
+			,"type": "cascade"
+			,"value": "ID|IDENTIFIER|ESMPRODUCTID|NEWID"
+			,"onError": "${errorMessage}"
+		}
+  ]
+}

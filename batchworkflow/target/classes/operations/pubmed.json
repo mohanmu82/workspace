@@ -9,13 +9,13 @@
         },	        
         "type": "HTTP",
         "http": {
-          "url": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id={id}&retmode=xml",
+          "url": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=${ID}&retmode=xml",
           "method": "GET",
           "threadCount": 5,
           "timeoutMs": 3000,
           "cache": {
             "name": "pubmeddata"
-            ,"key" : "pubmed{id}"
+            ,"key" : "pubmed${ID}"
           }          
         }
       },
@@ -29,10 +29,9 @@
         }
       }
     ],
-    "mandatoryAttributes": "id",
     "enricher": {
-      "type": "post",
-      "enhancer": "classpath:enricher/pubmedbasic_enricher.json"
+      "type": "pre",
+      "enhancer": "classpath:enricher/id_enricher.json"
     },
     "alias": [
       {
@@ -42,7 +41,7 @@
           "inputFilePath": "C:/work/data/pubmed.txt",
           "inputCount": 10,
           "filterInput": [
-            { "column": "id", "value": "11748935", "operation": "eq" }
+            { "column": "ID", "value": "11748935", "operation": "eq" }
           ]
         }
       },

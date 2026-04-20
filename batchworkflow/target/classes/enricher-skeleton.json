@@ -92,6 +92,12 @@
       "type": "base64decode",
       "string": "${encodedField}",
       "onError": "DECODE_ERROR"
+    },
+    {
+      "name": "id",
+      "type": "cascade",
+      "string": "ID|IDENTIFIER|ESMPRODUCTID|NEWID",
+      "onError": "ERROR"
     }
   ]
 }

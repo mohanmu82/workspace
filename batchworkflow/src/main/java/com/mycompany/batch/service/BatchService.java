@@ -229,11 +229,13 @@ public class BatchService {
         List<DataRow> rows = buildInputRows(request);
 
         int debugMode = request.debugMode() != null ? request.debugMode() : 0;
+
+        applyPreEnricher(rows, op.getEnricher());
+        rows = applyFilterInput(rows, request.filterInput());
+
         if (debugMode == -1) {
             return debugResult(rows);
         }
-
-        applyPreEnricher(rows, op.getEnricher());
 
         BatchProperties.ResponseProcessorProperties responseProc =
                 resolveResponseProcessor(op, request.responseProcessor());
@@ -260,9 +262,10 @@ public class BatchService {
     }
 
     /**
-     * Parses the input rows from a {@link RunRequest} and applies {@code filterInput}.
+     * Parses the input rows from a {@link RunRequest}.
      * Used by the ASYNC WebSocket handler to obtain the row count for the ACK message
-     * before kicking off background processing.
+     * before kicking off background processing. filterInput is applied separately after
+     * the pre-enricher runs.
      */
     public List<DataRow> buildInputRows(RunRequest request) throws Exception {
         request = resolveAlias(request);
@@ -314,7 +317,7 @@ public class BatchService {
             default -> throw new IllegalArgumentException("Unknown inputSource type: " + inputSourceType);
         };
 
-        return applyFilterInput(rows, request.filterInput());
+        return rows;
     }
 
     /**
@@ -335,6 +338,11 @@ public class BatchService {
         BatchProperties.EnricherProperties enricherProps = op.getEnricher();
 
         int debugMode = request.debugMode() != null ? request.debugMode() : 0;
+
+        // Pre-enrichment — runs before any activity futures are submitted
+        applyPreEnricher(rows, enricherProps);
+        rows = applyFilterInput(rows, request.filterInput());
+
         if (debugMode == -1) {
             BatchResult r = debugResult(rows);
             for (Map<String, Object> row : r.results()) rowCallback.accept(row);
@@ -343,9 +351,6 @@ public class BatchService {
                             r.httpStats(), r.columns(), List.of(),
                             r.batchUuid(), r.timestamp(), r.timeTakenMs(), r.responseSizeKb()));
         }
-
-        // Pre-enrichment — runs before any activity futures are submitted
-        applyPreEnricher(rows, enricherProps);
 
         // Post-enrichment — wrap the callback so each streamed row is enriched before being sent
         Consumer<Map<String, Object>> effectiveCallback = rowCallback;
@@ -411,6 +416,11 @@ public class BatchService {
      */
     public List<DataRow> readDataRowsFromFile(String filePath, Integer inputCount,
                                               BatchProperties.OperationProperties op) throws Exception {
+        if (filePath == null || filePath.isBlank())
+            throw new IllegalArgumentException("inputFilePath must not be blank");
+        if (!Files.exists(Path.of(filePath)))
+            throw new IllegalArgumentException("inputFilePath does not exist: " + filePath);
+
         List<String> allLines = Files.readAllLines(Path.of(filePath));
         if (allLines.isEmpty()) return List.of();
 
@@ -419,11 +429,11 @@ public class BatchService {
         String   delimiter     = commaTokens.length > 1 ? "," : "|";
         String[] headers       = delimiter.equals(",") ? commaTokens
                                   : headerLine.split(Pattern.quote("|"), -1);
-        headers = Arrays.stream(headers).map(String::trim).toArray(String[]::new);
+        headers = Arrays.stream(headers).map(s -> s.trim().toUpperCase()).toArray(String[]::new);
 
         List<String> headerList = Arrays.asList(headers);
         List<String> missing = op.getMandatoryAttributeList().stream()
-                .filter(attr -> !headerList.contains(attr)).toList();
+                .filter(attr -> !headerList.contains(attr.toUpperCase())).toList();
         if (!missing.isEmpty()) {
             throw new IllegalArgumentException(
                     "Input file is missing mandatory attribute(s): " + missing
@@ -1550,8 +1560,15 @@ public class BatchService {
 
     private static boolean matchesAll(Map<String, Object> data, List<FilterRule> filters) {
         for (FilterRule f : filters) {
-            if (f.getColumn() == null || !data.containsKey(f.getColumn())) continue;
-            String rowValue    = Objects.toString(data.get(f.getColumn()), "");
+            if (f.getColumn() == null) continue;
+            Object found = data.get(f.getColumn());
+            if (found == null) {
+                for (Map.Entry<String, Object> e : data.entrySet()) {
+                    if (e.getKey().equalsIgnoreCase(f.getColumn())) { found = e.getValue(); break; }
+                }
+            }
+            if (found == null) continue;
+            String rowValue    = Objects.toString(found, "");
             String filterValue = f.getValue() != null ? f.getValue() : "";
             String op          = f.getOperation() != null ? f.getOperation().toLowerCase() : "eq";
             boolean matches = switch (op) {
@@ -1590,12 +1607,19 @@ public class BatchService {
     static String resolveTemplate(String template, Map<String, Object> row,
                                   Map<String, String> fallback) {
         if (template == null || template.isBlank()) return template;
+        Map<String, Object> ci = new java.util.TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        ci.putAll(row);
+        Map<String, String> ciFallback = null;
+        if (fallback != null) {
+            ciFallback = new java.util.TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+            ciFallback.putAll(fallback);
+        }
         Matcher m = Pattern.compile("\\{([^}]+)\\}").matcher(template);
         StringBuffer sb = new StringBuffer();
         while (m.find()) {
             String key = m.group(1);
-            Object val = row.get(key);
-            if (val == null && fallback != null) val = fallback.get(key);
+            Object val = ci.get(key);
+            if (val == null && ciFallback != null) val = ciFallback.get(key);
             if (val == null) {
                 throw new IllegalArgumentException(
                         "Template references key '" + key + "' which is not present in the DataRow"
