@@ -1,6 +1,12 @@
   {
     "name": "pubmed",
-    "activity": [
+      "properties": {
+        "attributes": {	
+          "operationName": "ICE",
+          "operationDescription": "Published data from pubmed"
+        }
+  		}    
+      ,"activity": [
       {
         "name": "httpgetpubmeddata",
         "properties": {
@@ -49,27 +55,11 @@
         "name": "ASYNC_ALL",
         "request": {
           "inputSource": "FILE",
-          "inputFilePath": "C:/work/data/pubmed.txt",
+          "inputFilePath": "C:/work/data/pubmed2.txt",
           "executionMode": "ASYNC",
           "httpThreadCount": 10,
           "httpTimeoutMs": 5000
         }
       }
-    ],
-    "responseProcessor": [
-      {
-        "name": "attribute12",
-        "responseProcessor": {
-          "type": "attribute",
-          "name": "attribute12"
-        }
-      },
-      {
-        "name": "status",
-        "responseProcessor": {
-          "type": "aggregation",
-          "name": "status"
-        }
-      }
-    ]	    
+    ]
   }

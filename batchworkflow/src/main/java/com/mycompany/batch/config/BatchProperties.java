@@ -72,10 +72,11 @@ public class BatchProperties {
         private InputSourceProperties    inputSource = new InputSourceProperties();
         private OutputDataProperties     outputData  = new OutputDataProperties();
         private DataExtractionProperties dataExtraction = new DataExtractionProperties();
-        private String                   mandatoryAttributes = "";
+        private String                   mandatoryAttributes  = "";
+        private String                   mandatoryProperties  = "";
         private ColumnTemplateProperties columnTemplate;     // null → derive from results
-        /** Operation-level default values used as fallback when resolving {placeholder} templates. */
-        private Map<String, String>      properties  = new LinkedHashMap<>();
+        /** Operation-level properties — merged from static attributes, file, and HTTP source. */
+        private OperationPropertiesConfig properties = new OperationPropertiesConfig();
         /** Named request presets — selected at runtime via {@code "alias":"NAME"} in the request. */
         private List<AliasProperties>    alias       = new ArrayList<>();
         /** Optional enricher — adds derived attributes before or after the activity chain. */
@@ -107,17 +108,22 @@ public class BatchProperties {
         public DataExtractionProperties  getDataExtraction()                      { return dataExtraction; }
         public void setDataExtraction(DataExtractionProperties dataExtraction)    { this.dataExtraction = dataExtraction; }
 
-        public String getMandatoryAttributes()                          { return mandatoryAttributes; }
+        public String getMandatoryAttributes()                           { return mandatoryAttributes; }
         public void   setMandatoryAttributes(String mandatoryAttributes) { this.mandatoryAttributes = mandatoryAttributes; }
+
+        public String getMandatoryProperties()                           { return mandatoryProperties; }
+        public void   setMandatoryProperties(String mandatoryProperties) { this.mandatoryProperties = mandatoryProperties; }
+        public List<String> getMandatoryPropertiesList() {
+            if (mandatoryProperties == null || mandatoryProperties.isBlank()) return List.of();
+            return Arrays.stream(mandatoryProperties.split(","))
+                    .map(String::trim).filter(s -> !s.isBlank()).toList();
+        }
 
         public ColumnTemplateProperties getColumnTemplate()                          { return columnTemplate; }
         public void                     setColumnTemplate(ColumnTemplateProperties t) { this.columnTemplate = t; }
 
-        public Map<String, String> getProperties()                             { return properties; }
-        public void setProperties(Map<String, String> p) {
-            this.properties.clear();
-            if (p != null) this.properties.putAll(p);
-        }
+        public OperationPropertiesConfig getProperties()                                   { return properties; }
+        public void setProperties(OperationPropertiesConfig p)                            { this.properties = p != null ? p : new OperationPropertiesConfig(); }
 
         public List<AliasProperties> getAlias()                              { return alias; }
         public void setAlias(List<AliasProperties> alias)                    { this.alias = alias != null ? alias : new ArrayList<>(); }
@@ -152,9 +158,10 @@ public class BatchProperties {
         public void validate(String operationName) {
             if (!activity.isEmpty()) {
                 validateActivities(operationName);
-            } else {
+            } else if (http.url != null && !http.url.isBlank()) {
                 validateLegacy(operationName);
             }
+            // else: no activities and no legacy HTTP URL — pass-through operation, valid
             String inputType = inputSource.getType().trim().toUpperCase();
             if (!List.of("FILE", "REQUEST", "HTTP", "HTTPGET", "HTTPPOST", "HTTPCONFIG").contains(inputType)) {
                 throw new IllegalStateException(
@@ -260,6 +267,39 @@ public class BatchProperties {
     // Response processor (operation-level list — selected at runtime by name)
     // -------------------------------------------------------------------------
 
+    public static class OperationPropertiesConfig {
+        private Map<String, String>  attributes = new LinkedHashMap<>();
+        private HttpPropertiesSource http;
+        private FilePropertiesSource file;
+
+        public Map<String, String>  getAttributes()                        { return attributes; }
+        public void setAttributes(Map<String, String> a)                   { this.attributes = a != null ? a : new LinkedHashMap<>(); }
+        public HttpPropertiesSource getHttp()                              { return http; }
+        public void setHttp(HttpPropertiesSource h)                        { this.http = h; }
+        public FilePropertiesSource getFile()                              { return file; }
+        public void setFile(FilePropertiesSource f)                        { this.file = f; }
+    }
+
+    public static class HttpPropertiesSource {
+        private String url       = "";
+        private String method    = "GET";
+        private int    timeoutMs = 5000;
+
+        public String getUrl()                  { return url; }
+        public void   setUrl(String url)        { this.url = url != null ? url : ""; }
+        public String getMethod()               { return method; }
+        public void   setMethod(String method)  { this.method = method != null ? method : "GET"; }
+        public int    getTimeoutMs()            { return timeoutMs; }
+        public void   setTimeoutMs(int t)       { this.timeoutMs = t; }
+    }
+
+    public static class FilePropertiesSource {
+        private String path = "";
+
+        public String getPath()               { return path; }
+        public void   setPath(String path)    { this.path = path != null ? path : ""; }
+    }
+
     public static class ResponseProcessorEntryProperties {
         /** Name used to select this processor via the {@code responseProcessor} request field. */
         private String                      name              = "";
@@ -273,16 +313,16 @@ public class BatchProperties {
     }
 
     public static class ResponseProcessorProperties {
-        /** {@code "attribute"} — return only the named attribute per row.
-         *  {@code "aggregation"} — group rows by the named attribute; append string values. */
-        private String type = "";
-        private String name = "";
+        /** {@code "XML2JSON"} — parse responseBody XML into row fields.
+         *  {@code "JSONATA"}  — apply JSONata transform to the full results array. */
+        private String type             = "";
+        private String jsonataTransform = "";
 
-        public String getType()            { return type; }
-        public void   setType(String type) { this.type = type != null ? type : ""; }
+        public String getType()                        { return type; }
+        public void   setType(String type)             { this.type = type != null ? type : ""; }
 
-        public String getName()            { return name; }
-        public void   setName(String name) { this.name = name != null ? name : ""; }
+        public String getJsonataTransform()                          { return jsonataTransform; }
+        public void   setJsonataTransform(String jsonataTransform)   { this.jsonataTransform = jsonataTransform != null ? jsonataTransform : ""; }
     }
 
     // -------------------------------------------------------------------------

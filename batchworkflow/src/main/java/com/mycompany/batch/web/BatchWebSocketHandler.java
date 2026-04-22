@@ -1,5 +1,6 @@
 package com.mycompany.batch.web;
 
+import com.mycompany.batch.cache.CacheFactory;
 import com.mycompany.batch.config.BatchProperties;
 import com.mycompany.batch.model.DataRow;
 import com.mycompany.batch.model.RunRequest;
@@ -49,19 +50,22 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
     private final BatchController batchController;
     private final BatchProperties batchProperties;
     private final ObjectMapper objectMapper;
+    private final CacheFactory cacheFactory;
 
     public BatchWebSocketHandler(BatchService batchService,
                                  BatchController batchController,
                                  BatchProperties batchProperties,
-                                 ObjectMapper objectMapper) {
+                                 ObjectMapper objectMapper,
+                                 CacheFactory cacheFactory) {
         this.batchService = batchService;
         this.batchController = batchController;
         this.batchProperties = batchProperties;
         this.objectMapper = objectMapper;
+        this.cacheFactory = cacheFactory;
     }
 
     @Override
-    protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
+    protected void handleTextMessage(@org.springframework.lang.NonNull WebSocketSession session, @org.springframework.lang.NonNull TextMessage message) throws Exception {
         try {
             RunRequest request = objectMapper.readValue(message.getPayload(), RunRequest.class);
 
@@ -76,9 +80,11 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
             }
 
         } catch (Exception e) {
+            Map<String, Object> errEntry = new LinkedHashMap<>();
+            errEntry.put("activity", "validation");
+            errEntry.put("message",  e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
             Map<String, Object> err = new LinkedHashMap<>();
-            err.put("error",   true);
-            err.put("message", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+            err.put("Errors", List.of(errEntry));
             sendWsSafe(session, objectMapper.writeValueAsString(err));
         }
     }
@@ -90,6 +96,8 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
     private void handleSync(WebSocketSession session, RunRequest request) throws Exception {
         Map<String, Object> response;
         BatchService.BatchResult result = batchService.run(request);
+        batchController.saveToRuntimeCache(request, result.batchUuid(), result.timestamp());
+
         String outputData = resolveOutputData(request);
 
         if ("FILE".equals(outputData)) {
@@ -97,7 +105,7 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
             if (outputFilePath == null || outputFilePath.isBlank()) {
                 throw new IllegalArgumentException("outputFilePath is required when outputData=FILE");
             }
-            batchService.writeToPsv(result, outputFilePath);
+            batchService.writeToPsv(result, outputFilePath, Boolean.TRUE.equals(request.appendOutput()));
             response = batchController.buildFileResponse(request.operation(), result, outputFilePath);
         } else {
             response = batchController.buildHttpResponse(request.operation(), result, request.httpThreadCount());
@@ -112,8 +120,11 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
 
     private void handleAsync(WebSocketSession session, RunRequest request) throws Exception {
         final RunRequest resolvedReq = batchService.resolveAlias(request);
-        final List<DataRow> rows = batchService.buildInputRows(resolvedReq);
+        final java.util.Map<String, String> opProperties = batchService.loadRequestProperties(resolvedReq);
+        final List<DataRow> rows = batchService.buildInputRows(resolvedReq, opProperties);
         String batchUuid = UUID.randomUUID().toString();
+        batchController.saveToRuntimeCache(request, batchUuid,
+                java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
 
         // Send ACK before any processing starts
         Map<String, Object> ack = new LinkedHashMap<>();
@@ -155,11 +166,14 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
         }).exceptionally(ex -> {
             try {
                 Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
+                Map<String, Object> errEntry = new LinkedHashMap<>();
+                errEntry.put("activity", "error");
+                errEntry.put("message",  cause.getMessage() != null
+                        ? cause.getMessage() : cause.getClass().getSimpleName());
                 Map<String, Object> err = new LinkedHashMap<>();
                 err.put("type",      "error");
                 err.put("batchUuid", batchUuid);
-                err.put("message",   cause.getMessage() != null
-                        ? cause.getMessage() : cause.getClass().getSimpleName());
+                err.put("Errors",    List.of(errEntry));
                 sendWsSafe(session, objectMapper.writeValueAsString(err));
             } catch (Exception ignored) {}
             return null;

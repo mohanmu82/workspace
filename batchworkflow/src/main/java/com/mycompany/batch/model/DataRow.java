@@ -45,6 +45,7 @@ public class DataRow {
      */
     public Map<String, Object> toResponseMap(boolean includeMetadata) {
         Map<String, Object> result = new LinkedHashMap<>(data);
+        result.remove("SEQUENCE_NUMBER");
         if (includeMetadata) result.putAll(metadata);
         return result;
     }

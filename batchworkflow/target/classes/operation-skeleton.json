@@ -4,8 +4,18 @@
   "mandatoryAttributes": "id,accountId",
 
   "properties": {
-    "env": "PRD",
-    "region": "US"
+    "attributes": {
+      "env": "PRD",
+      "region": "US"
+    },
+    "file": {
+      "path": "C:/work/config/operation.properties"
+    },
+    "http": {
+      "url": "http://config.example.com/properties",
+      "method": "GET",
+      "timeoutMs": 3000
+    }
   },
 
   "inputSource": {
@@ -238,17 +248,23 @@
 
   "responseProcessor": [
     {
-      "name": "body-as-json",
+      "name": "convert-xml",
       "responseProcessor": {
-        "type": "attribute",
-        "name": "responseBody"
+        "type": "XML2JSON"
       }
     },
     {
-      "name": "by-status",
+      "name": "transform-jsonata",
       "responseProcessor": {
-        "type": "aggregation",
-        "name": "status"
+        "type": "JSONATA",
+        "jsonataTransform": "classpath:transforms/my-transform.jsonata"
+      }
+    },
+    {
+      "name": "transform-jsonata-inline",
+      "responseProcessor": {
+        "type": "JSONATA",
+        "jsonataTransform": "$[status = 'ACTIVE']"
       }
     }
   ]

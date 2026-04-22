@@ -310,24 +310,31 @@
         </select>
     </div>
 
-    <div class="form-group hidden" id="responseProcessorGroup">
-        <label>Response Processor</label>
-        <select id="responseProcessor">
-            <option value="">-- None --</option>
-        </select>
-    </div>
 
     <div class="form-group">
         <label>Input Source</label>
         <select id="inputSource" onchange="onInputSourceChange()">
             <option value="FILE">FILE</option>
             <option value="REQUEST">REQUEST</option>
+            <option value="JSON">JSON</option>
+            <option value="ALIAS">ALIAS</option>
+            <option value="HTTPLOCAL">HTTPLOCAL</option>
         </select>
     </div>
 
     <div class="form-group" id="inputFileGroup">
         <label>Input File Path</label>
         <input id="inputFilePath" type="text" placeholder="C:/work/data/ids.txt" />
+    </div>
+
+    <div class="form-group hidden" id="inputJsonPathGroup">
+        <label>Input JSON File Path</label>
+        <input id="inputJsonPath" type="text" placeholder="${DATADIR}/input.json" />
+    </div>
+
+    <div class="form-group wide hidden" id="inputHttpUrlGroup">
+        <label>Local Batch URL (operation + query params)</label>
+        <input id="inputHttpUrl" type="text" placeholder="/batch/run?operation=filereader&amp;inputFilePath=C:/work/data/ids.txt" />
     </div>
 
     <div class="form-group wide hidden" id="inputIdsGroup">
@@ -367,9 +374,11 @@
     <div class="form-group">
         <label>Mode</label>
         <select id="debugMode">
-            <option value="0">Normal</option>
-            <option value="1">Show all (include activity metadata)</option>
-            <option value="-1">Debug (skip activities)</option>
+            <option value="0">0 - Full pipeline</option>
+            <option value="1">1 - Properties only</option>
+            <option value="2">2 - Input source</option>
+            <option value="3">3 - After activities</option>
+            <option value="4">4 - After post-enrichment</option>
         </select>
     </div>
 
@@ -398,6 +407,11 @@
     </div>
 </div>
 <textarea class="request-preview" id="requestPreview" spellcheck="false"></textarea>
+
+<div class="request-preview-header" id="responsePreviewHeader" style="display:none">
+    <span class="request-preview-label">Last Response</span>
+</div>
+<textarea class="request-preview" id="responsePreview" spellcheck="false" readonly style="display:none"></textarea>
 
 <div class="toolbar">
     <button id="runBtn" onclick="runBatch()">Run</button>
@@ -583,13 +597,16 @@
         rowData: [],
         defaultColDef: { sortable: true, filter: true, resizable: true, minWidth: 100,
                          headerComponent: PieHeaderComp },
-        getRowClass: params => params.data?.operationStatus === 'FAILED' ? 'row-failed' : undefined,
+        getRowClass: params => (params.data?.operationStatus === 'FAILED' || params.data?.errorMessage) ? 'row-failed' : undefined,
         animateRows: true,
         onRowDataUpdated: updateRowCount,
         onFilterChanged:  updateRowCount,
         onRowClicked: params => {
             if (cacheMode === 'names' && params.data?.cacheName) {
                 loadCacheEntries(params.data.cacheName);
+            } else if (cacheMode === 'entries' && selectedCacheName === 'runtime' && params.data?._value) {
+                showRequestPreview(params.data._value);
+                setStatus('Request loaded — click "Send Request" to replay');
             }
         }
     };
@@ -597,7 +614,6 @@
     const grid = agGrid.createGrid(document.getElementById('grid'), gridOptions);
     let lastJson = null;
     let opAliases = {};            // opName -> string[]
-    let opResponseProcessors = {}; // opName -> string[]
 
     // Load operations on startup
     fetch('/batch/operations')
@@ -618,9 +634,7 @@
                 if (op.aliases && op.aliases.length > 0) {
                     opAliases[op.name] = op.aliases;
                 }
-                if (op.responseProcessors && op.responseProcessors.length > 0) {
-                    opResponseProcessors[op.name] = op.responseProcessors;
-                }
+
             });
             select.disabled = false;
             onOperationChange();
@@ -631,7 +645,7 @@
 
     function onOperationChange() {
         const name = document.getElementById('operation').value;
-        document.getElementById('inputFilePath').value = name ? `C:/work/data/${name}.txt` : '';
+        document.getElementById('inputFilePath').value = name ? `\${DATADIR}/${name}.txt` : '';
         const outPath = document.getElementById('outputFilePath');
         if (name) outPath.value = `C:/work/data/${name}.out`;
 
@@ -647,27 +661,26 @@
         });
         document.getElementById('aliasGroup').classList.toggle('hidden', aliases.length === 0);
 
-        // Populate response processor dropdown
-        const rps = opResponseProcessors[name] || [];
-        const rpSelect = document.getElementById('responseProcessor');
-        rpSelect.innerHTML = '<option value="">-- None --</option>';
-        rps.forEach(r => {
-            const opt = document.createElement('option');
-            opt.value = r; opt.textContent = r;
-            rpSelect.appendChild(opt);
-        });
-        document.getElementById('responseProcessorGroup').classList.toggle('hidden', rps.length === 0);
     }
 
     function onAliasChange() {
         const alias = document.getElementById('alias').value;
+        const srcSelect = document.getElementById('inputSource');
+        if (alias) {
+            srcSelect.value = 'ALIAS';
+        } else if (srcSelect.value === 'ALIAS') {
+            srcSelect.value = 'FILE';
+        }
+        onInputSourceChange();
         if (alias) runBatch();
     }
 
     function onInputSourceChange() {
         const src = document.getElementById('inputSource').value;
         document.getElementById('inputFileGroup').classList.toggle('hidden', src !== 'FILE');
+        document.getElementById('inputJsonPathGroup').classList.toggle('hidden', src !== 'JSON');
         document.getElementById('inputIdsGroup').classList.toggle('hidden', src !== 'REQUEST');
+        document.getElementById('inputHttpUrlGroup').classList.toggle('hidden', src !== 'HTTPLOCAL');
     }
 
     function onOutputDataChange() {
@@ -702,8 +715,19 @@
 
         if (!operation) { setStatus('Please select an operation.', true); return; }
 
+        const inputJsonPath = document.getElementById('inputJsonPath').value.trim();
         if (inputSource === 'FILE' && !inputFilePath) {
             setStatus('Please enter an input file path.', true); return;
+        }
+        if (inputSource === 'JSON' && !inputJsonPath) {
+            setStatus('Please enter a JSON file path.', true); return;
+        }
+        if (inputSource === 'ALIAS' && !document.getElementById('alias').value) {
+            setStatus('Please select an alias.', true); return;
+        }
+        const inputHttpUrl = document.getElementById('inputHttpUrl').value.trim();
+        if (inputSource === 'HTTPLOCAL' && !inputHttpUrl) {
+            setStatus('Please enter a local batch URL.', true); return;
         }
         if (inputSource === 'REQUEST' && !requestIdsRaw) {
             setStatus('Please enter at least one ID.', true); return;
@@ -720,7 +744,15 @@
         // Build JSON body
         const body = { operation, debugMode: parseInt(debugMode) };
 
-        if (inputSource === 'FILE') {
+        if (inputSource === 'HTTPLOCAL') {
+            body.inputSource  = 'HTTPLOCAL';
+            body.inputHttpUrl = inputHttpUrl;
+        } else if (inputSource === 'JSON') {
+            body.inputSource   = 'JSON';
+            body.inputJsonPath = inputJsonPath;
+        } else if (inputSource === 'ALIAS') {
+            body.inputSource = 'ALIAS';
+        } else if (inputSource === 'FILE') {
             body.inputSource   = 'FILE';
             body.inputFilePath = inputFilePath;
         } else {
@@ -773,9 +805,6 @@
         const aliasVal = document.getElementById('alias').value;
         if (aliasVal) body.alias = aliasVal;
 
-        const rpVal = document.getElementById('responseProcessor').value;
-        if (rpVal) body.responseProcessor = rpVal;
-
         // Show the request JSON before sending
         const bodyJson = JSON.stringify(body, null, 2);
         showRequestPreview(bodyJson);
@@ -786,6 +815,7 @@
             try {
                 const data = await sendRequest(bodyJson);
                 lastJson = data;
+                showResponsePreview(data);
                 handleResponse(data);
             } catch (err) {
                 setStatus(`Error: ${err.message}`, true);
@@ -799,9 +829,16 @@
     // Shared response renderer — used by runBatch() and sendRawRequest()
     // -------------------------------------------------------------------------
 
+    function extractErrorMessage(data) {
+        if (data.Errors && data.Errors.length > 0) {
+            return data.Errors.map(e => (e.activity ? `[${e.activity}] ` : '') + (e.message || '')).join('; ');
+        }
+        return data.message || 'Request failed';
+    }
+
     function handleResponse(data) {
-        if (data.error) {
-            setStatus(data.message || 'Request failed', true);
+        if (data.error || data.Errors) {
+            setStatus(extractErrorMessage(data), true);
             return;
         }
 
@@ -900,13 +937,18 @@
                 wsStreamHandler(msg);
                 return;
             }
+            // Error sent before ACK (no type field) while ASYNC is active
+            if (wsStreamHandler && msg.Errors) {
+                wsStreamHandler({ type: 'error', Errors: msg.Errors });
+                return;
+            }
 
             // SYNC request/response
             if (!wsPending) return;
             const { resolve, reject } = wsPending;
             wsPending = null;
-            if (msg.error) reject(new Error(msg.message || 'WebSocket error response'));
-            else           resolve(msg);
+            if (msg.error || msg.Errors) reject(new Error(extractErrorMessage(msg)));
+            else                        resolve(msg);
         };
 
         socket.onerror = () => {
@@ -1049,13 +1091,16 @@
                     document.getElementById('statAvg').textContent          = '—';
                     document.getElementById('statMax').textContent          = '—';
                     document.getElementById('statsBar').style.display = 'flex';
+                    lastJson = msg;
+                    showResponsePreview(msg);
                     break;
                 }
 
                 case 'error':
                     wsStreamHandler = null;
                     setButtonsDisabled(false);
-                    setStatus(`ASYNC error: ${msg.message}`, true);
+                    showResponsePreview(msg);
+                    setStatus(`ASYNC error: ${extractErrorMessage(msg)}`, true);
                     break;
 
                 default:
@@ -1105,6 +1150,18 @@
         document.getElementById('requestPreview').value = '';
     }
 
+    function showResponsePreview(json) {
+        document.getElementById('responsePreview').value        = typeof json === 'string' ? json : JSON.stringify(json, null, 2);
+        document.getElementById('responsePreview').style.display = 'block';
+        document.getElementById('responsePreviewHeader').style.display = 'flex';
+    }
+
+    function hideResponsePreview() {
+        document.getElementById('responsePreview').style.display       = 'none';
+        document.getElementById('responsePreviewHeader').style.display = 'none';
+        document.getElementById('responsePreview').value = '';
+    }
+
     function validateJson() {
         const text = document.getElementById('requestPreview').value.trim();
         if (!text) { setStatus('Request editor is empty.', true); return; }
@@ -1128,6 +1185,7 @@
         try {
             const data = await sendRequest(text);
             lastJson = data;
+            showResponsePreview(data);
             handleResponse(data);
         } catch (err) {
             setStatus(`Error: ${err.message}`, true);
@@ -1158,6 +1216,7 @@
         grid.setGridOption('rowData', []);
         grid.setGridOption('columnDefs', []);
         hideRequestPreview();
+        hideResponsePreview();
         lastJson = null;
         ['statMethod','statThreadCount','statTimestamp','statUuid',
          'statTimeTaken','statResponseSize','statMin','statAvg','statMax']
@@ -1245,13 +1304,30 @@
             const res  = await fetch(`/batch/cache/${encodeURIComponent(name)}`);
             const body = await res.json();
             const rows = body.data || [];
-            grid.setGridOption('columnDefs', rows.length > 0
-                ? Object.keys(rows[0]).map(k => ({ field: k, headerName: k }))
-                : [{ field: 'info', headerName: 'Info' }]);
-            grid.setGridOption('rowData', rows.length > 0 ? rows : [{ info: '(cache is empty)' }]);
+
+            if (name === 'runtime') {
+                const displayRows = rows.map(r => ({
+                    batchUuid:   r.key,
+                    requestInfo: r.url,
+                    _value:      r.value
+                }));
+                grid.setGridOption('columnDefs', [
+                    { field: 'batchUuid',   headerName: 'Batch UUID' },
+                    { field: 'requestInfo', headerName: 'Request Info' }
+                ]);
+                grid.setGridOption('rowData', displayRows.length > 0
+                    ? displayRows : [{ batchUuid: '(no requests recorded)', requestInfo: '' }]);
+                showCacheModeBar(`Runtime requests: ${rows.length} — click a row to load request`, true);
+            } else {
+                grid.setGridOption('columnDefs', rows.length > 0
+                    ? Object.keys(rows[0]).map(k => ({ field: k, headerName: k }))
+                    : [{ field: 'info', headerName: 'Info' }]);
+                grid.setGridOption('rowData', rows.length > 0 ? rows : [{ info: '(cache is empty)' }]);
+                showCacheModeBar(`Cache: "${name}" — ${rows.length} entry(s)`, true);
+            }
+
             grid.autoSizeAllColumns();
             lastJson = body;
-            showCacheModeBar(`Cache: "${name}" — ${rows.length} entry(s)`, true);
             setStatus('');
         } catch (err) {
             setStatus(`Error loading cache entries: ${err.message}`, true);

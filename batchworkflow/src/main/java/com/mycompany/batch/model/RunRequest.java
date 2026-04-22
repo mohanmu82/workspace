@@ -86,11 +86,11 @@ public record RunRequest(
          * Incoming request fields always take precedence over alias values.
          */
         String alias,
-        /**
-         * Optional name of a response processor defined in {@code operations.json}
-         * under {@code responseProcessor[].name}. Selects how the result rows are
-         * transformed before being returned: {@code "attribute"} (single field per row)
-         * or {@code "aggregation"} (group-by with string concatenation).
-         */
-        String responseProcessor) {
+        String responseProcessor,
+        /** When {@code outputData=FILE}, append to the file instead of overwriting. Default is overwrite. */
+        Boolean appendOutput,
+        /** Path to a JSON file used when {@code inputSource=JSON}. Content returned as-is (no data-array unwrapping). */
+        String inputJsonPath,
+        /** Optional inline key-value pairs merged into operation properties (highest priority). */
+        Map<String, String> properties) {
 }

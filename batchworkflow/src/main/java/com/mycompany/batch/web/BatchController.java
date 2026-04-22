@@ -1,5 +1,6 @@
 package com.mycompany.batch.web;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mycompany.batch.cache.CacheFactory;
 import com.mycompany.batch.config.BatchProperties;
 import com.mycompany.batch.model.RunRequest;
@@ -31,12 +32,14 @@ public class BatchController {
     private final BatchService batchService;
     private final BatchProperties batchProperties;
     private final CacheFactory cacheFactory;
+    private final ObjectMapper objectMapper;
 
     public BatchController(BatchService batchService, BatchProperties batchProperties,
-                           CacheFactory cacheFactory) {
+                           CacheFactory cacheFactory, ObjectMapper objectMapper) {
         this.batchService = batchService;
         this.batchProperties = batchProperties;
         this.cacheFactory = cacheFactory;
+        this.objectMapper = objectMapper;
     }
 
     // -------------------------------------------------------------------------
@@ -286,6 +289,8 @@ public class BatchController {
             result = batchService.run(request);
         } catch (IllegalArgumentException e) {
             return badRequest(e.getMessage());
+        } catch (Exception e) {
+            return errorsResponse("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
         }
 
         String outputData = resolveOutputData(request);
@@ -302,14 +307,17 @@ public class BatchController {
                 return badRequest("outputFilePath is required when outputData=FILE");
             }
             try {
-                batchService.writeToPsv(result, outputFilePath);
+                batchService.writeToPsv(result, outputFilePath,
+                        Boolean.TRUE.equals(request.appendOutput()));
             } catch (Exception e) {
                 return badRequest("Failed to write output file: " + e.getMessage());
             }
+            saveToRuntimeCache(request, result.batchUuid(), result.timestamp());
             return ResponseEntity.ok(buildFileResponse(request.operation(), result,
                     Path.of(outputFilePath).toAbsolutePath().toString()));
         }
 
+        saveToRuntimeCache(request, result.batchUuid(), result.timestamp());
         return ResponseEntity.ok(buildHttpResponse(request.operation(), result, request.httpThreadCount()));
     }
 
@@ -355,6 +363,9 @@ public class BatchController {
         response.put("metadata", metadata);
         response.put("columns",  result.columns());
         response.put("data",     result.results());
+        if (result.operationProperties() != null) {
+            response.put("properties", result.operationProperties());
+        }
         return response;
     }
 
@@ -411,8 +422,19 @@ public class BatchController {
                 null, // filterOutput — not supported via query params
                 null, // executionMode — defaults to SYNC
                 params.get("alias"),
-                params.get("responseProcessor")
+                params.get("responseProcessor"),
+                "true".equalsIgnoreCase(params.get("appendOutput")) ? Boolean.TRUE : null,
+                params.get("inputJsonPath"),
+                null  // properties — not supported via query params
         );
+    }
+
+    void saveToRuntimeCache(RunRequest request, String batchUuid, String timestamp) {
+        try {
+            String reqJson = objectMapper.writeValueAsString(request);
+            cacheFactory.save("runtime", batchUuid, reqJson,
+                    request.operation() + " | " + timestamp);
+        } catch (Exception ignored) {}
     }
 
     private ResponseEntity<Map<String, Object>> runPsv(Map<String, String> params) throws Exception {
@@ -477,9 +499,15 @@ public class BatchController {
     }
 
     private ResponseEntity<Map<String, Object>> badRequest(String message) {
+        return errorsResponse("validation", message);
+    }
+
+    ResponseEntity<Map<String, Object>> errorsResponse(String activity, String message) {
+        Map<String, Object> err = new LinkedHashMap<>();
+        err.put("activity", activity);
+        err.put("message",  message != null ? message : "Unknown error");
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("error",   true);
-        body.put("message", message);
+        body.put("Errors", List.of(err));
         return ResponseEntity.badRequest().body(body);
     }
 }
