@@ -643,11 +643,18 @@
             document.getElementById('operation').innerHTML = '<option value="">Failed to load operations</option>';
         });
 
+    function deriveOutputFilePath() {
+        const inp = document.getElementById('inputFilePath').value.trim();
+        if (!inp) return '';
+        const dot = inp.lastIndexOf('.');
+        return (dot >= 0 ? inp.substring(0, dot) : inp) + '.out';
+    }
+
     function onOperationChange() {
         const name = document.getElementById('operation').value;
         document.getElementById('inputFilePath').value = name ? `\${DATADIR}/${name}.txt` : '';
         const outPath = document.getElementById('outputFilePath');
-        if (name) outPath.value = `C:/work/data/${name}.out`;
+        if (name) outPath.value = deriveOutputFilePath();
 
         // Populate alias dropdown
         const aliases = opAliases[name] || [];
@@ -686,6 +693,10 @@
     function onOutputDataChange() {
         const out = document.getElementById('outputData').value;
         document.getElementById('outputFileGroup').classList.toggle('hidden', out !== 'FILE');
+        if (out === 'FILE') {
+            const derived = deriveOutputFilePath();
+            if (derived) document.getElementById('outputFilePath').value = derived;
+        }
     }
 
     function onExecutionModeChange() {
@@ -1023,6 +1034,7 @@
             return;
         }
 
+        const fileMode  = document.getElementById('outputData').value === 'FILE';
         let rowCount    = 0;
         let asyncUuid   = null;
         let colsApplied = false;
@@ -1046,16 +1058,19 @@
                     break;
 
                 case 'row': {
-                    const row = msg.row || {};
-                    // Apply column defs from the first row we see
-                    if (!colsApplied) {
-                        colsApplied = true;
-                        grid.setGridOption('columnDefs',
-                            Object.keys(row).map(k => ({ field: k, headerName: k })));
-                    }
-                    appendRowToGrid(row);
                     rowCount++;
-                    setStatus(`Receiving… ${rowCount} row(s) so far`);
+                    if (fileMode) {
+                        setStatus(`Receiving… ${rowCount} row(s) processed`);
+                    } else {
+                        const row = msg.row || {};
+                        if (!colsApplied) {
+                            colsApplied = true;
+                            grid.setGridOption('columnDefs',
+                                Object.keys(row).map(k => ({ field: k, headerName: k })));
+                        }
+                        appendRowToGrid(row);
+                        setStatus(`Receiving… ${rowCount} row(s) so far`);
+                    }
                     break;
                 }
 
@@ -1066,20 +1081,26 @@
                     const meta = msg.metadata || {};
                     const cols = msg.columns  || [];
 
-                    // Replace auto-derived column defs with the server's typed defs if available
-                    if (cols.length > 0) {
-                        grid.setGridOption('columnDefs',
-                            cols.map(c => ({ field: c.columnName, headerName: c.displayName })));
-                    }
-                    grid.sizeColumnsToFit();
-
-                    document.getElementById('exportBtn').disabled   = false;
-                    document.getElementById('expandBtn').disabled   = false;
-                    document.getElementById('shrinkBtn').disabled   = false;
                     document.getElementById('copyJsonBtn').disabled = false;
                     document.getElementById('clearBtn').disabled    = false;
 
-                    setStatus(`Processed: ${meta.processed ?? rowCount} — Succeeded: ${meta.succeeded ?? '?'} — Failed: ${meta.failed ?? '?'}`);
+                    if (fileMode) {
+                        const processed = meta.processed ?? rowCount;
+                        setStatus(`Number of rows processed: ${processed}`);
+                    } else {
+                        // Replace auto-derived column defs with the server's typed defs if available
+                        if (cols.length > 0) {
+                            grid.setGridOption('columnDefs',
+                                cols.map(c => ({ field: c.columnName, headerName: c.displayName })));
+                        }
+                        grid.sizeColumnsToFit();
+
+                        document.getElementById('exportBtn').disabled   = false;
+                        document.getElementById('expandBtn').disabled   = false;
+                        document.getElementById('shrinkBtn').disabled   = false;
+
+                        setStatus(`Processed: ${meta.processed ?? rowCount} — Succeeded: ${meta.succeeded ?? '?'} — Failed: ${meta.failed ?? '?'}`);
+                    }
 
                     document.getElementById('statTimestamp').textContent    = meta.timestamp      || '—';
                     document.getElementById('statUuid').textContent         = meta.batchUuid      || asyncUuid || '—';

@@ -502,7 +502,12 @@ public class BatchService {
         String   delimiter     = commaTokens.length > 1 ? "," : "|";
         String[] headers       = delimiter.equals(",") ? commaTokens
                                   : headerLine.split(Pattern.quote("|"), -1);
-        headers = Arrays.stream(headers).map(s -> s.trim().toUpperCase()).toArray(String[]::new);
+        headers = Arrays.stream(headers).map(s -> {
+            String h = s.trim().toUpperCase();
+            int bracket = h.indexOf('[');
+            if (bracket >= 0) h = h.substring(0, bracket).trim();
+            return h.replace(' ', '_');
+        }).toArray(String[]::new);
 
         String delimPattern = Pattern.quote(delimiter);
         List<String> dataLines = allLines.stream()
@@ -761,6 +766,40 @@ public class BatchService {
                 writer.write(String.join("|", line));
                 writer.newLine();
             }
+        }
+    }
+
+    /**
+     * Derives the PSV column order from the first row (same logic as {@link #writeToPsv})
+     * and writes the header line to the file, truncating any existing content.
+     * Returns the ordered column list to pass to {@link #appendPsvRow}.
+     */
+    public List<String> initPsvStream(Map<String, Object> firstRow, String outputFilePath,
+                                      boolean append) throws Exception {
+        SequencedSet<String> cols = new LinkedHashSet<>(firstRow.keySet());
+        cols.add("errorMessage");
+        java.nio.file.OpenOption[] options = append
+                ? new java.nio.file.OpenOption[]{java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND}
+                : new java.nio.file.OpenOption[]{java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.TRUNCATE_EXISTING};
+        try (BufferedWriter w = Files.newBufferedWriter(Path.of(outputFilePath), options)) {
+            w.write(String.join("|", cols));
+            w.newLine();
+        }
+        return new ArrayList<>(cols);
+    }
+
+    /** Appends a single data row to a PSV file that was already initialised with {@link #initPsvStream}. */
+    public void appendPsvRow(Map<String, Object> row, List<String> columns,
+                             String outputFilePath) throws Exception {
+        List<String> line = new ArrayList<>(columns.size());
+        for (String col : columns) {
+            Object val = row.get(col);
+            line.add(val != null ? val.toString().replaceAll("[\\r\\n]", " ") : "");
+        }
+        try (BufferedWriter w = Files.newBufferedWriter(Path.of(outputFilePath),
+                java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND)) {
+            w.write(String.join("|", line));
+            w.newLine();
         }
     }
 
@@ -2106,6 +2145,11 @@ public class BatchService {
     /** Convenience overload — no operation-level property fallback. */
     static String resolveTemplate(String template, Map<String, Object> row) {
         return resolveTemplate(template, row, null);
+    }
+
+    /** Resolves {@code ${KEY}} / {@code {KEY}} placeholders in a path string using operation properties. */
+    public String resolvePath(String path, Map<String, String> opProperties) {
+        return resolveTemplate(path, Map.of(), opProperties);
     }
 
     // -------------------------------------------------------------------------

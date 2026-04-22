@@ -105,6 +105,7 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
             if (outputFilePath == null || outputFilePath.isBlank()) {
                 throw new IllegalArgumentException("outputFilePath is required when outputData=FILE");
             }
+            outputFilePath = batchService.resolvePath(outputFilePath, result.operationProperties());
             batchService.writeToPsv(result, outputFilePath, Boolean.TRUE.equals(request.appendOutput()));
             response = batchController.buildFileResponse(request.operation(), result, outputFilePath);
         } else {
@@ -122,6 +123,19 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
         final RunRequest resolvedReq = batchService.resolveAlias(request);
         final java.util.Map<String, String> opProperties = batchService.loadRequestProperties(resolvedReq);
         final List<DataRow> rows = batchService.buildInputRows(resolvedReq, opProperties);
+
+        final String outputData = resolveOutputData(request);
+        final String resolvedOutputFilePath;
+        if ("FILE".equals(outputData)) {
+            String raw = resolveOutputFilePath(request);
+            if (raw == null || raw.isBlank()) {
+                throw new IllegalArgumentException("outputFilePath is required when outputData=FILE");
+            }
+            resolvedOutputFilePath = batchService.resolvePath(raw, opProperties);
+        } else {
+            resolvedOutputFilePath = null;
+        }
+
         String batchUuid = UUID.randomUUID().toString();
         batchController.saveToRuntimeCache(request, batchUuid,
                 java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
@@ -135,9 +149,33 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
                 + " processing asynchronously with " + rows.size() + " rows");
         sendWsSafe(session, objectMapper.writeValueAsString(ack));
 
+        // State for per-row PSV streaming (FILE mode only)
+        final Object fileLock          = new Object();
+        final boolean[]    headerDone  = {false};
+        final List[]       psvCols     = {null};
+
         // Kick off async processing — handler returns immediately after this call
         batchService.runAsync(rows, resolvedReq, row -> {
             try {
+                if ("FILE".equals(outputData)) {
+                    synchronized (fileLock) {
+                        try {
+                            if (!headerDone[0]) {
+                                @SuppressWarnings("unchecked")
+                                List<String> cols = batchService.initPsvStream(
+                                        row, resolvedOutputFilePath,
+                                        Boolean.TRUE.equals(resolvedReq.appendOutput()));
+                                psvCols[0] = cols;
+                                headerDone[0] = true;
+                                batchService.appendPsvRow(row, cols, resolvedOutputFilePath);
+                            } else {
+                                @SuppressWarnings("unchecked")
+                                List<String> cols = (List<String>) psvCols[0];
+                                batchService.appendPsvRow(row, cols, resolvedOutputFilePath);
+                            }
+                        } catch (Exception ignored) {}
+                    }
+                }
                 Map<String, Object> msg = new LinkedHashMap<>();
                 msg.put("type",      "row");
                 msg.put("batchUuid", batchUuid);
@@ -155,6 +193,7 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
                 meta.put("timestamp",      result.timestamp());
                 meta.put("batchUuid",      batchUuid);
                 if (resolvedReq.httpThreadCount() != null) meta.put("threadCount", resolvedReq.httpThreadCount());
+                if ("FILE".equals(outputData)) meta.put("outputFile", resolvedOutputFilePath);
 
                 Map<String, Object> done = new LinkedHashMap<>();
                 done.put("type",      "done");

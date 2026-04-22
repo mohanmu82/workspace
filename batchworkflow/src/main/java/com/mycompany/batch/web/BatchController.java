@@ -306,6 +306,7 @@ public class BatchController {
             if (outputFilePath == null || outputFilePath.isBlank()) {
                 return badRequest("outputFilePath is required when outputData=FILE");
             }
+            outputFilePath = batchService.resolvePath(outputFilePath, result.operationProperties());
             try {
                 batchService.writeToPsv(result, outputFilePath,
                         Boolean.TRUE.equals(request.appendOutput()));
