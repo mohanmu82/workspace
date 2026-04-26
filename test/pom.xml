@@ -12,9 +12,9 @@
     </parent>
 
     <groupId>com.mycompany</groupId>
-    <artifactId>demo</artifactId>
+    <artifactId>batchworkflow</artifactId>
     <version>1.0.5</version>
-    <name>demo</name>
+    <name>batchworkflow</name>
     <description>Demo project for Spring Boot</description>
 
     <properties>
