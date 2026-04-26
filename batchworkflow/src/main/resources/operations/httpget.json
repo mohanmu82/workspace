@@ -1,0 +1,75 @@
+{
+  "name": "httpget",
+  "mandatoryProperties": [
+    { "property": "inputSource", "dataType": "string", "defaultValue":"HTTPCONFIG", "readOnly": true },
+    { "property": "inputHttpUrl", "dataType": "string", "defaultValue":"http://localhost:8080/batch/operations" },
+    { "property": "inputHttpHeader", "dataType": "json", "elementType": "textarea", "required": false, "displayType": {"label": "Headers (JSON object)"} }
+  ],
+  "activity": [
+    {
+      "name": "httpgetgeneric",
+      "type": "HTTP",
+      "http": {
+        "url": "${inputHttpUrl}",
+        "method": "GET",
+        "contentType": "application/json",
+        "header": {
+          "Accept": "application/json"
+        },
+        "extract":{
+            "ifError": {
+              "RESPONSECODE": "$.statusCode",
+              "RESPONSEBODY": "$.body",
+              "REQUESTURL": "$.url",
+              "REQUESTHEADERS": "$.headers"
+            }
+        },
+        "threadCount": 1,
+        "timeoutMs": 30000
+      }
+    }
+  ],
+  "alias": [
+    {
+      "name": "ALLOPERATIONS",
+      "mandatoryProperties": [
+        { "property": "inputSource", "dataType": "string", "defaultValue":"HTTPCONFIG", "readOnly": true },
+        { "property": "inputHttpUrl", "dataType": "string", "defaultValue":"http://localhost:8080/batch/operations", "readOnly": true }
+      ],
+      "request": {
+      }
+    },
+    {
+      "name": "CLAUDEMODELS",
+      "mandatoryProperties": [
+        { "property": "inputSource", "dataType": "string", "defaultValue":"HTTPCONFIG", "readOnly": true },
+        { "property": "inputHttpUrl", "dataType": "string", "defaultValue":"https://api.anthropic.com/v1/models", "readOnly": true }
+      ],
+      "request": {
+        "inputHttpHeader": {
+          "Accept": "application/json",
+          "X-API-Key": "YOUR_ANTHROPIC_API_KEY",
+          "anthropic-version": "2023-06-01",
+          "anthropic-beta": "mcp-client-2025-11-20" 
+        }      
+      }
+    },
+        {
+      "name": "CLAUDEBATCHES",
+      "mandatoryProperties": [
+        { "property": "inputSource", "dataType": "string", "defaultValue":"HTTPCONFIG", "readOnly": true },
+        { "property": "inputHttpUrl", "dataType": "string", "defaultValue":"https://api.anthropic.com/v1/messages/batches", "readOnly": true }
+      ],
+      "request": {
+        "inputHttpHeader": {
+          "Accept": "application/json",
+          "X-API-Key": "YOUR_ANTHROPIC_API_KEY",
+          "anthropic-version": "2023-06-01",
+          "anthropic-beta": "mcp-client-2025-11-20" 
+        }      
+      }
+    }
+
+  ]
+
+}

@@ -132,9 +132,26 @@ public class EnricherService {
         return switch (type) {
             case "FILE" -> loadFromFile(resolveSystemVars(ds.getInputFilePath(), sys));
             case "HTTP", "HTTPCONFIG" -> loadFromHttp(resolveSystemVars(ds.getInputHttpUrl(), sys));
+            case "CACHE" -> loadFromCache(ds.getCacheName());
             default -> throw new IllegalArgumentException(
-                    "Enricher dataset inputSource must be FILE or HTTPCONFIG, got: " + type);
+                    "Enricher dataset inputSource must be FILE, HTTPCONFIG, or CACHE, got: " + type);
         };
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> loadFromCache(String cacheName) throws Exception {
+        if (cacheName == null || cacheName.isBlank())
+            throw new IllegalArgumentException("cacheName is required for CACHE enricher data source");
+        List<Map<String, Object>> rows = new ArrayList<>();
+        cacheFactory.getEntries(cacheName).values().forEach(entry -> {
+            String json = entry.value();
+            if (json != null) {
+                try {
+                    rows.add(objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {}));
+                } catch (Exception ignored) {}
+            }
+        });
+        return rows;
     }
 
     private List<Map<String, Object>> loadFromFile(String path) throws Exception {

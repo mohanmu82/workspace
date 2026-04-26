@@ -1,0 +1,25 @@
+{
+  "data": [
+		{
+			"name": "TOKEN"
+			,"type": "cascade"
+			,"value": "TOKEN|BAMTOKEN|JWTTOKEN"
+			,"onError": "${errorMessage}"
+		},
+		{
+			"name": "claim",
+			"type": "tokenize",
+			"string": "${TOKEN}",
+			"delimiter": ".",
+			"token": "2",
+			"onError": "${errorMessage}"
+		},		
+		{
+			"name": "responseBody",
+			"type": "base64decode",
+			"string": "${CLAIM}",
+			"onError": "${errorMessage}"
+		}
+
+  ]
+}

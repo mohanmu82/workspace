@@ -149,6 +149,30 @@
 
         .hidden { display: none !important; }
 
+        /* Template bar */
+        .tpl-bar {
+            display: flex; align-items: center; gap: 8px;
+            margin-bottom: 10px; flex-wrap: wrap;
+        }
+        .tpl-lbl {
+            font-size: 12px; font-weight: 700; color: #5e6c84;
+            text-transform: uppercase; letter-spacing: .4px; flex-shrink: 0;
+        }
+        .tpl-name-input {
+            padding: 6px 10px; font-size: 13px; border: 1px solid #ccc;
+            border-radius: 4px; outline: none; width: 180px; font-family: inherit;
+        }
+        .tpl-name-input:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.25); }
+        .tpl-select {
+            padding: 6px 10px; font-size: 13px; border: 1px solid #ccc;
+            border-radius: 4px; outline: none; font-family: inherit;
+        }
+        .tpl-select:focus { border-color: #4c9aff; }
+        .tpl-sep { color: #dfe1e6; font-size: 20px; line-height: 1; }
+        .tpl-msg { font-size: 12px; }
+        .tpl-msg.ok    { color: #006644; }
+        .tpl-msg.error { color: #de350b; }
+
         .row-count-bar {
             font-size: 12px;
             color: #5e6c84;
@@ -156,6 +180,31 @@
             margin-bottom: 4px;
             min-height: 16px;
         }
+
+        /* Column chooser */
+        #colChooserBar {
+            display: none;
+            flex-wrap: wrap;
+            gap: 6px;
+            padding: 8px 12px;
+            background: #fff;
+            border: 1px solid #dfe1e6;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            align-items: center;
+        }
+        #colChooserBar .chooser-lbl {
+            font-size: 11px; font-weight: 700; color: #5e6c84;
+            text-transform: uppercase; letter-spacing: .4px; margin-right: 4px; flex-shrink: 0;
+        }
+        .col-chip-idx {
+            display: inline-flex; align-items: center; gap: 5px;
+            padding: 3px 10px; background: #f4f5f7; border: 1px solid #dfe1e6;
+            border-radius: 16px; font-size: 12px; cursor: pointer; user-select: none;
+        }
+        .col-chip-idx:hover { background: #ebecf0; }
+        .col-chip-idx input[type=checkbox] { cursor: pointer; margin: 0; }
+        .col-chip-idx span { font-weight: 500; }
 
         .request-preview-header {
             display: none;
@@ -288,11 +337,110 @@
         }
 
         .pie-btn:hover { background: #e9f0ff; }
+
+        /* ---- Pivot modal ---- */
+        .pivot-overlay {
+            display: none; position: fixed; inset: 0;
+            background: rgba(0,0,0,0.5); z-index: 1100;
+            align-items: flex-start; justify-content: center; padding: 24px 0;
+            overflow-y: auto;
+        }
+        .pivot-overlay.open { display: flex; }
+        .pivot-box {
+            background: #fff; border-radius: 8px;
+            width: 96vw; max-width: 1200px;
+            box-shadow: 0 8px 40px rgba(0,0,0,0.28);
+            display: flex; flex-direction: column;
+        }
+        .pivot-header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 14px 20px; border-bottom: 1px solid #e0e4ea; flex-shrink: 0;
+        }
+        .pivot-header h3 { font-size: 16px; font-weight: 600; margin: 0; }
+        .pivot-header button { background: none; border: none; font-size: 18px; cursor: pointer; color: #5e6c84; padding: 2px 6px; border-radius: 4px; }
+        .pivot-header button:hover { background: #f4f5f7; }
+        .pivot-body { display: flex; gap: 0; min-height: 0; }
+        .pivot-config {
+            width: 380px; min-width: 300px; border-right: 1px solid #e0e4ea;
+            padding: 16px; display: flex; flex-direction: column; gap: 12px;
+            overflow-y: auto; max-height: calc(90vh - 56px);
+        }
+        .pivot-section-label {
+            font-size: 11px; font-weight: 600; color: #5e6c84;
+            text-transform: uppercase; letter-spacing: .5px; margin-bottom: 4px;
+        }
+        .pivot-avail-cols {
+            display: flex; flex-wrap: wrap; gap: 5px; max-height: 120px;
+            overflow-y: auto; padding: 6px; background: #f4f5f7;
+            border: 1px solid #dfe1e6; border-radius: 4px;
+        }
+        .pivot-chip {
+            display: inline-flex; align-items: center; gap: 4px;
+            padding: 2px 8px; border-radius: 12px; font-size: 12px;
+            cursor: pointer; user-select: none; white-space: nowrap;
+        }
+        .pivot-chip.avail   { background: #e9f0ff; color: #0052cc; border: 1px solid #4c9aff; }
+        .pivot-chip.avail:hover { background: #d0e4ff; }
+        .pivot-chip.row-grp { background: #e3fcef; color: #006644; border: 1px solid #57d9a3; }
+        .pivot-chip.piv-col { background: #fff0b3; color: #7a4600; border: 1px solid #ffab00; }
+        .pivot-chip.val-col { background: #ffe2dd; color: #bf2600; border: 1px solid #ff7452; }
+        .pivot-chip .rm     { font-size: 14px; line-height: 1; color: inherit; opacity: .7; }
+        .pivot-chip .rm:hover { opacity: 1; }
+        .pivot-drop-zone {
+            min-height: 36px; display: flex; flex-wrap: wrap; gap: 5px;
+            padding: 6px; background: #f4f5f7; border: 1px dashed #b3bac5;
+            border-radius: 4px;
+        }
+        .pivot-drop-zone.empty::after {
+            content: attr(data-hint); color: #b3bac5; font-size: 12px; font-style: italic;
+        }
+        .pivot-drop-zone.drag-over { background: #edf2ff !important; border-color: #4c9aff !important; }
+        .pivot-chip.dragging, .pivot-val-chip.dragging { opacity: 0.3; }
+        .pivot-val-chip {
+            display: inline-flex; align-items: center; gap: 4px;
+            padding: 2px 6px; border-radius: 12px; font-size: 12px;
+            background: #ffe2dd; color: #bf2600; border: 1px solid #ff7452;
+        }
+        .pivot-val-chip select {
+            font-size: 11px; border: none; background: transparent;
+            color: #bf2600; cursor: pointer; padding: 0; outline: none;
+        }
+        .pivot-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+        .pivot-controls select {
+            flex: 1; padding: 5px 8px; border: 1px solid #dfe1e6;
+            border-radius: 4px; font-size: 13px;
+        }
+        .pivot-result {
+            flex: 1; display: flex; flex-direction: column; min-width: 0;
+            padding: 16px; overflow: hidden;
+        }
+        .pivot-result-bar {
+            display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-shrink: 0;
+        }
+        .pivot-table-wrap {
+            flex: 1; overflow: auto; border: 1px solid #dfe1e6; border-radius: 4px;
+        }
+        .pivot-table {
+            border-collapse: collapse; font-size: 12px; width: 100%;
+        }
+        .pivot-table th {
+            background: #f4f5f7; padding: 5px 10px; text-align: left;
+            border: 1px solid #dfe1e6; white-space: nowrap; position: sticky; top: 0; z-index: 1;
+        }
+        .pivot-table td {
+            padding: 4px 10px; border: 1px solid #dfe1e6; white-space: nowrap;
+        }
+        .pivot-table tr:nth-child(even) td { background: #fafbfc; }
+        .pivot-chart-wrap {
+            flex: 1; display: flex; align-items: center; justify-content: center;
+            min-height: 300px; position: relative;
+        }
+        #pivotCanvas { max-height: 480px; }
     </style>
 </head>
 <body>
 
-<h1>Batch Runner</h1>
+<h1>Batch Runner &nbsp;<a href="/httppost.html" style="font-size:13px;font-weight:400;color:#0052cc;text-decoration:none" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">HTTP Post &rarr;</a> &nbsp;<a href="/templates.html" style="font-size:13px;font-weight:400;color:#0052cc;text-decoration:none" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">Templates &rarr;</a> &nbsp;<a href="/createoperations.html" style="font-size:13px;font-weight:400;color:#0052cc;text-decoration:none" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">Create Operations &rarr;</a> &nbsp;<a href="/comparedatasets.html" style="font-size:13px;font-weight:400;color:#0052cc;text-decoration:none" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">Compare Datasets &rarr;</a> &nbsp;<a href="/utils.html" style="font-size:13px;font-weight:400;color:#0052cc;text-decoration:none" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">Utils &rarr;</a> &nbsp;<a href="/jolokia.html" style="font-size:13px;font-weight:400;color:#0052cc;text-decoration:none" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">Jolokia &rarr;</a> &nbsp;<a href="/logreader.html" style="font-size:13px;font-weight:400;color:#0052cc;text-decoration:none" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">Log Reader &rarr;</a> &nbsp;<a href="/sshclient.html" style="font-size:13px;font-weight:400;color:#0052cc;text-decoration:none" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">SSH Client &rarr;</a> &nbsp;<a href="/wsclient.html" style="font-size:13px;font-weight:400;color:#0052cc;text-decoration:none" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">WS Client &rarr;</a> &nbsp;<a href="/dynamicoperation.html" style="font-size:13px;font-weight:400;color:#0052cc;text-decoration:none" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">Dynamic Op &rarr;</a></h1>
 
 <div class="form-panel">
     <!-- Row 1: Operation + Input Source -->
@@ -307,6 +455,13 @@
         <label>Alias</label>
         <select id="alias" onchange="onAliasChange()">
             <option value="">-- Select Alias --</option>
+        </select>
+    </div>
+
+    <div class="form-group" id="responseProcessorGroup" style="display:none">
+        <label>Response Processor</label>
+        <select id="responseProcessor">
+            <option value="">(none)</option>
         </select>
     </div>
 
@@ -422,6 +577,21 @@
     <button id="clearBtn" class="secondary" onclick="clearGrid()" disabled>Clear</button>
     <button id="showOpsBtn" class="secondary" onclick="showAllOperations()">Show All Operations</button>
     <button id="showCachesBtn" class="secondary" onclick="loadCacheNames()">Caches</button>
+    <button id="toggleChartsBtn" class="secondary" onclick="toggleCharts()">&#9685; Charts</button>
+    <button id="pivotBtn" class="secondary" onclick="openPivot()" disabled>&#8644; Pivot</button>
+    <button id="copyHtmlBtn" class="secondary" onclick="copyGridAsHtml()" disabled>&#128203; Copy as HTML</button>
+</div>
+
+<div class="tpl-bar">
+    <span class="tpl-lbl">Template:</span>
+    <input type="text" id="tplName" class="tpl-name-input" placeholder="template name" />
+    <button class="toolbar button secondary" onclick="saveTemplate()" style="padding:6px 14px;font-size:13px;font-weight:500;background:#fff;color:#0052cc;border:1px solid #0052cc;border-radius:4px;cursor:pointer">&#128190; Save</button>
+    <span class="tpl-sep">|</span>
+    <select id="tplSelect" class="tpl-select">
+        <option value="">— load template —</option>
+    </select>
+    <button onclick="loadTemplate()" style="padding:6px 14px;font-size:13px;font-weight:500;background:#fff;color:#0052cc;border:1px solid #0052cc;border-radius:4px;cursor:pointer">&#8595; Load</button>
+    <span id="tplMsg" class="tpl-msg"></span>
 </div>
 
 <div id="cacheModeBar" class="cache-mode-bar">
@@ -444,8 +614,71 @@
     <div class="stat" style="max-width:320px"><span class="stat-label">Batch UUID</span><span id="statUuid" class="stat-value" style="font-size:11px;word-break:break-all">—</span></div>
 </div>
 
+<div id="colChooserBar"><span class="chooser-lbl">Columns:</span></div>
 <div id="rowCountBar" class="row-count-bar"></div>
 <div id="grid" class="ag-theme-alpine"></div>
+
+<div id="pivotModal" class="pivot-overlay" onclick="onPivotOverlayClick(event)">
+  <div class="pivot-box">
+    <div class="pivot-header">
+      <h3>&#8644; Pivot &amp; Chart</h3>
+      <button onclick="closePivot()">&#10005;</button>
+    </div>
+    <div class="pivot-body">
+      <!-- Config panel -->
+      <div class="pivot-config">
+        <div>
+          <div class="pivot-section-label">Available Columns <span style="font-weight:400;text-transform:none;font-size:11px;color:#b3bac5">(click to add)</span></div>
+          <div id="pivotAvailCols" class="pivot-avail-cols"></div>
+        </div>
+        <div>
+          <div class="pivot-section-label">Row Groups</div>
+          <div id="pivotRowGroups" class="pivot-drop-zone" data-hint="Add row group columns…"></div>
+        </div>
+        <div>
+          <div class="pivot-section-label">Pivot Columns</div>
+          <div id="pivotColsZone" class="pivot-drop-zone" data-hint="Add pivot columns (optional)…"></div>
+        </div>
+        <div>
+          <div class="pivot-section-label">Values</div>
+          <div id="pivotValuesZone" class="pivot-drop-zone" data-hint="Add value columns + aggregation…"></div>
+        </div>
+        <div>
+          <div class="pivot-section-label">Display</div>
+          <div class="pivot-controls">
+            <select id="pivotDisplayType">
+              <option value="table">Table</option>
+              <option value="bar">Bar Chart</option>
+              <option value="line">Line Chart</option>
+              <option value="horizontalBar">Horizontal Bar</option>
+              <option value="scatter">Scatter Chart</option>
+              <option value="heatmap">Heat Map</option>
+              <option value="pie">Pie Chart</option>
+            </select>
+            <button class="secondary" onclick="applyPivot()">&#9654; Apply</button>
+            <button class="secondary" onclick="resetPivot()">Reset</button>
+          </div>
+        </div>
+      </div>
+      <!-- Result panel -->
+      <div class="pivot-result">
+        <div class="pivot-result-bar">
+          <button id="pivotExportBtn" class="secondary" onclick="exportPivotCsv()" style="display:none">Export CSV</button>
+          <button id="pivotCopyBtn"   class="secondary" onclick="copyPivotChart()" style="display:none">Copy Chart</button>
+          <button id="pivotHtmlBtn"   class="secondary" onclick="generatePivotHtml()" style="display:none">&#128203; Generate HTML</button>
+          <span id="pivotResultInfo" style="font-size:12px;color:#5e6c84"></span>
+        </div>
+        <div id="pivotTableWrap" class="pivot-table-wrap" style="display:none"></div>
+        <div id="pivotChartWrap" class="pivot-chart-wrap" style="display:none">
+          <canvas id="pivotCanvas"></canvas>
+        </div>
+        <div id="pivotEmpty" style="flex:1;display:flex;align-items:center;justify-content:center;color:#b3bac5;font-size:13px">
+          Configure row groups &amp; values to display.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 
 <div id="chartModal" class="chart-modal-overlay" onclick="onChartOverlayClick(event)">
     <div class="chart-modal-box">
@@ -500,16 +733,18 @@
                 this.eGui.appendChild(filterBtn);
             }
 
-            // Pie chart button
-            const pieBtn = document.createElement('button');
-            pieBtn.className = 'pie-btn';
-            pieBtn.title = `Chart: ${params.displayName}`;
-            pieBtn.textContent = '◑';
-            pieBtn.addEventListener('click', e => {
+            // Pie chart button — visibility controlled by global chartsVisible toggle
+            this.pieBtn = document.createElement('button');
+            this.pieBtn.className = 'pie-btn';
+            this.pieBtn.title = `Chart: ${params.displayName}`;
+            this.pieBtn.textContent = '◑';
+            this.pieBtn.style.display = chartsVisible ? '' : 'none';
+            this.pieBtn.addEventListener('click', e => {
                 e.stopPropagation();
                 showPieChart(params.column.getColId(), params.displayName);
             });
-            this.eGui.appendChild(pieBtn);
+            this.eGui.appendChild(this.pieBtn);
+            PieHeaderComp._instances.add(this);
 
             // Keep sort arrow in sync with column sort state
             this._onSortChanged = () => this._updateSort();
@@ -519,15 +754,24 @@
 
         _updateSort() {
             const s = this.params.column.getSort();
-            this.sortEl.textContent = s === 'asc' ? '↑' : s === 'desc' ? '↓' : '';
+            if (s === 'asc')       { this.sortEl.textContent = '↑'; this.sortEl.style.color = '#0052cc'; }
+            else if (s === 'desc') { this.sortEl.textContent = '↓'; this.sortEl.style.color = '#0052cc'; }
+            else if (this.params.enableSorting) { this.sortEl.textContent = '↕'; this.sortEl.style.color = '#b0bec5'; }
+            else                   { this.sortEl.textContent = ''; }
+        }
+
+        setPieVisible(visible) {
+            this.pieBtn.style.display = visible ? '' : 'none';
         }
 
         getGui()  { return this.eGui; }
 
         destroy() {
             this.params.column.removeEventListener('sortChanged', this._onSortChanged);
+            PieHeaderComp._instances.delete(this);
         }
     }
+    PieHeaderComp._instances = new Set();
 
     // -------------------------------------------------------------------------
     // Pie chart
@@ -601,6 +845,7 @@
         animateRows: true,
         onRowDataUpdated: updateRowCount,
         onFilterChanged:  updateRowCount,
+        onGridColumnsChanged: rebuildColChooser,
         onRowClicked: params => {
             if (cacheMode === 'names' && params.data?.cacheName) {
                 loadCacheEntries(params.data.cacheName);
@@ -634,9 +879,17 @@
                 if (op.aliases && op.aliases.length > 0) {
                     opAliases[op.name] = op.aliases;
                 }
-
             });
             select.disabled = false;
+            // Populate responseProcessor dropdown
+            const rpNames = body.responseProcessors || [];
+            const rpSel = document.getElementById('responseProcessor');
+            rpNames.forEach(n => {
+                const opt = document.createElement('option');
+                opt.value = opt.textContent = n;
+                rpSel.appendChild(opt);
+            });
+            if (rpNames.length > 0) document.getElementById('responseProcessorGroup').style.display = '';
             onOperationChange();
         })
         .catch(() => {
@@ -815,6 +1068,8 @@
 
         const aliasVal = document.getElementById('alias').value;
         if (aliasVal) body.alias = aliasVal;
+        const rpVal = document.getElementById('responseProcessor').value;
+        if (rpVal) body.responseProcessor = rpVal;
 
         // Show the request JSON before sending
         const bodyJson = JSON.stringify(body, null, 2);
@@ -899,6 +1154,8 @@
         document.getElementById('shrinkBtn').disabled   = false;
         document.getElementById('copyJsonBtn').disabled = false;
         document.getElementById('clearBtn').disabled    = false;
+        document.getElementById('pivotBtn').disabled    = false;
+        document.getElementById('copyHtmlBtn').disabled = false;
 
         const { httpStats, summary = {} } = meta;
         const { processed = 0, succeeded = 0, failed = 0 } = summary;
@@ -1048,6 +1305,7 @@
         document.getElementById('shrinkBtn').disabled  = true;
         document.getElementById('copyJsonBtn').disabled = true;
         document.getElementById('clearBtn').disabled   = true;
+        document.getElementById('copyHtmlBtn').disabled = true;
 
         wsStreamHandler = msg => {
             switch (msg.type) {
@@ -1098,6 +1356,8 @@
                         document.getElementById('exportBtn').disabled   = false;
                         document.getElementById('expandBtn').disabled   = false;
                         document.getElementById('shrinkBtn').disabled   = false;
+                        document.getElementById('pivotBtn').disabled    = false;
+                        document.getElementById('copyHtmlBtn').disabled = false;
 
                         setStatus(`Processed: ${meta.processed ?? rowCount} — Succeeded: ${meta.succeeded ?? '?'} — Failed: ${meta.failed ?? '?'}`);
                     }
@@ -1250,6 +1510,8 @@
         document.getElementById('shrinkBtn').disabled    = true;
         document.getElementById('copyJsonBtn').disabled  = true;
         document.getElementById('clearBtn').disabled     = true;
+        document.getElementById('pivotBtn').disabled     = true;
+        document.getElementById('copyHtmlBtn').disabled  = true;
         setStatus('');
     }
 
@@ -1282,6 +1544,703 @@
     }
 
     function exportCsv() { grid.exportDataAsCsv({ fileName: 'batch-results.csv' }); }
+
+    // -------------------------------------------------------------------------
+    // Charts toggle
+    // -------------------------------------------------------------------------
+
+    let chartsVisible = false;
+
+    function toggleCharts() {
+        chartsVisible = !chartsVisible;
+        PieHeaderComp._instances.forEach(h => h.setPieVisible(chartsVisible));
+        const btn = document.getElementById('toggleChartsBtn');
+        btn.style.fontWeight = chartsVisible ? 'bold' : '';
+        btn.style.color      = chartsVisible ? '#0052cc' : '';
+    }
+
+    // -------------------------------------------------------------------------
+    // Pivot & Chart
+    // -------------------------------------------------------------------------
+
+    let pivotChart  = null;
+    let pivotData   = [];          // snapshot of grid rows at open time
+    let pivotCols   = [];          // available column names
+    let pivotRowGrps = [];         // [{col}]
+    let pivotPivCols = [];         // [{col}]
+    let pivotValues  = [];         // [{col, agg}]
+    const AGG_OPTS = ['sum','avg','min','max','count','dcount','first','last'];
+    let _drag = null;              // { type:'avail'|'row-grp'|'piv-col'|'val', col, idx, agg? }
+
+    function openPivot() {
+        pivotData = [];
+        grid.forEachNodeAfterFilter(n => { if (n.data) pivotData.push(n.data); });
+        if (!pivotData.length) { setStatus('No data in grid to pivot.', true); return; }
+
+        pivotCols    = Object.keys(pivotData[0]);
+        pivotRowGrps = [];
+        pivotPivCols = [];
+        pivotValues  = [];
+        _pivotResult = null;
+
+        renderPivotAvail();
+        renderZone('pivotRowGroups', pivotRowGrps, 'row-grp');
+        renderZone('pivotColsZone',  pivotPivCols, 'piv-col');
+        renderValuesZone();
+        setupZoneDrops();
+
+        document.getElementById('pivotTableWrap').style.display = 'none';
+        document.getElementById('pivotChartWrap').style.display = 'none';
+        document.getElementById('pivotEmpty').style.display     = 'flex';
+        document.getElementById('pivotExportBtn').style.display = 'none';
+        document.getElementById('pivotCopyBtn').style.display   = 'none';
+        document.getElementById('pivotResultInfo').textContent  = '';
+        document.getElementById('pivotModal').classList.add('open');
+    }
+
+    function closePivot() {
+        document.getElementById('pivotModal').classList.remove('open');
+        if (pivotChart) { pivotChart.destroy(); pivotChart = null; }
+    }
+
+    function onPivotOverlayClick(e) {
+        if (e.target === document.getElementById('pivotModal')) closePivot();
+    }
+
+    function resetPivot() {
+        pivotRowGrps = []; pivotPivCols = []; pivotValues = [];
+        _pivotResult = null;
+        refreshZones();
+        document.getElementById('pivotTableWrap').style.display = 'none';
+        document.getElementById('pivotChartWrap').style.display = 'none';
+        document.getElementById('pivotEmpty').style.display     = 'flex';
+        document.getElementById('pivotExportBtn').style.display = 'none';
+        document.getElementById('pivotCopyBtn').style.display   = 'none';
+        document.getElementById('pivotHtmlBtn').style.display   = 'none';
+        document.getElementById('pivotResultInfo').textContent  = '';
+    }
+
+    // --- re-render all 3 zones and auto-apply whenever there's something to show ---
+    function refreshZones() {
+        renderPivotAvail();
+        renderZone('pivotRowGroups', pivotRowGrps, 'row-grp');
+        renderZone('pivotColsZone',  pivotPivCols, 'piv-col');
+        renderValuesZone();
+        if (pivotRowGrps.length || pivotValues.length) applyPivot();
+    }
+
+    // --- zone drag-drop setup (called once per element) ---
+    function setupZoneDrops() {
+        [
+            { id: 'pivotRowGroups', getArr: () => pivotRowGrps },
+            { id: 'pivotColsZone',  getArr: () => pivotPivCols },
+            { id: 'pivotValuesZone',getArr: () => pivotValues  },
+        ].forEach(({ id, getArr }) => {
+            const el = document.getElementById(id);
+            if (el._dndReady) return;
+            el._dndReady = true;
+            el.addEventListener('dragover', e => {
+                if (!_drag) return;
+                e.preventDefault();
+                el.classList.add('drag-over');
+                const chips = [...el.querySelectorAll('[data-idx]')];
+                const ov = chips.find(c => {
+                    const r = c.getBoundingClientRect();
+                    return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+                });
+                el._dropAt = ov ? parseInt(ov.dataset.idx) : getArr().length;
+            });
+            el.addEventListener('dragleave', e => {
+                if (!el.contains(e.relatedTarget)) { el.classList.remove('drag-over'); el._dropAt = undefined; }
+            });
+            el.addEventListener('drop', e => {
+                e.preventDefault();
+                el.classList.remove('drag-over');
+                const at = el._dropAt !== undefined ? el._dropAt : getArr().length;
+                el._dropAt = undefined;
+                handleZoneDrop(getArr(), at);
+            });
+        });
+    }
+
+    function handleZoneDrop(targetArr, insertAt) {
+        if (!_drag) return;
+        const { type: srcType, col, idx: srcIdx, agg: srcAgg } = _drag;
+        _drag = null;
+        const getZoneArr = t => t === 'row-grp' ? pivotRowGrps : t === 'piv-col' ? pivotPivCols : t === 'val' ? pivotValues : null;
+        const srcArr = getZoneArr(srcType);
+        let savedAgg = srcAgg || 'sum';
+        if (srcArr) {
+            srcArr.splice(srcIdx, 1);
+            if (srcArr === targetArr && srcIdx < insertAt) insertAt--;
+        }
+        if (!targetArr.find(v => v.col === col)) {
+            const newItem = targetArr === pivotValues ? { col, agg: savedAgg } : { col };
+            insertAt = Math.max(0, Math.min(insertAt, targetArr.length));
+            targetArr.splice(insertAt, 0, newItem);
+        }
+        refreshZones();
+    }
+
+    // --- available columns ---
+    function renderPivotAvail() {
+        const el = document.getElementById('pivotAvailCols');
+        el.innerHTML = '';
+        pivotCols.forEach(col => {
+            const chip = document.createElement('span');
+            chip.className = 'pivot-chip avail';
+            chip.textContent = col;
+            chip.title = 'Drag to a zone, or click to add';
+            chip.draggable = true;
+            chip.addEventListener('dragstart', e => {
+                _drag = { type: 'avail', col };
+                e.dataTransfer.effectAllowed = 'copy';
+                setTimeout(() => chip.classList.add('dragging'), 0);
+            });
+            chip.addEventListener('dragend', () => chip.classList.remove('dragging'));
+            chip.addEventListener('click', () => showPivotColMenu(col, chip));
+            el.appendChild(chip);
+        });
+    }
+
+    let _pivotMenu = null;
+    function showPivotColMenu(col, anchor) {
+        if (_pivotMenu) _pivotMenu.remove();
+        const menu = document.createElement('div');
+        menu.style.cssText = 'position:fixed;background:#fff;border:1px solid #dfe1e6;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.18);z-index:9999;min-width:160px;padding:4px 0;font-size:13px';
+        const items = [
+            { label: '↓ Row Group',      action: () => { if (!pivotRowGrps.find(r=>r.col===col)) { pivotRowGrps.push({col}); refreshZones(); } } },
+            { label: '→ Pivot Column',   action: () => { if (!pivotPivCols.find(r=>r.col===col)) { pivotPivCols.push({col}); refreshZones(); } } },
+            { label: '∑ Value (sum)',     action: () => { pivotValues.push({col, agg:'sum'});   refreshZones(); } },
+            { label: '∑ Value (avg)',     action: () => { pivotValues.push({col, agg:'avg'});   refreshZones(); } },
+            { label: '∑ Value (count)',   action: () => { pivotValues.push({col, agg:'count'}); refreshZones(); } },
+            { label: '∑ Value (dcount)',  action: () => { pivotValues.push({col, agg:'dcount'}); refreshZones(); } },
+        ];
+        items.forEach(({label, action}) => {
+            const div = document.createElement('div');
+            div.textContent = label;
+            div.style.cssText = 'padding:6px 14px;cursor:pointer';
+            div.addEventListener('mouseenter', () => div.style.background = '#e9f0ff');
+            div.addEventListener('mouseleave', () => div.style.background = '');
+            div.addEventListener('click', () => { action(); menu.remove(); _pivotMenu = null; });
+            menu.appendChild(div);
+        });
+        document.body.appendChild(menu);
+        _pivotMenu = menu;
+        const r = anchor.getBoundingClientRect();
+        menu.style.left = r.left + 'px';
+        menu.style.top  = (r.bottom + 4) + 'px';
+        setTimeout(() => document.addEventListener('click', function h() {
+            menu.remove(); _pivotMenu = null;
+            document.removeEventListener('click', h);
+        }), 10);
+    }
+
+    function renderZone(id, arr, chipClass) {
+        const el = document.getElementById(id);
+        el.innerHTML = '';
+        el.classList.toggle('empty', arr.length === 0);
+        arr.forEach((item, i) => {
+            const chip = document.createElement('span');
+            chip.className = `pivot-chip ${chipClass}`;
+            chip.dataset.idx = String(i);
+            chip.draggable = true;
+            chip.innerHTML = `${item.col} <span class="rm" title="Remove">&#215;</span>`;
+            chip.querySelector('.rm').addEventListener('click', e => {
+                e.stopPropagation();
+                arr.splice(i, 1);
+                refreshZones();
+            });
+            chip.addEventListener('dragstart', e => {
+                _drag = { type: chipClass, col: item.col, idx: i };
+                e.dataTransfer.effectAllowed = 'move';
+                setTimeout(() => chip.classList.add('dragging'), 0);
+            });
+            chip.addEventListener('dragend', () => chip.classList.remove('dragging'));
+            el.appendChild(chip);
+        });
+    }
+
+    function renderValuesZone() {
+        const el = document.getElementById('pivotValuesZone');
+        el.innerHTML = '';
+        el.classList.toggle('empty', pivotValues.length === 0);
+        pivotValues.forEach((item, i) => {
+            const chip = document.createElement('span');
+            chip.className = 'pivot-val-chip';
+            chip.dataset.idx = String(i);
+            chip.draggable = true;
+            chip.addEventListener('dragstart', e => {
+                _drag = { type: 'val', col: item.col, idx: i, agg: item.agg };
+                e.dataTransfer.effectAllowed = 'move';
+                setTimeout(() => chip.classList.add('dragging'), 0);
+            });
+            chip.addEventListener('dragend', () => chip.classList.remove('dragging'));
+            const sel = document.createElement('select');
+            AGG_OPTS.forEach(a => {
+                const o = document.createElement('option');
+                o.value = a; o.textContent = a; if (a === item.agg) o.selected = true;
+                sel.appendChild(o);
+            });
+            sel.addEventListener('change', () => { pivotValues[i].agg = sel.value; if (_pivotResult !== null) applyPivot(); });
+            sel.addEventListener('click', e => e.stopPropagation());
+            const label = document.createElement('span');
+            label.textContent = item.col;
+            const rm = document.createElement('span');
+            rm.className = 'rm'; rm.title = 'Remove'; rm.innerHTML = '&#215;';
+            rm.addEventListener('click', e => { e.stopPropagation(); pivotValues.splice(i, 1); refreshZones(); });
+            chip.appendChild(label);
+            chip.appendChild(sel);
+            chip.appendChild(rm);
+            el.appendChild(chip);
+        });
+    }
+
+    // --- pivot computation ---
+    function computePivot(data, rowGrps, pivCols, values) {
+        const rowGrpKeys = rowGrps.map(r => r.col);
+        const pivColKeys = pivCols.map(p => p.col);
+
+        // Collect unique pivot key combos
+        const pivKeySet = new Set();
+        if (pivColKeys.length) {
+            data.forEach(row => pivKeySet.add(pivColKeys.map(c => String(row[c] ?? '')).join(' | ')));
+        }
+        const sortedPivKeys = [...pivKeySet].sort();
+
+        // Group rows by row-group key
+        const groups = new Map();
+        data.forEach(row => {
+            const gk = rowGrpKeys.map(c => String(row[c] ?? '')).join('\x00');
+            if (!groups.has(gk)) {
+                const entry = {};
+                rowGrpKeys.forEach(c => entry[c] = row[c]);
+                entry._rows = [];
+                groups.set(gk, entry);
+            }
+            groups.get(gk)._rows.push(row);
+        });
+
+        // Build header columns
+        const headers = [...rowGrpKeys];
+        if (pivColKeys.length) {
+            sortedPivKeys.forEach(pk => values.forEach(v => headers.push(`${pk} › ${v.col} [${v.agg}]`)));
+        } else {
+            values.forEach(v => headers.push(`${v.col} [${v.agg}]`));
+        }
+
+        // Build result rows
+        const resultRows = [];
+        for (const entry of groups.values()) {
+            const outRow = {};
+            rowGrpKeys.forEach(c => outRow[c] = entry[c]);
+            if (pivColKeys.length) {
+                sortedPivKeys.forEach(pk => {
+                    const subset = entry._rows.filter(r => pivColKeys.map(c => String(r[c] ?? '')).join(' | ') === pk);
+                    values.forEach(v => {
+                        outRow[`${pk} › ${v.col} [${v.agg}]`] = agg(subset.map(r => r[v.col]), v.agg);
+                    });
+                });
+            } else {
+                values.forEach(v => {
+                    outRow[`${v.col} [${v.agg}]`] = agg(entry._rows.map(r => r[v.col]), v.agg);
+                });
+            }
+            resultRows.push(outRow);
+        }
+        return { headers, rows: resultRows };
+    }
+
+    function agg(vals, type) {
+        const nums = vals.map(v => parseFloat(v)).filter(v => !isNaN(v));
+        switch (type) {
+            case 'sum':    return nums.length ? nums.reduce((a,b)=>a+b,0) : null;
+            case 'avg':    return nums.length ? +(nums.reduce((a,b)=>a+b,0)/nums.length).toFixed(4) : null;
+            case 'min':    return nums.length ? Math.min(...nums) : null;
+            case 'max':    return nums.length ? Math.max(...nums) : null;
+            case 'count':  return vals.length;
+            case 'dcount': return new Set(vals.map(v => String(v ?? ''))).size;
+            case 'first':  return vals.length ? vals[0] : null;
+            case 'last':   return vals.length ? vals[vals.length-1] : null;
+            default:       return nums.length ? nums.reduce((a,b)=>a+b,0) : null;
+        }
+    }
+
+    // --- apply pivot & render ---
+    let _pivotResult = null;
+
+    function applyPivot() {
+        if (!pivotRowGrps.length && !pivotValues.length) {
+            document.getElementById('pivotResultInfo').textContent = 'Add at least one row group or value column.';
+            return;
+        }
+        _pivotResult = computePivot(pivotData, pivotRowGrps, pivotPivCols, pivotValues);
+        const display = document.getElementById('pivotDisplayType').value;
+        document.getElementById('pivotResultInfo').textContent = `${_pivotResult.rows.length} row(s), ${_pivotResult.headers.length} column(s)`;
+        document.getElementById('pivotHtmlBtn').style.display = '';
+
+        if (display === 'table')   renderPivotTable(_pivotResult);
+        else if (display === 'heatmap') renderHeatmap(_pivotResult);
+        else if (display === 'pie') renderPieChart(_pivotResult);
+        else renderPivotChart(_pivotResult, display);
+    }
+
+    function renderPivotTable({ headers, rows }) {
+        if (pivotChart) { pivotChart.destroy(); pivotChart = null; }
+        const wrap = document.getElementById('pivotTableWrap');
+        document.getElementById('pivotChartWrap').style.display = 'none';
+        document.getElementById('pivotEmpty').style.display     = 'none';
+        document.getElementById('pivotExportBtn').style.display = '';
+        document.getElementById('pivotCopyBtn').style.display   = 'none';
+
+        const tbl = document.createElement('table');
+        tbl.className = 'pivot-table';
+        const thead = tbl.createTHead();
+        const hr = thead.insertRow();
+        headers.forEach(h => { const th = document.createElement('th'); th.textContent = h; hr.appendChild(th); });
+        const tbody = tbl.createTBody();
+        rows.forEach(row => {
+            const tr = tbody.insertRow();
+            headers.forEach(h => { const td = tr.insertCell(); td.textContent = row[h] ?? ''; });
+        });
+        wrap.innerHTML = '';
+        wrap.appendChild(tbl);
+        wrap.style.display = '';
+    }
+
+    function renderPivotChart({ headers, rows }, displayType) {
+        document.getElementById('pivotTableWrap').style.display = 'none';
+        document.getElementById('pivotEmpty').style.display     = 'none';
+        document.getElementById('pivotExportBtn').style.display = 'none';
+        document.getElementById('pivotCopyBtn').style.display   = '';
+        if (pivotChart) { pivotChart.destroy(); pivotChart = null; }
+
+        const rowGrpKeys = pivotRowGrps.map(r => r.col);
+        const labels = rows.map(r => rowGrpKeys.map(k => r[k] ?? '').join(' | ') || '(all)');
+        const valueKeys = headers.filter(h => !rowGrpKeys.includes(h));
+
+        const datasets = valueKeys.map((key, i) => ({
+            label: key,
+            data: displayType === 'scatter'
+                ? rows.map((r, ri) => ({ x: ri, y: parseFloat(r[key]) || 0 }))
+                : rows.map(r => parseFloat(r[key]) || 0),
+            backgroundColor: generateChartColors(valueKeys.length)[i] + (displayType === 'bar' || displayType === 'horizontalBar' ? 'cc' : '22'),
+            borderColor:     generateChartColors(valueKeys.length)[i],
+            borderWidth: 2,
+            fill: false,
+            tension: 0.3,
+            pointRadius: displayType === 'scatter' ? 5 : 3,
+        }));
+
+        const typeMap = { bar: 'bar', line: 'line', horizontalBar: 'bar', scatter: 'scatter' };
+        const chartType = typeMap[displayType] || 'bar';
+        const isHorizonal = displayType === 'horizontalBar';
+
+        const ctx = document.getElementById('pivotCanvas').getContext('2d');
+        pivotChart = new Chart(ctx, {
+            type: chartType,
+            data: { labels, datasets },
+            options: {
+                indexAxis: isHorizonal ? 'y' : 'x',
+                responsive: true,
+                plugins: { legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 } } } },
+                scales: {
+                    x: { ticks: { font: { size: 11 } } },
+                    y: { ticks: { font: { size: 11 } } }
+                }
+            }
+        });
+        document.getElementById('pivotChartWrap').style.display = 'flex';
+    }
+
+    function renderPieChart({ headers, rows }) {
+        document.getElementById('pivotTableWrap').style.display = 'none';
+        document.getElementById('pivotEmpty').style.display     = 'none';
+        document.getElementById('pivotExportBtn').style.display = 'none';
+        document.getElementById('pivotCopyBtn').style.display   = '';
+        if (pivotChart) { pivotChart.destroy(); pivotChart = null; }
+
+        const rowGrpKeys = pivotRowGrps.map(r => r.col);
+        const valueKeys  = headers.filter(h => !rowGrpKeys.includes(h));
+        const labels     = rows.map(r => rowGrpKeys.map(k => r[k] ?? '').join(' | ') || '(all)');
+
+        if (valueKeys.length <= 1) {
+            // Single value — clean pie
+            const key   = valueKeys[0] || headers[0];
+            const data  = rows.map(r => Math.abs(parseFloat(r[key]) || 0));
+            const ctx   = document.getElementById('pivotCanvas').getContext('2d');
+            pivotChart  = new Chart(ctx, {
+                type: 'pie',
+                data: {
+                    labels,
+                    datasets: [{ data, backgroundColor: generateChartColors(labels.length), borderWidth: 1 }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } },
+                        title:  { display: !!key, text: key, font: { size: 12 } }
+                    }
+                }
+            });
+        } else {
+            // Multiple values — stacked doughnut rings (one ring per value column)
+            const datasets = valueKeys.map((key, ki) => ({
+                label: key,
+                data:  rows.map(r => Math.abs(parseFloat(r[key]) || 0)),
+                backgroundColor: generateChartColors(labels.length).map(c => c + (ki === 0 ? 'ff' : 'aa')),
+                borderWidth: 1,
+                weight: 1,
+            }));
+            const ctx  = document.getElementById('pivotCanvas').getContext('2d');
+            pivotChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: { labels, datasets },
+                options: {
+                    responsive: true,
+                    plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } } }
+                }
+            });
+        }
+        document.getElementById('pivotChartWrap').style.display = 'flex';
+    }
+
+    function renderHeatmap({ headers, rows }) {
+        if (pivotChart) { pivotChart.destroy(); pivotChart = null; }
+        document.getElementById('pivotChartWrap').style.display = 'none';
+        document.getElementById('pivotEmpty').style.display     = 'none';
+        document.getElementById('pivotExportBtn').style.display = '';
+        document.getElementById('pivotCopyBtn').style.display   = 'none';
+
+        const rowGrpKeys = pivotRowGrps.map(r => r.col);
+        const valueKeys  = headers.filter(h => !rowGrpKeys.includes(h));
+        const allNums    = rows.flatMap(r => valueKeys.map(k => parseFloat(r[k]) || 0));
+        const minV = Math.min(...allNums), maxV = Math.max(...allNums);
+        const heat = (v) => {
+            const t = maxV === minV ? 0.5 : (v - minV) / (maxV - minV);
+            const r = Math.round(255 * t), g = Math.round(180 - 120 * t), b = Math.round(255 * (1-t));
+            return `rgb(${r},${g},${b})`;
+        };
+
+        const tbl = document.createElement('table');
+        tbl.className = 'pivot-table';
+        const thead = tbl.createTHead();
+        const hr = thead.insertRow();
+        headers.forEach(h => { const th = document.createElement('th'); th.textContent = h; hr.appendChild(th); });
+        const tbody = tbl.createTBody();
+        rows.forEach(row => {
+            const tr = tbody.insertRow();
+            headers.forEach(h => {
+                const td = tr.insertCell();
+                const v = row[h];
+                td.textContent = v ?? '';
+                if (!rowGrpKeys.includes(h) && v !== null && v !== undefined) {
+                    td.style.background = heat(parseFloat(v) || 0);
+                    td.style.color = '#000';
+                    td.style.textAlign = 'right';
+                }
+            });
+        });
+        const wrap = document.getElementById('pivotTableWrap');
+        wrap.innerHTML = '';
+        wrap.appendChild(tbl);
+        wrap.style.display = '';
+    }
+
+    function exportPivotCsv() {
+        if (!_pivotResult) return;
+        const { headers, rows } = _pivotResult;
+        const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+        const lines = [headers.map(esc).join(','), ...rows.map(r => headers.map(h => esc(r[h])).join(','))];
+        const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+        a.download = 'pivot.csv'; a.click();
+    }
+
+    function copyPivotChart() {
+        const canvas = document.getElementById('pivotCanvas');
+        canvas.toBlob(blob => {
+            navigator.clipboard.write([new ClipboardItem({'image/png': blob})])
+                .then(() => { document.getElementById('pivotResultInfo').textContent = 'Chart copied to clipboard.'; })
+                .catch(() => {
+                    const link = document.createElement('a'); link.download = 'pivot-chart.png';
+                    link.href = canvas.toDataURL(); link.click();
+                });
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    // Column chooser (above main grid)
+    // -------------------------------------------------------------------------
+
+    function rebuildColChooser() {
+        const bar = document.getElementById('colChooserBar');
+        while (bar.children.length > 1) bar.removeChild(bar.lastChild);
+
+        const cols = grid.getAllGridColumns ? grid.getAllGridColumns() : [];
+        if (!cols || cols.length === 0) { bar.style.display = 'none'; return; }
+
+        bar.style.display = 'flex';
+
+        // Select All chip
+        const allChip = document.createElement('label');
+        allChip.className = 'col-chip-idx';
+        allChip.title = 'Select / deselect all columns';
+        allChip.style.cssText = 'background:#e9f0ff;border-color:#4c9aff;font-weight:600';
+
+        const allChk = document.createElement('input');
+        allChk.type = 'checkbox';
+        allChk.id   = 'colChooserSelectAll';
+        allChk.addEventListener('change', () => {
+            cols.forEach(col => grid.setColumnVisible(col.getColId(), allChk.checked));
+            bar.querySelectorAll('.col-chip-idx:not(#colChooserSelectAll) input[type=checkbox]')
+               .forEach(c => { c.checked = allChk.checked; });
+        });
+
+        const allLbl = document.createElement('span');
+        allLbl.textContent = 'All';
+
+        allChip.appendChild(allChk);
+        allChip.appendChild(allLbl);
+        bar.appendChild(allChip);
+
+        const sep = document.createElement('span');
+        sep.style.cssText = 'width:1px;height:16px;background:#dfe1e6;flex-shrink:0;align-self:center';
+        bar.appendChild(sep);
+
+        cols.forEach(col => {
+            const id   = col.getColId();
+            const name = col.getColDef().headerName || id;
+
+            const chip = document.createElement('label');
+            chip.className = 'col-chip-idx';
+            chip.title = id;
+
+            const chk = document.createElement('input');
+            chk.type    = 'checkbox';
+            chk.checked = col.isVisible();
+            chk.addEventListener('change', () => {
+                grid.setColumnVisible(id, chk.checked);
+                syncSelectAll();
+            });
+
+            const lbl = document.createElement('span');
+            lbl.textContent = name;
+
+            chip.appendChild(chk);
+            chip.appendChild(lbl);
+            bar.appendChild(chip);
+        });
+
+        syncSelectAll();
+    }
+
+    function syncSelectAll() {
+        const allChk = document.getElementById('colChooserSelectAll');
+        if (!allChk) return;
+        const bar    = document.getElementById('colChooserBar');
+        const boxes  = [...bar.querySelectorAll('.col-chip-idx:not(#colChooserSelectAll) input[type=checkbox]')];
+        const n      = boxes.filter(c => c.checked).length;
+        if (n === 0) {
+            allChk.checked = false; allChk.indeterminate = false;
+        } else if (n === boxes.length) {
+            allChk.checked = true;  allChk.indeterminate = false;
+        } else {
+            allChk.checked = false; allChk.indeterminate = true;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // HTML generation helpers
+    // -------------------------------------------------------------------------
+
+    function escHtml(s) {
+        return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    let _indexLastHtml = '';
+
+    function showCopyDialog(html, title) {
+        _indexLastHtml = html;
+        let modal = document.getElementById('htmlCopyModal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'htmlCopyModal';
+            modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center';
+            modal.addEventListener('click', e => { if (e.target === modal) modal.style.display = 'none'; });
+            modal.setAttribute('role', 'dialog');
+            modal.setAttribute('aria-modal', 'true');
+            modal.setAttribute('aria-labelledby', 'htmlCopyTitle');
+            modal.innerHTML = `
+                <div style="background:#fff;border-radius:8px;padding:20px;width:92vw;max-width:1200px;max-height:90vh;display:flex;flex-direction:column;gap:12px;box-shadow:0 8px 32px rgba(0,0,0,.3)">
+                    <div style="display:flex;justify-content:space-between;align-items:center;flex-shrink:0">
+                        <span id="htmlCopyTitle" style="font-weight:600;font-size:14px">HTML Preview</span>
+                        <div style="display:flex;gap:8px;align-items:center">
+                            <button id="htmlCopyBtn2" style="padding:6px 16px;background:#0052cc;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:500" onclick="doCopyHtml()">Copy HTML</button>
+                            <button onclick="document.getElementById('htmlCopyModal').style.display='none'" style="background:none;border:none;cursor:pointer;font-size:20px;color:#5e6c84;line-height:1">&times;</button>
+                        </div>
+                    </div>
+                    <div id="htmlPreviewArea" style="flex:1;overflow:auto;border:1px solid #dfe1e6;border-radius:4px;padding:10px;min-height:380px;background:#fff"></div>
+                </div>`;
+            document.body.appendChild(modal);
+        }
+        if (title) document.getElementById('htmlCopyTitle').textContent = title;
+        document.getElementById('htmlPreviewArea').innerHTML = html;
+        modal.style.display = 'flex';
+    }
+
+    function doCopyHtml() {
+        navigator.clipboard.writeText(_indexLastHtml)
+            .then(() => {
+                const btn = document.getElementById('htmlCopyBtn2');
+                const orig = btn.textContent; btn.textContent = 'Copied!'; btn.style.background = '#006644';
+                setTimeout(() => { btn.textContent = orig; btn.style.background = '#0052cc'; }, 1500);
+            })
+            .catch(() => {
+                const ta = document.createElement('textarea');
+                ta.value = _indexLastHtml; document.body.appendChild(ta); ta.select();
+                document.execCommand('copy'); document.body.removeChild(ta);
+            });
+    }
+
+    function buildHtmlTable(headers, rows, cellStyleFn) {
+        const th = 'border:1px solid #ccc;padding:6px 10px;background:#f4f5f7;text-align:left;font-weight:bold;white-space:nowrap;font-family:Arial,sans-serif;font-size:12px;';
+        const td = 'border:1px solid #ccc;padding:5px 10px;font-family:Arial,sans-serif;font-size:12px;';
+        let html = '<table style="border-collapse:collapse"><thead><tr>';
+        headers.forEach(h => { html += `<th style="${th}">${escHtml(h)}</th>`; });
+        html += '</tr></thead><tbody>';
+        rows.forEach(row => {
+            html += '<tr>';
+            headers.forEach(h => {
+                const extra = cellStyleFn ? cellStyleFn(h, row) : '';
+                html += `<td style="${td}${extra}">${escHtml(String(row[h] ?? ''))}</td>`;
+            });
+            html += '</tr>';
+        });
+        html += '</tbody></table>';
+        return html;
+    }
+
+    function generatePivotHtml() {
+        if (!_pivotResult) return;
+        const html = buildHtmlTable(_pivotResult.headers, _pivotResult.rows);
+        showCopyDialog(html, 'Pivot Table HTML');
+    }
+
+    function copyGridAsHtml() {
+        const visibleCols = grid.getAllGridColumns().filter(c => c.isVisible());
+        const rows = [];
+        grid.forEachNodeAfterFilter(n => { if (n.data) rows.push(n.data); });
+        const headers = visibleCols.map(c => c.getColDef().headerName || c.getColId());
+        const fields  = visibleCols.map(c => c.getColDef().field || c.getColId());
+        const mappedRows = rows.map(r => {
+            const m = {};
+            headers.forEach((h, i) => { m[h] = r[fields[i]]; });
+            return m;
+        });
+        const html = buildHtmlTable(headers, mappedRows);
+        showCopyDialog(html, 'Grid HTML');
+    }
 
     // -------------------------------------------------------------------------
     // Cache UI
@@ -1328,16 +2287,18 @@
 
             if (name === 'runtime') {
                 const displayRows = rows.map(r => ({
-                    batchUuid:   r.key,
-                    requestInfo: r.url,
-                    _value:      r.value
+                    batchUuid: r.key,
+                    operation: r.operation,
+                    timestamp: r.timestamp,
+                    _value:    r.value
                 }));
                 grid.setGridOption('columnDefs', [
-                    { field: 'batchUuid',   headerName: 'Batch UUID' },
-                    { field: 'requestInfo', headerName: 'Request Info' }
+                    { field: 'batchUuid', headerName: 'Batch UUID' },
+                    { field: 'operation', headerName: 'Operation' },
+                    { field: 'timestamp', headerName: 'Timestamp' }
                 ]);
                 grid.setGridOption('rowData', displayRows.length > 0
-                    ? displayRows : [{ batchUuid: '(no requests recorded)', requestInfo: '' }]);
+                    ? displayRows : [{ batchUuid: '(no requests recorded)', operation: '', timestamp: '' }]);
                 showCacheModeBar(`Runtime requests: ${rows.length} — click a row to load request`, true);
             } else {
                 grid.setGridOption('columnDefs', rows.length > 0
@@ -1394,6 +2355,167 @@
         bar.textContent = msg;
         bar.className = 'status-bar' + (isError ? ' error' : '');
     }
+
+    // -------------------------------------------------------------------------
+    // Template save / load
+    // -------------------------------------------------------------------------
+
+    function buildSaveContent() {
+        const inputSource = document.getElementById('inputSource').value;
+        const body = {
+            operation:   document.getElementById('operation').value,
+            inputSource
+        };
+
+        const inputFilePath  = document.getElementById('inputFilePath').value.trim();
+        const inputJsonPath  = document.getElementById('inputJsonPath').value.trim();
+        const inputHttpUrl   = document.getElementById('inputHttpUrl').value.trim();
+        const requestIdsRaw  = document.getElementById('requestIds').value.trim();
+        const outputData     = document.getElementById('outputData').value;
+        const outputFilePath = document.getElementById('outputFilePath').value.trim();
+        const httpThreadCount = document.getElementById('httpThreadCount').value.trim();
+        const httpTimeoutMs   = document.getElementById('httpTimeoutMs').value.trim();
+        const inputCount      = document.getElementById('inputCount').value.trim();
+        const debugMode       = document.getElementById('debugMode').value;
+        const executionMode   = document.getElementById('executionMode').value;
+        const alias           = document.getElementById('alias').value;
+
+        if (inputFilePath)  body.inputFilePath  = inputFilePath;
+        if (inputJsonPath)  body.inputJsonPath  = inputJsonPath;
+        if (inputHttpUrl)   body.inputHttpUrl   = inputHttpUrl;
+
+        if (inputSource === 'REQUEST' && requestIdsRaw) {
+            const lines = requestIdsRaw.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+            if (lines.length > 1) {
+                const delim   = lines[0].includes(',') ? ',' : '|';
+                const headers = lines[0].split(delim).map(h => h.trim());
+                const raw     = lines.slice(1).map(line => {
+                    const vals = line.split(delim);
+                    const row  = {};
+                    headers.forEach((h, i) => { row[h] = (vals[i] || '').trim(); });
+                    return row;
+                });
+                if (raw.length > 0) body.raw = raw; else body.ids = headers;
+            } else if (lines.length === 1) {
+                body.ids = lines[0].split(',').map(s => s.trim()).filter(Boolean);
+            }
+        }
+
+        if (outputData !== 'HTTP') body.outputData = outputData;
+        if (outputFilePath)  body.outputFilePath  = outputFilePath;
+        if (httpThreadCount) body.httpThreadCount  = parseInt(httpThreadCount);
+        if (httpTimeoutMs)   body.httpTimeoutMs    = parseInt(httpTimeoutMs);
+        if (inputCount)      body.inputCount       = parseInt(inputCount);
+        if (debugMode && debugMode !== '0') body.debugMode = parseInt(debugMode);
+        if (executionMode === 'ASYNC') body.executionMode = 'ASYNC';
+        if (alias) body.alias = alias;
+
+        return body;
+    }
+
+    async function saveTemplate() {
+        const name = document.getElementById('tplName').value.trim();
+        if (!name) { showTplMsg('Enter a template name', 'error'); return; }
+        try {
+            const res = await fetch('/batch/template', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({ name, content: buildSaveContent() })
+            });
+            const data = await res.json();
+            if (!res.ok) { showTplMsg(data.error || 'Save failed', 'error'); return; }
+            showTplMsg('Saved: ' + name, 'ok');
+            await loadTemplateList();
+            document.getElementById('tplSelect').value = name;
+        } catch (e) {
+            showTplMsg('Error: ' + e.message, 'error');
+        }
+    }
+
+    async function loadTemplateList() {
+        try {
+            const res  = await fetch('/batch/template');
+            const data = await res.json();
+            const sel  = document.getElementById('tplSelect');
+            const cur  = sel.value;
+            sel.innerHTML = '<option value="">— load template —</option>';
+            (data.data || []).forEach(n => {
+                const opt = document.createElement('option');
+                opt.value = opt.textContent = n;
+                sel.appendChild(opt);
+            });
+            if (cur) sel.value = cur;
+        } catch (_) {}
+    }
+
+    async function loadTemplate() {
+        const name = document.getElementById('tplSelect').value;
+        if (!name) { showTplMsg('Select a template first', 'error'); return; }
+        try {
+            const res  = await fetch('/batch/template/' + encodeURIComponent(name));
+            if (!res.ok) { showTplMsg('Template not found', 'error'); return; }
+            const data = await res.json();
+            const c    = data.content || {};
+
+            if (c.operation) {
+                document.getElementById('operation').value = c.operation;
+                onOperationChange();
+            }
+            if (c.inputSource) {
+                document.getElementById('inputSource').value = c.inputSource;
+                onInputSourceChange();
+            }
+            if (c.inputFilePath)  document.getElementById('inputFilePath').value  = c.inputFilePath;
+            if (c.inputJsonPath)  document.getElementById('inputJsonPath').value  = c.inputJsonPath;
+            if (c.inputHttpUrl)   document.getElementById('inputHttpUrl').value   = c.inputHttpUrl;
+
+            if (c.raw && c.raw.length > 0) {
+                const headers = Object.keys(c.raw[0]);
+                const lines   = [headers.join(','),
+                    ...c.raw.map(row => headers.map(h => row[h] ?? '').join(','))];
+                document.getElementById('requestIds').value = lines.join('\n');
+            } else if (c.ids && c.ids.length > 0) {
+                document.getElementById('requestIds').value = c.ids.join('\n');
+            }
+
+            if (c.outputData) {
+                document.getElementById('outputData').value = c.outputData;
+                onOutputDataChange();
+            }
+            if (c.outputFilePath)  document.getElementById('outputFilePath').value  = c.outputFilePath;
+            if (c.httpThreadCount != null) document.getElementById('httpThreadCount').value = c.httpThreadCount;
+            if (c.httpTimeoutMs   != null) document.getElementById('httpTimeoutMs').value   = c.httpTimeoutMs;
+            if (c.inputCount      != null) document.getElementById('inputCount').value      = c.inputCount;
+            if (c.debugMode       != null) document.getElementById('debugMode').value       = c.debugMode;
+            if (c.executionMode)  document.getElementById('executionMode').value  = c.executionMode;
+            if (c.alias) {
+                document.getElementById('alias').value = c.alias;
+            }
+
+            document.getElementById('tplName').value = name;
+            showTplMsg('Loaded: ' + name, 'ok');
+        } catch (e) {
+            showTplMsg('Error: ' + e.message, 'error');
+        }
+    }
+
+    function showTplMsg(msg, type) {
+        const el = document.getElementById('tplMsg');
+        el.textContent = msg;
+        el.className   = 'tpl-msg' + (type ? ' ' + type : '');
+        clearTimeout(el._t);
+        el._t = setTimeout(() => { el.textContent = ''; el.className = 'tpl-msg'; }, 3000);
+    }
+
+    // Load template list on startup
+    loadTemplateList();
+
+    // Global ESC closes any open modal
+    document.addEventListener('keydown', e => {
+        if (e.key !== 'Escape') return;
+        const modal = document.getElementById('htmlCopyModal');
+        if (modal && modal.style.display === 'flex') modal.style.display = 'none';
+    });
 </script>
 
 </body>

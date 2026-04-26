@@ -22,6 +22,7 @@ public class DataRow {
     private final Map<String, Object> metadata = new LinkedHashMap<>();
     private String responseBody;
     private List<Map<String, Object>> expandedRows; // non-null only for multi-row JSON extraction
+    private int lastHttpStatusCode = 0; // 0 = no HTTP activity ran
 
     public DataRow() {}
 
@@ -34,6 +35,9 @@ public class DataRow {
 
     public String getResponseBody()               { return responseBody; }
     public void   setResponseBody(String body)    { this.responseBody = body; }
+
+    public int  getLastHttpStatusCode()             { return lastHttpStatusCode; }
+    public void setLastHttpStatusCode(int code)     { this.lastHttpStatusCode = code; }
 
     public List<Map<String, Object>> getExpandedRows()                      { return expandedRows; }
     public void                      setExpandedRows(List<Map<String, Object>> rows) { this.expandedRows = rows; }

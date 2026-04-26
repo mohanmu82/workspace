@@ -1,9 +1,23 @@
   {
     "name": "jsonreader",
-    "properties": {
-      "attributes": {	
-        "inputSource": "JSON"
-      }
-    },  
-    "mandatoryProperties": "inputJsonPath"
+    "mandatoryProperties": [
+      { "property": "inputJsonPath", "dataType": "string", "defaultValue": "${DATADIR}/sample.json" },
+      { "property": "inputSource", "dataType": "string", "defaultValue": "JSON", "readOnly": true }
+    ],
+  "alias": [
+        {
+          "name": "CLAUDECREDENTAILS",
+          "mandatoryProperties": [
+            { "property": "inputJsonPath", "dataType": "string", "defaultValue": "C:\\Users\\dmath\\.claude\\.credentials.json" },
+            { "property": "inputSource", "dataType": "string", "defaultValue": "JSON", "readOnly": true }
+          ],        
+          "request": {
+              "responseProcessor": "ROW0",
+              "jsonataTransform": {
+                "value": "$.claudeAiOauth"	
+              }               
+          }
+        }
+    ]
+
   }

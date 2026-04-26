@@ -6,12 +6,14 @@ package com.mycompany.batch.enricher;
  */
 public class DataSourceDef {
 
-    /** {@code FILE} or {@code HTTPCONFIG}. */
+    /** {@code FILE}, {@code HTTPCONFIG}, or {@code CACHE}. */
     private String          inputSource  = "FILE";
     /** Path to a delimited (comma or pipe) file. Supports {@code ${DATESTAMP}}. */
     private String          inputFilePath;
     /** URL whose JSON response contains a {@code "data"} array. Supports {@code ${DATESTAMP}}. */
     private String          inputHttpUrl;
+    /** Name of the CacheFactory cache to read rows from when {@code inputSource=CACHE}. */
+    private String          cacheName;
     /** Optional cache — when present the loaded dataset is stored/retrieved from CacheFactory. */
     private DatasetCacheDef cache;
 
@@ -23,6 +25,9 @@ public class DataSourceDef {
 
     public String          getInputHttpUrl()                   { return inputHttpUrl; }
     public void            setInputHttpUrl(String u)           { this.inputHttpUrl = u; }
+
+    public String          getCacheName()                      { return cacheName; }
+    public void            setCacheName(String c)              { this.cacheName = c; }
 
     public DatasetCacheDef getCache()                          { return cache; }
     public void            setCache(DatasetCacheDef c)         { this.cache = c; }

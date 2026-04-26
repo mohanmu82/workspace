@@ -3,6 +3,8 @@ package com.mycompany.batch.web;
 import com.mycompany.batch.cache.CacheFactory;
 import com.mycompany.batch.config.BatchProperties;
 import com.mycompany.batch.model.DataRow;
+import com.mycompany.batch.model.ExecutionMode;
+import com.mycompany.batch.model.OutputDataType;
 import com.mycompany.batch.model.RunRequest;
 import com.mycompany.batch.service.BatchService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -67,13 +69,14 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
     @Override
     protected void handleTextMessage(@org.springframework.lang.NonNull WebSocketSession session, @org.springframework.lang.NonNull TextMessage message) throws Exception {
         try {
-            RunRequest request = objectMapper.readValue(message.getPayload(), RunRequest.class);
+            Map<String, Object> body = objectMapper.readValue(message.getPayload(), new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+            RunRequest request = batchController.deserializeRunRequest(body);
 
             if (request.operation() == null || request.operation().isBlank()) {
                 throw new IllegalArgumentException("operation is required");
             }
 
-            if ("ASYNC".equalsIgnoreCase(request.executionMode())) {
+            if (request.executionMode() == ExecutionMode.ASYNC) {
                 handleAsync(session, request);
             } else {
                 handleSync(session, request);
@@ -94,13 +97,13 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
     // -------------------------------------------------------------------------
 
     private void handleSync(WebSocketSession session, RunRequest request) throws Exception {
-        Map<String, Object> response;
+        Object response;
         BatchService.BatchResult result = batchService.run(request);
         batchController.saveToRuntimeCache(request, result.batchUuid(), result.timestamp());
 
-        String outputData = resolveOutputData(request);
+        OutputDataType outputData = resolveOutputData(request);
 
-        if ("FILE".equals(outputData)) {
+        if (outputData == OutputDataType.FILE) {
             String outputFilePath = resolveOutputFilePath(request);
             if (outputFilePath == null || outputFilePath.isBlank()) {
                 throw new IllegalArgumentException("outputFilePath is required when outputData=FILE");
@@ -110,8 +113,14 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
             response = batchController.buildFileResponse(request.operation(), result, outputFilePath);
         } else {
             response = batchController.buildHttpResponse(request.operation(), result, request.httpThreadCount());
+            if (request.responseProcessor() != null && !request.responseProcessor().isBlank()) {
+                response = batchService.applyResponseProcessor(response, request.responseProcessor());
+            }
         }
 
+        if (request.jsonataTransform() != null) {
+            response = batchService.applyJsonataTransform(response, request.jsonataTransform());
+        }
         sendWsSafe(session, objectMapper.writeValueAsString(response));
     }
 
@@ -124,9 +133,9 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
         final java.util.Map<String, String> opProperties = batchService.loadRequestProperties(resolvedReq);
         final List<DataRow> rows = batchService.buildInputRows(resolvedReq, opProperties);
 
-        final String outputData = resolveOutputData(request);
+        final OutputDataType outputData = resolveOutputData(request);
         final String resolvedOutputFilePath;
-        if ("FILE".equals(outputData)) {
+        if (outputData == OutputDataType.FILE) {
             String raw = resolveOutputFilePath(request);
             if (raw == null || raw.isBlank()) {
                 throw new IllegalArgumentException("outputFilePath is required when outputData=FILE");
@@ -157,11 +166,10 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
         // Kick off async processing — handler returns immediately after this call
         batchService.runAsync(rows, resolvedReq, row -> {
             try {
-                if ("FILE".equals(outputData)) {
+                if (outputData == OutputDataType.FILE) {
                     synchronized (fileLock) {
                         try {
                             if (!headerDone[0]) {
-                                @SuppressWarnings("unchecked")
                                 List<String> cols = batchService.initPsvStream(
                                         row, resolvedOutputFilePath,
                                         Boolean.TRUE.equals(resolvedReq.appendOutput()));
@@ -193,7 +201,7 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
                 meta.put("timestamp",      result.timestamp());
                 meta.put("batchUuid",      batchUuid);
                 if (resolvedReq.httpThreadCount() != null) meta.put("threadCount", resolvedReq.httpThreadCount());
-                if ("FILE".equals(outputData)) meta.put("outputFile", resolvedOutputFilePath);
+                if (outputData == OutputDataType.FILE) meta.put("outputFile", resolvedOutputFilePath);
 
                 Map<String, Object> done = new LinkedHashMap<>();
                 done.put("type",      "done");
@@ -237,15 +245,13 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
     // Helpers
     // -------------------------------------------------------------------------
 
-    private String resolveOutputData(RunRequest request) {
-        if (request.outputData() != null && !request.outputData().isBlank()) {
-            return request.outputData().trim().toUpperCase();
-        }
+    private OutputDataType resolveOutputData(RunRequest request) {
+        if (request.outputData() != null) return request.outputData();
         try {
-            return batchProperties.getOperation(request.operation())
-                    .getOutputData().getType().trim().toUpperCase();
+            OutputDataType t = batchProperties.getOperation(request.operation()).getOutputData().getType();
+            return t != null ? t : OutputDataType.HTTP;
         } catch (Exception e) {
-            return "HTTP";
+            return OutputDataType.HTTP;
         }
     }
 

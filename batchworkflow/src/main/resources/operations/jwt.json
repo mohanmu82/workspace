@@ -1,0 +1,21 @@
+  {
+    "name": "jwt",
+    "properties": {
+        "attributes": {	
+          "inputSource": "FILE",
+          "inputFilePath": "${DATADIR}/jwt.txt",
+          "application": "APP",
+          "operationName": "JWT",
+          "operationDescription": "JWT Token Processing example"
+        }
+  	},    
+    "mandatoryProperties": [
+      { "property": "application", "dataType": "string" },
+      { "property": "username",    "dataType": "string" },
+      { "property": "password",    "dataType": "string" }
+    ],
+    "enricher": {
+      "type": "pre",
+      "enhancer": "classpath:enricher/jwt_enricher.json"
+    }
+  }

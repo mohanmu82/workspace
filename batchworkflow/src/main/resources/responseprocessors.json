@@ -1,0 +1,41 @@
+{
+  "responseProcessorList": [
+      {
+          "name": "ROW0RESPONSEBODY",
+          "responseProcessor": [
+            {
+            "type": "JSONATA",
+            "jsonataTransform": "classpath:transforms/responseBody.jsonata",
+            "onError": "$.error"
+            }
+          ]
+      }
+    ,
+      {
+          "name": "ROW0",
+          "responseProcessor": [
+            {
+            "type": "JSONATA",
+            "jsonataTransform": "classpath:transforms/rowZero.jsonata",
+            "onError": "$.error"
+            }
+          ]
+      }
+      ,
+      {
+          "name": "ROW0RESPONSEBODY2XML",
+          "responseProcessor": [
+            {
+            "type": "JSONATA",
+            "jsonataTransform": "classpath:transforms/responseBody.jsonata",
+            "onError": "$.error"
+            }
+          ,	
+            {
+            "type": "XML2JSON",
+            "onError": "SKIP"
+            }
+            ]
+      }
+  ]
+}

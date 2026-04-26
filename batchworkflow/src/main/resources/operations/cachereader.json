@@ -1,0 +1,7 @@
+  {
+    "name": "cachereader",
+    "mandatoryProperties": [
+      { "property": "inputSource", "dataType": "string", "defaultValue": "CACHE", "readOnly": "true" },
+      { "property": "cacheName", "dataType": "string", "defaultValue": "runtime" }
+    ]
+  }

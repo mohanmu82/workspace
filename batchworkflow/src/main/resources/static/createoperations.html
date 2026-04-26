@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Create Operations</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f4f5f7;
+            color: #172b4d;
+            padding: 24px;
+        }
+
+        .nav { margin-bottom: 18px; }
+        .nav a { font-size: 13px; color: #0052cc; text-decoration: none; }
+        .nav a:hover { text-decoration: underline; }
+
+        h1 { font-size: 20px; font-weight: 600; margin-bottom: 16px; }
+
+        .panel {
+            background: #fff;
+            border: 1px solid #dfe1e6;
+            border-radius: 6px;
+            padding: 16px;
+            margin-bottom: 14px;
+        }
+
+        .panel-title {
+            font-size: 12px;
+            font-weight: 700;
+            color: #5e6c84;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 12px;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .form-group.wide { grid-column: 1 / -1; }
+
+        .form-group label {
+            font-size: 11px;
+            font-weight: 600;
+            color: #5e6c84;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+        }
+
+        .form-group input, .form-group select {
+            padding: 7px 10px;
+            font-size: 14px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            outline: none;
+            background: #fff;
+            font-family: inherit;
+        }
+
+        .form-group input:focus, .form-group select:focus {
+            border-color: #4c9aff;
+            box-shadow: 0 0 0 2px rgba(76,154,255,0.25);
+        }
+
+        .hint { font-size: 11px; color: #a5adba; margin-top: 2px; }
+
+        .toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+            margin-bottom: 14px;
+        }
+
+        button {
+            padding: 8px 18px;
+            font-size: 14px;
+            font-weight: 500;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        button.primary { background: #0052cc; color: #fff; }
+        button.primary:hover { background: #0065ff; }
+        button.primary:disabled { background: #a5adba; cursor: not-allowed; }
+
+        button.secondary {
+            background: #fff;
+            color: #0052cc;
+            border: 1px solid #0052cc;
+        }
+        button.secondary:hover { background: #e9f0ff; }
+        button.secondary:disabled { background: #fff; color: #a5adba; border-color: #a5adba; cursor: not-allowed; }
+
+        button.danger { background: #de350b; color: #fff; }
+        button.danger:hover { background: #ff5630; }
+
+        .status-bar {
+            font-size: 13px;
+            color: #5e6c84;
+            min-height: 18px;
+            margin-bottom: 8px;
+        }
+        .status-bar.error { color: #de350b; }
+        .status-bar.ok    { color: #006644; }
+
+        /* Operations table */
+        .ops-table-wrap {
+            overflow-x: auto;
+            border: 1px solid #dfe1e6;
+            border-radius: 4px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        thead th {
+            background: #f4f5f7;
+            padding: 8px 10px;
+            text-align: left;
+            font-size: 11px;
+            font-weight: 700;
+            color: #5e6c84;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            border-bottom: 1px solid #dfe1e6;
+            white-space: nowrap;
+        }
+
+        tbody tr { border-bottom: 1px solid #ebecf0; }
+        tbody tr:last-child { border-bottom: none; }
+        tbody tr:hover { background: #f8f9ff; }
+        tbody tr.selected { background: #e9f0ff; }
+
+        tbody td { padding: 7px 10px; vertical-align: middle; }
+
+        .method-badge {
+            display: inline-block;
+            padding: 2px 7px;
+            border-radius: 3px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        .method-get    { background: #e3fcef; color: #006644; }
+        .method-post   { background: #e9f0ff; color: #0052cc; }
+        .method-put    { background: #fff7e0; color: #974900; }
+        .method-patch  { background: #fff0fb; color: #8b0060; }
+        .method-delete { background: #ffebe6; color: #de350b; }
+        .method-other  { background: #f4f5f7; color: #5e6c84; }
+
+        .has-body-yes { color: #0052cc; font-weight: 600; font-size: 12px; }
+        .has-body-no  { color: #a5adba; font-size: 12px; }
+
+        .path-cell { font-family: "Cascadia Code", "Fira Code", Consolas, monospace; font-size: 12px; color: #172b4d; }
+        .id-cell   { font-family: "Cascadia Code", "Fira Code", Consolas, monospace; font-size: 12px; }
+
+        .ops-toolbar {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-bottom: 8px;
+            flex-wrap: wrap;
+        }
+        .ops-count { font-size: 12px; color: #5e6c84; margin-left: auto; }
+
+        /* Results */
+        .results-list { list-style: none; padding: 0; }
+        .results-list li {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 0;
+            border-bottom: 1px solid #f4f5f7;
+            font-size: 13px;
+        }
+        .results-list li:last-child { border-bottom: none; }
+        .result-name { font-family: "Cascadia Code", "Fira Code", Consolas, monospace; font-size: 12px; color: #172b4d; }
+        .result-file { font-size: 11px; color: #a5adba; font-family: "Cascadia Code", "Fira Code", Consolas, monospace; }
+        .badge-created { background: #e3fcef; color: #006644; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+        .badge-error   { background: #ffebe6; color: #de350b; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+
+        #results-panel { display: none; }
+    </style>
+</head>
+<body>
+
+<div class="nav"><a href="/">&larr; Batch Runner</a></div>
+<h1>Create Operations from Swagger / OpenAPI</h1>
+
+<!-- Swagger URL panel -->
+<div class="panel">
+    <div class="panel-title">Swagger / OpenAPI Source</div>
+    <div class="form-row">
+        <div class="form-group wide">
+            <label>Swagger JSON URL <span style="color:#de350b" aria-hidden="true">*</span></label>
+            <input type="text" id="swaggerUrl" placeholder="https://example.com/v2/api-docs"
+                   aria-required="true" />
+            <span class="hint">Swagger 2.0 or OpenAPI 3.x JSON endpoint</span>
+        </div>
+    </div>
+    <div class="toolbar">
+        <button class="primary" onclick="fetchOps()">Fetch Operations</button>
+    </div>
+    <div id="fetchStatus" class="status-bar"></div>
+</div>
+
+<!-- Operations table (hidden until fetch succeeds) -->
+<div class="panel" id="ops-panel" style="display:none">
+    <div class="panel-title">Parsed Operations</div>
+
+    <div class="ops-toolbar">
+        <button class="secondary" onclick="selectAll(true)">Select All</button>
+        <button class="secondary" onclick="selectAll(false)">Deselect All</button>
+        <span class="ops-count" id="selCount">0 selected</span>
+    </div>
+
+    <div class="ops-table-wrap">
+        <table id="opsTable">
+            <thead>
+                <tr>
+                    <th style="width:32px" scope="col"><input type="checkbox" id="chkAll" onchange="toggleAll(this.checked)" aria-label="Select all operations" /></th>
+                    <th scope="col">Method</th>
+                    <th scope="col">Operation ID</th>
+                    <th scope="col">Path</th>
+                    <th scope="col">Summary</th>
+                    <th scope="col">Body</th>
+                </tr>
+            </thead>
+            <tbody id="opsBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Create config panel (hidden until fetch succeeds) -->
+<div class="panel" id="create-panel" style="display:none">
+    <div class="panel-title">Operation File Settings</div>
+    <div class="form-row">
+        <div class="form-group">
+            <label>Prefix</label>
+            <input type="text" id="prefix" placeholder="e.g. myapi_" />
+            <span class="hint">Prepended to each operationId for the file name</span>
+        </div>
+        <div class="form-group">
+            <label>Base URL Override</label>
+            <input type="text" id="baseUrl" placeholder="(auto-detected from spec)" />
+            <span class="hint">Leave blank to use the URL parsed from the spec</span>
+        </div>
+        <div class="form-group">
+            <label>Thread Count</label>
+            <input type="number" id="threadCount" value="5" min="1" />
+        </div>
+        <div class="form-group">
+            <label>Timeout (ms)</label>
+            <input type="number" id="timeoutMs" value="3000" min="100" />
+        </div>
+    </div>
+    <div class="toolbar">
+        <button class="primary" id="createBtn" onclick="createSelected()">Create Selected Operations</button>
+    </div>
+    <div id="createStatus" class="status-bar"></div>
+</div>
+
+<!-- Results panel -->
+<div class="panel" id="results-panel">
+    <div class="panel-title" style="display:flex;align-items:center;gap:8px">
+        Results
+        <span id="resultsCount" style="font-size:12px;font-weight:400;color:#5e6c84"></span>
+    </div>
+    <ul class="results-list" id="resultsList"></ul>
+</div>
+
+<script>
+    let _ops   = [];    // parsed operations from last fetch
+    let _baseUrl = '';  // detected base URL from spec
+
+    // -------------------------------------------------------------------------
+    // Fetch & render operations
+    // -------------------------------------------------------------------------
+
+    async function fetchOps() {
+        const url = document.getElementById('swaggerUrl').value.trim();
+        if (!url) { setStatus('fetchStatus', 'Enter a Swagger URL.', 'error'); return; }
+
+        setStatus('fetchStatus', 'Fetching…', '');
+        try {
+            const res  = await fetch('/batch/swagger/parse?url=' + encodeURIComponent(url));
+            const data = await res.json();
+            if (!res.ok) { setStatus('fetchStatus', data.error || 'Error ' + res.status, 'error'); return; }
+
+            _ops     = data.operations || [];
+            _baseUrl = data.baseUrl    || '';
+
+            if (_baseUrl) document.getElementById('baseUrl').placeholder = _baseUrl;
+
+            renderOps();
+            document.getElementById('ops-panel').style.display    = '';
+            document.getElementById('create-panel').style.display = '';
+            setStatus('fetchStatus', 'Loaded ' + _ops.length + ' operation(s).', 'ok');
+        } catch (e) {
+            setStatus('fetchStatus', e.message, 'error');
+        }
+    }
+
+    function renderOps() {
+        const tbody = document.getElementById('opsBody');
+        tbody.innerHTML = '';
+        _ops.forEach((op, i) => {
+            const tr = document.createElement('tr');
+            tr.dataset.idx = i;
+            tr.innerHTML = `
+                <td><input type="checkbox" class="op-chk" data-idx="${i}" checked onchange="updateSelCount()" /></td>
+                <td><span class="method-badge ${methodClass(op.method)}">${esc(op.method)}</span></td>
+                <td class="id-cell">${esc(op.operationId)}</td>
+                <td class="path-cell">${esc(op.path)}</td>
+                <td>${esc(op.summary)}</td>
+                <td>${op.hasBody
+                    ? '<span class="has-body-yes">&#10003; body</span>'
+                    : '<span class="has-body-no">—</span>'}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+        updateSelCount();
+    }
+
+    function methodClass(m) {
+        switch ((m||'').toUpperCase()) {
+            case 'GET':    return 'method-get';
+            case 'POST':   return 'method-post';
+            case 'PUT':    return 'method-put';
+            case 'PATCH':  return 'method-patch';
+            case 'DELETE': return 'method-delete';
+            default:       return 'method-other';
+        }
+    }
+
+    function selectAll(checked) {
+        document.querySelectorAll('.op-chk').forEach(c => c.checked = checked);
+        document.getElementById('chkAll').checked = checked;
+        updateSelCount();
+    }
+
+    function toggleAll(checked) {
+        document.querySelectorAll('.op-chk').forEach(c => c.checked = checked);
+        updateSelCount();
+    }
+
+    function updateSelCount() {
+        const total = document.querySelectorAll('.op-chk').length;
+        const sel   = document.querySelectorAll('.op-chk:checked').length;
+        document.getElementById('selCount').textContent = sel + ' / ' + total + ' selected';
+        // sync header checkbox
+        const chkAll = document.getElementById('chkAll');
+        chkAll.checked       = sel === total && total > 0;
+        chkAll.indeterminate = sel > 0 && sel < total;
+    }
+
+    // -------------------------------------------------------------------------
+    // Create selected
+    // -------------------------------------------------------------------------
+
+    async function createSelected() {
+        const checked = [...document.querySelectorAll('.op-chk:checked')];
+        if (!checked.length) { setStatus('createStatus', 'No operations selected.', 'error'); return; }
+
+        const selectedOps = checked.map(c => _ops[parseInt(c.dataset.idx)]);
+        const prefix      = document.getElementById('prefix').value.trim();
+        const baseUrl     = document.getElementById('baseUrl').value.trim() || _baseUrl;
+        const threadCount = parseInt(document.getElementById('threadCount').value) || 5;
+        const timeoutMs   = parseInt(document.getElementById('timeoutMs').value)   || 3000;
+
+        const body = { prefix, baseUrl, threadCount, timeoutMs, operations: selectedOps };
+
+        setStatus('createStatus', 'Creating…', '');
+        document.getElementById('createBtn').disabled = true;
+        try {
+            const res  = await fetch('/batch/swagger/create', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify(body)
+            });
+            const data = await res.json();
+            if (!res.ok) { setStatus('createStatus', data.error || 'Error ' + res.status, 'error'); return; }
+
+            const ops  = data.operations || [];
+            const nOk  = data.created ?? ops.filter(o => o.status === 'created').length;
+
+            setStatus('createStatus', nOk + ' operation(s) created.', 'ok');
+            renderResults(ops);
+        } catch (e) {
+            setStatus('createStatus', e.message, 'error');
+        } finally {
+            document.getElementById('createBtn').disabled = false;
+        }
+    }
+
+    function renderResults(ops) {
+        const panel = document.getElementById('results-panel');
+        const list  = document.getElementById('resultsList');
+        const count = document.getElementById('resultsCount');
+
+        const nOk  = ops.filter(o => o.status === 'created').length;
+        const nErr = ops.length - nOk;
+        count.textContent = nOk + ' created' + (nErr ? ', ' + nErr + ' failed' : '');
+
+        list.innerHTML = '';
+        ops.forEach(op => {
+            const ok  = op.status === 'created';
+            const li  = document.createElement('li');
+            li.innerHTML = `
+                <span class="${ok ? 'badge-created' : 'badge-error'}">${ok ? 'created' : 'error'}</span>
+                <span class="result-name">${esc(op.name)}</span>
+                ${ok && op.file
+                    ? `<span class="result-file">${esc(op.file)}</span>`
+                    : `<span style="color:#de350b;font-size:12px">${esc(String(op.status).replace(/^error:\s*/,''))}</span>`}
+                ${ok && op.template ? `<span class="result-file">[template: ${esc(op.template)}]</span>` : ''}
+            `;
+            list.appendChild(li);
+        });
+
+        panel.style.display = '';
+        panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
+    function setStatus(id, msg, type) {
+        const el = document.getElementById(id);
+        el.textContent  = msg;
+        el.className    = 'status-bar' + (type ? ' ' + type : '');
+    }
+
+    function esc(s) {
+        return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    // Allow Enter key in the URL field to trigger fetch
+    document.getElementById('swaggerUrl').addEventListener('keydown', e => {
+        if (e.key === 'Enter') fetchOps();
+    });
+</script>
+</body>
+</html>

@@ -1,0 +1,36 @@
+{
+  "name": "dbquery",
+  "activity": [
+    {
+      "name": "dbquery",
+      "properties": {
+        "application": "ICE",
+        "dataEnvironment": "PRD"
+      },
+      "mandatoryProperties": [
+        { "property": "SQL", "dataType": "string", "defaultValue": "SELECT * FROM DUAL" }
+      ],
+      "type": "DB",
+      "db": {
+        "jdbcUrl": "jdbc:oracle:thin:@//dbserver:1521/ORCL",
+        "userName": "username",
+        "password": "password",
+        "timeoutMs": 3000,
+        "sql": "${SQL}",
+        "extract":{
+            "ifError": {
+                 "RESPONSECODE": "$.statusCode",
+                 "RESPONSEBODY": "$.error",
+                 "USERNAME": "$.userName",
+                 "PASSWORD": "$.password",
+                 "JDBCURL": "$.jdbcUrl"
+            }
+        },
+        "cache": {
+          "name": "pubmeddata",
+          "key": "pubmed"
+        }
+      }
+    }
+  ]
+}

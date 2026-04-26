@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jolokia MBeans</title>
+    <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@31/dist/ag-grid-community.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+               background: #f4f5f7; color: #172b4d; padding: 24px; }
+        .nav { margin-bottom: 18px; }
+        .nav a { font-size: 13px; color: #0052cc; text-decoration: none; }
+        .nav a:hover { text-decoration: underline; }
+        h1 { font-size: 20px; font-weight: 600; margin-bottom: 16px; }
+
+        .panel { background: #fff; border: 1px solid #dfe1e6; border-radius: 6px;
+                 padding: 16px; margin-bottom: 14px; }
+        .panel-title { font-size: 12px; font-weight: 700; text-transform: uppercase;
+                       letter-spacing: .5px; margin-bottom: 12px; color: #5e6c84; }
+
+        .form-group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+        .form-group label { font-size: 11px; font-weight: 600; color: #5e6c84;
+                            text-transform: uppercase; letter-spacing: .4px; }
+        .form-group input, .form-group textarea {
+            padding: 7px 10px; font-size: 13px; border: 1px solid #ccc; border-radius: 4px;
+            outline: none; background: #fff; font-family: inherit; }
+        .form-group input:focus, .form-group textarea:focus {
+            border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.25); }
+        .form-group textarea { resize: vertical; min-height: 100px;
+            font-family: "Cascadia Code","Fira Code",Consolas,monospace; font-size: 12px; }
+        .form-group textarea[readonly] { background: #f4f5f7; }
+
+        .toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+        button { padding: 7px 16px; font-size: 13px; font-weight: 500; border: none;
+                 border-radius: 4px; cursor: pointer; white-space: nowrap; }
+        button.primary   { background: #0052cc; color: #fff; }
+        button.primary:hover   { background: #0065ff; }
+        button.secondary { background: #fff; color: #0052cc; border: 1px solid #0052cc; }
+        button.secondary:hover { background: #e9f0ff; }
+        button.tool-btn  { background: #f4f5f7; color: #172b4d; border: 1px solid #dfe1e6;
+                           padding: 5px 12px; font-size: 12px; }
+        button.tool-btn:hover { background: #ebecf0; }
+        button.danger    { background: #de350b; color: #fff; }
+        button.danger:hover { background: #ff5630; }
+
+        .filter-input {
+            padding: 6px 10px; font-size: 13px; border: 1px solid #ccc;
+            border-radius: 4px; outline: none; font-family: inherit; width: 260px; }
+        .filter-input:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.25); }
+        select.kind-select {
+            padding: 6px 10px; font-size: 13px; border: 1px solid #ccc;
+            border-radius: 4px; outline: none; font-family: inherit; }
+        select.kind-select:focus { border-color: #4c9aff; }
+
+        .status-bar { font-size: 13px; color: #5e6c84; min-height: 18px; margin-bottom: 8px; }
+        .status-bar.error { color: #de350b; background: #ffebe6; border: 1px solid #ff8f73;
+                            border-radius: 4px; padding: 6px 10px; }
+        .status-bar.ok    { color: #006644; }
+
+        /* Execution panel */
+        .exec-section { margin-bottom: 14px; }
+        .exec-label { font-size: 11px; font-weight: 700; color: #5e6c84;
+                      text-transform: uppercase; letter-spacing: .4px; margin-bottom: 6px; }
+        .exec-url-box {
+            background: #1e1e2e; color: #cdd6f4;
+            font-family: "Cascadia Code","Fira Code",Consolas,monospace;
+            font-size: 12px; padding: 8px 12px; border-radius: 4px;
+            border-left: 3px solid #4c9aff; margin-bottom: 8px;
+            word-break: break-all; white-space: pre-wrap; }
+        .exec-url-box .method { color: #89dceb; font-weight: 700; margin-right: 8px; }
+        .exec-curl-box {
+            background: #2b2b3b; color: #a6e3a1;
+            font-family: "Cascadia Code","Fira Code",Consolas,monospace;
+            font-size: 11px; padding: 7px 12px; border-radius: 4px;
+            margin-bottom: 8px; word-break: break-all; white-space: pre-wrap; }
+        .divider { border: none; border-top: 1px solid #dfe1e6; margin: 14px 0; }
+
+        .args-grid { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+        .arg-row { display: grid; grid-template-columns: 180px 1fr; gap: 8px; align-items: center; }
+        .arg-label { font-size: 12px; }
+        .arg-name  { font-weight: 600; }
+        .arg-type  { font-size: 11px; color: #5e6c84; margin-left: 6px;
+                     font-family: "Cascadia Code",Consolas,monospace; }
+        .arg-input { padding: 5px 8px; font-size: 13px; border: 1px solid #ccc;
+                     border-radius: 4px; outline: none; font-family: inherit; }
+        .arg-input:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.25); }
+        .no-args { font-size: 12px; color: #5e6c84; font-style: italic; margin-bottom: 10px; }
+
+        .chip {
+            display: inline-block; padding: 2px 8px; border-radius: 10px;
+            font-size: 11px; font-weight: 600; }
+        .chip-op   { background: #e9f0ff; color: #0052cc; }
+        .chip-attr { background: #e3fcef; color: #006644; }
+        .chip-rw   { background: #fff0b3; color: #7a4600; font-size: 10px; }
+
+        #mbeanGrid { width: 100%; height: 420px; }
+    </style>
+</head>
+<body>
+<div class="nav"><a href="/">&larr; Batch Runner</a></div>
+<h1>Jolokia MBeans</h1>
+
+<div class="panel">
+    <div class="panel-title">Connection</div>
+    <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+        <div class="form-group" style="flex:1;min-width:280px;margin-bottom:0">
+            <label>Jolokia Base URL</label>
+            <input type="text" id="jolokiaUrl" value="http://localhost:8080/actuator/jolokia"
+                   onkeydown="if(event.key==='Enter')fetchMBeans()" />
+        </div>
+        <div class="form-group" style="width:130px;margin-bottom:0">
+            <label>Timeout (ms)</label>
+            <input type="number" id="timeoutMs" value="10000" step="1000" min="0" />
+        </div>
+    </div>
+    <div style="height:10px"></div>
+    <div class="toolbar">
+        <button class="primary" onclick="fetchMBeans()">Fetch MBeans</button>
+        <input class="filter-input" id="filterInput" placeholder="Filter by domain, name, description…"
+               oninput="applyFilter()" />
+        <select class="kind-select" id="kindFilter" onchange="applyFilter()">
+            <option value="">All types</option>
+            <option value="ATTRIBUTE">Attributes</option>
+            <option value="OPERATION">Operations</option>
+        </select>
+        <span id="countLabel" style="font-size:12px;color:#5e6c84;margin-left:auto"></span>
+    </div>
+    <div id="statusBar" class="status-bar"></div>
+</div>
+
+<div class="panel" id="gridPanel" style="display:none">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <div class="panel-title" style="margin-bottom:0">MBeans
+            <span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:11px;color:#a5adba;margin-left:8px">
+                click a row to see how to execute it
+            </span>
+        </div>
+        <button class="tool-btn" onclick="viewGridAsHtml()" style="margin-left:auto">&#128203; View as HTML</button>
+    </div>
+    <div id="mbeanGrid" class="ag-theme-alpine"></div>
+</div>
+
+<div class="panel" id="execPanel" style="display:none">
+    <div class="panel-title" id="execTitle">Execute</div>
+
+    <div id="execContent"></div>
+
+    <div id="execStatusBar" class="status-bar"></div>
+
+    <div class="form-group">
+        <label>Result</label>
+        <textarea id="execResult" readonly placeholder="Result will appear here…"></textarea>
+    </div>
+    <div class="toolbar" style="margin-bottom:0">
+        <button class="tool-btn" onclick="prettyPrintResult()">JSON Pretty Print</button>
+        <button class="tool-btn" onclick="copyText(document.getElementById('execResult').value)">Copy Result</button>
+    </div>
+</div>
+
+<script>
+    let grid    = null;
+    let allRows = [];
+    let currentRow = null;
+
+    // -------------------------------------------------------------------------
+    // Fetch & parse
+    // -------------------------------------------------------------------------
+
+    async function fetchMBeans() {
+        const base = getBaseUrl();
+        if (!base) { setStatus('URL is required', 'error'); return; }
+        setStatus('Fetching MBeans…');
+        document.getElementById('execPanel').style.display = 'none';
+        try {
+            const resp = await fetch(base + '/list', {
+                signal: AbortSignal.timeout(getTimeout())
+            });
+            if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + resp.statusText);
+            const data = await resp.json();
+            if (data.status !== 200) throw new Error(data.error || 'Jolokia returned status ' + data.status);
+            allRows = buildRows(data.value);
+            renderGrid(allRows);
+            setStatus('Loaded ' + allRows.length.toLocaleString() + ' entries', 'ok');
+        } catch (e) {
+            setStatus(e.message, 'error');
+        }
+    }
+
+    function buildRows(value) {
+        const rows = [];
+        for (const [domain, mbeans] of Object.entries(value || {})) {
+            for (const [props, info] of Object.entries(mbeans)) {
+                if (typeof info !== 'object' || info === null) continue;
+                const mbean = domain + ':' + props;
+
+                for (const [name, aInfo] of Object.entries(info.attr || {})) {
+                    rows.push({
+                        domain, props, mbean, kind: 'ATTRIBUTE', name,
+                        typeOrReturn : aInfo.type  || '',
+                        access       : aInfo.rw ? 'R/W' : 'R',
+                        args         : '',
+                        desc         : aInfo.desc  || '',
+                        _info        : aInfo
+                    });
+                }
+
+                for (const [name, oInfo] of Object.entries(info.op || {})) {
+                    const variants = Array.isArray(oInfo) ? oInfo : [oInfo];
+                    for (const op of variants) {
+                        const argList = (op.args || []).map(a => (a.type || '?') + ' ' + (a.name || '')).join(', ');
+                        rows.push({
+                            domain, props, mbean, kind: 'OPERATION', name,
+                            typeOrReturn : op.ret  || 'void',
+                            access       : '',
+                            args         : argList,
+                            desc         : op.desc || '',
+                            _info        : op
+                        });
+                    }
+                }
+            }
+        }
+        rows.sort((a, b) => a.domain.localeCompare(b.domain) || a.name.localeCompare(b.name));
+        return rows;
+    }
+
+    // -------------------------------------------------------------------------
+    // Grid
+    // -------------------------------------------------------------------------
+
+    function renderGrid(rows) {
+        const colDefs = [
+            { field: 'domain',       headerName: 'Domain',            width: 180,  filter: true },
+            { field: 'props',        headerName: 'MBean Properties',  flex: 2,     filter: true },
+            { field: 'kind',         headerName: 'Kind',              width: 115,  filter: true,
+              cellRenderer: p => `<span class="chip ${p.value === 'OPERATION' ? 'chip-op' : 'chip-attr'}">${p.value}</span>` },
+            { field: 'name',         headerName: 'Name',              width: 220,  filter: true },
+            { field: 'typeOrReturn', headerName: 'Type / Return',     width: 200,  filter: true },
+            { field: 'access',       headerName: 'Access',            width: 75,
+              cellRenderer: p => p.value === 'R/W'
+                  ? `<span class="chip chip-rw">R/W</span>`
+                  : (p.value ? `<span style="font-size:12px">${p.value}</span>` : '') },
+            { field: 'args',         headerName: 'Arguments',         flex: 2,     filter: true },
+            { field: 'desc',         headerName: 'Description',       flex: 2,     filter: true },
+        ];
+
+        document.getElementById('gridPanel').style.display = 'block';
+
+        if (grid) {
+            grid.setGridOption('columnDefs', colDefs);
+            grid.setGridOption('rowData', rows);
+        } else {
+            grid = agGrid.createGrid(document.getElementById('mbeanGrid'), {
+                columnDefs    : colDefs,
+                rowData       : rows,
+                defaultColDef : { resizable: true, sortable: true },
+                rowSelection  : 'single',
+                onRowClicked  : e => showExecPanel(e.data),
+                tooltipShowDelay: 300
+            });
+        }
+        document.getElementById('countLabel').textContent = rows.length.toLocaleString() + ' entries';
+    }
+
+    // -------------------------------------------------------------------------
+    // Filter
+    // -------------------------------------------------------------------------
+
+    function applyFilter() {
+        if (!grid) return;
+        const text = document.getElementById('filterInput').value.toLowerCase();
+        const kind = document.getElementById('kindFilter').value;
+        const filtered = allRows.filter(r => {
+            if (kind && r.kind !== kind) return false;
+            if (!text) return true;
+            return [r.domain, r.props, r.name, r.args, r.desc, r.typeOrReturn]
+                .some(v => v && v.toLowerCase().includes(text));
+        });
+        grid.setGridOption('rowData', filtered);
+        document.getElementById('countLabel').textContent =
+            filtered.length.toLocaleString() + ' / ' + allRows.length.toLocaleString() + ' entries';
+    }
+
+    // -------------------------------------------------------------------------
+    // Execution panel
+    // -------------------------------------------------------------------------
+
+    function showExecPanel(row) {
+        currentRow = row;
+        document.getElementById('execResult').value  = '';
+        document.getElementById('execStatusBar').textContent = '';
+        document.getElementById('execStatusBar').className   = 'status-bar';
+        document.getElementById('execPanel').style.display   = 'block';
+
+        const base = getBaseUrl();
+
+        if (row.kind === 'ATTRIBUTE') {
+            renderAttributePanel(row, base);
+        } else {
+            renderOperationPanel(row, base);
+        }
+
+        document.getElementById('execPanel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function renderAttributePanel(row, base) {
+        document.getElementById('execTitle').textContent =
+            'Attribute — ' + row.domain + ' → ' + row.name;
+
+        const readUrl  = base + '/read/' + jolokiaPath(row.mbean) + '/' + enc(row.name);
+        const readCurl = "curl '" + readUrl + "'";
+
+        let html = `
+            <div class="exec-section">
+                <div class="exec-label">Read Attribute</div>
+                <div class="exec-url-box"><span class="method">GET</span>${readUrl}</div>
+                <div class="exec-curl-box">${escHtml(readCurl)}</div>
+                <div class="toolbar">
+                    <button class="primary"   onclick="readAttribute()">Read</button>
+                    <button class="tool-btn"  onclick="copyText(${escAttr(readCurl)})">Copy cURL</button>
+                </div>
+            </div>`;
+
+        if (row.access === 'R/W') {
+            const writeCurl = "curl -X POST '" + base + "' -H 'Content-Type: application/json' -d '{\"type\":\"write\",\"mbean\":\"" + row.mbean + "\",\"attribute\":\"" + row.name + "\",\"value\":<newValue>}'";
+            html += `
+                <hr class="divider">
+                <div class="exec-section">
+                    <div class="exec-label">Write Attribute</div>
+                    <div class="form-group">
+                        <label>New Value <span style="font-size:10px;font-weight:400">(JSON — e.g. 42, "hello", true)</span></label>
+                        <input type="text" id="writeValue" placeholder='42 or "hello" or true' class="arg-input" style="max-width:320px" />
+                    </div>
+                    <div class="exec-url-box"><span class="method">POST</span>${base}</div>
+                    <div class="exec-curl-box">${escHtml(writeCurl)}</div>
+                    <div class="toolbar">
+                        <button class="secondary" onclick="writeAttribute()">Write</button>
+                        <button class="tool-btn"  onclick="copyText(${escAttr(writeCurl)})">Copy cURL</button>
+                    </div>
+                </div>`;
+        }
+
+        document.getElementById('execContent').innerHTML = html;
+    }
+
+    function renderOperationPanel(row, base) {
+        document.getElementById('execTitle').textContent =
+            'Operation — ' + row.domain + ' → ' + row.name +
+            ' → ' + (row.typeOrReturn || 'void');
+
+        const argDefs = row._info.args || [];
+
+        let argsHtml = '';
+        if (argDefs.length > 0) {
+            argsHtml = '<div class="exec-label">Arguments</div><div class="args-grid">';
+            argDefs.forEach((a, i) => {
+                argsHtml += `
+                    <div class="arg-row">
+                        <label class="arg-label">
+                            <span class="arg-name">${escHtml(a.name || 'arg' + i)}</span>
+                            <span class="arg-type">${escHtml(a.type || '')}</span>
+                        </label>
+                        <input type="text" id="opArg_${i}" class="arg-input"
+                               placeholder="${escAttr(a.type || '')}"
+                               title="${escAttr(a.desc || a.type || '')}" />
+                    </div>`;
+            });
+            argsHtml += '</div>';
+        } else {
+            argsHtml = '<div class="no-args">No arguments required</div>';
+        }
+
+        const exampleBody = JSON.stringify({
+            type      : 'exec',
+            mbean     : row.mbean,
+            operation : row.name,
+            arguments : argDefs.map((a, i) => '<' + (a.name || 'arg' + i) + '>')
+        }, null, 2);
+
+        const execCurl = "curl -X POST '" + base + "' -H 'Content-Type: application/json' -d '" + exampleBody.replace(/'/g, "'\\''") + "'";
+
+        const html = `
+            ${argsHtml}
+            <div class="exec-section" style="margin-top:6px">
+                <div class="exec-label">Execution</div>
+                <div class="exec-url-box"><span class="method">POST</span>${base}
+<span style="color:#a6adc8;font-size:11px">${escHtml(exampleBody)}</span></div>
+                <div class="exec-curl-box">${escHtml(execCurl)}</div>
+                <div class="toolbar">
+                    <button class="primary"  onclick="executeOp()">Execute</button>
+                    <button class="tool-btn" onclick="copyExecCurl()">Copy cURL</button>
+                    <span style="font-size:12px;color:#5e6c84">Returns: <strong>${escHtml(row.typeOrReturn || 'void')}</strong></span>
+                </div>
+            </div>`;
+
+        document.getElementById('execContent').innerHTML = html;
+    }
+
+    // -------------------------------------------------------------------------
+    // Jolokia calls
+    // -------------------------------------------------------------------------
+
+    async function readAttribute() {
+        if (!currentRow) return;
+        const base = getBaseUrl();
+        const url  = base + '/read/' + jolokiaPath(currentRow.mbean) + '/' + enc(currentRow.name);
+        setExecStatus('Reading…');
+        try {
+            const resp = await fetch(url, { signal: AbortSignal.timeout(getTimeout()) });
+            const data = await resp.json();
+            document.getElementById('execResult').value = JSON.stringify(data, null, 2);
+            if (data.status === 200) {
+                setExecStatus('Read OK', 'ok');
+            } else {
+                setExecStatus('Error: ' + (data.error || data.status), 'error');
+            }
+        } catch (e) {
+            setExecStatus(e.message, 'error');
+        }
+    }
+
+    async function writeAttribute() {
+        if (!currentRow) return;
+        const base  = getBaseUrl();
+        const rawVal = document.getElementById('writeValue')?.value ?? '';
+        let value;
+        try { value = JSON.parse(rawVal); } catch { value = rawVal; }
+        setExecStatus('Writing…');
+        try {
+            const resp = await fetch(base, {
+                method  : 'POST',
+                headers : { 'Content-Type': 'application/json' },
+                body    : JSON.stringify({ type: 'write', mbean: currentRow.mbean,
+                                          attribute: currentRow.name, value }),
+                signal  : AbortSignal.timeout(getTimeout())
+            });
+            const data = await resp.json();
+            document.getElementById('execResult').value = JSON.stringify(data, null, 2);
+            setExecStatus(data.status === 200 ? 'Written OK' : 'Error: ' + (data.error || data.status),
+                          data.status === 200 ? 'ok' : 'error');
+        } catch (e) {
+            setExecStatus(e.message, 'error');
+        }
+    }
+
+    async function executeOp() {
+        if (!currentRow) return;
+        const base    = getBaseUrl();
+        const argDefs = currentRow._info.args || [];
+        const args    = argDefs.map((_, i) => {
+            const raw = document.getElementById('opArg_' + i)?.value ?? '';
+            try { return JSON.parse(raw); } catch { return raw; }
+        });
+        setExecStatus('Executing…');
+        try {
+            const resp = await fetch(base, {
+                method  : 'POST',
+                headers : { 'Content-Type': 'application/json' },
+                body    : JSON.stringify({ type: 'exec', mbean: currentRow.mbean,
+                                          operation: currentRow.name, arguments: args }),
+                signal  : AbortSignal.timeout(getTimeout())
+            });
+            const data = await resp.json();
+            document.getElementById('execResult').value = JSON.stringify(data, null, 2);
+            setExecStatus(data.status === 200 ? 'Executed OK' : 'Error: ' + (data.error || data.status),
+                          data.status === 200 ? 'ok' : 'error');
+        } catch (e) {
+            setExecStatus(e.message, 'error');
+        }
+    }
+
+    function copyExecCurl() {
+        if (!currentRow) return;
+        const base    = getBaseUrl();
+        const argDefs = currentRow._info.args || [];
+        const args    = argDefs.map((a, i) => {
+            const raw = document.getElementById('opArg_' + i)?.value ?? '';
+            try { return JSON.parse(raw); } catch { return raw; }
+        });
+        const body = JSON.stringify({ type: 'exec', mbean: currentRow.mbean,
+                                      operation: currentRow.name, arguments: args });
+        const curl = "curl -X POST '" + base + "' -H 'Content-Type: application/json' -d '" +
+                     body.replace(/'/g, "'\\''") + "'";
+        copyText(curl);
+    }
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
+    function getBaseUrl() {
+        return document.getElementById('jolokiaUrl').value.trim().replace(/\/+$/, '');
+    }
+
+    function getTimeout() {
+        const v = parseInt(document.getElementById('timeoutMs').value, 10);
+        return (isNaN(v) || v <= 0) ? 10000 : v;
+    }
+
+    /** Encode a single segment for Jolokia GET URLs (minimal — colon/equals preserved). */
+    function jolokiaPath(mbean) {
+        return mbean.replace(/!/g, '!!').replace(/\//g, '!/');
+    }
+
+    function enc(s) { return encodeURIComponent(s); }
+
+    function escHtml(s) {
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function escAttr(s) {
+        return "'" + String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'") + "'";
+    }
+
+    function copyText(text) {
+        navigator.clipboard.writeText(text).then(
+            () => { setExecStatus('Copied to clipboard', 'ok'); },
+            () => { setExecStatus('Copy failed — use Ctrl+C', 'error'); }
+        );
+    }
+
+    function setStatus(msg, type) {
+        const el = document.getElementById('statusBar');
+        el.textContent = msg;
+        el.className   = 'status-bar' + (type ? ' ' + type : '');
+    }
+
+    function setExecStatus(msg, type) {
+        const el = document.getElementById('execStatusBar');
+        el.textContent = msg;
+        el.className   = 'status-bar' + (type ? ' ' + type : '');
+    }
+
+    function prettyPrintResult() {
+        const ta  = document.getElementById('execResult');
+        const src = ta.value.trim();
+        if (!src) return;
+        try {
+            ta.value = JSON.stringify(JSON.parse(src), null, 2);
+            setExecStatus('Formatted', 'ok');
+        } catch (e) {
+            setExecStatus('Not valid JSON: ' + e.message, 'error');
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // View as HTML
+    // -------------------------------------------------------------------------
+    let _lastHtml = '';
+
+    function viewGridAsHtml() {
+        if (!grid) return;
+        const cols = grid.getAllGridColumns().filter(c => c.isVisible());
+        if (!cols.length) return;
+        const headers = cols.map(c => c.getColDef().headerName || c.getColId());
+        const fields  = cols.map(c => c.getColDef().field     || c.getColId());
+        const rows = [];
+        grid.forEachNodeAfterFilter(n => { if (n.data) rows.push(n.data); });
+        const mapped = rows.map(r => { const m = {}; headers.forEach((h,i) => { m[h] = r[fields[i]]; }); return m; });
+        showHtmlModal(buildHtmlTableStr(headers, mapped));
+    }
+
+    function buildHtmlTableStr(headers, rows) {
+        const th = 'border:1px solid #ccc;padding:6px 10px;background:#f4f5f7;text-align:left;font-weight:bold;white-space:nowrap;font-family:Arial,sans-serif;font-size:12px;';
+        const td = 'border:1px solid #ccc;padding:5px 10px;font-family:Arial,sans-serif;font-size:12px;';
+        let html = '<table style="border-collapse:collapse"><thead><tr>';
+        headers.forEach(h => { html += `<th style="${th}">${escStr(h)}</th>`; });
+        html += '</tr></thead><tbody>';
+        rows.forEach(row => {
+            html += '<tr>';
+            headers.forEach(h => { html += `<td style="${td}">${escStr(String(row[h] ?? ''))}</td>`; });
+            html += '</tr>';
+        });
+        html += '</tbody></table>';
+        return html;
+    }
+
+    function escStr(s) {
+        return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function showHtmlModal(html) {
+        _lastHtml = html;
+        let modal = document.getElementById('htmlCopyModal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'htmlCopyModal';
+            modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center';
+            modal.addEventListener('click', e => { if (e.target === modal) modal.style.display = 'none'; });
+            modal.setAttribute('role', 'dialog');
+            modal.setAttribute('aria-modal', 'true');
+            modal.innerHTML = `
+                <div style="background:#fff;border-radius:8px;padding:20px;width:92vw;max-width:1200px;max-height:90vh;display:flex;flex-direction:column;gap:12px;box-shadow:0 8px 32px rgba(0,0,0,.3)">
+                    <div style="display:flex;justify-content:space-between;align-items:center;flex-shrink:0">
+                        <span style="font-weight:600;font-size:14px">HTML Preview</span>
+                        <div style="display:flex;gap:8px;align-items:center">
+                            <button id="htmlCopyBtn" style="padding:6px 16px;background:#0052cc;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:500" onclick="doCopyHtml()">Copy HTML</button>
+                            <button onclick="document.getElementById('htmlCopyModal').style.display='none'" style="background:none;border:none;cursor:pointer;font-size:20px;color:#5e6c84;line-height:1">&times;</button>
+                        </div>
+                    </div>
+                    <div id="htmlPreviewArea" style="flex:1;overflow:auto;border:1px solid #dfe1e6;border-radius:4px;padding:10px;min-height:380px;background:#fff"></div>
+                </div>`;
+            document.body.appendChild(modal);
+        }
+        document.getElementById('htmlPreviewArea').innerHTML = html;
+        modal.style.display = 'flex';
+    }
+
+    function doCopyHtml() {
+        navigator.clipboard.writeText(_lastHtml)
+            .then(() => {
+                const btn = document.getElementById('htmlCopyBtn');
+                const orig = btn.textContent; btn.textContent = 'Copied!'; btn.style.background = '#006644';
+                setTimeout(() => { btn.textContent = orig; btn.style.background = '#0052cc'; }, 1500);
+            })
+            .catch(() => {
+                const ta = document.createElement('textarea');
+                ta.value = _lastHtml; document.body.appendChild(ta); ta.select();
+                document.execCommand('copy'); document.body.removeChild(ta);
+            });
+    }
+</script>
+</body>
+</html>

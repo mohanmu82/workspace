@@ -5,8 +5,12 @@
           "operationName": "ICE",
           "operationDescription": "Published data from pubmed"
         }
-  		}    
-      ,"activity": [
+  		},    
+      "mandatoryProperties": [
+        { "property": "inputFilePath", "dataType": "string", "defaultValue": "${DATADIR}/pubmed.txt" }
+        ,{ "property": "inputSource", "dataType": "string", "defaultValue": "FILE" }
+      ],
+      "activity": [
       {
         "name": "httpgetpubmeddata",
         "properties": {
@@ -30,7 +34,7 @@
         "type": "dataextraction",
         "dataExtraction": {
           "type": "XPATH",
-          "threadCount": 10,
+          "threadCount": 20,
           "config": "classpath:xpaths/pubmed_xpaths.json"
         }
       }
@@ -41,10 +45,12 @@
     },
     "alias": [
       {
-        "name": "TECH",
+        "name": "TECHTOP10WITHFILTER",
+        "mandatoryProperties": [
+        ],
         "request": {
           "inputSource": "FILE",
-          "inputFilePath": "C:/work/data/pubmed.txt",
+          "inputFilePath": "${DATADIR}/pubmed.txt",
           "inputCount": 10,
           "filterInput": [
             { "column": "ID", "value": "11748935", "operation": "eq" }
@@ -53,9 +59,11 @@
       },
       {
         "name": "ASYNC_ALL",
+        "mandatoryProperties": [
+        ],
         "request": {
           "inputSource": "FILE",
-          "inputFilePath": "C:/work/data/pubmed2.txt",
+          "inputFilePath": "${DATADIR}/pubmed2.txt",
           "executionMode": "ASYNC",
           "httpThreadCount": 10,
           "httpTimeoutMs": 5000

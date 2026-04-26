@@ -1,0 +1,1253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Client</title>
+    <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@31/dist/ag-grid-community.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+               background: #f4f5f7; color: #172b4d; padding: 24px; }
+        .nav { margin-bottom: 18px; }
+        .nav a { font-size: 13px; color: #0052cc; text-decoration: none; }
+        .nav a:hover { text-decoration: underline; }
+        h1 { font-size: 20px; font-weight: 600; margin-bottom: 16px; }
+
+        .panel { background: #fff; border: 1px solid #dfe1e6; border-radius: 6px;
+                 padding: 16px; margin-bottom: 14px; }
+        .panel-title { font-size: 12px; font-weight: 700; text-transform: uppercase;
+                       letter-spacing: .5px; margin-bottom: 12px; color: #5e6c84; }
+
+        .form-row { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+        .url-input { flex: 1; padding: 7px 10px; font-size: 13px; border: 1px solid #ccc;
+                     border-radius: 4px; outline: none; font-family: inherit; }
+        .url-input:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.25); }
+
+        button { padding: 7px 16px; font-size: 13px; font-weight: 500; border: none;
+                 border-radius: 4px; cursor: pointer; white-space: nowrap; }
+        button.primary   { background: #0052cc; color: #fff; }
+        button.primary:hover  { background: #0065ff; }
+        button.danger    { background: #de350b; color: #fff; }
+        button.danger:hover   { background: #ff5630; }
+        button.secondary { background: #fff; color: #0052cc; border: 1px solid #0052cc; }
+        button.secondary:hover { background: #e9f0ff; }
+        button.tool-btn  { background: #f4f5f7; color: #172b4d; border: 1px solid #dfe1e6;
+                           padding: 5px 12px; font-size: 12px; }
+        button.tool-btn:hover { background: #ebecf0; }
+        button:disabled  { opacity: .45; cursor: not-allowed; }
+
+        .ws-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+                  background: #a5adba; margin-right: 6px; vertical-align: middle; }
+        .ws-dot.connected    { background: #57d9a3; }
+        .ws-dot.connecting   { background: #ffab00; }
+        .ws-dot.disconnected { background: #de350b; }
+        .ws-status-text { font-size: 13px; color: #5e6c84; }
+
+        textarea.msg-area {
+            width: 100%; padding: 8px 10px;
+            font-family: "Cascadia Code", "Fira Code", Consolas, "Courier New", monospace;
+            font-size: 13px; border: 1px solid #ccc; border-radius: 4px; outline: none;
+            resize: vertical; min-height: 80px;
+        }
+        textarea.msg-area:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.25); }
+
+        .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+
+        /* Message log */
+        #msgLog {
+            background: #0d1117; color: #c9d1d9;
+            font-family: "Cascadia Code", "Fira Code", Consolas, "Courier New", monospace;
+            font-size: 12px; line-height: 1.55; padding: 10px 12px;
+            border-radius: 6px; border: 1px solid #21262d;
+            height: 200px; overflow-y: auto; overflow-x: auto;
+            white-space: pre; word-break: normal; margin-bottom: 8px;
+        }
+        .msg-sent   { color: #79c0ff; }
+        .msg-recv   { color: #c9d1d9; }
+        .msg-sys    { color: #8b949e; font-style: italic; }
+        .msg-err    { color: #ff7b72; }
+
+        /* Grid area */
+        #gridSection { display: none; }
+
+        #colChooserBar {
+            display: none; flex-wrap: wrap; gap: 6px; padding: 8px 12px;
+            background: #fff; border: 1px solid #dfe1e6; border-radius: 6px;
+            margin-bottom: 8px; align-items: center;
+        }
+        #colChooserBar .chooser-lbl {
+            font-size: 11px; font-weight: 700; color: #5e6c84;
+            text-transform: uppercase; letter-spacing: .4px; margin-right: 4px; flex-shrink: 0;
+        }
+        .col-chip-idx {
+            display: inline-flex; align-items: center; gap: 5px;
+            padding: 3px 10px; background: #f4f5f7; border: 1px solid #dfe1e6;
+            border-radius: 16px; font-size: 12px; cursor: pointer; user-select: none;
+        }
+        .col-chip-idx:hover { background: #ebecf0; }
+        .col-chip-idx input[type=checkbox] { cursor: pointer; margin: 0; }
+        .col-chip-idx span { font-weight: 500; }
+
+        .grid-toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+                        margin-bottom: 8px; }
+        .row-count-bar { font-size: 12px; color: #5e6c84; text-align: right; margin-bottom: 4px; min-height: 16px; }
+
+        #grid { width: 100%; height: 480px; }
+
+        .pie-btn {
+            padding: 0 4px; font-size: 11px; border: 1px solid #ccc;
+            border-radius: 3px; cursor: pointer; background: #fff; color: #0052cc;
+            line-height: 1.5; margin-left: 4px; flex-shrink: 0;
+        }
+        .pie-btn:hover { background: #e9f0ff; }
+
+        /* Chart modal */
+        .chart-modal-overlay {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;
+        }
+        .chart-modal-overlay.open { display: flex; }
+        .chart-modal-box {
+            background: #fff; border-radius: 8px; padding: 20px 24px;
+            width: 480px; max-width: 95vw; box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+        }
+        .chart-modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+        .chart-modal-header h3 { font-size: 16px; font-weight: 600; margin: 0; }
+        .chart-modal-header button { background: none; border: none; font-size: 18px; cursor: pointer; color: #5e6c84; padding: 2px 6px; border-radius: 4px; }
+        .chart-modal-header button:hover { background: #f4f5f7; }
+
+        /* Pivot modal */
+        .pivot-overlay {
+            display: none; position: fixed; inset: 0;
+            background: rgba(0,0,0,0.5); z-index: 1100;
+            align-items: flex-start; justify-content: center; padding: 24px 0; overflow-y: auto;
+        }
+        .pivot-overlay.open { display: flex; }
+        .pivot-box { background: #fff; border-radius: 8px; width: 96vw; max-width: 1200px;
+                     box-shadow: 0 8px 40px rgba(0,0,0,0.28); display: flex; flex-direction: column; }
+        .pivot-header { display: flex; justify-content: space-between; align-items: center;
+                        padding: 14px 20px; border-bottom: 1px solid #e0e4ea; flex-shrink: 0; }
+        .pivot-header h3 { font-size: 16px; font-weight: 600; margin: 0; }
+        .pivot-header button { background: none; border: none; font-size: 18px; cursor: pointer; color: #5e6c84; padding: 2px 6px; border-radius: 4px; }
+        .pivot-header button:hover { background: #f4f5f7; }
+        .pivot-body { display: flex; gap: 0; min-height: 0; }
+        .pivot-config { width: 380px; min-width: 300px; border-right: 1px solid #e0e4ea;
+                        padding: 16px; display: flex; flex-direction: column; gap: 12px;
+                        overflow-y: auto; max-height: calc(90vh - 56px); }
+        .pivot-section-label { font-size: 11px; font-weight: 600; color: #5e6c84;
+                               text-transform: uppercase; letter-spacing: .5px; margin-bottom: 4px; }
+        .pivot-avail-cols { display: flex; flex-wrap: wrap; gap: 5px; max-height: 120px;
+                            overflow-y: auto; padding: 6px; background: #f4f5f7;
+                            border: 1px solid #dfe1e6; border-radius: 4px; }
+        .pivot-chip { display: inline-flex; align-items: center; gap: 4px;
+                      padding: 2px 8px; border-radius: 12px; font-size: 12px;
+                      cursor: pointer; user-select: none; white-space: nowrap; }
+        .pivot-chip.avail   { background: #e9f0ff; color: #0052cc; border: 1px solid #4c9aff; }
+        .pivot-chip.avail:hover { background: #d0e4ff; }
+        .pivot-chip.row-grp { background: #e3fcef; color: #006644; border: 1px solid #57d9a3; }
+        .pivot-chip.piv-col { background: #fff0b3; color: #7a4600; border: 1px solid #ffab00; }
+        .pivot-chip.val-col { background: #ffe2dd; color: #bf2600; border: 1px solid #ff7452; }
+        .pivot-chip .rm     { font-size: 14px; line-height: 1; color: inherit; opacity: .7; }
+        .pivot-chip .rm:hover { opacity: 1; }
+        .pivot-drop-zone { min-height: 36px; display: flex; flex-wrap: wrap; gap: 5px;
+                           padding: 6px; background: #f4f5f7; border: 1px dashed #b3bac5; border-radius: 4px; }
+        .pivot-drop-zone.empty::after { content: attr(data-hint); color: #b3bac5; font-size: 12px; font-style: italic; }
+        .pivot-drop-zone.drag-over { background: #edf2ff !important; border-color: #4c9aff !important; }
+        .pivot-chip.dragging, .pivot-val-chip.dragging { opacity: 0.3; }
+        .pivot-val-chip { display: inline-flex; align-items: center; gap: 4px;
+                          padding: 2px 6px; border-radius: 12px; font-size: 12px;
+                          background: #ffe2dd; color: #bf2600; border: 1px solid #ff7452; }
+        .pivot-val-chip select { font-size: 11px; border: none; background: transparent;
+                                 color: #bf2600; cursor: pointer; padding: 0; outline: none; }
+        .pivot-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+        .pivot-controls select { flex: 1; padding: 5px 8px; border: 1px solid #dfe1e6; border-radius: 4px; font-size: 13px; }
+        .pivot-result { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 16px; overflow: hidden; }
+        .pivot-result-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-shrink: 0; }
+        .pivot-table-wrap { flex: 1; overflow: auto; border: 1px solid #dfe1e6; border-radius: 4px; }
+        .pivot-table { border-collapse: collapse; font-size: 12px; width: 100%; }
+        .pivot-table th { background: #f4f5f7; padding: 5px 10px; text-align: left;
+                          border: 1px solid #dfe1e6; white-space: nowrap; position: sticky; top: 0; z-index: 1; }
+        .pivot-table td { padding: 4px 10px; border: 1px solid #dfe1e6; white-space: nowrap; }
+        .pivot-table tr:nth-child(even) td { background: #fafbfc; }
+        .pivot-chart-wrap { flex: 1; display: flex; align-items: center; justify-content: center;
+                            min-height: 300px; position: relative; }
+        #pivotCanvas { max-height: 480px; }
+    </style>
+</head>
+<body>
+<div class="nav"><a href="/">&larr; Batch Runner</a></div>
+<h1>WebSocket Client</h1>
+
+<!-- Connection panel -->
+<div class="panel">
+    <div class="panel-title">Connection</div>
+    <div id="profileRow" style="display:none;align-items:center;gap:8px;margin-bottom:10px">
+        <label style="font-size:11px;font-weight:600;color:#5e6c84;text-transform:uppercase;letter-spacing:.4px;flex-shrink:0">Profile</label>
+        <select id="profileSelect" onchange="applyProfile()"
+                style="padding:6px 10px;font-size:13px;border:1px solid #ccc;border-radius:4px;outline:none;font-family:inherit;min-width:200px">
+            <option value="">— select —</option>
+        </select>
+    </div>
+    <div class="form-row">
+        <input class="url-input" type="text" id="wsUrl"
+               placeholder="ws://localhost:8080/batch/ws" />
+        <button class="primary"  id="btnConnect"    onclick="connectWs()">Connect</button>
+        <button class="danger"   id="btnDisconnect" onclick="disconnectWs()" disabled>Disconnect</button>
+    </div>
+    <div>
+        <span class="ws-dot" id="wsDot"></span>
+        <span class="ws-status-text" id="statusText">Not connected</span>
+    </div>
+</div>
+
+<!-- Send message panel -->
+<div class="panel">
+    <div class="panel-title">Send Message</div>
+    <textarea class="msg-area" id="requestArea"
+              placeholder='Enter JSON or plain text to send…&#10;{"operation":"mypub","inputSource":"REQUEST","ids":["123"]}'></textarea>
+    <div class="toolbar">
+        <button class="primary"   id="btnSend"     onclick="sendMessage()" disabled>Send</button>
+        <button class="tool-btn"  onclick="formatJson()">Format JSON</button>
+        <button class="tool-btn"  onclick="clearLog()">Clear Log</button>
+    </div>
+</div>
+
+<!-- Message log -->
+<div class="panel">
+    <div class="panel-title">Message Log</div>
+    <div id="msgLog"></div>
+</div>
+
+<!-- Grid section (shown when response is an array) -->
+<div id="gridSection" class="panel">
+    <div class="panel-title">Data Grid</div>
+    <div class="grid-toolbar">
+        <button class="tool-btn" onclick="grid.autoSizeAllColumns()">Expand Cols</button>
+        <button class="tool-btn" onclick="grid.sizeColumnsToFit()">Fit Cols</button>
+        <button class="tool-btn" onclick="exportCsv()">Export CSV</button>
+        <button class="tool-btn" id="toggleChartsBtn" onclick="toggleCharts()">&#9685; Charts</button>
+        <button class="tool-btn" id="pivotBtn" onclick="openPivot()">&#8644; Pivot</button>
+        <button class="tool-btn" onclick="clearGrid()">Clear Grid</button>
+        <button class="tool-btn" onclick="viewAsHtml()">&#128203; View as HTML</button>
+    </div>
+    <div id="colChooserBar"><span class="chooser-lbl">Columns:</span></div>
+    <div id="rowCountBar" class="row-count-bar"></div>
+    <div id="grid" class="ag-theme-alpine"></div>
+</div>
+
+<!-- Chart modal -->
+<div id="chartModal" class="chart-modal-overlay" onclick="onChartOverlayClick(event)">
+    <div class="chart-modal-box">
+        <div class="chart-modal-header">
+            <h3 id="chartTitle"></h3>
+            <button onclick="closeChart()">&#10005;</button>
+        </div>
+        <canvas id="pieCanvas"></canvas>
+    </div>
+</div>
+
+<!-- Pivot modal -->
+<div id="pivotModal" class="pivot-overlay" onclick="onPivotOverlayClick(event)">
+  <div class="pivot-box">
+    <div class="pivot-header">
+      <h3>&#8644; Pivot &amp; Chart</h3>
+      <button onclick="closePivot()">&#10005;</button>
+    </div>
+    <div class="pivot-body">
+      <div class="pivot-config">
+        <div>
+          <div class="pivot-section-label">Available Columns <span style="font-weight:400;text-transform:none;font-size:11px;color:#b3bac5">(click to add)</span></div>
+          <div id="pivotAvailCols" class="pivot-avail-cols"></div>
+        </div>
+        <div>
+          <div class="pivot-section-label">Row Groups</div>
+          <div id="pivotRowGroups" class="pivot-drop-zone" data-hint="Add row group columns…"></div>
+        </div>
+        <div>
+          <div class="pivot-section-label">Pivot Columns</div>
+          <div id="pivotColsZone" class="pivot-drop-zone" data-hint="Add pivot columns (optional)…"></div>
+        </div>
+        <div>
+          <div class="pivot-section-label">Values</div>
+          <div id="pivotValuesZone" class="pivot-drop-zone" data-hint="Add value columns + aggregation…"></div>
+        </div>
+        <div>
+          <div class="pivot-section-label">Display</div>
+          <div class="pivot-controls">
+            <select id="pivotDisplayType">
+              <option value="table">Table</option>
+              <option value="bar">Bar Chart</option>
+              <option value="line">Line Chart</option>
+              <option value="horizontalBar">Horizontal Bar</option>
+              <option value="scatter">Scatter Chart</option>
+              <option value="heatmap">Heat Map</option>
+              <option value="pie">Pie Chart</option>
+            </select>
+            <button class="secondary" onclick="applyPivot()">&#9654; Apply</button>
+            <button class="secondary" onclick="resetPivot()">Reset</button>
+          </div>
+        </div>
+      </div>
+      <div class="pivot-result">
+        <div class="pivot-result-bar">
+          <button id="pivotExportBtn" class="secondary" onclick="exportPivotCsv()" style="display:none">Export CSV</button>
+          <button id="pivotCopyBtn"   class="secondary" onclick="copyPivotChart()" style="display:none">Copy Chart</button>
+          <span id="pivotResultInfo" style="font-size:12px;color:#5e6c84"></span>
+        </div>
+        <div id="pivotTableWrap" class="pivot-table-wrap" style="display:none"></div>
+        <div id="pivotChartWrap" class="pivot-chart-wrap" style="display:none">
+          <canvas id="pivotCanvas"></canvas>
+        </div>
+        <div id="pivotEmpty" style="flex:1;display:flex;align-items:center;justify-content:center;color:#b3bac5;font-size:13px">
+          Configure row groups &amp; values to display.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+    // =========================================================================
+    // PieHeaderComp — custom ag-Grid header with chart button
+    // =========================================================================
+    class PieHeaderComp {
+        init(params) {
+            this.params = params;
+            this.eGui = document.createElement('div');
+            this.eGui.style.cssText = 'display:flex;align-items:center;width:100%;gap:2px;overflow:hidden';
+
+            const sortArea = document.createElement('span');
+            sortArea.style.cssText = 'flex:1;display:flex;align-items:center;min-width:0;overflow:hidden;cursor:pointer;user-select:none';
+            sortArea.addEventListener('click', e => { if (params.enableSorting) params.progressSort(e.shiftKey); });
+
+            this.labelEl = document.createElement('span');
+            this.labelEl.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+            this.labelEl.textContent = params.displayName;
+
+            this.sortEl = document.createElement('span');
+            this.sortEl.style.cssText = 'flex-shrink:0;font-size:10px;margin-left:2px;color:#5e6c84';
+
+            sortArea.appendChild(this.labelEl);
+            sortArea.appendChild(this.sortEl);
+            this.eGui.appendChild(sortArea);
+
+            if (params.enableMenu) {
+                const filterBtn = document.createElement('button');
+                filterBtn.className = 'pie-btn';
+                filterBtn.title = 'Filter';
+                filterBtn.innerHTML = '&#9661;';
+                filterBtn.style.fontSize = '10px';
+                filterBtn.addEventListener('click', e => { e.stopPropagation(); params.showColumnMenu(filterBtn); });
+                this.eGui.appendChild(filterBtn);
+            }
+
+            this.pieBtn = document.createElement('button');
+            this.pieBtn.className = 'pie-btn';
+            this.pieBtn.title = `Chart: ${params.displayName}`;
+            this.pieBtn.textContent = '◑';
+            this.pieBtn.style.display = chartsVisible ? '' : 'none';
+            this.pieBtn.addEventListener('click', e => {
+                e.stopPropagation();
+                showPieChart(params.column.getColId(), params.displayName);
+            });
+            this.eGui.appendChild(this.pieBtn);
+            PieHeaderComp._instances.add(this);
+
+            this._onSortChanged = () => this._updateSort();
+            params.column.addEventListener('sortChanged', this._onSortChanged);
+            this._updateSort();
+        }
+
+        _updateSort() {
+            const s = this.params.column.getSort();
+            if (s === 'asc')       { this.sortEl.textContent = '↑'; this.sortEl.style.color = '#0052cc'; }
+            else if (s === 'desc') { this.sortEl.textContent = '↓'; this.sortEl.style.color = '#0052cc'; }
+            else if (this.params.enableSorting) { this.sortEl.textContent = '↕'; this.sortEl.style.color = '#b0bec5'; }
+            else                   { this.sortEl.textContent = ''; }
+        }
+
+        setPieVisible(v) { this.pieBtn.style.display = v ? '' : 'none'; }
+        getGui()  { return this.eGui; }
+        destroy() {
+            this.params.column.removeEventListener('sortChanged', this._onSortChanged);
+            PieHeaderComp._instances.delete(this);
+        }
+    }
+    PieHeaderComp._instances = new Set();
+
+    // =========================================================================
+    // ag-Grid
+    // =========================================================================
+    const gridOptions = {
+        columnDefs: [],
+        rowData: [],
+        defaultColDef: { sortable: true, filter: true, resizable: true, minWidth: 80,
+                         headerComponent: PieHeaderComp },
+        animateRows: true,
+        onRowDataUpdated: updateRowCount,
+        onFilterChanged:  updateRowCount,
+        onGridColumnsChanged: rebuildColChooser,
+    };
+
+    const grid = agGrid.createGrid(document.getElementById('grid'), gridOptions);
+
+    function loadGridData(rows) {
+        if (!Array.isArray(rows) || rows.length === 0) return;
+        grid.setGridOption('columnDefs', Object.keys(rows[0]).map(k => ({ field: k, headerName: k })));
+        grid.setGridOption('rowData', rows);
+        grid.sizeColumnsToFit();
+        document.getElementById('gridSection').style.display = 'block';
+    }
+
+    function clearGrid() {
+        grid.setGridOption('rowData', []);
+        grid.setGridOption('columnDefs', []);
+        document.getElementById('gridSection').style.display = 'none';
+        document.getElementById('rowCountBar').textContent = '';
+    }
+
+    function exportCsv() { grid.exportDataAsCsv({ fileName: 'ws-data.csv' }); }
+
+    function updateRowCount() {
+        const total = grid.getDisplayedRowCount();
+        const bar = document.getElementById('rowCountBar');
+        bar.textContent = total === 0 ? '' : `Rows: ${total}`;
+    }
+
+    // =========================================================================
+    // Column chooser
+    // =========================================================================
+    function rebuildColChooser() {
+        const bar  = document.getElementById('colChooserBar');
+        while (bar.children.length > 1) bar.removeChild(bar.lastChild);
+
+        const cols = grid.getAllGridColumns ? grid.getAllGridColumns() : [];
+        if (!cols || cols.length === 0) { bar.style.display = 'none'; return; }
+
+        bar.style.display = 'flex';
+
+        const allChip = document.createElement('label');
+        allChip.className = 'col-chip-idx';
+        allChip.title = 'Select / deselect all columns';
+        allChip.style.cssText = 'background:#e9f0ff;border-color:#4c9aff;font-weight:600';
+
+        const allChk = document.createElement('input');
+        allChk.type = 'checkbox';
+        allChk.id   = 'colChooserSelectAll';
+        allChk.addEventListener('change', () => {
+            cols.forEach(col => grid.setColumnVisible(col.getColId(), allChk.checked));
+            bar.querySelectorAll('.col-chip-idx:not(#colChooserSelectAll) input[type=checkbox]')
+               .forEach(c => { c.checked = allChk.checked; });
+        });
+        const allLbl = document.createElement('span');
+        allLbl.textContent = 'All';
+        allChip.appendChild(allChk);
+        allChip.appendChild(allLbl);
+        bar.appendChild(allChip);
+
+        const sep = document.createElement('span');
+        sep.style.cssText = 'width:1px;height:16px;background:#dfe1e6;flex-shrink:0;align-self:center';
+        bar.appendChild(sep);
+
+        cols.forEach(col => {
+            const id   = col.getColId();
+            const name = col.getColDef().headerName || id;
+            const chip = document.createElement('label');
+            chip.className = 'col-chip-idx';
+            chip.title = id;
+            const chk = document.createElement('input');
+            chk.type    = 'checkbox';
+            chk.checked = col.isVisible();
+            chk.addEventListener('change', () => { grid.setColumnVisible(id, chk.checked); syncSelectAll(); });
+            const lbl = document.createElement('span');
+            lbl.textContent = name;
+            chip.appendChild(chk);
+            chip.appendChild(lbl);
+            bar.appendChild(chip);
+        });
+
+        syncSelectAll();
+    }
+
+    function syncSelectAll() {
+        const allChk = document.getElementById('colChooserSelectAll');
+        if (!allChk) return;
+        const bar   = document.getElementById('colChooserBar');
+        const boxes = [...bar.querySelectorAll('.col-chip-idx:not(#colChooserSelectAll) input[type=checkbox]')];
+        const n     = boxes.filter(c => c.checked).length;
+        if (n === 0)             { allChk.checked = false; allChk.indeterminate = false; }
+        else if (n === boxes.length) { allChk.checked = true;  allChk.indeterminate = false; }
+        else                     { allChk.checked = false; allChk.indeterminate = true; }
+    }
+
+    // =========================================================================
+    // Charts toggle + pie chart
+    // =========================================================================
+    let chartsVisible = false;
+    let pieChart = null;
+
+    function toggleCharts() {
+        chartsVisible = !chartsVisible;
+        PieHeaderComp._instances.forEach(h => h.setPieVisible(chartsVisible));
+        const btn = document.getElementById('toggleChartsBtn');
+        btn.style.fontWeight = chartsVisible ? 'bold' : '';
+        btn.style.color      = chartsVisible ? '#0052cc' : '';
+    }
+
+    function showPieChart(colId, displayName) {
+        const counts = {};
+        grid.forEachNodeAfterFilter(node => {
+            if (!node.data) return;
+            const val = node.data[colId];
+            const key = (val !== null && val !== undefined && val !== '') ? String(val) : '(blank)';
+            counts[key] = (counts[key] || 0) + 1;
+        });
+        const labels = Object.keys(counts);
+        if (labels.length === 0) return;
+
+        document.getElementById('chartTitle').textContent = displayName;
+        document.getElementById('chartModal').classList.add('open');
+
+        if (pieChart) { pieChart.destroy(); pieChart = null; }
+        const ctx = document.getElementById('pieCanvas').getContext('2d');
+        pieChart = new Chart(ctx, {
+            type: 'pie',
+            data: { labels, datasets: [{ data: labels.map(l => counts[l]),
+                    backgroundColor: generateChartColors(labels.length) }] },
+            options: { plugins: { legend: { position: 'right', labels: { boxWidth: 14, font: { size: 12 } } } } }
+        });
+    }
+
+    function closeChart() {
+        document.getElementById('chartModal').classList.remove('open');
+        if (pieChart) { pieChart.destroy(); pieChart = null; }
+    }
+
+    function onChartOverlayClick(e) {
+        if (e.target === document.getElementById('chartModal')) closeChart();
+    }
+
+    function generateChartColors(n) {
+        const palette = [
+            '#4c9aff','#36b37e','#ff5630','#ffab00','#6554c0',
+            '#00b8d9','#ff7452','#57d9a3','#998dd9','#79e2f2',
+            '#f6c90e','#e84393','#00c7c7','#ff9f43','#a29bfe'
+        ];
+        return Array.from({ length: n }, (_, i) => palette[i % palette.length]);
+    }
+
+    // =========================================================================
+    // Pivot
+    // =========================================================================
+    let pivotChart  = null;
+    let pivotData   = [];
+    let pivotCols   = [];
+    let pivotRowGrps = [];
+    let pivotPivCols = [];
+    let pivotValues  = [];
+    let _pivotResult = null;
+    let _drag = null;
+    const AGG_OPTS = ['sum','avg','min','max','count','dcount','first','last'];
+
+    function openPivot() {
+        pivotData = [];
+        grid.forEachNodeAfterFilter(n => { if (n.data) pivotData.push(n.data); });
+        if (!pivotData.length) return;
+
+        pivotCols    = Object.keys(pivotData[0]);
+        pivotRowGrps = [];
+        pivotPivCols = [];
+        pivotValues  = [];
+        _pivotResult = null;
+
+        renderPivotAvail();
+        renderZone('pivotRowGroups', pivotRowGrps, 'row-grp');
+        renderZone('pivotColsZone',  pivotPivCols, 'piv-col');
+        renderValuesZone();
+        setupZoneDrops();
+
+        document.getElementById('pivotTableWrap').style.display = 'none';
+        document.getElementById('pivotChartWrap').style.display = 'none';
+        document.getElementById('pivotEmpty').style.display     = 'flex';
+        document.getElementById('pivotExportBtn').style.display = 'none';
+        document.getElementById('pivotCopyBtn').style.display   = 'none';
+        document.getElementById('pivotResultInfo').textContent  = '';
+        document.getElementById('pivotModal').classList.add('open');
+    }
+
+    function closePivot() {
+        document.getElementById('pivotModal').classList.remove('open');
+        if (pivotChart) { pivotChart.destroy(); pivotChart = null; }
+    }
+
+    function onPivotOverlayClick(e) {
+        if (e.target === document.getElementById('pivotModal')) closePivot();
+    }
+
+    function resetPivot() {
+        pivotRowGrps = []; pivotPivCols = []; pivotValues = []; _pivotResult = null;
+        refreshZones();
+        document.getElementById('pivotTableWrap').style.display = 'none';
+        document.getElementById('pivotChartWrap').style.display = 'none';
+        document.getElementById('pivotEmpty').style.display     = 'flex';
+        document.getElementById('pivotExportBtn').style.display = 'none';
+        document.getElementById('pivotCopyBtn').style.display   = 'none';
+        document.getElementById('pivotResultInfo').textContent  = '';
+    }
+
+    function refreshZones() {
+        renderPivotAvail();
+        renderZone('pivotRowGroups', pivotRowGrps, 'row-grp');
+        renderZone('pivotColsZone',  pivotPivCols, 'piv-col');
+        renderValuesZone();
+        if (pivotRowGrps.length || pivotValues.length) applyPivot();
+    }
+
+    function setupZoneDrops() {
+        [
+            { id: 'pivotRowGroups', getArr: () => pivotRowGrps },
+            { id: 'pivotColsZone',  getArr: () => pivotPivCols },
+            { id: 'pivotValuesZone',getArr: () => pivotValues  },
+        ].forEach(({ id, getArr }) => {
+            const el = document.getElementById(id);
+            if (el._dndReady) return;
+            el._dndReady = true;
+            el.addEventListener('dragover', e => {
+                if (!_drag) return;
+                e.preventDefault();
+                el.classList.add('drag-over');
+                const chips = [...el.querySelectorAll('[data-idx]')];
+                const ov = chips.find(c => {
+                    const r = c.getBoundingClientRect();
+                    return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+                });
+                el._dropAt = ov ? parseInt(ov.dataset.idx) : getArr().length;
+            });
+            el.addEventListener('dragleave', e => {
+                if (!el.contains(e.relatedTarget)) { el.classList.remove('drag-over'); el._dropAt = undefined; }
+            });
+            el.addEventListener('drop', e => {
+                e.preventDefault();
+                el.classList.remove('drag-over');
+                const at = el._dropAt !== undefined ? el._dropAt : getArr().length;
+                el._dropAt = undefined;
+                handleZoneDrop(getArr(), at);
+            });
+        });
+    }
+
+    function handleZoneDrop(targetArr, insertAt) {
+        if (!_drag) return;
+        const { type: srcType, col, idx: srcIdx, agg: srcAgg } = _drag;
+        _drag = null;
+        const getZoneArr = t => t === 'row-grp' ? pivotRowGrps : t === 'piv-col' ? pivotPivCols : t === 'val' ? pivotValues : null;
+        const srcArr = getZoneArr(srcType);
+        let savedAgg = srcAgg || 'sum';
+        if (srcArr) {
+            srcArr.splice(srcIdx, 1);
+            if (srcArr === targetArr && srcIdx < insertAt) insertAt--;
+        }
+        if (!targetArr.find(v => v.col === col)) {
+            const newItem = targetArr === pivotValues ? { col, agg: savedAgg } : { col };
+            insertAt = Math.max(0, Math.min(insertAt, targetArr.length));
+            targetArr.splice(insertAt, 0, newItem);
+        }
+        refreshZones();
+    }
+
+    function renderPivotAvail() {
+        const el = document.getElementById('pivotAvailCols');
+        el.innerHTML = '';
+        pivotCols.forEach(col => {
+            const chip = document.createElement('span');
+            chip.className = 'pivot-chip avail';
+            chip.textContent = col;
+            chip.title = 'Drag to a zone, or click to add';
+            chip.draggable = true;
+            chip.addEventListener('dragstart', e => {
+                _drag = { type: 'avail', col };
+                e.dataTransfer.effectAllowed = 'copy';
+                setTimeout(() => chip.classList.add('dragging'), 0);
+            });
+            chip.addEventListener('dragend', () => chip.classList.remove('dragging'));
+            chip.addEventListener('click', () => showPivotColMenu(col, chip));
+            el.appendChild(chip);
+        });
+    }
+
+    let _pivotMenu = null;
+    function showPivotColMenu(col, anchor) {
+        if (_pivotMenu) _pivotMenu.remove();
+        const menu = document.createElement('div');
+        menu.style.cssText = 'position:fixed;background:#fff;border:1px solid #dfe1e6;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.18);z-index:9999;min-width:160px;padding:4px 0;font-size:13px';
+        const items = [
+            { label: '↓ Row Group',     action: () => { if (!pivotRowGrps.find(r=>r.col===col)) { pivotRowGrps.push({col}); refreshZones(); } } },
+            { label: '→ Pivot Column',  action: () => { if (!pivotPivCols.find(r=>r.col===col)) { pivotPivCols.push({col}); refreshZones(); } } },
+            { label: '∑ Value (sum)',    action: () => { pivotValues.push({col, agg:'sum'});    refreshZones(); } },
+            { label: '∑ Value (avg)',    action: () => { pivotValues.push({col, agg:'avg'});    refreshZones(); } },
+            { label: '∑ Value (count)',  action: () => { pivotValues.push({col, agg:'count'});  refreshZones(); } },
+            { label: '∑ Value (dcount)', action: () => { pivotValues.push({col, agg:'dcount'}); refreshZones(); } },
+        ];
+        items.forEach(({label, action}) => {
+            const div = document.createElement('div');
+            div.textContent = label;
+            div.style.cssText = 'padding:6px 14px;cursor:pointer';
+            div.addEventListener('mouseenter', () => div.style.background = '#e9f0ff');
+            div.addEventListener('mouseleave', () => div.style.background = '');
+            div.addEventListener('click', () => { action(); menu.remove(); _pivotMenu = null; });
+            menu.appendChild(div);
+        });
+        document.body.appendChild(menu);
+        _pivotMenu = menu;
+        const r = anchor.getBoundingClientRect();
+        menu.style.left = r.left + 'px';
+        menu.style.top  = (r.bottom + 4) + 'px';
+        setTimeout(() => document.addEventListener('click', function h() {
+            menu.remove(); _pivotMenu = null;
+            document.removeEventListener('click', h);
+        }), 10);
+    }
+
+    function renderZone(id, arr, chipClass) {
+        const el = document.getElementById(id);
+        el.innerHTML = '';
+        el.classList.toggle('empty', arr.length === 0);
+        arr.forEach((item, i) => {
+            const chip = document.createElement('span');
+            chip.className = `pivot-chip ${chipClass}`;
+            chip.dataset.idx = String(i);
+            chip.draggable = true;
+            chip.innerHTML = `${item.col} <span class="rm" title="Remove">&#215;</span>`;
+            chip.querySelector('.rm').addEventListener('click', e => { e.stopPropagation(); arr.splice(i, 1); refreshZones(); });
+            chip.addEventListener('dragstart', e => {
+                _drag = { type: chipClass, col: item.col, idx: i };
+                e.dataTransfer.effectAllowed = 'move';
+                setTimeout(() => chip.classList.add('dragging'), 0);
+            });
+            chip.addEventListener('dragend', () => chip.classList.remove('dragging'));
+            el.appendChild(chip);
+        });
+    }
+
+    function renderValuesZone() {
+        const el = document.getElementById('pivotValuesZone');
+        el.innerHTML = '';
+        el.classList.toggle('empty', pivotValues.length === 0);
+        pivotValues.forEach((item, i) => {
+            const chip = document.createElement('span');
+            chip.className = 'pivot-val-chip';
+            chip.dataset.idx = String(i);
+            chip.draggable = true;
+            chip.addEventListener('dragstart', e => {
+                _drag = { type: 'val', col: item.col, idx: i, agg: item.agg };
+                e.dataTransfer.effectAllowed = 'move';
+                setTimeout(() => chip.classList.add('dragging'), 0);
+            });
+            chip.addEventListener('dragend', () => chip.classList.remove('dragging'));
+            const sel = document.createElement('select');
+            AGG_OPTS.forEach(a => {
+                const o = document.createElement('option');
+                o.value = a; o.textContent = a; if (a === item.agg) o.selected = true;
+                sel.appendChild(o);
+            });
+            sel.addEventListener('change', () => { pivotValues[i].agg = sel.value; if (_pivotResult !== null) applyPivot(); });
+            sel.addEventListener('click', e => e.stopPropagation());
+            const label = document.createElement('span');
+            label.textContent = item.col;
+            const rm = document.createElement('span');
+            rm.className = 'rm'; rm.title = 'Remove'; rm.innerHTML = '&#215;';
+            rm.addEventListener('click', e => { e.stopPropagation(); pivotValues.splice(i, 1); refreshZones(); });
+            chip.appendChild(label);
+            chip.appendChild(sel);
+            chip.appendChild(rm);
+            el.appendChild(chip);
+        });
+    }
+
+    function computePivot(data, rowGrps, pivCols, values) {
+        const rowGrpKeys = rowGrps.map(r => r.col);
+        const pivColKeys = pivCols.map(p => p.col);
+        const pivKeySet  = new Set();
+        if (pivColKeys.length) {
+            data.forEach(row => pivKeySet.add(pivColKeys.map(c => String(row[c] ?? '')).join(' | ')));
+        }
+        const sortedPivKeys = [...pivKeySet].sort();
+        const groups = new Map();
+        data.forEach(row => {
+            const gk = rowGrpKeys.map(c => String(row[c] ?? '')).join('\x00');
+            if (!groups.has(gk)) {
+                const entry = {};
+                rowGrpKeys.forEach(c => entry[c] = row[c]);
+                entry._rows = [];
+                groups.set(gk, entry);
+            }
+            groups.get(gk)._rows.push(row);
+        });
+        const headers = [...rowGrpKeys];
+        if (pivColKeys.length) {
+            sortedPivKeys.forEach(pk => values.forEach(v => headers.push(`${pk} › ${v.col} [${v.agg}]`)));
+        } else {
+            values.forEach(v => headers.push(`${v.col} [${v.agg}]`));
+        }
+        const resultRows = [];
+        for (const entry of groups.values()) {
+            const outRow = {};
+            rowGrpKeys.forEach(c => outRow[c] = entry[c]);
+            if (pivColKeys.length) {
+                sortedPivKeys.forEach(pk => {
+                    const subset = entry._rows.filter(r => pivColKeys.map(c => String(r[c] ?? '')).join(' | ') === pk);
+                    values.forEach(v => { outRow[`${pk} › ${v.col} [${v.agg}]`] = agg(subset.map(r => r[v.col]), v.agg); });
+                });
+            } else {
+                values.forEach(v => { outRow[`${v.col} [${v.agg}]`] = agg(entry._rows.map(r => r[v.col]), v.agg); });
+            }
+            resultRows.push(outRow);
+        }
+        return { headers, rows: resultRows };
+    }
+
+    function agg(vals, type) {
+        const nums = vals.map(v => parseFloat(v)).filter(v => !isNaN(v));
+        switch (type) {
+            case 'sum':    return nums.length ? nums.reduce((a,b)=>a+b,0) : null;
+            case 'avg':    return nums.length ? +(nums.reduce((a,b)=>a+b,0)/nums.length).toFixed(4) : null;
+            case 'min':    return nums.length ? Math.min(...nums) : null;
+            case 'max':    return nums.length ? Math.max(...nums) : null;
+            case 'count':  return vals.length;
+            case 'dcount': return new Set(vals.map(v => String(v ?? ''))).size;
+            case 'first':  return vals.length ? vals[0] : null;
+            case 'last':   return vals.length ? vals[vals.length-1] : null;
+            default:       return nums.length ? nums.reduce((a,b)=>a+b,0) : null;
+        }
+    }
+
+    function applyPivot() {
+        if (!pivotRowGrps.length && !pivotValues.length) {
+            document.getElementById('pivotResultInfo').textContent = 'Add at least one row group or value column.';
+            return;
+        }
+        _pivotResult = computePivot(pivotData, pivotRowGrps, pivotPivCols, pivotValues);
+        const display = document.getElementById('pivotDisplayType').value;
+        document.getElementById('pivotResultInfo').textContent =
+            `${_pivotResult.rows.length} row(s), ${_pivotResult.headers.length} column(s)`;
+
+        if (display === 'table')        renderPivotTable(_pivotResult);
+        else if (display === 'heatmap') renderHeatmap(_pivotResult);
+        else if (display === 'pie')     renderPieChart(_pivotResult);
+        else                            renderPivotChart(_pivotResult, display);
+    }
+
+    function renderPivotTable({ headers, rows }) {
+        if (pivotChart) { pivotChart.destroy(); pivotChart = null; }
+        const wrap = document.getElementById('pivotTableWrap');
+        document.getElementById('pivotChartWrap').style.display = 'none';
+        document.getElementById('pivotEmpty').style.display     = 'none';
+        document.getElementById('pivotExportBtn').style.display = '';
+        document.getElementById('pivotCopyBtn').style.display   = 'none';
+        const tbl = document.createElement('table');
+        tbl.className = 'pivot-table';
+        const thead = tbl.createTHead();
+        const hr = thead.insertRow();
+        headers.forEach(h => { const th = document.createElement('th'); th.textContent = h; hr.appendChild(th); });
+        const tbody = tbl.createTBody();
+        rows.forEach(row => {
+            const tr = tbody.insertRow();
+            headers.forEach(h => { const td = tr.insertCell(); td.textContent = row[h] ?? ''; });
+        });
+        wrap.innerHTML = '';
+        wrap.appendChild(tbl);
+        wrap.style.display = '';
+    }
+
+    function renderPivotChart({ headers, rows }, displayType) {
+        document.getElementById('pivotTableWrap').style.display = 'none';
+        document.getElementById('pivotEmpty').style.display     = 'none';
+        document.getElementById('pivotExportBtn').style.display = 'none';
+        document.getElementById('pivotCopyBtn').style.display   = '';
+        if (pivotChart) { pivotChart.destroy(); pivotChart = null; }
+        const rowGrpKeys = pivotRowGrps.map(r => r.col);
+        const labels     = rows.map(r => rowGrpKeys.map(k => r[k] ?? '').join(' | ') || '(all)');
+        const valueKeys  = headers.filter(h => !rowGrpKeys.includes(h));
+        const datasets   = valueKeys.map((key, i) => ({
+            label: key,
+            data: displayType === 'scatter'
+                ? rows.map((r, ri) => ({ x: ri, y: parseFloat(r[key]) || 0 }))
+                : rows.map(r => parseFloat(r[key]) || 0),
+            backgroundColor: generateChartColors(valueKeys.length)[i] + (displayType === 'bar' || displayType === 'horizontalBar' ? 'cc' : '22'),
+            borderColor:     generateChartColors(valueKeys.length)[i],
+            borderWidth: 2, fill: false, tension: 0.3,
+            pointRadius: displayType === 'scatter' ? 5 : 3,
+        }));
+        const typeMap    = { bar: 'bar', line: 'line', horizontalBar: 'bar', scatter: 'scatter' };
+        const ctx        = document.getElementById('pivotCanvas').getContext('2d');
+        pivotChart = new Chart(ctx, {
+            type: typeMap[displayType] || 'bar',
+            data: { labels, datasets },
+            options: {
+                indexAxis: displayType === 'horizontalBar' ? 'y' : 'x',
+                responsive: true,
+                plugins: { legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 } } } },
+                scales: { x: { ticks: { font: { size: 11 } } }, y: { ticks: { font: { size: 11 } } } }
+            }
+        });
+        document.getElementById('pivotChartWrap').style.display = 'flex';
+    }
+
+    function renderPieChart({ headers, rows }) {
+        document.getElementById('pivotTableWrap').style.display = 'none';
+        document.getElementById('pivotEmpty').style.display     = 'none';
+        document.getElementById('pivotExportBtn').style.display = 'none';
+        document.getElementById('pivotCopyBtn').style.display   = '';
+        if (pivotChart) { pivotChart.destroy(); pivotChart = null; }
+        const rowGrpKeys = pivotRowGrps.map(r => r.col);
+        const valueKeys  = headers.filter(h => !rowGrpKeys.includes(h));
+        const labels     = rows.map(r => rowGrpKeys.map(k => r[k] ?? '').join(' | ') || '(all)');
+        const ctx        = document.getElementById('pivotCanvas').getContext('2d');
+        if (valueKeys.length <= 1) {
+            const key  = valueKeys[0] || headers[0];
+            const data = rows.map(r => Math.abs(parseFloat(r[key]) || 0));
+            pivotChart = new Chart(ctx, {
+                type: 'pie',
+                data: { labels, datasets: [{ data, backgroundColor: generateChartColors(labels.length), borderWidth: 1 }] },
+                options: { responsive: true, plugins: {
+                    legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } },
+                    title:  { display: !!key, text: key, font: { size: 12 } }
+                }}
+            });
+        } else {
+            const datasets = valueKeys.map((key, ki) => ({
+                label: key, data: rows.map(r => Math.abs(parseFloat(r[key]) || 0)),
+                backgroundColor: generateChartColors(labels.length).map(c => c + (ki === 0 ? 'ff' : 'aa')),
+                borderWidth: 1, weight: 1,
+            }));
+            pivotChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: { labels, datasets },
+                options: { responsive: true, plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } } } }
+            });
+        }
+        document.getElementById('pivotChartWrap').style.display = 'flex';
+    }
+
+    function renderHeatmap({ headers, rows }) {
+        if (pivotChart) { pivotChart.destroy(); pivotChart = null; }
+        document.getElementById('pivotChartWrap').style.display = 'none';
+        document.getElementById('pivotEmpty').style.display     = 'none';
+        document.getElementById('pivotExportBtn').style.display = '';
+        document.getElementById('pivotCopyBtn').style.display   = 'none';
+        const rowGrpKeys = pivotRowGrps.map(r => r.col);
+        const valueKeys  = headers.filter(h => !rowGrpKeys.includes(h));
+        const allNums    = rows.flatMap(r => valueKeys.map(k => parseFloat(r[k]) || 0));
+        const minV = Math.min(...allNums), maxV = Math.max(...allNums);
+        const heat = v => {
+            const t = maxV === minV ? 0.5 : (v - minV) / (maxV - minV);
+            return `rgb(${Math.round(255*t)},${Math.round(180-120*t)},${Math.round(255*(1-t))})`;
+        };
+        const tbl = document.createElement('table');
+        tbl.className = 'pivot-table';
+        const thead = tbl.createTHead();
+        const hr = thead.insertRow();
+        headers.forEach(h => { const th = document.createElement('th'); th.textContent = h; hr.appendChild(th); });
+        const tbody = tbl.createTBody();
+        rows.forEach(row => {
+            const tr = tbody.insertRow();
+            headers.forEach(h => {
+                const td = tr.insertCell();
+                const v = row[h];
+                td.textContent = v ?? '';
+                if (!rowGrpKeys.includes(h) && v !== null && v !== undefined) {
+                    td.style.background = heat(parseFloat(v) || 0);
+                    td.style.color = '#000'; td.style.textAlign = 'right';
+                }
+            });
+        });
+        const wrap = document.getElementById('pivotTableWrap');
+        wrap.innerHTML = ''; wrap.appendChild(tbl); wrap.style.display = '';
+    }
+
+    function exportPivotCsv() {
+        if (!_pivotResult) return;
+        const { headers, rows } = _pivotResult;
+        const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+        const lines = [headers.map(esc).join(','), ...rows.map(r => headers.map(h => esc(r[h])).join(','))];
+        const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+        a.download = 'pivot.csv'; a.click();
+    }
+
+    function copyPivotChart() {
+        const canvas = document.getElementById('pivotCanvas');
+        canvas.toBlob(blob => {
+            navigator.clipboard.write([new ClipboardItem({'image/png': blob})])
+                .catch(() => { const a = document.createElement('a'); a.download = 'pivot-chart.png'; a.href = canvas.toDataURL(); a.click(); });
+        });
+    }
+
+    // =========================================================================
+    // WebSocket client
+    // =========================================================================
+    let ws          = null;
+    const MAX_LOG   = 200;
+    let logCount    = 0;
+
+    function connectWs() {
+        const url = document.getElementById('wsUrl').value.trim();
+        if (!url) { setStatus('Enter a WebSocket URL', 'err'); return; }
+
+        if (ws) { ws.close(); ws = null; }
+
+        setStatus('Connecting…', 'connecting');
+        setDot('connecting');
+
+        try {
+            ws = new WebSocket(url);
+        } catch (e) {
+            setStatus('Invalid URL: ' + e.message, 'err');
+            return;
+        }
+
+        ws.onopen = () => {
+            setStatus('Connected', 'ok');
+            setDot('connected');
+            document.getElementById('btnConnect').disabled    = true;
+            document.getElementById('btnDisconnect').disabled = false;
+            document.getElementById('btnSend').disabled       = false;
+            appendLog('Connected to ' + url, 'msg-sys');
+        };
+
+        ws.onmessage = e => {
+            appendLog('← ' + e.data, 'msg-recv');
+            tryLoadGrid(e.data);
+        };
+
+        ws.onerror = () => {
+            setStatus('WebSocket error', 'err');
+            setDot('disconnected');
+            appendLog('[error]', 'msg-err');
+        };
+
+        ws.onclose = ev => {
+            setStatus('Disconnected (code ' + ev.code + ')', '');
+            setDot('disconnected');
+            document.getElementById('btnConnect').disabled    = false;
+            document.getElementById('btnDisconnect').disabled = true;
+            document.getElementById('btnSend').disabled       = true;
+            appendLog('Disconnected (code ' + ev.code + ')', 'msg-sys');
+            ws = null;
+        };
+    }
+
+    function disconnectWs() {
+        if (ws) { ws.close(); ws = null; }
+    }
+
+    function sendMessage() {
+        if (!ws || ws.readyState !== WebSocket.OPEN) { setStatus('Not connected', 'err'); return; }
+        const text = document.getElementById('requestArea').value;
+        if (!text.trim()) return;
+        ws.send(text);
+        appendLog('→ ' + text, 'msg-sent');
+    }
+
+    function tryLoadGrid(raw) {
+        let parsed;
+        try { parsed = JSON.parse(raw); } catch { return; }
+
+        // Support: plain array, or {data: [...]} envelope
+        let rows = null;
+        if (Array.isArray(parsed)) {
+            rows = parsed;
+        } else if (parsed && Array.isArray(parsed.data) && parsed.data.length > 0
+                   && typeof parsed.data[0] === 'object') {
+            rows = parsed.data;
+        }
+
+        if (rows && rows.length > 0 && typeof rows[0] === 'object' && rows[0] !== null) {
+            loadGridData(rows);
+        }
+    }
+
+    function formatJson() {
+        const area = document.getElementById('requestArea');
+        try {
+            area.value = JSON.stringify(JSON.parse(area.value), null, 2);
+        } catch (e) {
+            setStatus('Not valid JSON: ' + e.message, 'err');
+        }
+    }
+
+    // =========================================================================
+    // Message log
+    // =========================================================================
+    function appendLog(text, cls) {
+        const log  = document.getElementById('msgLog');
+
+        // Trim oldest if over limit
+        if (logCount >= MAX_LOG) {
+            const first = log.querySelector('span');
+            if (first) { log.removeChild(first); logCount--; }
+        }
+
+        const span = document.createElement('span');
+        span.className   = cls || '';
+        span.style.display = 'block';
+        span.textContent = text;
+        log.appendChild(span);
+        logCount++;
+        log.scrollTop = log.scrollHeight;
+    }
+
+    function clearLog() {
+        document.getElementById('msgLog').innerHTML = '';
+        logCount = 0;
+    }
+
+    // =========================================================================
+    // UI helpers
+    // =========================================================================
+    function setStatus(msg, type) {
+        const el = document.getElementById('statusText');
+        el.textContent = msg;
+        el.style.color = type === 'ok'         ? '#006644'
+                       : type === 'err'        ? '#de350b'
+                       : type === 'connecting' ? '#7a4600'
+                       : '#5e6c84';
+    }
+
+    function setDot(state) {
+        document.getElementById('wsDot').className = 'ws-dot ' + state;
+    }
+
+    // Ctrl+Enter sends
+    document.getElementById('requestArea').addEventListener('keydown', e => {
+        if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); sendMessage(); }
+    });
+
+    // -------------------------------------------------------------------------
+    // Profile dropdown — loaded from the "wsconfig" template on page load
+    // -------------------------------------------------------------------------
+    let _profiles = [];
+
+    function col(row, ...keys) {
+        for (const k of keys) {
+            const v = row[k];
+            if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();
+        }
+        return null;
+    }
+
+    (async function loadProfiles() {
+        try {
+            const res  = await fetch('/batch/template?name=wsconfig');
+            if (!res.ok) return;
+            const body = await res.json();
+            const rows = body.data || [];
+            if (!rows.length) return;
+
+            _profiles = rows;
+            const sel = document.getElementById('profileSelect');
+            rows.forEach(row => {
+                const alias = col(row, 'alias', 'ALIAS');
+                if (!alias) return;
+                const opt = document.createElement('option');
+                opt.value       = alias;
+                opt.textContent = alias;
+                sel.appendChild(opt);
+            });
+            if (sel.options.length > 1) {
+                document.getElementById('profileRow').style.display = 'flex';
+            }
+        } catch (_) {
+            // template not found or server not available — silently skip
+        }
+    })();
+
+    function applyProfile() {
+        const alias = document.getElementById('profileSelect').value;
+        if (!alias) return;
+        const row = _profiles.find(r => col(r, 'alias', 'ALIAS') === alias);
+        if (!row) return;
+        const url = col(row, 'url', 'URL', 'wsUrl', 'WSURL', 'wsurl');
+        if (url) document.getElementById('wsUrl').value = url;
+    }
+
+    // =========================================================================
+    // View as HTML
+    // =========================================================================
+    let _lastHtml = '';
+
+    function viewAsHtml() {
+        const cols = grid.getAllGridColumns ? grid.getAllGridColumns().filter(c => c.isVisible()) : [];
+        if (!cols.length) return;
+        const headers = cols.map(c => c.getColDef().headerName || c.getColId());
+        const fields  = cols.map(c => c.getColDef().field     || c.getColId());
+        const rows = [];
+        grid.forEachNodeAfterFilter(n => { if (n.data) rows.push(n.data); });
+        const mapped = rows.map(r => { const m = {}; headers.forEach((h,i) => { m[h] = r[fields[i]]; }); return m; });
+        showHtmlModal(buildHtmlTable(headers, mapped));
+    }
+
+    function buildHtmlTable(headers, rows) {
+        const th = 'border:1px solid #ccc;padding:6px 10px;background:#f4f5f7;text-align:left;font-weight:bold;white-space:nowrap;font-family:Arial,sans-serif;font-size:12px;';
+        const td = 'border:1px solid #ccc;padding:5px 10px;font-family:Arial,sans-serif;font-size:12px;';
+        let html = '<table style="border-collapse:collapse"><thead><tr>';
+        headers.forEach(h => { html += `<th style="${th}">${escStr(h)}</th>`; });
+        html += '</tr></thead><tbody>';
+        rows.forEach(row => {
+            html += '<tr>';
+            headers.forEach(h => { html += `<td style="${td}">${escStr(String(row[h] ?? ''))}</td>`; });
+            html += '</tr>';
+        });
+        html += '</tbody></table>';
+        return html;
+    }
+
+    function escStr(s) {
+        return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function showHtmlModal(html) {
+        _lastHtml = html;
+        let modal = document.getElementById('htmlCopyModal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'htmlCopyModal';
+            modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center';
+            modal.addEventListener('click', e => { if (e.target === modal) modal.style.display = 'none'; });
+            modal.setAttribute('role', 'dialog');
+            modal.setAttribute('aria-modal', 'true');
+            modal.innerHTML = `
+                <div style="background:#fff;border-radius:8px;padding:20px;width:92vw;max-width:1200px;max-height:90vh;display:flex;flex-direction:column;gap:12px;box-shadow:0 8px 32px rgba(0,0,0,.3)">
+                    <div style="display:flex;justify-content:space-between;align-items:center;flex-shrink:0">
+                        <span style="font-weight:600;font-size:14px">HTML Preview</span>
+                        <div style="display:flex;gap:8px;align-items:center">
+                            <button id="htmlCopyBtn" style="padding:6px 16px;background:#0052cc;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:500" onclick="doCopyHtml()">Copy HTML</button>
+                            <button onclick="document.getElementById('htmlCopyModal').style.display='none'" style="background:none;border:none;cursor:pointer;font-size:20px;color:#5e6c84;line-height:1">&times;</button>
+                        </div>
+                    </div>
+                    <div id="htmlPreviewArea" style="flex:1;overflow:auto;border:1px solid #dfe1e6;border-radius:4px;padding:10px;min-height:380px;background:#fff"></div>
+                </div>`;
+            document.body.appendChild(modal);
+        }
+        document.getElementById('htmlPreviewArea').innerHTML = html;
+        modal.style.display = 'flex';
+    }
+
+    function doCopyHtml() {
+        navigator.clipboard.writeText(_lastHtml)
+            .then(() => {
+                const btn = document.getElementById('htmlCopyBtn');
+                const orig = btn.textContent; btn.textContent = 'Copied!'; btn.style.background = '#006644';
+                setTimeout(() => { btn.textContent = orig; btn.style.background = '#0052cc'; }, 1500);
+            })
+            .catch(() => {
+                const ta = document.createElement('textarea');
+                ta.value = _lastHtml; document.body.appendChild(ta); ta.select();
+                document.execCommand('copy'); document.body.removeChild(ta);
+            });
+    }
+</script>
+</body>
+</html>

@@ -1,5 +1,9 @@
   {
     "name": "zip",
+    "mandatoryProperties": [
+      { "property": "inputFilePath", "dataType": "string", "defaultValue": "${DATADIR}/zip.txt" }
+      ,{ "property": "inputSource", "dataType": "string", "defaultValue": "FILE" }
+    ],
     "activity": [
       {
         "name": "httpgetzipdata",

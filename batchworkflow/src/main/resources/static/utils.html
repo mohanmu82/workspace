@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Utils</title>
+    <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@31/dist/ag-grid-community.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+               background: #f4f5f7; color: #172b4d; padding: 24px; }
+        .nav { margin-bottom: 18px; }
+        .nav a { font-size: 13px; color: #0052cc; text-decoration: none; }
+        .nav a:hover { text-decoration: underline; }
+        h1 { font-size: 20px; font-weight: 600; margin-bottom: 16px; }
+
+        .panel { background: #fff; border: 1px solid #dfe1e6; border-radius: 6px;
+                 padding: 16px; margin-bottom: 14px; }
+        .panel-title { font-size: 12px; font-weight: 700; text-transform: uppercase;
+                       letter-spacing: .5px; margin-bottom: 12px; color: #5e6c84; }
+
+        .form-group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+        .form-group label { font-size: 11px; font-weight: 600; color: #5e6c84;
+                            text-transform: uppercase; letter-spacing: .4px; }
+        .form-group input {
+            padding: 7px 10px; font-size: 14px; border: 1px solid #ccc; border-radius: 4px;
+            outline: none; background: #fff; font-family: inherit; }
+        .form-group input:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.25); }
+        .form-group textarea {
+            padding: 7px 10px; font-size: 13px; border: 1px solid #ccc; border-radius: 4px;
+            outline: none; background: #fff; resize: vertical;
+            font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+            min-height: 140px; }
+        .form-group textarea:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.25); }
+        .form-group textarea[readonly] { background: #f4f5f7; }
+
+        .toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+        button { padding: 8px 18px; font-size: 13px; font-weight: 500; border: none;
+                 border-radius: 4px; cursor: pointer; white-space: nowrap; }
+        button.primary   { background: #0052cc; color: #fff; }
+        button.primary:hover   { background: #0065ff; }
+        button.primary:disabled { background: #a5adba; cursor: not-allowed; }
+        button.secondary { background: #fff; color: #0052cc; border: 1px solid #0052cc; }
+        button.secondary:hover { background: #e9f0ff; }
+        button.secondary:disabled { color: #a5adba; border-color: #a5adba; cursor: not-allowed; }
+        button.tool-btn  { background: #f4f5f7; color: #172b4d; border: 1px solid #dfe1e6;
+                           padding: 6px 12px; font-size: 12px; }
+        button.tool-btn:hover { background: #ebecf0; }
+        button.danger    { background: #de350b; color: #fff; }
+        button.danger:hover { background: #ff5630; }
+
+        .status-bar { font-size: 13px; color: #5e6c84; min-height: 18px; margin-bottom: 10px; }
+        .status-bar.error { color: #de350b; background: #ffebe6; border: 1px solid #ff8f73;
+                            border-radius: 4px; padding: 8px 12px; }
+        .status-bar.ok    { color: #006644; }
+
+        .section-label { font-size: 11px; font-weight: 700; color: #5e6c84; text-transform: uppercase;
+                         letter-spacing: .5px; margin-bottom: 6px; }
+        .divider { border: none; border-top: 1px solid #dfe1e6; margin: 14px 0; }
+
+        .transform-bar {
+            background: #f8f9fa;
+            border: 1px solid #e8eaed;
+            border-radius: 4px;
+            padding: 8px 10px;
+            margin-bottom: 14px;
+        }
+        .transform-bar .toolbar { margin-bottom: 4px; }
+        .transform-bar .toolbar:last-child { margin-bottom: 0; }
+
+        #utilGrid { width: 100%; height: 420px; }
+        #gridSection { display: none; }
+    </style>
+</head>
+<body>
+<div class="nav"><a href="/">&larr; Batch Runner</a></div>
+<h1>Utils</h1>
+
+<div class="panel">
+    <div class="panel-title">HTTP Request</div>
+
+    <div style="display:flex;gap:12px;align-items:flex-end">
+        <div class="form-group" style="flex:1;margin-bottom:0">
+            <label>URL</label>
+            <input type="text" id="urlInput" placeholder="https://..." />
+        </div>
+        <div class="form-group" style="width:120px;margin-bottom:0">
+            <label>Timeout (ms)</label>
+            <input type="number" id="httpTimeout" value="5000" min="0" step="500" />
+        </div>
+    </div>
+    <div style="height:10px"></div>
+
+    <div class="form-group">
+        <label>Request Body / Value</label>
+        <textarea id="valueArea" placeholder="Paste request body, XML, JSON, or any value here..."></textarea>
+    </div>
+
+    <div class="transform-bar">
+        <div class="section-label">Transform Tools</div>
+        <div class="toolbar">
+            <button class="tool-btn" onclick="xmlValidate('valueArea')">XML Validate</button>
+            <button class="tool-btn" onclick="xmlPrettyPrint('valueArea')">XML Pretty Print</button>
+            <button class="tool-btn" onclick="jsonValidate('valueArea')">JSON Validate</button>
+            <button class="tool-btn" onclick="jsonPrettyPrint('valueArea')">JSON Pretty Print</button>
+            <button class="tool-btn" onclick="base64Decode('valueArea')">Base64 Decode</button>
+        </div>
+        <div class="toolbar">
+            <button class="tool-btn" onclick="base64Encode('valueArea')">Base64 Encode</button>
+            <button class="tool-btn" onclick="urlDecode('valueArea')">URL Decode</button>
+            <button class="tool-btn" onclick="urlEncode('valueArea')">URL Encode</button>
+            <button class="tool-btn" onclick="htmlEscapeBtn('valueArea')">HTML Escape</button>
+            <button class="tool-btn" onclick="htmlUnescapeBtn('valueArea')">HTML Unescape</button>
+            <button class="tool-btn" onclick="xmlToJson('valueArea')">XML to JSON</button>
+        </div>
+    </div>
+
+    <div class="toolbar">
+        <button class="primary"    onclick="doHttpPost()">HTTP POST</button>
+        <button class="secondary"  onclick="doHttpGet()">HTTP GET</button>
+        <button class="secondary"  onclick="loadGrid()">Load Grid</button>
+        <button class="danger"     onclick="clearAll()" style="margin-left:auto">Clear</button>
+    </div>
+
+    <div id="statusBar" class="status-bar"></div>
+
+    <div class="form-group">
+        <label>Response</label>
+        <textarea id="responseArea" readonly placeholder="Response will appear here..."
+                  aria-label="Response output (read-only)"></textarea>
+    </div>
+
+    <div class="transform-bar">
+        <div class="section-label">Transform Tools</div>
+        <div class="toolbar">
+            <button class="tool-btn" onclick="xmlValidate('responseArea')">XML Validate</button>
+            <button class="tool-btn" onclick="xmlPrettyPrint('responseArea')">XML Pretty Print</button>
+            <button class="tool-btn" onclick="jsonValidate('responseArea')">JSON Validate</button>
+            <button class="tool-btn" onclick="jsonPrettyPrint('responseArea')">JSON Pretty Print</button>
+            <button class="tool-btn" onclick="base64Decode('responseArea')">Base64 Decode</button>
+        </div>
+        <div class="toolbar">
+            <button class="tool-btn" onclick="base64Encode('responseArea')">Base64 Encode</button>
+            <button class="tool-btn" onclick="urlDecode('responseArea')">URL Decode</button>
+            <button class="tool-btn" onclick="urlEncode('responseArea')">URL Encode</button>
+            <button class="tool-btn" onclick="htmlEscapeBtn('responseArea')">HTML Escape</button>
+            <button class="tool-btn" onclick="htmlUnescapeBtn('responseArea')">HTML Unescape</button>
+            <button class="tool-btn" onclick="xmlToJson('responseArea')">XML to JSON</button>
+        </div>
+    </div>
+
+    <hr class="divider">
+
+    <div class="form-group">
+        <label>Result</label>
+        <textarea id="resultArea" readonly placeholder="Transform result will appear here..."
+                  aria-label="Transform result (read-only)" style="min-height:100px"></textarea>
+    </div>
+</div>
+
+<div id="gridSection" class="panel">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+        <div class="panel-title" style="margin-bottom:0">Data Grid</div>
+        <button class="tool-btn" onclick="viewAsHtml()">&#128203; View as HTML</button>
+        <span id="gridRowCount" style="font-size:12px;color:#5e6c84;margin-left:auto"></span>
+    </div>
+    <div id="utilGrid" class="ag-theme-alpine"></div>
+</div>
+
+<script>
+    let utilGrid = null;
+
+    // ---- HTTP ----
+
+    function getTimeout() {
+        const v = parseInt(document.getElementById('httpTimeout').value, 10);
+        return (isNaN(v) || v <= 0) ? 0 : v;
+    }
+
+    function makeAbortSignal(timeoutMs) {
+        if (!timeoutMs) return { signal: undefined, clear: () => {} };
+        const controller = new AbortController();
+        const tid = setTimeout(() => controller.abort(), timeoutMs);
+        return { signal: controller.signal, clear: () => clearTimeout(tid) };
+    }
+
+    async function doHttpPost() {
+        const url = document.getElementById('urlInput').value.trim();
+        if (!url) { setStatus('URL is required', 'error'); return; }
+        const body = document.getElementById('valueArea').value;
+        const { signal, clear } = makeAbortSignal(getTimeout());
+        setStatus('Posting…');
+        try {
+            const res = await fetch(url, {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    body,
+                signal
+            });
+            clear();
+            await handleResponse(res);
+        } catch (e) {
+            clear();
+            setStatus(e.name === 'AbortError' ? 'Request timed out' : 'Request failed: ' + e.message, 'error');
+        }
+    }
+
+    async function doHttpGet() {
+        const url = document.getElementById('urlInput').value.trim();
+        if (!url) { setStatus('URL is required', 'error'); return; }
+        const { signal, clear } = makeAbortSignal(getTimeout());
+        setStatus('Getting…');
+        try {
+            const res = await fetch(url, { signal });
+            clear();
+            await handleResponse(res);
+        } catch (e) {
+            clear();
+            setStatus(e.name === 'AbortError' ? 'Request timed out' : 'Request failed: ' + e.message, 'error');
+        }
+    }
+
+    async function handleResponse(res) {
+        const text = await res.text();
+        document.getElementById('responseArea').value = text;
+        if (res.ok) {
+            setStatus('HTTP ' + res.status + ' ' + res.statusText, 'ok');
+            tryLoadGridFromText(text);
+        } else {
+            setStatus('HTTP ' + res.status + ' ' + res.statusText, 'error');
+        }
+    }
+
+    function loadGrid() {
+        const text = document.getElementById('responseArea').value.trim()
+                  || document.getElementById('valueArea').value.trim();
+        if (!text) { setStatus('No data to load', 'error'); return; }
+        const loaded = tryLoadGridFromText(text, true);
+        if (!loaded) setStatus('No array found in the JSON to load into the grid', 'error');
+    }
+
+    function tryLoadGridFromText(text, explicit = false) {
+        let parsed;
+        try { parsed = JSON.parse(text); } catch (_) { return false; }
+
+        let rows = null;
+        if (Array.isArray(parsed)) {
+            rows = parsed;
+        } else if (parsed && Array.isArray(parsed.data)) {
+            rows = parsed.data;
+        } else if (parsed && typeof parsed === 'object') {
+            const key = Object.keys(parsed).find(k => Array.isArray(parsed[k]));
+            if (key) rows = parsed[key];
+        }
+
+        if (!rows || rows.length === 0) return false;
+        renderGrid(rows);
+        return true;
+    }
+
+    function renderGrid(rows) {
+        const cols = [];
+        const keys = new Set();
+        rows.forEach(r => { if (r && typeof r === 'object') Object.keys(r).forEach(k => keys.add(k)); });
+        keys.forEach(k => cols.push({
+            field: k,
+            headerName: k,
+            sortable: true,
+            filter: true,
+            resizable: true,
+            tooltipValueGetter: p => (p.value !== null && p.value !== undefined) ? String(p.value) : ''
+        }));
+
+        const section = document.getElementById('gridSection');
+        section.style.display = 'block';
+
+        if (utilGrid) {
+            utilGrid.setGridOption('columnDefs', cols);
+            utilGrid.setGridOption('rowData', rows);
+        } else {
+            utilGrid = agGrid.createGrid(document.getElementById('utilGrid'), {
+                columnDefs:    cols,
+                rowData:       rows,
+                defaultColDef: { sortable: true, filter: true, resizable: true, minWidth: 80 },
+                tooltipShowDelay: 300
+            });
+        }
+        document.getElementById('gridRowCount').textContent = rows.length.toLocaleString() + ' row(s)';
+    }
+
+    // ---- Transform tools ----
+
+    function xmlValidate(sourceId) {
+        const src = document.getElementById(sourceId).value.trim();
+        if (!src) { setStatus('Nothing to validate', 'error'); return; }
+        try {
+            const parser = new DOMParser();
+            const doc    = parser.parseFromString(src, 'application/xml');
+            const err    = doc.querySelector('parsererror');
+            if (err) {
+                setOutput('XML is INVALID:\n' + err.textContent.trim());
+                setStatus('XML is invalid', 'error');
+            } else {
+                setOutput('XML is valid.');
+                setStatus('XML is valid', 'ok');
+            }
+        } catch (e) {
+            setOutput('Error: ' + e.message);
+            setStatus('Parse error', 'error');
+        }
+    }
+
+    function xmlPrettyPrint(sourceId) {
+        const src = document.getElementById(sourceId).value.trim();
+        if (!src) { setStatus('Nothing to format', 'error'); return; }
+        try {
+            const parser = new DOMParser();
+            const doc    = parser.parseFromString(src, 'application/xml');
+            const err    = doc.querySelector('parsererror');
+            if (err) { setStatus('Invalid XML — cannot pretty print', 'error'); return; }
+            const serial = new XMLSerializer();
+            const raw    = serial.serializeToString(doc);
+            setOutput(indentXml(raw));
+            setStatus('XML formatted', 'ok');
+        } catch (e) {
+            setStatus('Error: ' + e.message, 'error');
+        }
+    }
+
+    function indentXml(xml) {
+        let formatted = '';
+        let indent    = 0;
+        const tab     = '    ';
+        xml.replace(/>\s*</g, '>\n<').split('\n').forEach(node => {
+            if (node.match(/^<\/\w/)) indent = Math.max(0, indent - 1);
+            formatted += tab.repeat(indent) + node + '\n';
+            if (node.match(/^<\w[^>]*[^/]>.*$/) && !node.match(/<.*>.*<\/.*>/)) indent++;
+        });
+        return formatted.trim();
+    }
+
+    function jsonValidate(sourceId) {
+        const src = document.getElementById(sourceId).value.trim();
+        if (!src) { setStatus('Nothing to validate', 'error'); return; }
+        try {
+            JSON.parse(src);
+            setOutput('JSON is valid.');
+            setStatus('JSON is valid', 'ok');
+        } catch (e) {
+            setOutput('JSON is INVALID:\n' + e.message);
+            setStatus('JSON is invalid', 'error');
+        }
+    }
+
+    function jsonPrettyPrint(sourceId) {
+        const src = document.getElementById(sourceId).value.trim();
+        if (!src) { setStatus('Nothing to format', 'error'); return; }
+        try {
+            const parsed = JSON.parse(src);
+            setOutput(JSON.stringify(parsed, null, 2));
+            setStatus('JSON formatted', 'ok');
+        } catch (e) {
+            setStatus('Invalid JSON: ' + e.message, 'error');
+        }
+    }
+
+    function base64Decode(sourceId) {
+        const src = document.getElementById(sourceId).value.trim();
+        if (!src) { setStatus('Nothing to decode', 'error'); return; }
+        try {
+            setOutput(atob(src));
+            setStatus('Base64 decoded', 'ok');
+        } catch (e) {
+            setStatus('Invalid Base64: ' + e.message, 'error');
+        }
+    }
+
+    function base64Encode(sourceId) {
+        const src = document.getElementById(sourceId).value;
+        if (!src) { setStatus('Nothing to encode', 'error'); return; }
+        try {
+            setOutput(btoa(src));
+            setStatus('Base64 encoded', 'ok');
+        } catch (e) {
+            setStatus('Encode error: ' + e.message, 'error');
+        }
+    }
+
+    function urlDecode(sourceId) {
+        const src = document.getElementById(sourceId).value.trim();
+        if (!src) { setStatus('Nothing to decode', 'error'); return; }
+        try {
+            setOutput(decodeURIComponent(src));
+            setStatus('URL decoded', 'ok');
+        } catch (e) {
+            setStatus('Invalid encoded string: ' + e.message, 'error');
+        }
+    }
+
+    function urlEncode(sourceId) {
+        const src = document.getElementById(sourceId).value;
+        if (!src) { setStatus('Nothing to encode', 'error'); return; }
+        setOutput(encodeURIComponent(src));
+        setStatus('URL encoded', 'ok');
+    }
+
+    function htmlEscapeBtn(sourceId) {
+        const src = document.getElementById(sourceId).value;
+        if (!src) { setStatus('Nothing to escape', 'error'); return; }
+        setOutput(src.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                     .replace(/"/g,'&quot;').replace(/'/g,'&#39;'));
+        setStatus('HTML escaped', 'ok');
+    }
+
+    function htmlUnescapeBtn(sourceId) {
+        const src = document.getElementById(sourceId).value;
+        if (!src) { setStatus('Nothing to unescape', 'error'); return; }
+        const el = document.createElement('textarea');
+        el.innerHTML = src;
+        setOutput(el.value);
+        setStatus('HTML unescaped', 'ok');
+    }
+
+    function xmlToJson(sourceId) {
+        const src = document.getElementById(sourceId).value.trim();
+        if (!src) { setStatus('Nothing to convert', 'error'); return; }
+        try {
+            const parser = new DOMParser();
+            const doc    = parser.parseFromString(src, 'application/xml');
+            const err    = doc.querySelector('parsererror');
+            if (err) { setStatus('Invalid XML: ' + err.textContent.trim().split('\n')[0], 'error'); return; }
+            setOutput(JSON.stringify(xmlNodeToObj(doc.documentElement), null, 2));
+            setStatus('XML converted to JSON', 'ok');
+        } catch (e) {
+            setStatus('Conversion error: ' + e.message, 'error');
+        }
+    }
+
+    function xmlNodeToObj(node) {
+        const obj = {};
+        if (node.attributes && node.attributes.length > 0) {
+            obj['@attributes'] = {};
+            for (const attr of node.attributes) obj['@attributes'][attr.name] = attr.value;
+        }
+        for (const child of node.childNodes) {
+            if (child.nodeType === Node.TEXT_NODE) {
+                const t = child.nodeValue.trim();
+                if (t) obj['#text'] = (obj['#text'] ? obj['#text'] + t : t);
+            } else if (child.nodeType === Node.ELEMENT_NODE) {
+                const key = child.tagName;
+                const val = xmlNodeToObj(child);
+                if (obj[key] === undefined) {
+                    obj[key] = val;
+                } else if (Array.isArray(obj[key])) {
+                    obj[key].push(val);
+                } else {
+                    obj[key] = [obj[key], val];
+                }
+            }
+        }
+        const keys = Object.keys(obj);
+        if (keys.length === 1 && keys[0] === '#text') return obj['#text'];
+        return obj;
+    }
+
+    // ---- Helpers ----
+
+    function setOutput(text) {
+        document.getElementById('resultArea').value = text;
+    }
+
+    function setStatus(msg, type) {
+        const el = document.getElementById('statusBar');
+        el.textContent = msg;
+        el.className   = 'status-bar' + (type ? ' ' + type : '');
+    }
+
+    function clearAll() {
+        document.getElementById('urlInput').value       = '';
+        document.getElementById('valueArea').value      = '';
+        document.getElementById('responseArea').value   = '';
+        document.getElementById('resultArea').value     = '';
+        document.getElementById('statusBar').textContent = '';
+        document.getElementById('statusBar').className   = 'status-bar';
+        document.getElementById('gridSection').style.display = 'none';
+        if (utilGrid) { utilGrid.destroy(); utilGrid = null; }
+    }
+
+    // -------------------------------------------------------------------------
+    // View as HTML
+    // -------------------------------------------------------------------------
+    let _lastHtml = '';
+
+    function viewAsHtml() {
+        if (!utilGrid) return;
+        const cols = utilGrid.getAllGridColumns().filter(c => c.isVisible());
+        if (!cols.length) return;
+        const headers = cols.map(c => c.getColDef().headerName || c.getColId());
+        const fields  = cols.map(c => c.getColDef().field     || c.getColId());
+        const rows = [];
+        utilGrid.forEachNodeAfterFilter(n => { if (n.data) rows.push(n.data); });
+        const mapped = rows.map(r => { const m = {}; headers.forEach((h,i) => { m[h] = r[fields[i]]; }); return m; });
+        showHtmlModal(buildHtmlTableStr(headers, mapped));
+    }
+
+    function buildHtmlTableStr(headers, rows) {
+        const th = 'border:1px solid #ccc;padding:6px 10px;background:#f4f5f7;text-align:left;font-weight:bold;white-space:nowrap;font-family:Arial,sans-serif;font-size:12px;';
+        const td = 'border:1px solid #ccc;padding:5px 10px;font-family:Arial,sans-serif;font-size:12px;';
+        let html = '<table style="border-collapse:collapse"><thead><tr>';
+        headers.forEach(h => { html += `<th style="${th}">${escHtmlStr(h)}</th>`; });
+        html += '</tr></thead><tbody>';
+        rows.forEach(row => {
+            html += '<tr>';
+            headers.forEach(h => { html += `<td style="${td}">${escHtmlStr(String(row[h] ?? ''))}</td>`; });
+            html += '</tr>';
+        });
+        html += '</tbody></table>';
+        return html;
+    }
+
+    function escHtmlStr(s) {
+        return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function showHtmlModal(html) {
+        _lastHtml = html;
+        let modal = document.getElementById('htmlCopyModal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'htmlCopyModal';
+            modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center';
+            modal.addEventListener('click', e => { if (e.target === modal) modal.style.display = 'none'; });
+            modal.setAttribute('role', 'dialog');
+            modal.setAttribute('aria-modal', 'true');
+            modal.innerHTML = `
+                <div style="background:#fff;border-radius:8px;padding:20px;width:92vw;max-width:1200px;max-height:90vh;display:flex;flex-direction:column;gap:12px;box-shadow:0 8px 32px rgba(0,0,0,.3)">
+                    <div style="display:flex;justify-content:space-between;align-items:center;flex-shrink:0">
+                        <span style="font-weight:600;font-size:14px">HTML Preview</span>
+                        <div style="display:flex;gap:8px;align-items:center">
+                            <button id="htmlCopyBtn" style="padding:6px 16px;background:#0052cc;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:500" onclick="doCopyHtml()">Copy HTML</button>
+                            <button onclick="document.getElementById('htmlCopyModal').style.display='none'" style="background:none;border:none;cursor:pointer;font-size:20px;color:#5e6c84;line-height:1">&times;</button>
+                        </div>
+                    </div>
+                    <div id="htmlPreviewArea" style="flex:1;overflow:auto;border:1px solid #dfe1e6;border-radius:4px;padding:10px;min-height:380px;background:#fff"></div>
+                </div>`;
+            document.body.appendChild(modal);
+        }
+        document.getElementById('htmlPreviewArea').innerHTML = html;
+        modal.style.display = 'flex';
+    }
+
+    function doCopyHtml() {
+        navigator.clipboard.writeText(_lastHtml)
+            .then(() => {
+                const btn = document.getElementById('htmlCopyBtn');
+                const orig = btn.textContent; btn.textContent = 'Copied!'; btn.style.background = '#006644';
+                setTimeout(() => { btn.textContent = orig; btn.style.background = '#0052cc'; }, 1500);
+            })
+            .catch(() => {
+                const ta = document.createElement('textarea');
+                ta.value = _lastHtml; document.body.appendChild(ta); ta.select();
+                document.execCommand('copy'); document.body.removeChild(ta);
+            });
+    }
+</script>
+</body>
+</html>

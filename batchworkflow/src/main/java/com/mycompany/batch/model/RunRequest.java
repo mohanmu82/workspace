@@ -49,7 +49,7 @@ import java.util.Map;
  */
 public record RunRequest(
         String operation,
-        String inputSource,
+        InputSourceType inputSource,
         String inputFilePath,
         /**
          * Mandatory when {@code inputSource=HTTPCONFIG}: the URL that returns the input rows
@@ -57,11 +57,15 @@ public record RunRequest(
          * {@code operations.json} for that operation.
          */
         String inputHttpUrl,
+        /** Extra HTTP headers sent with the input source HTTP call (HTTPCONFIG) and merged on top of activity headers. */
+        Map<String, String> inputHttpHeader,
+        /** HTTP request body sent with the input source HTTP call (HTTPCONFIG POST) or used as activity body template. */
+        String inputHttpBody,
         List<String> ids,
         /** Pre-parsed rows sent from the REQUEST textarea (multi-column CSV). Takes precedence over {@code ids}. */
         List<Map<String, Object>> raw,
         Integer inputCount,
-        String outputData,
+        OutputDataType outputData,
         String outputFilePath,
         Integer debugMode,
         /** Per-run override for HTTP thread pool size. Uses operation default when null. */
@@ -72,13 +76,17 @@ public record RunRequest(
         List<FilterRule> filterInput,
         /** Rows not matching all rules are excluded from the response after activity execution. */
         List<FilterRule> filterOutput,
+        /** Free-text keyword filter applied after inputCount and before filterInput. */
+        SearchKeyword searchKeyword,
+        /** When set, each result row is saved into the named cache keyed by the specified column. */
+        CacheOutput cache,
         /**
          * "SYNC" (default) or "ASYNC".
          * ASYNC: the WebSocket handler sends an immediate ACK then streams each result row
          * individually as it completes, followed by a final "done" metadata message.
          * Only meaningful when requestMode=WS; ignored for REST requests.
          */
-        String executionMode,
+        ExecutionMode executionMode,
         /**
          * Optional name of a pre-configured request preset defined in {@code operations.json}
          * under {@code alias[].name}. When supplied, the alias's {@code request} fields are
@@ -91,6 +99,16 @@ public record RunRequest(
         Boolean appendOutput,
         /** Path to a JSON file used when {@code inputSource=JSON}. Content returned as-is (no data-array unwrapping). */
         String inputJsonPath,
+        /** Cache name to read DataRows from when {@code inputSource=CACHE}. */
+        String cacheName,
         /** Optional inline key-value pairs merged into operation properties (highest priority). */
-        Map<String, String> properties) {
+        Map<String, String> properties,
+        /**
+         * Optional JSONata transform applied to the response JSON just before returning to the client.
+         * Set {@code key} to load from {@code classpath:transforms/{key}.jsonata},
+         * or {@code value} to pass the expression inline.
+         */
+        JsonataTransform jsonataTransform,
+        /** Template name used as input source when {@code inputSource=TEMPLATE}. */
+        String templateName) {
 }

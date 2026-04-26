@@ -1,0 +1,946 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dynamic Operation</title>
+    <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@31/dist/ag-grid-community.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+               background: #f4f5f7; color: #172b4d; padding: 24px; }
+
+        .nav { margin-bottom: 18px; }
+        .nav a { font-size: 13px; color: #0052cc; text-decoration: none; }
+        .nav a:hover { text-decoration: underline; }
+        h1 { font-size: 20px; font-weight: 600; margin-bottom: 16px; }
+
+        .panel { background: #fff; border: 1px solid #dfe1e6; border-radius: 6px;
+                 padding: 16px; margin-bottom: 14px; }
+        .panel-title { font-size: 12px; font-weight: 700; text-transform: uppercase;
+                       letter-spacing: .5px; margin-bottom: 12px; color: #5e6c84; }
+
+        .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+                     gap: 12px; }
+        .form-group { display: flex; flex-direction: column; gap: 4px; }
+        .form-group.wide { grid-column: 1 / -1; }
+        .form-group label { font-size: 11px; font-weight: 600; color: #5e6c84;
+                            text-transform: uppercase; letter-spacing: .4px; }
+        .form-group input[type=text],
+        .form-group input[type=number],
+        .form-group input[type=password],
+        .form-group select,
+        .form-group textarea {
+            padding: 7px 10px; font-size: 13px; border: 1px solid #ccc;
+            border-radius: 4px; outline: none; font-family: inherit; background: #fff; }
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+            border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.25); }
+        .form-group textarea { resize: vertical; min-height: 70px; font-size: 12px; }
+        .form-group input[type=checkbox] { width: 16px; height: 16px; margin-top: 4px; cursor: pointer; }
+
+        .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+                   margin-bottom: 12px; }
+        button { padding: 7px 16px; font-size: 13px; font-weight: 500; border: none;
+                 border-radius: 4px; cursor: pointer; white-space: nowrap; }
+        button.primary   { background: #0052cc; color: #fff; }
+        button.primary:hover  { background: #0065ff; }
+        button.secondary { background: #fff; color: #0052cc; border: 1px solid #0052cc; }
+        button.secondary:hover { background: #e9f0ff; }
+        button.tool-btn  { background: #f4f5f7; color: #172b4d; border: 1px solid #dfe1e6;
+                           padding: 5px 12px; font-size: 12px; }
+        button.tool-btn:hover { background: #ebecf0; }
+        button:disabled  { opacity: .45; cursor: not-allowed; }
+
+        .status-bar { font-size: 13px; color: #5e6c84; min-height: 18px; margin-bottom: 10px; }
+        .status-bar.error   { color: #de350b; }
+        .status-bar.ok      { color: #006644; }
+
+        .ws-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+                  background: #a5adba; margin-right: 4px; vertical-align: middle; }
+        .ws-dot.connected    { background: #57d9a3; }
+        .ws-dot.connecting   { background: #ffab00; }
+        .ws-dot.disconnected { background: #de350b; }
+
+        .stats-bar { display: none; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; font-size: 13px; }
+        .stat { background: #fff; border: 1px solid #dfe1e6; border-radius: 4px;
+                padding: 5px 12px; display: flex; flex-direction: column; align-items: center; gap: 1px; }
+        .stat-label { color: #5e6c84; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+        .stat-value { font-size: 15px; font-weight: 600; color: #172b4d; }
+
+        #colChooserBar { display: none; flex-wrap: wrap; gap: 6px; padding: 8px 12px;
+                         background: #fff; border: 1px solid #dfe1e6; border-radius: 6px;
+                         margin-bottom: 8px; align-items: center; }
+        #colChooserBar .chooser-lbl { font-size: 11px; font-weight: 700; color: #5e6c84;
+                                      text-transform: uppercase; letter-spacing: .4px; margin-right: 4px; flex-shrink: 0; }
+        .col-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px;
+                    background: #f4f5f7; border: 1px solid #dfe1e6; border-radius: 16px;
+                    font-size: 12px; cursor: pointer; user-select: none; }
+        .col-chip:hover { background: #ebecf0; }
+        .col-chip input[type=checkbox] { cursor: pointer; margin: 0; width: 13px; height: 13px; }
+        .col-chip span { font-weight: 500; }
+
+        .row-count-bar { font-size: 12px; color: #5e6c84; text-align: right;
+                         margin-bottom: 4px; min-height: 16px; }
+        #grid { width: 100%; height: calc(100vh - 380px); min-height: 300px; }
+        #responseTextarea { display: none; width: 100%; height: calc(100vh - 380px); min-height: 300px;
+                            font-family: "Consolas", "Monaco", monospace; font-size: 12px;
+                            padding: 12px; border: 1px solid #dfe1e6; border-radius: 6px;
+                            background: #fafbfc; resize: vertical; color: #172b4d; }
+
+        .row-failed { background-color: #ffebe6 !important; color: #bf2600; }
+        .row-failed:hover { background-color: #ffbdad !important; }
+
+        .pie-btn { background: none; border: none; padding: 0 2px; font-size: 12px;
+                   cursor: pointer; color: #5e6c84; line-height: 1; opacity: .6; flex-shrink: 0; }
+        .pie-btn:hover { opacity: 1; color: #0052cc; }
+
+        .chart-modal-overlay { display: none; position: fixed; top: 0; left: 0;
+                                width: 100%; height: 100%; background: rgba(0,0,0,.5);
+                                z-index: 1000; align-items: center; justify-content: center; }
+        .chart-modal-overlay.open { display: flex; }
+        .chart-modal-box { background: #fff; border-radius: 8px; padding: 20px 24px;
+                           width: 480px; max-width: 95vw;
+                           box-shadow: 0 8px 32px rgba(0,0,0,.25); }
+        .chart-modal-header { display: flex; justify-content: space-between;
+                              align-items: center; margin-bottom: 16px; }
+        .chart-modal-header h3 { font-size: 16px; font-weight: 600; margin: 0; }
+        .chart-modal-header button { background: none; border: none; font-size: 18px;
+                                     cursor: pointer; color: #5e6c84; padding: 0; }
+        .chart-modal-header button:hover { color: #172b4d; }
+
+        /* HTML copy modal */
+        .html-modal-overlay { display: none; position: fixed; top: 0; left: 0;
+                               width: 100%; height: 100%; background: rgba(0,0,0,.5);
+                               z-index: 1000; align-items: center; justify-content: center; }
+        .html-modal-overlay.open { display: flex; }
+        .html-modal-box { background: #fff; border-radius: 8px; padding: 20px 24px;
+                          width: 90vw; max-width: 900px; max-height: 80vh;
+                          display: flex; flex-direction: column;
+                          box-shadow: 0 8px 32px rgba(0,0,0,.25); }
+        .html-modal-header { display: flex; justify-content: space-between;
+                             align-items: center; margin-bottom: 12px; flex-shrink: 0; }
+        .html-modal-header h3 { font-size: 15px; font-weight: 600; margin: 0; }
+        .html-modal-header button { background: none; border: none; font-size: 18px;
+                                    cursor: pointer; color: #5e6c84; padding: 0; }
+        #htmlPreviewArea { flex: 1; overflow: auto; border: 1px solid #dfe1e6;
+                           border-radius: 4px; padding: 12px; font-size: 12px; }
+        table.html-preview { border-collapse: collapse; font-size: 12px; }
+        table.html-preview th { background: #f4f5f7; padding: 5px 10px; text-align: left;
+                                border: 1px solid #dfe1e6; white-space: nowrap; }
+        table.html-preview td { padding: 4px 10px; border: 1px solid #dfe1e6; white-space: nowrap; }
+        table.html-preview tr:nth-child(even) td { background: #fafbfc; }
+    </style>
+</head>
+<body>
+<div class="nav"><a href="/">&larr; Batch Runner</a></div>
+<h1>Dynamic Operation</h1>
+
+<!-- ── Panel 1: operation selector + execution options ── -->
+<div class="panel">
+    <div class="panel-title">Operation</div>
+    <div class="form-grid">
+        <div class="form-group">
+            <label>Operation</label>
+            <select id="operationSelect" disabled onchange="onOperationChange()">
+                <option value="">Loading operations…</option>
+            </select>
+        </div>
+        <div class="form-group" id="aliasGroup" style="display:none">
+            <label>Alias</label>
+            <select id="aliasSelect" onchange="onAliasChange()">
+                <option value="">— no alias —</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Mode</label>
+            <select id="debugMode">
+                <option value="0">0 – Full pipeline</option>
+                <option value="1">1 – Properties only</option>
+                <option value="2">2 – Input source</option>
+                <option value="3">3 – After activities</option>
+                <option value="4">4 – After post-enrichment</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Request Mode &nbsp;<span id="wsDot" class="ws-dot"></span></label>
+            <select id="requestMode" onchange="onRequestModeChange()">
+                <option value="WS" selected>WS (WebSocket)</option>
+                <option value="REST">REST (HTTP)</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Execution Mode</label>
+            <select id="executionMode">
+                <option value="SYNC" selected>SYNC</option>
+                <option value="ASYNC">ASYNC</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Max Rows (optional)</label>
+            <input type="number" id="inputCount" placeholder="All rows" min="1" />
+        </div>
+        <div class="form-group" id="responseProcessorGroup" style="display:none">
+            <label>Response Processor</label>
+            <select id="responseProcessor">
+                <option value="">(none)</option>
+            </select>
+        </div>
+    </div>
+</div>
+
+<!-- ── Panel 2: dynamic mandatory properties ── -->
+<div id="mandatoryPanel" class="panel" style="display:none">
+    <div class="panel-title">Operation Parameters</div>
+    <div id="mandatoryFields" class="form-grid"></div>
+</div>
+
+<!-- ── Toolbar ── -->
+<div class="toolbar">
+    <button class="primary"   id="runBtn"    onclick="executeOperation()">&#9654; Execute</button>
+    <button class="secondary" id="exportBtn" onclick="exportCsv()"    disabled>Export CSV</button>
+    <button class="tool-btn"  id="expandBtn" onclick="expandColumns()" disabled>Expand Cols</button>
+    <button class="tool-btn"  id="fitBtn"    onclick="fitColumns()"    disabled>Fit Cols</button>
+    <button class="tool-btn"  id="chartsBtn" onclick="toggleCharts()">&#9685; Charts</button>
+    <button class="tool-btn"  id="htmlBtn"    onclick="viewAsHtml()"   disabled>&#128203; View as HTML</button>
+    <button class="tool-btn"  id="copyJsonBtn" onclick="copyJson()"   disabled>&#128203; Copy JSON</button>
+    <button class="secondary" id="clearBtn"  onclick="clearGrid()"    disabled>Clear</button>
+</div>
+
+<!-- ── Status + stats ── -->
+<div id="statusBar" class="status-bar"></div>
+<div id="statsBar"  class="stats-bar">
+    <div class="stat"><span class="stat-label">Timestamp</span><span id="statTimestamp" class="stat-value">—</span></div>
+    <div class="stat"><span class="stat-label">Time (ms)</span><span id="statTime"      class="stat-value">—</span></div>
+    <div class="stat"><span class="stat-label">Processed</span><span id="statProcessed" class="stat-value">—</span></div>
+    <div class="stat"><span class="stat-label">Succeeded</span><span id="statSucceeded" class="stat-value">—</span></div>
+    <div class="stat"><span class="stat-label">Failed</span>   <span id="statFailed"    class="stat-value">—</span></div>
+    <div class="stat"><span class="stat-label">Method</span>   <span id="statMethod"    class="stat-value">—</span></div>
+    <div class="stat"><span class="stat-label">Threads</span>  <span id="statThreads"   class="stat-value">—</span></div>
+    <div class="stat"><span class="stat-label">Min ms</span>   <span id="statMin"       class="stat-value">—</span></div>
+    <div class="stat"><span class="stat-label">Avg ms</span>   <span id="statAvg"       class="stat-value">—</span></div>
+    <div class="stat"><span class="stat-label">Max ms</span>   <span id="statMax"       class="stat-value">—</span></div>
+</div>
+
+<!-- ── Column chooser ── -->
+<div id="colChooserBar"></div>
+<div id="rowCountBar" class="row-count-bar"></div>
+
+<!-- ── Grid ── -->
+<div id="grid" class="ag-theme-alpine"></div>
+<textarea id="responseTextarea" readonly></textarea>
+
+<!-- ── Chart modal ── -->
+<div id="chartModal" class="chart-modal-overlay" onclick="onChartOverlayClick(event)">
+    <div class="chart-modal-box">
+        <div class="chart-modal-header">
+            <h3 id="chartTitle"></h3>
+            <button onclick="closeChart()">&#x2715;</button>
+        </div>
+        <canvas id="pieCanvas"></canvas>
+    </div>
+</div>
+
+<!-- ── HTML copy modal ── -->
+<div id="htmlModal" class="html-modal-overlay" onclick="onHtmlOverlayClick(event)">
+    <div class="html-modal-box">
+        <div class="html-modal-header">
+            <h3>Table as HTML</h3>
+            <div style="display:flex;gap:8px;align-items:center">
+                <button class="secondary" onclick="doCopyHtml()" style="padding:5px 14px;font-size:12px;border:1px solid #0052cc;border-radius:4px;cursor:pointer;color:#0052cc;background:#fff">Copy HTML</button>
+                <button onclick="closeHtmlModal()" style="background:none;border:none;font-size:18px;cursor:pointer;color:#5e6c84">&#x2715;</button>
+            </div>
+        </div>
+        <div id="htmlPreviewArea"></div>
+    </div>
+</div>
+
+<script>
+    // ─────────────────────────────────────────────
+    // PieHeaderComp — custom ag-Grid header
+    // ─────────────────────────────────────────────
+    let chartsVisible = false;
+
+    class PieHeaderComp {
+        init(params) {
+            this.params = params;
+            this.eGui   = document.createElement('div');
+            this.eGui.style.cssText = 'display:flex;align-items:center;width:100%;gap:2px;overflow:hidden';
+
+            const sortArea = document.createElement('span');
+            sortArea.style.cssText = 'flex:1;display:flex;align-items:center;min-width:0;overflow:hidden;cursor:pointer;user-select:none';
+            sortArea.addEventListener('click', e => { if (params.enableSorting) params.progressSort(e.shiftKey); });
+
+            this.labelEl = document.createElement('span');
+            this.labelEl.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+            this.labelEl.textContent = params.displayName;
+
+            this.sortEl = document.createElement('span');
+            this.sortEl.style.cssText = 'flex-shrink:0;font-size:10px;margin-left:2px;color:#5e6c84';
+
+            sortArea.appendChild(this.labelEl);
+            sortArea.appendChild(this.sortEl);
+            this.eGui.appendChild(sortArea);
+
+            if (params.enableMenu) {
+                const filterBtn = document.createElement('button');
+                filterBtn.className   = 'pie-btn';
+                filterBtn.title       = 'Filter';
+                filterBtn.innerHTML   = '&#9661;';
+                filterBtn.style.fontSize = '10px';
+                filterBtn.addEventListener('click', e => { e.stopPropagation(); params.showColumnMenu(filterBtn); });
+                this.eGui.appendChild(filterBtn);
+            }
+
+            this.pieBtn = document.createElement('button');
+            this.pieBtn.className   = 'pie-btn';
+            this.pieBtn.title       = `Chart: ${params.displayName}`;
+            this.pieBtn.textContent = '◑';
+            this.pieBtn.style.display = chartsVisible ? '' : 'none';
+            this.pieBtn.addEventListener('click', e => { e.stopPropagation(); showPieChart(params.column.getColId(), params.displayName); });
+            this.eGui.appendChild(this.pieBtn);
+            PieHeaderComp._instances.add(this);
+
+            this._onSortChanged = () => this._updateSort();
+            params.column.addEventListener('sortChanged', this._onSortChanged);
+            this._updateSort();
+        }
+        _updateSort() {
+            const s = this.params.column.getSort();
+            if (s === 'asc')       { this.sortEl.textContent = '↑'; this.sortEl.style.color = '#0052cc'; }
+            else if (s === 'desc') { this.sortEl.textContent = '↓'; this.sortEl.style.color = '#0052cc'; }
+            else if (this.params.enableSorting) { this.sortEl.textContent = '↕'; this.sortEl.style.color = '#b0bec5'; }
+            else { this.sortEl.textContent = ''; }
+        }
+        setPieVisible(v) { this.pieBtn.style.display = v ? '' : 'none'; }
+        getGui()         { return this.eGui; }
+        destroy()        { this.params.column.removeEventListener('sortChanged', this._onSortChanged); PieHeaderComp._instances.delete(this); }
+    }
+    PieHeaderComp._instances = new Set();
+
+    // ─────────────────────────────────────────────
+    // Pie chart
+    // ─────────────────────────────────────────────
+    let pieChart = null;
+
+    function showPieChart(colId, displayName) {
+        const counts = {};
+        grid.forEachNodeAfterFilter(n => {
+            if (!n.data) return;
+            const v = n.data[colId];
+            const k = (v !== null && v !== undefined && v !== '') ? String(v) : '(blank)';
+            counts[k] = (counts[k] || 0) + 1;
+        });
+        const labels = Object.keys(counts);
+        if (!labels.length) { setStatus('No data in this column.'); return; }
+        document.getElementById('chartTitle').textContent = displayName;
+        document.getElementById('chartModal').classList.add('open');
+        if (pieChart) { pieChart.destroy(); pieChart = null; }
+        pieChart = new Chart(document.getElementById('pieCanvas').getContext('2d'), {
+            type: 'pie',
+            data: { labels, datasets: [{ data: labels.map(l => counts[l]), backgroundColor: chartColors(labels.length) }] },
+            options: { plugins: { legend: { position: 'right', labels: { boxWidth: 14, font: { size: 12 } } } } }
+        });
+    }
+    function closeChart()            { document.getElementById('chartModal').classList.remove('open'); if (pieChart) { pieChart.destroy(); pieChart = null; } }
+    function onChartOverlayClick(e)  { if (e.target === document.getElementById('chartModal')) closeChart(); }
+    function toggleCharts() {
+        chartsVisible = !chartsVisible;
+        document.getElementById('chartsBtn').style.background = chartsVisible ? '#e9f0ff' : '';
+        PieHeaderComp._instances.forEach(h => h.setPieVisible(chartsVisible));
+    }
+    function chartColors(n) {
+        const p = ['#4c9aff','#36b37e','#ff5630','#ffab00','#6554c0','#00b8d9','#ff7452','#57d9a3','#998dd9','#79e2f2','#f6c90e','#e84393'];
+        return Array.from({ length: n }, (_, i) => p[i % p.length]);
+    }
+
+    // ─────────────────────────────────────────────
+    // ag-Grid
+    // ─────────────────────────────────────────────
+    const gridOptions = {
+        columnDefs: [], rowData: [],
+        defaultColDef: { sortable: true, filter: true, resizable: true, minWidth: 80, headerComponent: PieHeaderComp },
+        getRowClass: p => (p.data?.operationStatus === 'FAILED' || p.data?.errorMessage) ? 'row-failed' : undefined,
+        animateRows: true,
+        onRowDataUpdated:     updateRowCount,
+        onFilterChanged:      updateRowCount,
+        onGridColumnsChanged: rebuildColChooser
+    };
+    const grid = agGrid.createGrid(document.getElementById('grid'), gridOptions);
+
+    function loadGridData(rows, columns) {
+        if (!rows || !rows.length) { setStatus('No results returned.'); return; }
+        if (columns && columns.length) {
+            grid.setGridOption('columnDefs', columns.map(c => ({ field: c.columnName, headerName: c.displayName })));
+        } else {
+            grid.setGridOption('columnDefs', Object.keys(rows[0]).map(k => ({ field: k, headerName: k })));
+        }
+        grid.setGridOption('rowData', rows);
+        grid.sizeColumnsToFit();
+        ['exportBtn','expandBtn','fitBtn','htmlBtn','clearBtn'].forEach(id => document.getElementById(id).disabled = false);
+    }
+
+    function clearGrid() {
+        _lastResponse = null;
+        grid.setGridOption('columnDefs', []);
+        grid.setGridOption('rowData', []);
+        document.getElementById('colChooserBar').innerHTML = '';
+        document.getElementById('colChooserBar').style.display = 'none';
+        document.getElementById('rowCountBar').textContent = '';
+        document.getElementById('statsBar').style.display = 'none';
+        const ta = document.getElementById('responseTextarea');
+        ta.value = '';
+        ta.style.display = 'none';
+        document.getElementById('grid').style.display = '';
+        ['exportBtn','expandBtn','fitBtn','htmlBtn','copyJsonBtn','clearBtn'].forEach(id => document.getElementById(id).disabled = true);
+        setStatus('');
+    }
+
+    function exportCsv()    { grid.exportDataAsCsv(); }
+    function expandColumns() { grid.getColumns()?.forEach(c => grid.autoSizeColumn(c)); }
+    function fitColumns()    { grid.sizeColumnsToFit(); }
+
+    function updateRowCount() {
+        const total = grid.getDisplayedRowCount();
+        document.getElementById('rowCountBar').textContent = total ? `${total} row${total !== 1 ? 's' : ''}` : '';
+    }
+
+    function rebuildColChooser() {
+        const bar = document.getElementById('colChooserBar');
+        const cols = grid.getColumns() || [];
+        if (!cols.length) { bar.style.display = 'none'; return; }
+        bar.innerHTML = '<span class="chooser-lbl">Columns</span>';
+        // All checkbox
+        const allChip = document.createElement('label');
+        allChip.className = 'col-chip';
+        const allCb = document.createElement('input'); allCb.type = 'checkbox'; allCb.id = '_colAll';
+        const allVis = cols.every(c => c.isVisible());
+        allCb.checked = allVis;
+        allCb.indeterminate = !allVis && cols.some(c => c.isVisible());
+        allCb.addEventListener('change', () => {
+            cols.forEach(c => grid.setColumnVisible(c.getColId(), allCb.checked));
+            rebuildColChooser();
+        });
+        allChip.appendChild(allCb);
+        allChip.appendChild(Object.assign(document.createElement('span'), { textContent: 'All' }));
+        bar.appendChild(allChip);
+        cols.forEach(col => {
+            const chip = document.createElement('label'); chip.className = 'col-chip';
+            const cb   = document.createElement('input'); cb.type = 'checkbox'; cb.checked = col.isVisible();
+            cb.addEventListener('change', () => { grid.setColumnVisible(col.getColId(), cb.checked); rebuildColChooser(); });
+            chip.appendChild(cb);
+            chip.appendChild(Object.assign(document.createElement('span'), { textContent: col.getColDef().headerName || col.getColId() }));
+            bar.appendChild(chip);
+        });
+        bar.style.display = 'flex';
+    }
+
+    // ─────────────────────────────────────────────
+    // HTML copy modal
+    // ─────────────────────────────────────────────
+    function viewAsHtml() {
+        const rows = []; grid.forEachNodeAfterFilter(n => { if (n.data) rows.push(n.data); });
+        if (!rows.length) { setStatus('No rows to export.'); return; }
+        const cols = (grid.getColumns() || []).filter(c => c.isVisible()).map(c => ({ id: c.getColId(), name: c.getColDef().headerName || c.getColId() }));
+        let html = '<table class="html-preview"><thead><tr>' + cols.map(c => `<th>${esc(c.name)}</th>`).join('') + '</tr></thead><tbody>';
+        rows.forEach(r => { html += '<tr>' + cols.map(c => `<td>${esc(r[c.id] ?? '')}</td>`).join('') + '</tr>'; });
+        html += '</tbody></table>';
+        document.getElementById('htmlPreviewArea').innerHTML = html;
+        document.getElementById('htmlModal').classList.add('open');
+        _lastHtml = html;
+    }
+    let _lastHtml = '';
+    function doCopyHtml()        { navigator.clipboard.writeText(_lastHtml).catch(() => {}); }
+    function closeHtmlModal()    { document.getElementById('htmlModal').classList.remove('open'); }
+    function onHtmlOverlayClick(e) { if (e.target === document.getElementById('htmlModal')) closeHtmlModal(); }
+    function esc(v)              { return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    // ─────────────────────────────────────────────
+    // Status helpers
+    // ─────────────────────────────────────────────
+    function setStatus(msg, isError) {
+        const bar = document.getElementById('statusBar');
+        bar.textContent = msg;
+        bar.className   = 'status-bar' + (isError ? ' error' : '');
+    }
+    function setWsDot(state) { document.getElementById('wsDot').className = 'ws-dot ' + state; }
+
+    function showStats(meta) {
+        const s  = meta.summary   || {};
+        const hs = meta.httpStats || {};
+        document.getElementById('statTimestamp').textContent = meta.timestamp    || '—';
+        document.getElementById('statTime').textContent      = (s.timeTakenMs    ?? '—') + ' ms';
+        document.getElementById('statProcessed').textContent = s.processed        ?? '—';
+        document.getElementById('statSucceeded').textContent = s.succeeded        ?? '—';
+        document.getElementById('statFailed').textContent    = s.failed           ?? '—';
+        document.getElementById('statMethod').textContent    = hs.method          || '—';
+        document.getElementById('statThreads').textContent   = hs.threadCount      ?? '—';
+        document.getElementById('statMin').textContent       = hs.minMs !== undefined ? hs.minMs  + ' ms' : '—';
+        document.getElementById('statAvg').textContent       = hs.avgMs !== undefined ? Math.round(hs.avgMs) + ' ms' : '—';
+        document.getElementById('statMax').textContent       = hs.maxMs !== undefined ? hs.maxMs  + ' ms' : '—';
+        document.getElementById('statsBar').style.display = 'flex';
+    }
+
+    // ─────────────────────────────────────────────
+    // Response handler
+    // ─────────────────────────────────────────────
+    let _lastResponse = null;
+
+    function handleResponse(data) {
+        _lastResponse = data;
+        document.getElementById('copyJsonBtn').disabled = false;
+        if (data.Errors) { setStatus(data.Errors.map(e => (e.activity ? `[${e.activity}] ` : '') + (e.message || '')).join('; '), true); return; }
+        if (Array.isArray(data.data) && data.data.length > 0) {
+            const meta = data.metadata || {};
+            const { processed = 0, succeeded = 0, failed = 0 } = meta.summary || {};
+            setStatus(`Processed: ${processed} — Succeeded: ${succeeded} — Failed: ${failed}`);
+            showStats(meta);
+            showGrid();
+            loadGridData(data.data, data.columns);
+        } else {
+            const meta = data.metadata || {};
+            if (meta.summary || meta.timestamp) showStats(meta);
+            showResponseTextarea(data);
+            setStatus('Response received.');
+        }
+    }
+
+    function showGrid() {
+        document.getElementById('grid').style.display = '';
+        document.getElementById('responseTextarea').style.display = 'none';
+    }
+
+    function showResponseTextarea(data) {
+        document.getElementById('grid').style.display = 'none';
+        const ta = document.getElementById('responseTextarea');
+        ta.value = JSON.stringify(data, null, 2);
+        ta.style.display = '';
+        ['exportBtn','expandBtn','fitBtn','htmlBtn'].forEach(id => document.getElementById(id).disabled = true);
+        document.getElementById('copyJsonBtn').disabled = false;
+        document.getElementById('clearBtn').disabled = false;
+    }
+
+    function copyJson() {
+        if (!_lastResponse) return;
+        navigator.clipboard.writeText(JSON.stringify(_lastResponse, null, 2)).then(() => {
+            const btn = document.getElementById('copyJsonBtn');
+            const orig = btn.innerHTML;
+            btn.innerHTML = '&#10003; Copied!';
+            setTimeout(() => { btn.innerHTML = orig; }, 1500);
+        }).catch(() => {});
+    }
+
+    // ─────────────────────────────────────────────
+    // WebSocket — persistent connection
+    // ─────────────────────────────────────────────
+    let socket          = null;
+    let wsPending       = null;   // {resolve, reject} for in-flight SYNC
+    let wsStreamRows    = [];     // accumulates rows during ASYNC stream
+    let wsStreamCols    = null;
+    let wsReconnectTimer = null;
+
+    function wsUrl() { return (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/batch/ws'; }
+
+    function wsConnect() {
+        if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
+        setWsDot('connecting');
+        socket = new WebSocket(wsUrl());
+        socket.onopen  = () => { setWsDot('connected'); };
+        socket.onclose = () => {
+            setWsDot('disconnected');
+            if (wsPending) { wsPending.reject(new Error('WebSocket closed')); wsPending = null; }
+            wsStreamRows = []; wsStreamCols = null;
+            wsReconnectTimer = setTimeout(wsConnect, 3000);
+        };
+        socket.onerror = () => setWsDot('disconnected');
+        socket.onmessage = e => {
+            let msg;
+            try { msg = JSON.parse(e.data); } catch { return; }
+            if (wsPending) {
+                // SYNC: server returns the complete response as one message
+                const { resolve, reject } = wsPending; wsPending = null;
+                if (msg.Errors || msg.error) reject(new Error((msg.Errors?.[0]?.message) || msg.error || 'Error'));
+                else resolve(msg);
+                return;
+            }
+            // ASYNC stream
+            switch (msg.type) {
+                case 'ack':
+                    setStatus(`Streaming ${msg.rowCount} rows…`);
+                    wsStreamRows = []; wsStreamCols = null;
+                    break;
+                case 'row':
+                    wsStreamRows.push(msg.row);
+                    grid.setGridOption('rowData', [...wsStreamRows]);
+                    updateRowCount();
+                    break;
+                case 'done':
+                    wsStreamCols = msg.columns || null;
+                    if (wsStreamCols) grid.setGridOption('columnDefs', wsStreamCols.map(c => ({ field: c.columnName, headerName: c.displayName })));
+                    grid.sizeColumnsToFit();
+                    ['exportBtn','expandBtn','fitBtn','htmlBtn','clearBtn'].forEach(id => document.getElementById(id).disabled = false);
+                    showStats(msg.metadata || {});
+                    const s2 = (msg.metadata?.summary || {});
+                    setStatus(`Processed: ${s2.processed ?? wsStreamRows.length} — Succeeded: ${s2.succeeded ?? wsStreamRows.length} — Failed: ${s2.failed ?? 0}`);
+                    document.getElementById('runBtn').disabled = false;
+                    break;
+                case 'error':
+                    setStatus('Error: ' + msg.message, true);
+                    document.getElementById('runBtn').disabled = false;
+                    break;
+            }
+        };
+    }
+    wsConnect();
+
+    function sendViaWs(bodyJson) {
+        return new Promise((resolve, reject) => {
+            if (!socket || socket.readyState !== WebSocket.OPEN) { reject(new Error('WebSocket not connected')); return; }
+            wsPending = { resolve, reject };
+            socket.send(bodyJson);
+        });
+    }
+
+    function sendViaWsAsync(bodyJson) {
+        if (!socket || socket.readyState !== WebSocket.OPEN) { setStatus('WebSocket not connected', true); document.getElementById('runBtn').disabled = false; return; }
+        wsStreamRows = []; wsStreamCols = null;
+        socket.send(bodyJson);
+    }
+
+    // ─────────────────────────────────────────────
+    // Operation list loading
+    // ─────────────────────────────────────────────
+    let allOps = {};   // name → operation entry from /batch/operations
+
+    (async () => {
+        try {
+            const res  = await fetch('/batch/operations');
+            const body = await res.json();
+            const ops  = body.data || [];
+            const sel  = document.getElementById('operationSelect');
+            sel.innerHTML = '<option value="">— select operation —</option>';
+            ops.forEach(op => {
+                allOps[op.name] = op;
+                const opt = document.createElement('option');
+                opt.value       = op.name;
+                opt.textContent = op.name;
+                sel.appendChild(opt);
+            });
+            sel.disabled = false;
+
+            const rpNames = body.responseProcessors || [];
+            const rpSel   = document.getElementById('responseProcessor');
+            rpNames.forEach(n => {
+                const opt = document.createElement('option');
+                opt.value = opt.textContent = n;
+                rpSel.appendChild(opt);
+            });
+            if (rpNames.length > 0) document.getElementById('responseProcessorGroup').style.display = '';
+        } catch (err) {
+            setStatus('Failed to load operations: ' + err.message, true);
+        }
+    })();
+
+    // ─────────────────────────────────────────────
+    // Operation selection → populate alias dropdown, render mandatory props
+    // ─────────────────────────────────────────────
+    function onOperationChange() {
+        const opName = document.getElementById('operationSelect').value;
+        // Reset alias dropdown
+        const aliasGroup  = document.getElementById('aliasGroup');
+        const aliasSelect = document.getElementById('aliasSelect');
+        aliasSelect.innerHTML = '<option value="">— no alias —</option>';
+        aliasGroup.style.display = 'none';
+
+        if (!opName) { document.getElementById('mandatoryPanel').style.display = 'none'; return; }
+
+        const op = allOps[opName] || {};
+
+        // Populate alias dropdown if aliases exist
+        const aliasDets = op.aliasDetails || [];
+        if (aliasDets.length) {
+            aliasDets.forEach(a => {
+                const opt = document.createElement('option');
+                opt.value       = a.name;
+                opt.textContent = a.name;
+                aliasSelect.appendChild(opt);
+            });
+            aliasGroup.style.display = '';
+        }
+
+        renderPropsForCurrentSelection();
+    }
+
+    function onAliasChange() {
+        renderPropsForCurrentSelection();
+    }
+
+    function resolveProps() {
+        const opName    = document.getElementById('operationSelect').value;
+        const aliasName = document.getElementById('aliasSelect').value;
+        const op        = allOps[opName] || {};
+        if (aliasName) {
+            const aliasDet = (op.aliasDetails || []).find(a => a.name === aliasName);
+            if (aliasDet && aliasDet.mandatoryProperties && aliasDet.mandatoryProperties.length) {
+                return aliasDet.mandatoryProperties;
+            }
+        }
+        return op.mandatoryProperties || [];
+    }
+
+    function renderPropsForCurrentSelection() {
+        // Always clear immediately — prevents old fields lingering when new op has fewer/no props
+        clearTimeout(_autoExecTimer);
+        const container = document.getElementById('mandatoryFields');
+        container.innerHTML = '';
+
+        const props = resolveProps();
+        if (!props.length) {
+            document.getElementById('mandatoryPanel').style.display = 'none';
+            return;
+        }
+        document.getElementById('mandatoryPanel').style.display = '';
+        renderMandatoryProps(props);
+    }
+
+    // ─────────────────────────────────────────────
+    // Auto-execute when all fields are filled
+    // ─────────────────────────────────────────────
+    let _autoExecTimer  = null;
+    let _renderGen      = 0;     // incremented on every render; async work checks this before mutating DOM
+
+    function scheduleAutoExecute() {
+        clearTimeout(_autoExecTimer);
+        _autoExecTimer = setTimeout(() => {
+            if (allFieldsFilled() && !document.getElementById('runBtn').disabled) {
+                executeOperation();
+            }
+        }, 200);
+    }
+
+    function allFieldsFilled() {
+        const fields = [...document.querySelectorAll('#mandatoryFields [data-prop]')];
+        if (!fields.length) return true;
+        return fields.every(el => {
+            if (el.disabled || el.readOnly)       return true;
+            if (el.type === 'checkbox')            return true;
+            if (el.dataset.required === 'false')  return true;
+            return el.value.trim() !== '';
+        });
+    }
+
+    function applyDefaultValue(el, defaultValue, gen) {
+        if (!defaultValue) return;
+        if (defaultValue.startsWith('classpath:')) {
+            const path = defaultValue.substring('classpath:'.length).trim();
+            fetch('/batch/resource?classpath=' + encodeURIComponent(path))
+                .then(r => r.json())
+                .then(body => {
+                    if (gen !== _renderGen) return;
+                    el.value = body.content || '';
+                    scheduleAutoExecute();
+                })
+                .catch(() => {});
+        } else {
+            el.value = defaultValue;
+        }
+    }
+
+    async function renderMandatoryProps(props) {
+        const myGen     = ++_renderGen;
+        const container = document.getElementById('mandatoryFields');
+        container.innerHTML = '';
+        for (const prop of props) {
+            const dt          = prop.displayType  || {};
+            const ds          = prop.dataSource;
+            const label       = dt.label          || prop.property;
+            const elementType = (prop.elementType || dt.elementType || 'text').toLowerCase();
+
+            const group = document.createElement('div');
+            group.className = 'form-group';
+            if (elementType === 'textarea') group.classList.add('wide');
+
+            const lbl = document.createElement('label');
+            lbl.textContent = label;
+            group.appendChild(lbl);
+
+            if (elementType === 'select') {
+                const sel = document.createElement('select');
+                sel.dataset.prop     = prop.property;
+                sel.dataset.required = String(prop.required !== false);
+                sel.dataset.datatype = prop.dataType || 'string';
+                if (prop.readOnly) sel.disabled = true;
+                const empty = document.createElement('option'); empty.value = ''; empty.textContent = '— select —';
+                sel.appendChild(empty);
+                if (ds && ds.inputSource) {
+                    loadSelectOptions(sel, ds, dt, myGen).then(scheduleAutoExecute).catch(() => {});
+                }
+                sel.addEventListener('change', scheduleAutoExecute);
+                group.appendChild(sel);
+
+            } else if (elementType === 'checkbox') {
+                const inp = document.createElement('input');
+                inp.type             = 'checkbox';
+                inp.dataset.prop     = prop.property;
+                inp.dataset.required = String(prop.required !== false);
+                inp.dataset.datatype = prop.dataType || 'string';
+                if (prop.defaultValue === 'true') inp.checked = true;
+                if (prop.readOnly) inp.disabled = true;
+                inp.addEventListener('change', scheduleAutoExecute);
+                group.appendChild(inp);
+
+            } else if (elementType === 'textarea') {
+                const ta = document.createElement('textarea');
+                ta.dataset.prop     = prop.property;
+                ta.dataset.required = String(prop.required !== false);
+                ta.dataset.datatype = prop.dataType || 'string';
+                ta.placeholder      = prop.property;
+                if (prop.readOnly) { ta.readOnly = true; ta.style.background = '#f4f5f7'; ta.style.color = '#5e6c84'; }
+                ta.addEventListener('input', scheduleAutoExecute);
+                group.appendChild(ta);
+                applyDefaultValue(ta, prop.defaultValue, myGen);
+
+            } else if (elementType === 'password') {
+                const inp = document.createElement('input');
+                inp.type             = 'password';
+                inp.dataset.prop     = prop.property;
+                inp.dataset.required = String(prop.required !== false);
+                inp.dataset.datatype = prop.dataType || 'string';
+                inp.placeholder      = prop.property;
+                if (prop.readOnly) { inp.readOnly = true; inp.style.background = '#f4f5f7'; inp.style.color = '#5e6c84'; }
+                inp.addEventListener('input', scheduleAutoExecute);
+                group.appendChild(inp);
+                applyDefaultValue(inp, prop.defaultValue, myGen);
+
+            } else {
+                const inp = document.createElement('input');
+                inp.type             = 'text';
+                inp.dataset.prop     = prop.property;
+                inp.dataset.required = String(prop.required !== false);
+                inp.dataset.datatype = prop.dataType || 'string';
+                inp.placeholder      = prop.property;
+                if (prop.readOnly) { inp.readOnly = true; inp.style.background = '#f4f5f7'; inp.style.color = '#5e6c84'; }
+                inp.addEventListener('input', scheduleAutoExecute);
+                group.appendChild(inp);
+                applyDefaultValue(inp, prop.defaultValue, myGen);
+            }
+
+            container.appendChild(group);
+        }
+        // If all fields already have values (all defaults), auto-execute
+        scheduleAutoExecute();
+    }
+
+    async function loadSelectOptions(sel, ds, dt, gen) {
+        try {
+            let url = '/batch/template?name=' + encodeURIComponent(ds.inputSource);
+            if (ds.inputFilePath) url += '&inputFilePath=' + encodeURIComponent(ds.inputFilePath);
+            const res  = await fetch(url);
+            if (!res.ok || gen !== _renderGen) return;   // stale — operation changed while fetching
+            const body = await res.json();
+            if (gen !== _renderGen) return;              // check again after await
+            let rows   = body.data || [];
+            if (dt.sortBy && rows.length) {
+                const key = dt.sortBy;
+                rows = [...rows].sort((a, b) => String(a[key] ?? '').localeCompare(String(b[key] ?? '')));
+            }
+            rows.forEach(row => {
+                const val  = dt.selectKey     ? row[dt.selectKey]     : Object.values(row)[0];
+                const disp = dt.selectDisplay ? row[dt.selectDisplay] : (val ?? '');
+                const opt  = document.createElement('option');
+                opt.value       = String(val ?? '');
+                opt.textContent = String(disp ?? val ?? '');
+                sel.appendChild(opt);
+            });
+        } catch (_) {}
+    }
+
+    function onRequestModeChange() {
+        const mode = document.getElementById('requestMode').value;
+        if (mode === 'WS' && (!socket || socket.readyState !== WebSocket.OPEN)) wsConnect();
+    }
+
+    // ─────────────────────────────────────────────
+    // Build request body
+    // ─────────────────────────────────────────────
+    function buildRequest() {
+        const operation     = document.getElementById('operationSelect').value;
+        if (!operation) return null;
+        const debugMode     = parseInt(document.getElementById('debugMode').value);
+        const executionMode = document.getElementById('executionMode').value;
+        const inputCount    = document.getElementById('inputCount').value.trim();
+
+        const aliasName = document.getElementById('aliasSelect').value;
+        const req = { operation, debugMode };
+        if (aliasName)                 req.alias         = aliasName;
+        if (inputCount)                req.inputCount    = parseInt(inputCount);
+        if (executionMode === 'ASYNC') req.executionMode = 'ASYNC';
+
+        const rpVal = document.getElementById('responseProcessor').value;
+        if (rpVal) req.responseProcessor = rpVal;
+
+        // Collect mandatory property values from the dynamic form
+        document.querySelectorAll('#mandatoryFields [data-prop]').forEach(el => {
+            const prop = el.dataset.prop;
+            const val  = el.type === 'checkbox' ? String(el.checked) : el.value.trim();
+            if (!val) return;
+            if (el.dataset.datatype === 'json') {
+                try { req[prop] = JSON.parse(val); } catch (_) { req[prop] = val; }
+            } else {
+                req[prop] = val;
+            }
+        });
+
+        return req;
+    }
+
+    // ─────────────────────────────────────────────
+    // Execute
+    // ─────────────────────────────────────────────
+    async function executeOperation() {
+        const req = buildRequest();
+        if (!req) { setStatus('Please select an operation.', true); return; }
+
+        const requestMode   = document.getElementById('requestMode').value;
+        const executionMode = document.getElementById('executionMode').value;
+
+        document.getElementById('runBtn').disabled = true;
+        document.getElementById('statsBar').style.display = 'none';
+        setStatus('Running…');
+
+        const bodyJson = JSON.stringify(req, null, 2);
+
+        if (executionMode === 'ASYNC') {
+            if (requestMode === 'WS') {
+                sendViaWsAsync(bodyJson);
+            } else {
+                // ASYNC over REST — fire-and-forget, poll not supported here; use WS instead
+                setStatus('ASYNC mode requires Request Mode = WS.', true);
+                document.getElementById('runBtn').disabled = false;
+            }
+            return;
+        }
+
+        // SYNC
+        try {
+            let data;
+            if (requestMode === 'WS') {
+                data = await sendViaWs(bodyJson);
+            } else {
+                const res = await fetch('/batch/run', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: bodyJson
+                });
+                data = await res.json();
+            }
+            handleResponse(data);
+        } catch (err) {
+            setStatus('Error: ' + err.message, true);
+        } finally {
+            document.getElementById('runBtn').disabled = false;
+        }
+    }
+</script>
+</body>
+</html>

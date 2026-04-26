@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Log Reader</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+               background: #f4f5f7; color: #172b4d; padding: 24px; }
+        .nav { margin-bottom: 18px; }
+        .nav a { font-size: 13px; color: #0052cc; text-decoration: none; }
+        .nav a:hover { text-decoration: underline; }
+        h1 { font-size: 20px; font-weight: 600; margin-bottom: 16px; }
+
+        .panel { background: #fff; border: 1px solid #dfe1e6; border-radius: 6px;
+                 padding: 16px; margin-bottom: 14px; }
+        .panel-title { font-size: 12px; font-weight: 700; text-transform: uppercase;
+                       letter-spacing: .5px; margin-bottom: 12px; color: #5e6c84; }
+
+        .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+                     gap: 12px; margin-bottom: 12px; }
+        .form-group { display: flex; flex-direction: column; gap: 4px; }
+        .form-group.wide { grid-column: 1 / -1; }
+        .form-group label { font-size: 11px; font-weight: 600; color: #5e6c84;
+                            text-transform: uppercase; letter-spacing: .4px; }
+        .form-group input { padding: 7px 10px; font-size: 13px; border: 1px solid #ccc;
+                            border-radius: 4px; outline: none; font-family: inherit; }
+        .form-group input:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.25); }
+
+        .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        button { padding: 7px 16px; font-size: 13px; font-weight: 500; border: none;
+                 border-radius: 4px; cursor: pointer; white-space: nowrap; }
+        button.primary   { background: #0052cc; color: #fff; }
+        button.primary:hover  { background: #0065ff; }
+        button.danger    { background: #de350b; color: #fff; }
+        button.danger:hover   { background: #ff5630; }
+        button.secondary { background: #fff; color: #0052cc; border: 1px solid #0052cc; }
+        button.secondary:hover { background: #e9f0ff; }
+        button.tool-btn  { background: #f4f5f7; color: #172b4d; border: 1px solid #dfe1e6;
+                           padding: 5px 12px; font-size: 12px; }
+        button.tool-btn:hover { background: #ebecf0; }
+        button:disabled  { opacity: .45; cursor: not-allowed; }
+
+        .status-bar { font-size: 13px; color: #5e6c84; min-height: 20px; margin-top: 10px; }
+        .status-bar.ok      { color: #006644; }
+        .status-bar.error   { color: #de350b; }
+        .status-bar.warning { color: #7a4600; }
+
+        .filter-input { padding: 5px 10px; font-size: 13px; border: 1px solid #ccc;
+                        border-radius: 4px; outline: none; font-family: inherit; width: 240px; }
+        .filter-input:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.25); }
+
+        /* Log terminal */
+        #logPanel { display: none; }
+
+        .log-controls { display: flex; align-items: center; gap: 8px;
+                        margin-bottom: 10px; flex-wrap: wrap; }
+        .log-count { font-size: 12px; color: #5e6c84; margin-left: auto; }
+
+        #logBox {
+            background: #0d1117;
+            color: #c9d1d9;
+            font-family: "Cascadia Code", "Fira Code", Consolas, "Courier New", monospace;
+            font-size: 12px;
+            line-height: 1.55;
+            padding: 12px 14px;
+            border-radius: 6px;
+            border: 1px solid #21262d;
+            height: 540px;
+            overflow-y: auto;
+            overflow-x: auto;
+            white-space: pre;
+            word-break: normal;
+        }
+
+        .log-line { display: block; padding: 1px 0; }
+        .log-line.highlight { background: #2d333b; color: #e6edf3; border-radius: 2px; }
+        .log-line.hidden    { display: none; }
+
+        .log-line .match { background: #bb8009; color: #0d1117;
+                           border-radius: 2px; padding: 0 2px; }
+
+        .ws-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+                  background: #a5adba; margin-right: 6px; vertical-align: middle; }
+        .ws-dot.connected    { background: #57d9a3; }
+        .ws-dot.connecting   { background: #ffab00; }
+        .ws-dot.disconnected { background: #de350b; }
+
+        .scroll-lock-btn { font-size: 11px; padding: 4px 10px; }
+        .scroll-lock-btn.locked { background: #fff0b3; color: #7a4600; border-color: #ffab00; }
+    </style>
+</head>
+<body>
+<div class="nav"><a href="/">&larr; Batch Runner</a></div>
+<h1>Log Reader</h1>
+
+<div class="panel">
+    <div class="panel-title">SSH Connection</div>
+    <div id="profileRow" style="display:none;align-items:center;gap:8px;margin-bottom:12px">
+        <label style="font-size:11px;font-weight:600;color:#5e6c84;text-transform:uppercase;letter-spacing:.4px;flex-shrink:0">Profile</label>
+        <select id="profileSelect" onchange="applyProfile()"
+                style="padding:6px 10px;font-size:13px;border:1px solid #ccc;border-radius:4px;outline:none;font-family:inherit;min-width:200px">
+            <option value="">— select —</option>
+        </select>
+    </div>
+    <div class="form-grid">
+        <div class="form-group">
+            <label>Hostname</label>
+            <input type="text" id="hostname" placeholder="remotehost.example.com" />
+        </div>
+        <div class="form-group">
+            <label>Port</label>
+            <input type="number" id="port" value="22" min="1" max="65535" style="width:100px" />
+        </div>
+        <div class="form-group">
+            <label>Username</label>
+            <input type="text" id="username" placeholder="ec2-user" />
+        </div>
+        <div class="form-group">
+            <label>Initial Tail Lines</label>
+            <input type="number" id="tailLines" value="200" min="1" max="10000" style="width:100px" />
+        </div>
+        <div class="form-group">
+            <label>Connect Timeout (ms)</label>
+            <input type="number" id="timeoutMs" value="5000" min="1000" step="1000" style="width:100px" />
+        </div>
+        <div class="form-group wide">
+            <label>Log File Path</label>
+            <input type="text" id="logFilePath" placeholder="/var/log/app/application.log" />
+        </div>
+        <div class="form-group wide">
+            <label>Private Key File Path</label>
+            <input type="text" id="privateKeyFilePath" placeholder="/home/user/.ssh/id_rsa" />
+        </div>
+    </div>
+    <div class="toolbar">
+        <button class="primary" id="btnConnect"    onclick="connect()">Connect</button>
+        <button class="danger"  id="btnDisconnect" onclick="disconnect()" disabled>Disconnect</button>
+    </div>
+    <div id="statusBar" class="status-bar">
+        <span class="ws-dot" id="wsDot"></span><span id="statusText">Not connected</span>
+    </div>
+</div>
+
+<div id="logPanel" class="panel">
+    <div class="panel-title">Log Output</div>
+    <div class="log-controls">
+        <input class="filter-input" id="filterInput" placeholder="Filter lines…" oninput="applyFilter()" />
+        <label style="font-size:12px;display:flex;align-items:center;gap:5px;cursor:pointer">
+            <input type="checkbox" id="filterHide" onchange="applyFilter()" />
+            Hide non-matching
+        </label>
+        <button class="tool-btn scroll-lock-btn" id="scrollLockBtn" onclick="toggleScrollLock()">
+            Auto-scroll: ON
+        </button>
+        <button class="tool-btn" onclick="clearLog()">Clear</button>
+        <button class="tool-btn" onclick="copyLog()">Copy All</button>
+        <span class="log-count" id="logCount"></span>
+    </div>
+    <div id="logBox"></div>
+</div>
+
+<script>
+    let ws          = null;
+    let lineCount   = 0;
+    let autoScroll  = true;
+    const MAX_LINES = 5000;
+
+    // -------------------------------------------------------------------------
+    // WebSocket connect / disconnect
+    // -------------------------------------------------------------------------
+
+    function connect() {
+        const hostname           = val('hostname');
+        const username           = val('username');
+        const logFilePath        = val('logFilePath');
+        const privateKeyFilePath = val('privateKeyFilePath');
+        const port               = parseInt(document.getElementById('port').value, 10) || 22;
+        const tailLines          = parseInt(document.getElementById('tailLines').value, 10) || 200;
+        const timeoutMs          = parseInt(document.getElementById('timeoutMs').value,  10) || 5000;
+
+        if (!hostname || !username || !logFilePath || !privateKeyFilePath) {
+            setStatus('All fields are required', 'error');
+            return;
+        }
+
+        if (ws) ws.close();
+
+        const wsUrl = (location.protocol === 'https:' ? 'wss' : 'ws') +
+                      '://' + location.host + '/logtail/ws';
+        setStatus('Connecting…', 'connecting');
+        setDot('connecting');
+
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+            ws.send(JSON.stringify({ hostname, port, username, logFilePath, privateKeyFilePath, tailLines, timeoutMs }));
+            setBtn(true);
+        };
+
+        ws.onmessage = e => {
+            const msg = JSON.parse(e.data);
+            switch (msg.type) {
+                case 'line':
+                    appendLine(msg.text);
+                    break;
+                case 'connected':
+                    setStatus(msg.message, 'ok');
+                    setDot('connected');
+                    document.getElementById('logPanel').style.display = 'block';
+                    break;
+                case 'error':
+                    setStatus('Error: ' + msg.message, 'error');
+                    setDot('disconnected');
+                    setBtn(false);
+                    break;
+                case 'info':
+                    setStatus(msg.message, '');
+                    break;
+            }
+        };
+
+        ws.onclose = () => {
+            setDot('disconnected');
+            setBtn(false);
+            if (document.getElementById('statusText').className !== 'error') {
+                setStatus('Disconnected', 'warning');
+            }
+        };
+
+        ws.onerror = () => {
+            setStatus('WebSocket error — check server', 'error');
+            setDot('disconnected');
+            setBtn(false);
+        };
+    }
+
+    function disconnect() {
+        if (ws) {
+            ws.send(JSON.stringify({ type: 'stop' }));
+            ws.close();
+            ws = null;
+        }
+        setBtn(false);
+        setDot('disconnected');
+        setStatus('Disconnected');
+    }
+
+    // -------------------------------------------------------------------------
+    // Log display
+    // -------------------------------------------------------------------------
+
+    function appendLine(text) {
+        const box    = document.getElementById('logBox');
+        const filter = document.getElementById('filterInput').value;
+        const hide   = document.getElementById('filterHide').checked;
+
+        // Trim oldest lines if over limit
+        if (lineCount >= MAX_LINES) {
+            const first = box.querySelector('.log-line');
+            if (first) { box.removeChild(first); lineCount--; }
+        }
+
+        const span = document.createElement('span');
+        span.className = 'log-line';
+
+        if (filter) {
+            if (text.toLowerCase().includes(filter.toLowerCase())) {
+                span.classList.add('highlight');
+                span.innerHTML = escHtml(text).replace(
+                    new RegExp(escRegex(filter), 'gi'),
+                    m => '<span class="match">' + m + '</span>');
+            } else {
+                if (hide) span.classList.add('hidden');
+                span.textContent = text;
+            }
+        } else {
+            span.textContent = text;
+        }
+
+        box.appendChild(span);
+        lineCount++;
+        updateCount();
+
+        if (autoScroll) box.scrollTop = box.scrollHeight;
+    }
+
+    function applyFilter() {
+        const filter = document.getElementById('filterInput').value.toLowerCase();
+        const hide   = document.getElementById('filterHide').checked;
+        const lines  = document.querySelectorAll('#logBox .log-line');
+        lines.forEach(el => {
+            const text = el.textContent;
+            const matches = !filter || text.toLowerCase().includes(filter);
+            el.classList.toggle('hidden', !matches && hide);
+            el.classList.toggle('highlight', !!(filter && matches));
+            if (filter && matches) {
+                el.innerHTML = escHtml(text).replace(
+                    new RegExp(escRegex(filter), 'gi'),
+                    m => '<span class="match">' + m + '</span>');
+            } else if (!filter) {
+                el.textContent = text;
+            }
+        });
+    }
+
+    function clearLog() {
+        document.getElementById('logBox').innerHTML = '';
+        lineCount = 0;
+        updateCount();
+    }
+
+    function copyLog() {
+        const lines = [...document.querySelectorAll('#logBox .log-line')]
+            .map(el => el.textContent).join('\n');
+        navigator.clipboard.writeText(lines).catch(() => {});
+    }
+
+    function toggleScrollLock() {
+        autoScroll = !autoScroll;
+        const btn = document.getElementById('scrollLockBtn');
+        btn.textContent = 'Auto-scroll: ' + (autoScroll ? 'ON' : 'OFF');
+        btn.classList.toggle('locked', !autoScroll);
+        if (autoScroll) document.getElementById('logBox').scrollTop =
+            document.getElementById('logBox').scrollHeight;
+    }
+
+    function updateCount() {
+        const visible = document.querySelectorAll('#logBox .log-line:not(.hidden)').length;
+        document.getElementById('logCount').textContent =
+            lineCount === visible
+                ? lineCount.toLocaleString() + ' lines'
+                : visible.toLocaleString() + ' / ' + lineCount.toLocaleString() + ' lines';
+    }
+
+    // -------------------------------------------------------------------------
+    // UI helpers
+    // -------------------------------------------------------------------------
+
+    function setStatus(msg, type) {
+        document.getElementById('statusText').textContent = msg;
+        document.getElementById('statusText').className  = type || '';
+    }
+
+    function setDot(state) {
+        const d = document.getElementById('wsDot');
+        d.className = 'ws-dot ' + state;
+    }
+
+    function setBtn(connected) {
+        document.getElementById('btnConnect').disabled    =  connected;
+        document.getElementById('btnDisconnect').disabled = !connected;
+    }
+
+    function val(id) {
+        return document.getElementById(id).value.trim();
+    }
+
+    function escHtml(s) {
+        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function escRegex(s) {
+        return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    // -------------------------------------------------------------------------
+    // Profile dropdown — loaded from the "sshconfig" template on page load
+    // -------------------------------------------------------------------------
+    let _profiles = [];
+
+    function col(row, ...keys) {
+        for (const k of keys) {
+            const v = row[k];
+            if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();
+        }
+        return null;
+    }
+
+    (async function loadProfiles() {
+        try {
+            const res  = await fetch('/batch/template?name=sshconfig');
+            if (!res.ok) return;
+            const body = await res.json();
+            const rows = body.data || [];
+            if (!rows.length) return;
+
+            _profiles = rows;
+            const sel = document.getElementById('profileSelect');
+            rows.forEach(row => {
+                const alias = col(row, 'alias', 'ALIAS');
+                if (!alias) return;
+                const opt = document.createElement('option');
+                opt.value       = alias;
+                opt.textContent = alias;
+                sel.appendChild(opt);
+            });
+            if (sel.options.length > 1) {
+                document.getElementById('profileRow').style.display = 'flex';
+            }
+        } catch (_) {
+            // template not found or server not available — silently skip
+        }
+    })();
+
+    function applyProfile() {
+        const alias = document.getElementById('profileSelect').value;
+        if (!alias) return;
+        const row = _profiles.find(r => col(r, 'alias', 'ALIAS') === alias);
+        if (!row) return;
+        const hostname = col(row, 'hostname',          'HOSTNAME');
+        const port     = col(row, 'port',              'PORT');
+        const username = col(row, 'username',          'USERNAME');
+        const keyPath  = col(row, 'privateKeyFilePath','PRIVATEKEYFILEPATH','keyPath','KEYPATH');
+        const timeout  = col(row, 'timeoutMs',         'TIMEOUTMS','timeout','TIMEOUT');
+        if (hostname) document.getElementById('hostname').value           = hostname;
+        if (port)     document.getElementById('port').value               = port;
+        if (username) document.getElementById('username').value           = username;
+        if (keyPath)  document.getElementById('privateKeyFilePath').value = keyPath;
+        if (timeout)  document.getElementById('timeoutMs').value          = timeout;
+    }
+</script>
+</body>
+</html>

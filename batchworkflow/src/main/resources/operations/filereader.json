@@ -1,21 +1,18 @@
   {
     "name": "filereader",
-    "properties": {
-      "attributes": {	
-        "inputSource": "FILE"
-      }
-    },  
-    "mandatoryProperties": "inputFilePath",
+    "mandatoryProperties": [
+      { "property": "inputFilePath", "dataType": "string" }
+      ,{ "property": "inputSource", "dataType": "string", "defaultValue": "FILE", "readOnly": true }
+],
     "alias": [
       {
-        "name": "PUBMEDINPUT",
+        "name": "DATADIRFILE",
+        "mandatoryProperties": [
+          { "property": "inputFilePath", "dataType": "string", "defaultValue": "${DATADIR}/${FILENAME}" }
+          ,{ "property": "inputSource", "dataType": "string", "defaultValue": "FILE", "readOnly": true }
+          ,{ "property": "FILENAME", "dataType": "string", "defaultValue": "" }
+        ],        
         "request": {
-          "inputSource": "FILE",
-          "inputFilePath": "C:/work/data/pubmed.txt",
-          "inputCount": 10,
-          "filterInput": [
-            { "column": "ID", "value": "11748935", "operation": "eq" }
-          ]
         }
       }
     ]

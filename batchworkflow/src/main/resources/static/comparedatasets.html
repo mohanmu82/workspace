@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Compare Datasets</title>
+    <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@31/dist/ag-grid-community.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+               background: #f4f5f7; color: #172b4d; padding: 24px; }
+        .nav { margin-bottom: 18px; }
+        .nav a { font-size: 13px; color: #0052cc; text-decoration: none; }
+        .nav a:hover { text-decoration: underline; }
+        h1 { font-size: 20px; font-weight: 600; margin-bottom: 16px; }
+
+        .ds-panels { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+        @media(max-width:900px){ .ds-panels { grid-template-columns: 1fr; } }
+
+        .panel { background:#fff; border:1px solid #dfe1e6; border-radius:6px; padding:16px; margin-bottom:14px; }
+        .panel-title { font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; margin-bottom:12px; color:#5e6c84; }
+        .panel-title.ds1 { color:#0052cc; }
+        .panel-title.ds2 { color:#974900; }
+
+        .form-group { display:flex; flex-direction:column; gap:4px; margin-bottom:10px; }
+        .form-group label { font-size:11px; font-weight:600; color:#5e6c84; text-transform:uppercase; letter-spacing:.4px; }
+        .form-group input, .form-group textarea {
+            padding:7px 10px; font-size:14px; border:1px solid #ccc; border-radius:4px;
+            outline:none; background:#fff; font-family:inherit; }
+        .form-group input:focus, .form-group textarea:focus {
+            border-color:#4c9aff; box-shadow:0 0 0 2px rgba(76,154,255,.25); }
+        .form-group textarea { resize:vertical; font-family:"Cascadia Code","Fira Code",Consolas,monospace;
+                               font-size:12px; min-height:120px; }
+        .hint { font-size:11px; color:#a5adba; margin-top:2px; }
+
+        .toolbar { display:flex; align-items:center; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
+        button { padding:8px 16px; font-size:13px; font-weight:500; border:none; border-radius:4px;
+                 cursor:pointer; white-space:nowrap; }
+        button.primary { background:#0052cc; color:#fff; }
+        button.primary:hover { background:#0065ff; }
+        button.primary:disabled { background:#a5adba; cursor:not-allowed; }
+        button.secondary { background:#fff; color:#0052cc; border:1px solid #0052cc; }
+        button.secondary:hover { background:#e9f0ff; }
+        button.secondary:disabled { color:#a5adba; border-color:#a5adba; cursor:not-allowed; }
+        button.filter-btn { background:#fff; border:1px solid #dfe1e6; color:#172b4d; padding:6px 12px; font-size:12px; }
+        button.filter-btn:hover { background:#f4f5f7; }
+        button.filter-btn.active { font-weight:700; }
+        button.filter-btn.f-all.active      { background:#f4f5f7; border-color:#5e6c84; }
+        button.filter-btn.f-both.active     { background:#e3fcef; border-color:#57d9a3; color:#006644; }
+        button.filter-btn.f-ds1.active      { background:#deebff; border-color:#79b8ff; color:#0052cc; }
+        button.filter-btn.f-ds2.active      { background:#fffae6; border-color:#ffd700; color:#974900; }
+        button.danger { background:#de350b; color:#fff; }
+        button.danger:hover { background:#ff5630; }
+
+        .status-bar { font-size:13px; color:#5e6c84; min-height:18px; }
+        .status-bar.error { color:#de350b; background:#ffebe6; border:1px solid #ff8f73;
+                            border-radius:4px; padding:8px 12px; }
+        .status-bar.ok { color:#006644; }
+
+        /* Template bar */
+        .tpl-bar { display:flex; align-items:center; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
+        .tpl-lbl { font-size:12px; font-weight:700; color:#5e6c84; text-transform:uppercase; letter-spacing:.4px; flex-shrink:0; }
+        .tpl-name-input { padding:6px 10px; font-size:13px; border:1px solid #ccc; border-radius:4px; outline:none; width:180px; font-family:inherit; }
+        .tpl-name-input:focus { border-color:#4c9aff; box-shadow:0 0 0 2px rgba(76,154,255,.25); }
+        .tpl-select { padding:6px 10px; font-size:13px; border:1px solid #ccc; border-radius:4px; outline:none; font-family:inherit; }
+        .tpl-select:focus { border-color:#4c9aff; }
+        .tpl-sep { color:#dfe1e6; font-size:20px; line-height:1; }
+        .tpl-msg { font-size:12px; }
+        .tpl-msg.ok    { color:#006644; }
+        .tpl-msg.error { color:#de350b; }
+
+        /* Stats table */
+        .stats-table { width:100%; border-collapse:collapse; font-size:13px; }
+        .stats-table th { background:#f4f5f7; padding:7px 12px; text-align:left; font-size:11px;
+                          font-weight:700; color:#5e6c84; text-transform:uppercase; border-bottom:1px solid #dfe1e6; }
+        .stats-table td { padding:7px 12px; border-bottom:1px solid #f4f5f7; }
+        .stats-table tr:last-child td { border-bottom:none; }
+        .badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:700; }
+        .badge-same     { background:#e3fcef; color:#006644; }
+        .badge-mismatch { background:#ffebe6; color:#de350b; }
+        .badge-ds1      { background:#deebff; color:#0052cc; }
+        .badge-ds2      { background:#fffae6; color:#974900; }
+
+        /* Column chooser */
+        .col-chooser { display:flex; flex-wrap:wrap; gap:8px; padding:8px 0 4px; }
+        .col-chip { display:flex; align-items:center; gap:6px; padding:4px 10px;
+                    background:#f4f5f7; border:1px solid #dfe1e6; border-radius:20px;
+                    font-size:12px; cursor:pointer; user-select:none; transition:background .1s; }
+        .col-chip:hover { background:#ebecf0; }
+        .col-chip.mismatch-chip { border-color:#ff8f73; background:#fff5f5; }
+        .col-chip input[type=checkbox] { cursor:pointer; margin:0; }
+        .col-chip .col-name { font-weight:600; }
+        .col-chip .col-pct  { font-size:11px; color:#de350b; font-weight:700; }
+        .col-chip .col-pct.ok { color:#006644; }
+        .col-chip .col-cnt  { font-size:10px; color:#5e6c84; }
+
+        /* Grid */
+        .grid-toolbar { display:flex; gap:6px; align-items:center; margin-bottom:8px; flex-wrap:wrap; }
+        .row-count { font-size:12px; color:#5e6c84; margin-left:auto; }
+        #compareGrid { width:100%; height:520px; }
+
+        .cell-mismatch { background-color:#ffebe6 !important; color:#de350b !important; font-weight:600; }
+        .ag-header-cell.header-key    { background-color:#f4f5f7 !important; }
+        .ag-header-cell.header-common { background-color:#e3fcef !important; }
+        .ag-header-cell.header-common .ag-header-cell-text { color:#006644; font-weight:700; }
+        .ag-header-cell.header-ds1    { background-color:#deebff !important; }
+        .ag-header-cell.header-ds1    .ag-header-cell-text { color:#0052cc; font-weight:700; }
+        .ag-header-cell.header-ds2    { background-color:#fffae6 !important; }
+        .ag-header-cell.header-ds2    .ag-header-cell-text { color:#974900; font-weight:700; }
+        .row-same      .ag-cell { background-color:#f0fff8; }
+        .row-mismatch  .ag-cell { background-color:#fffbf0; }
+        .row-ds1only   .ag-cell { background-color:#f0f6ff; }
+        .row-ds2only   .ag-cell { background-color:#fffff0; }
+
+        /* HTML preview modal */
+        #htmlCopyModal { display:none; position:fixed; top:0; left:0; right:0; bottom:0;
+                         background:rgba(0,0,0,.5); z-index:9999; align-items:center; justify-content:center; }
+        #htmlPreviewArea { flex:1; overflow:auto; border:1px solid #dfe1e6; border-radius:4px;
+                           padding:10px; min-height:380px; background:#fff; }
+
+        #resultsSection { display:none; }
+    </style>
+</head>
+<body>
+<div class="nav"><a href="/">&larr; Batch Runner</a></div>
+<h1>Compare Datasets</h1>
+
+<!-- Config panels -->
+<div class="ds-panels">
+    <div class="panel">
+        <div class="panel-title ds1">&#9632; Dataset 1</div>
+        <div class="form-group">
+            <label>Request Body (JSON)</label>
+            <textarea id="body1" placeholder='{"operation":"myOp","inputSource":"REQUEST","dataRows":[]}'></textarea>
+        </div>
+        <div class="form-group">
+            <label>Unique Key Field</label>
+            <input type="text" id="key1" placeholder="id" />
+            <span class="hint">Column that uniquely identifies each row</span>
+        </div>
+    </div>
+    <div class="panel">
+        <div class="panel-title ds2">&#9632; Dataset 2</div>
+        <div class="form-group">
+            <label>Request Body (JSON)</label>
+            <textarea id="body2" placeholder='{"operation":"myOp","inputSource":"REQUEST","dataRows":[]}'></textarea>
+        </div>
+        <div class="form-group">
+            <label>Unique Key Field</label>
+            <input type="text" id="key2" placeholder="(same as Dataset 1)" />
+            <span class="hint">Leave blank to use the same key as Dataset 1</span>
+        </div>
+    </div>
+</div>
+
+<div class="toolbar">
+    <button class="primary" id="compareBtn" onclick="compare()">&#8644; Compare</button>
+    <button class="danger"  id="clearBtn"   onclick="clearAll()" style="display:none">&#10005; Clear</button>
+</div>
+
+<div class="tpl-bar">
+    <span class="tpl-lbl">Template:</span>
+    <input type="text" id="tplName" class="tpl-name-input" placeholder="template name" />
+    <button class="secondary" onclick="saveTemplate()">&#128190; Save</button>
+    <span class="tpl-sep">|</span>
+    <select id="tplSelect" class="tpl-select">
+        <option value="">— load template —</option>
+    </select>
+    <button class="secondary" onclick="loadTemplate()">&#8595; Load</button>
+    <span id="tplMsg" class="tpl-msg"></span>
+</div>
+
+<div id="statusBar" class="status-bar" style="margin-bottom:12px"></div>
+
+<!-- Results -->
+<div id="resultsSection">
+
+    <!-- Stats table -->
+    <div class="panel">
+        <div class="panel-title">Execution Summary</div>
+        <table class="stats-table">
+            <thead>
+                <tr>
+                    <th>Dataset</th><th>Rows Returned</th><th>Processed</th>
+                    <th>Succeeded</th><th>Failed</th><th>Time (ms)</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong style="color:#0052cc">&#9632; Dataset 1</strong></td>
+                    <td id="s1rows">—</td><td id="s1proc">—</td>
+                    <td id="s1succ">—</td><td id="s1fail">—</td><td id="s1time">—</td>
+                </tr>
+                <tr>
+                    <td><strong style="color:#974900">&#9632; Dataset 2</strong></td>
+                    <td id="s2rows">—</td><td id="s2proc">—</td>
+                    <td id="s2succ">—</td><td id="s2fail">—</td><td id="s2time">—</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Summary badges -->
+    <div class="panel" style="padding:12px 16px">
+        <div class="panel-title" style="margin-bottom:8px">Comparison Result</div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+            <span id="badgeSame"     class="badge badge-same">SAME: 0</span>
+            <span id="badgeMismatch" class="badge badge-mismatch">MISMATCH: 0</span>
+            <span id="badgeDs1"      class="badge badge-ds1">DS1 ONLY: 0</span>
+            <span id="badgeDs2"      class="badge badge-ds2">DS2 ONLY: 0</span>
+            <span id="badgeTotal"    class="badge" style="background:#f4f5f7;color:#172b4d">TOTAL: 0</span>
+        </div>
+    </div>
+
+    <!-- Column chooser -->
+    <div class="panel" id="colChooserPanel">
+        <div class="panel-title" style="margin-bottom:4px">
+            Common Columns
+            <span style="font-weight:400;text-transform:none;font-size:11px;color:#a5adba"> — uncheck to hide from grid</span>
+        </div>
+        <div class="col-chooser" id="colChooser"></div>
+    </div>
+
+    <!-- Grid panel -->
+    <div class="panel" style="padding:12px">
+        <div class="grid-toolbar">
+            <button class="filter-btn f-all active" id="fAll"  onclick="setFilter('ALL')">All Rows</button>
+            <button class="filter-btn f-both"        id="fBoth" onclick="setFilter('BOTH')">Both Datasets</button>
+            <button class="filter-btn f-ds1"         id="fDs1"  onclick="setFilter('DS1')">DS1 Only</button>
+            <button class="filter-btn f-ds2"         id="fDs2"  onclick="setFilter('DS2')">DS2 Only</button>
+            <button class="secondary" onclick="exportCompareCsv()">&#8595; Export CSV</button>
+            <button class="secondary" onclick="showAsHtml()" style="margin-left:4px">&#128203; Show as HTML</button>
+            <span class="row-count" id="rowCountBar"></span>
+        </div>
+        <div id="compareGrid" class="ag-theme-alpine"></div>
+    </div>
+</div>
+
+<!-- HTML preview modal -->
+<div id="htmlCopyModal" role="dialog" aria-modal="true" aria-labelledby="htmlPreviewTitle">
+    <div style="background:#fff;border-radius:8px;padding:20px;width:92vw;max-width:1200px;max-height:90vh;
+                display:flex;flex-direction:column;gap:12px;box-shadow:0 8px 32px rgba(0,0,0,.3)">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-shrink:0">
+            <span id="htmlPreviewTitle" style="font-weight:600;font-size:14px">HTML Preview</span>
+            <div style="display:flex;gap:8px;align-items:center">
+                <button id="htmlCopyBtn" onclick="doCopy()"
+                        style="padding:6px 16px;background:#0052cc;color:#fff;border:none;border-radius:4px;
+                               cursor:pointer;font-size:13px;font-weight:500">Copy HTML</button>
+                <button onclick="document.getElementById('htmlCopyModal').style.display='none'"
+                        style="background:none;border:none;cursor:pointer;font-size:20px;color:#5e6c84;line-height:1">&times;</button>
+            </div>
+        </div>
+        <div id="htmlPreviewArea"></div>
+    </div>
+</div>
+
+<script>
+    let compareGrid  = null;
+    let _meta        = null;
+    let _activeFilter = 'ALL';
+    let _hiddenCols   = new Set();
+
+    // -------------------------------------------------------------------------
+    // Compare
+    // -------------------------------------------------------------------------
+
+    async function compare() {
+        const body1 = document.getElementById('body1').value.trim();
+        const body2 = document.getElementById('body2').value.trim();
+        const key1  = document.getElementById('key1').value.trim();
+        const key2  = document.getElementById('key2').value.trim();
+
+        if (!body1) { setStatus('Enter request body for Dataset 1.', 'error'); return; }
+        if (!body2) { setStatus('Enter request body for Dataset 2.', 'error'); return; }
+        if (!key1)  { setStatus('Enter a key field for Dataset 1.', 'error'); return; }
+
+        let ds1, ds2;
+        try { ds1 = JSON.parse(body1); } catch (e) { setStatus('Dataset 1 — invalid JSON: ' + e.message, 'error'); return; }
+        try { ds2 = JSON.parse(body2); } catch (e) { setStatus('Dataset 2 — invalid JSON: ' + e.message, 'error'); return; }
+
+        setStatus('Running comparison…', '');
+        document.getElementById('compareBtn').disabled = true;
+
+        try {
+            const res  = await fetch('/batch/comparedatasets', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({ dataset1: ds1, dataset2: ds2, key1, key2: key2 || key1 })
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                setStatus(data.error || 'Error ' + res.status, 'error');
+                return;
+            }
+
+            _meta = data.metadata;
+            _hiddenCols.clear();
+            _activeFilter = 'ALL';
+
+            renderStats(_meta);
+            renderSummaryBadges(_meta.summary);
+            renderColChooser(_meta.columns);
+            document.getElementById('resultsSection').style.display = 'block';
+            document.getElementById('clearBtn').style.display = '';
+            requestAnimationFrame(() => renderGrid(data.data, _meta.columns));
+            setStatus('Comparison complete — ' + _meta.summary.total + ' row(s).', 'ok');
+        } catch (e) {
+            setStatus('Request failed: ' + e.message, 'error');
+        } finally {
+            document.getElementById('compareBtn').disabled = false;
+        }
+    }
+
+    function clearAll() {
+        if (compareGrid) {
+            compareGrid.setGridOption('rowData', []);
+            compareGrid.setGridOption('columnDefs', []);
+        }
+        _meta = null; _hiddenCols.clear(); _activeFilter = 'ALL';
+        document.getElementById('resultsSection').style.display = 'none';
+        document.getElementById('clearBtn').style.display = 'none';
+        setStatus('', '');
+        updateFilterButtons();
+    }
+
+    // -------------------------------------------------------------------------
+    // Stats table
+    // -------------------------------------------------------------------------
+
+    function renderStats(meta) {
+        const d1 = meta.dataset1 || {}, d2 = meta.dataset2 || {};
+        document.getElementById('s1rows').textContent = d1.rowCount ?? '—';
+        document.getElementById('s1proc').textContent = d1.processed ?? '—';
+        document.getElementById('s1succ').textContent = d1.succeeded ?? '—';
+        document.getElementById('s1fail').textContent = d1.failed    ?? '—';
+        document.getElementById('s1time').textContent = d1.timeTakenMs != null ? d1.timeTakenMs + ' ms' : '—';
+        document.getElementById('s2rows').textContent = d2.rowCount ?? '—';
+        document.getElementById('s2proc').textContent = d2.processed ?? '—';
+        document.getElementById('s2succ').textContent = d2.succeeded ?? '—';
+        document.getElementById('s2fail').textContent = d2.failed    ?? '—';
+        document.getElementById('s2time').textContent = d2.timeTakenMs != null ? d2.timeTakenMs + ' ms' : '—';
+    }
+
+    // -------------------------------------------------------------------------
+    // Summary badges
+    // -------------------------------------------------------------------------
+
+    function renderSummaryBadges(s) {
+        document.getElementById('badgeSame').textContent     = 'SAME: ' + s.same;
+        document.getElementById('badgeMismatch').textContent = 'MISMATCH: ' + s.mismatch;
+        document.getElementById('badgeDs1').textContent      = 'DS1 ONLY: ' + s.dataset1Only;
+        document.getElementById('badgeDs2').textContent      = 'DS2 ONLY: ' + s.dataset2Only;
+        document.getElementById('badgeTotal').textContent    = 'TOTAL: ' + s.total;
+    }
+
+    // -------------------------------------------------------------------------
+    // Column chooser
+    // -------------------------------------------------------------------------
+
+    function renderColChooser(cols) {
+        const container = document.getElementById('colChooser');
+        container.innerHTML = '';
+        const matchPct      = cols.matchPct      || {};
+        const mismatchCount = cols.mismatchCount || {};
+
+        (cols.common || []).forEach(c => {
+            const pct      = matchPct[c]      ?? 100;
+            const mismatch = mismatchCount[c] ?? 0;
+            const hasMismatch = mismatch > 0;
+
+            const chip = document.createElement('label');
+            chip.className = 'col-chip' + (hasMismatch ? ' mismatch-chip' : '');
+            chip.title = `${c}: ${pct}% match, ${mismatch} mismatch(es)`;
+
+            const chk = document.createElement('input');
+            chk.type    = 'checkbox';
+            chk.checked = true;
+            chk.addEventListener('change', () => {
+                if (chk.checked) { _hiddenCols.delete(c); } else { _hiddenCols.add(c); }
+                if (compareGrid) compareGrid.setColumnVisible(c, chk.checked);
+            });
+
+            chip.appendChild(chk);
+            chip.insertAdjacentHTML('beforeend',
+                `<span class="col-name">${esc(c)}</span>` +
+                (hasMismatch
+                    ? `<span class="col-pct">${100 - pct}% mismatch</span><span class="col-cnt">(${mismatch})</span>`
+                    : `<span class="col-pct ok">100% match</span>`));
+            container.appendChild(chip);
+        });
+
+        if (!(cols.common || []).length) {
+            container.textContent = 'No common columns between datasets.';
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Filter
+    // -------------------------------------------------------------------------
+
+    function setFilter(f) {
+        _activeFilter = f;
+        updateFilterButtons();
+        if (compareGrid) compareGrid.onFilterChanged();
+    }
+
+    function updateFilterButtons() {
+        ['fAll','fBoth','fDs1','fDs2'].forEach(id => {
+            document.getElementById(id).classList.remove('active');
+        });
+        const map = { ALL:'fAll', BOTH:'fBoth', DS1:'fDs1', DS2:'fDs2' };
+        const el = document.getElementById(map[_activeFilter]);
+        if (el) el.classList.add('active');
+    }
+
+    // -------------------------------------------------------------------------
+    // AG Grid
+    // -------------------------------------------------------------------------
+
+    function renderGrid(rows, cols) {
+        const colDefs = [
+            { field: '__compareKey',  headerName: 'Key',    pinned: 'left', width: 160, headerClass: 'header-key' },
+            { field: 'compareStatus', headerName: 'Status', pinned: 'left', width: 140, headerClass: 'header-key',
+              cellStyle: p => statusStyle(p.value) },
+        ];
+
+        (cols.common || []).forEach(c => colDefs.push({
+            field: c,
+            headerName: `${c} [${(cols.matchPct||{})[c] ?? 100}%]`,
+            headerClass: 'header-common',
+            hide: _hiddenCols.has(c),
+            cellClassRules: { 'cell-mismatch': p => !!(p.data?.__mismatchedColumns?.includes(c)) },
+            tooltipValueGetter: p => {
+                if (p.data?.__mismatchedColumns?.includes(c))
+                    return `DS1: ${p.value ?? ''}\nDS2: ${p.data['__ds2_' + c] ?? ''}`;
+                return null;
+            }
+        }));
+        (cols.dataset1Only || []).forEach(c => colDefs.push({ field: c, headerName: c, headerClass: 'header-ds1' }));
+        (cols.dataset2Only || []).forEach(c => colDefs.push({ field: c, headerName: c, headerClass: 'header-ds2' }));
+
+        if (compareGrid) {
+            compareGrid.setGridOption('columnDefs', colDefs);
+            compareGrid.setGridOption('rowData', rows);
+        } else {
+            compareGrid = agGrid.createGrid(document.getElementById('compareGrid'), {
+                columnDefs: colDefs,
+                rowData:    rows,
+                defaultColDef: { sortable: true, filter: true, resizable: true, minWidth: 90 },
+                getRowClass: p => {
+                    switch (p.data?.compareStatus) {
+                        case 'SAME':          return 'row-same';
+                        case 'MISMATCH':      return 'row-mismatch';
+                        case 'DATASET1_ONLY': return 'row-ds1only';
+                        case 'DATASET2_ONLY': return 'row-ds2only';
+                    }
+                },
+                isExternalFilterPresent: () => _activeFilter !== 'ALL',
+                doesExternalFilterPass: p => {
+                    const s = p.data?.compareStatus;
+                    if (_activeFilter === 'BOTH') return s === 'SAME' || s === 'MISMATCH';
+                    if (_activeFilter === 'DS1')  return s === 'DATASET1_ONLY';
+                    if (_activeFilter === 'DS2')  return s === 'DATASET2_ONLY';
+                    return true;
+                },
+                onRowDataUpdated: updateRowCount,
+                onFilterChanged:  updateRowCount,
+                tooltipShowDelay: 300,
+            });
+        }
+        updateRowCount();
+    }
+
+    function statusStyle(s) {
+        switch (s) {
+            case 'SAME':          return { background:'#e3fcef', color:'#006644', fontWeight:600 };
+            case 'MISMATCH':      return { background:'#ffebe6', color:'#de350b', fontWeight:600 };
+            case 'DATASET1_ONLY': return { background:'#deebff', color:'#0052cc', fontWeight:600 };
+            case 'DATASET2_ONLY': return { background:'#fffae6', color:'#974900', fontWeight:600 };
+            default: return null;
+        }
+    }
+
+    function updateRowCount() {
+        if (!compareGrid) return;
+        let n = 0; compareGrid.forEachNodeAfterFilter(() => n++);
+        document.getElementById('rowCountBar').textContent = n + ' row(s) shown';
+    }
+
+    // -------------------------------------------------------------------------
+    // Export CSV
+    // -------------------------------------------------------------------------
+
+    function exportCompareCsv() {
+        if (!compareGrid) return;
+        compareGrid.exportDataAsCsv({ fileName: 'comparison.csv', onlyRowsWithSelectedStatus: false });
+    }
+
+    // -------------------------------------------------------------------------
+    // Show as HTML (rendered preview)
+    // -------------------------------------------------------------------------
+
+    let _lastHtml = '';
+
+    function showAsHtml() {
+        if (!compareGrid) return;
+        const visible = compareGrid.getAllGridColumns().filter(c => c.isVisible());
+        const rows = [];
+        compareGrid.forEachNodeAfterFilter(n => { if (n.data) rows.push(n.data); });
+
+        const thBase = 'border:1px solid #ccc;padding:6px 10px;text-align:left;font-weight:bold;white-space:nowrap;font-family:Arial,sans-serif;font-size:12px;';
+        const tdBase = 'border:1px solid #ccc;padding:5px 10px;font-family:Arial,sans-serif;font-size:12px;';
+
+        let html = '<table style="border-collapse:collapse"><thead><tr>';
+        visible.forEach(col => {
+            const cls = col.getColDef().headerClass || '';
+            let bg = 'background:#f4f5f7;';
+            if (cls.includes('header-common')) bg = 'background:#e3fcef;color:#006644;';
+            else if (cls.includes('header-ds1')) bg = 'background:#deebff;color:#0052cc;';
+            else if (cls.includes('header-ds2')) bg = 'background:#fffae6;color:#974900;';
+            html += `<th style="${thBase}${bg}">${esc(col.getColDef().headerName || col.getColId())}</th>`;
+        });
+        html += '</tr></thead><tbody>';
+        rows.forEach(row => {
+            html += '<tr>';
+            visible.forEach(col => {
+                const field = col.getColDef().field || col.getColId();
+                let extra = '';
+                if (field === 'compareStatus') extra = statusInlineCss(row.compareStatus);
+                else if (row.__mismatchedColumns?.includes(field)) extra = 'background:#ffebe6;color:#de350b;font-weight:bold;';
+                html += `<td style="${tdBase}${extra}">${esc(String(row[field] ?? ''))}</td>`;
+            });
+            html += '</tr>';
+        });
+        html += '</tbody></table>';
+
+        _lastHtml = html;
+        document.getElementById('htmlPreviewArea').innerHTML = html;
+        document.getElementById('htmlCopyModal').style.display = 'flex';
+    }
+
+    function statusInlineCss(s) {
+        switch (s) {
+            case 'SAME':          return 'background:#e3fcef;color:#006644;font-weight:bold;';
+            case 'MISMATCH':      return 'background:#ffebe6;color:#de350b;font-weight:bold;';
+            case 'DATASET1_ONLY': return 'background:#deebff;color:#0052cc;font-weight:bold;';
+            case 'DATASET2_ONLY': return 'background:#fffae6;color:#974900;font-weight:bold;';
+            default: return '';
+        }
+    }
+
+    function doCopy() {
+        navigator.clipboard.writeText(_lastHtml)
+            .then(() => {
+                const btn = document.getElementById('htmlCopyBtn');
+                const orig = btn.textContent; btn.textContent = 'Copied!'; btn.style.background = '#006644';
+                setTimeout(() => { btn.textContent = orig; btn.style.background = '#0052cc'; }, 1500);
+            })
+            .catch(() => {
+                const ta = document.createElement('textarea');
+                ta.value = _lastHtml; document.body.appendChild(ta); ta.select();
+                document.execCommand('copy'); document.body.removeChild(ta);
+            });
+    }
+
+    document.getElementById('htmlCopyModal').addEventListener('click', e => {
+        if (e.target === document.getElementById('htmlCopyModal'))
+            document.getElementById('htmlCopyModal').style.display = 'none';
+    });
+
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && document.getElementById('htmlCopyModal').style.display === 'flex')
+            document.getElementById('htmlCopyModal').style.display = 'none';
+    });
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
+    function setStatus(msg, type) {
+        const el = document.getElementById('statusBar');
+        el.textContent = msg;
+        el.className = 'status-bar' + (type ? ' ' + type : '');
+    }
+
+    function esc(s) {
+        return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    // -------------------------------------------------------------------------
+    // Template save / load
+    // -------------------------------------------------------------------------
+
+    async function saveTemplate() {
+        const name = document.getElementById('tplName').value.trim();
+        if (!name) { showTplMsg('Enter a template name', 'error'); return; }
+
+        const body1 = document.getElementById('body1').value.trim();
+        const body2 = document.getElementById('body2').value.trim();
+        const key1  = document.getElementById('key1').value.trim();
+        const key2  = document.getElementById('key2').value.trim();
+
+        let ds1 = null, ds2 = null;
+        try { if (body1) ds1 = JSON.parse(body1); } catch (e) { showTplMsg('Dataset 1 body is not valid JSON', 'error'); return; }
+        try { if (body2) ds2 = JSON.parse(body2); } catch (e) { showTplMsg('Dataset 2 body is not valid JSON', 'error'); return; }
+
+        const content = { dataset1: ds1, dataset2: ds2, key1, key2 };
+        try {
+            const res = await fetch('/batch/template', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({ name, content })
+            });
+            const data = await res.json();
+            if (!res.ok) { showTplMsg(data.error || 'Save failed', 'error'); return; }
+            showTplMsg('Saved: ' + name, 'ok');
+            await loadTemplateList();
+            document.getElementById('tplSelect').value = name;
+        } catch (e) {
+            showTplMsg('Error: ' + e.message, 'error');
+        }
+    }
+
+    async function loadTemplateList() {
+        try {
+            const res  = await fetch('/batch/template');
+            const data = await res.json();
+            const sel  = document.getElementById('tplSelect');
+            const cur  = sel.value;
+            sel.innerHTML = '<option value="">— load template —</option>';
+            (data.data || []).forEach(n => {
+                const opt = document.createElement('option');
+                opt.value = opt.textContent = n;
+                sel.appendChild(opt);
+            });
+            if (cur) sel.value = cur;
+        } catch (_) {}
+    }
+
+    async function loadTemplate() {
+        const name = document.getElementById('tplSelect').value;
+        if (!name) { showTplMsg('Select a template first', 'error'); return; }
+        try {
+            const res = await fetch('/batch/template/' + encodeURIComponent(name));
+            if (!res.ok) { showTplMsg('Template not found', 'error'); return; }
+            const data = await res.json();
+            const c    = data.content || {};
+
+            if (c.dataset1 != null) document.getElementById('body1').value = JSON.stringify(c.dataset1, null, 2);
+            if (c.dataset2 != null) document.getElementById('body2').value = JSON.stringify(c.dataset2, null, 2);
+            if (c.key1)             document.getElementById('key1').value  = c.key1;
+            if (c.key2 != null)     document.getElementById('key2').value  = c.key2;
+            document.getElementById('tplName').value = name;
+            showTplMsg('Loaded: ' + name, 'ok');
+        } catch (e) {
+            showTplMsg('Error: ' + e.message, 'error');
+        }
+    }
+
+    function showTplMsg(msg, type) {
+        const el = document.getElementById('tplMsg');
+        el.textContent = msg;
+        el.className   = 'tpl-msg' + (type ? ' ' + type : '');
+        clearTimeout(el._t);
+        el._t = setTimeout(() => { el.textContent = ''; el.className = 'tpl-msg'; }, 3000);
+    }
+
+    // Load template list on page load
+    loadTemplateList();
+</script>
+</body>
+</html>

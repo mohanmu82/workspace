@@ -1,9 +1,0 @@
-  {
-    "name": "jsonreader",
-    "properties": {
-      "attributes": {	
-        "inputSource": "JSON"
-      }
-    },  
-    "mandatoryProperties": "inputJsonPath"
-  }

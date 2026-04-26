@@ -1,0 +1,59 @@
+{
+  "name": "httppost",
+  "mandatoryProperties": [
+    { "property": "inputHttpUrl",  "dataType": "string" },
+    { "property": "inputHttpBody", "dataType": "string","elementType" : "textarea"  },
+    { "property": "inputSource", "dataType": "string", "defaultValue":"SPECIFIC", "readOnly": true }
+  ],
+  "alias": [
+    {
+      "name": "CLAUDEMCPLOCAL",
+      "mandatoryProperties": [
+        { "property": "inputHttpUrl",  "dataType": "string", "defaultValue":"http://localhost:44518" },
+        { "property": "inputHttpBody", "dataType": "string", "elementType" : "textarea", "defaultValue": "{\"jsonrpc\": \"2.0\", \"method\": \"tools/list\", \"id\": 1}"},
+        { "property": "inputSource", "dataType": "string", "defaultValue":"SPECIFIC", "readOnly": true }
+      ],        
+      "request": {
+      }
+    },
+    {
+      "name": "CLAUDECOMMANDMESSAGE",
+      "mandatoryProperties": [
+        { "property": "inputHttpUrl",  "dataType": "string", "defaultValue":"https://api.anthropic.com/v1/messages" },
+        { "property": "inputHttpBody", "dataType": "string", "elementType" : "textarea", "defaultValue": "classpath:requestTemplate/claudeTools.json" },
+        { "property": "inputSource", "dataType": "string", "defaultValue":"SPECIFIC", "readOnly": true }
+      ],        
+      "request": {
+        "inputHttpHeader": {
+          "Accept": "application/json",
+          "X-API-Key": "YOUR_ANTHROPIC_API_KEY",
+          "anthropic-version": "2023-06-01",
+          "anthropic-beta": "mcp-client-2025-11-20" 
+        }      
+      }
+    }
+  ],
+  "activity": [
+    {
+      "name": "httppostgeneric",
+      "type": "HTTP",
+      "http": {
+        "url": "${inputHttpUrl}",
+        "bodyTemplate": "${inputHttpBody}",
+        "method": "POST",
+        "contentType": "application/json",
+        "extract":{
+            "ifError": {
+              "RESPONSECODE": "$.statusCode",
+              "RESPONSEBODY": "$.body",
+              "REQUESTURL": "$.url",
+              "REQUESTHEADERS": "$.requestHeaders",
+              "RESPONSEHEADERS": "$.responseHeaders"
+            }
+        },
+        "threadCount": 1,
+        "timeoutMs": 30000
+      }
+    }
+  ]
+}
