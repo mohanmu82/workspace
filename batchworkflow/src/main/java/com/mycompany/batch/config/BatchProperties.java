@@ -411,6 +411,7 @@ public class BatchProperties {
         private String            dataType     = "string";
         private String            elementType;          // shorthand — overrides displayType.elementType
         private boolean           readOnly     = false;
+        private boolean           required     = true;
         private DisplayTypeConfig displayType;
         private DataSourceConfig  dataSource;
 
@@ -424,6 +425,8 @@ public class BatchProperties {
         public void              setElementType(String et)              { this.elementType = et; }
         public boolean           isReadOnly()                           { return readOnly; }
         public void              setReadOnly(boolean ro)                { this.readOnly = ro; }
+        public boolean           isRequired()                           { return required; }
+        public void              setRequired(boolean req)               { this.required = req; }
         public DisplayTypeConfig getDisplayType()                       { return displayType; }
         public void              setDisplayType(DisplayTypeConfig dt)   { this.displayType = dt; }
         public DataSourceConfig  getDataSource()                        { return dataSource; }

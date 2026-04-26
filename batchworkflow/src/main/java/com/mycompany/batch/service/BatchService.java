@@ -432,9 +432,12 @@ public class BatchService {
                 String httpUrl = request.inputHttpUrl();
                 if (httpUrl == null || httpUrl.isBlank()) httpUrl = opProperties.get("inputHttpUrl");
                 if (httpUrl != null && !httpUrl.isBlank()) {
+                    Map<String, String> urlProps = new LinkedHashMap<>(opProperties);
+                    System.getenv().forEach(urlProps::putIfAbsent);
+                    httpUrl = resolveTemplate(httpUrl.trim(), Map.of(), urlProps);
                     BatchProperties.HttpConfigSourceProperties override =
                             new BatchProperties.HttpConfigSourceProperties();
-                    override.setUrl(httpUrl.trim());
+                    override.setUrl(httpUrl);
                     // if the request has a body, force POST; otherwise keep the configured method
                     override.setMethod(request.inputHttpBody() != null && !request.inputHttpBody().isBlank()
                             ? com.mycompany.batch.model.HttpMethod.POST : httpCfg.getMethod());
@@ -2435,6 +2438,7 @@ public class BatchService {
         for (BatchProperties.MandatoryPropertyDef def : defs) {
             String prop = def.getProperty();
             if (prop == null || prop.isBlank()) continue;
+            if (!def.isRequired()) continue;
             Object val = reqMap.get(prop);
             if (val != null && !val.toString().isBlank()) continue;
             String opVal = opProperties.get(prop);
@@ -2465,6 +2469,7 @@ public class BatchService {
         for (BatchProperties.MandatoryPropertyDef def : defs) {
             String prop = def.getProperty();
             if (prop == null || prop.isBlank()) continue;
+            if (!def.isRequired()) continue;
             Object val = reqMap.get(prop);
             if (val != null && !val.toString().isBlank()) continue;
             String opVal = opProperties.get(prop);

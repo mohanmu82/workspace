@@ -2,7 +2,7 @@
   "name": "httpget",
   "mandatoryProperties": [
     { "property": "inputSource", "dataType": "string", "defaultValue":"HTTPCONFIG", "readOnly": true },
-    { "property": "inputHttpUrl", "dataType": "string", "defaultValue":"http://localhost:8080/batch/operations" },
+    { "property": "inputHttpUrl", "dataType": "string", "defaultValue":"http://${HOSTNAME}:${PORTNUMBER}/batch/operations" },
     { "property": "inputHttpHeader", "dataType": "json", "elementType": "textarea", "required": false, "displayType": {"label": "Headers (JSON object)"} }
   ],
   "activity": [
@@ -31,10 +31,19 @@
   ],
   "alias": [
     {
+      "name": "ALLCACHES",
+      "mandatoryProperties": [
+        { "property": "inputSource", "dataType": "string", "defaultValue":"HTTPCONFIG", "readOnly": true },
+        { "property": "inputHttpUrl", "dataType": "string", "defaultValue":"http://${HOSTNAME}:${PORTNUMBER}/batch/cache", "readOnly": true }
+      ],
+      "request": {
+      }
+    },
+    {
       "name": "ALLOPERATIONS",
       "mandatoryProperties": [
         { "property": "inputSource", "dataType": "string", "defaultValue":"HTTPCONFIG", "readOnly": true },
-        { "property": "inputHttpUrl", "dataType": "string", "defaultValue":"http://localhost:8080/batch/operations", "readOnly": true }
+        { "property": "inputHttpUrl", "dataType": "string", "defaultValue":"http://${HOSTNAME}:${PORTNUMBER}/batch/operations", "readOnly": true }
       ],
       "request": {
       }
