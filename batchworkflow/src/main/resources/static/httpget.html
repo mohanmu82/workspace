@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HTTP Post</title>
+    <title>HTTP Get</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -15,11 +15,7 @@
         }
 
         .nav { margin-bottom: 18px; }
-        .nav a {
-            font-size: 13px;
-            color: #0052cc;
-            text-decoration: none;
-        }
+        .nav a { font-size: 13px; color: #0052cc; text-decoration: none; }
         .nav a:hover { text-decoration: underline; }
 
         h1 { font-size: 20px; font-weight: 600; margin-bottom: 16px; }
@@ -48,12 +44,7 @@
             margin-bottom: 12px;
         }
 
-        .form-group {
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-        }
-
+        .form-group { display: flex; flex-direction: column; gap: 4px; }
         .form-group.wide { grid-column: 1 / -1; }
 
         .form-group label {
@@ -89,7 +80,6 @@
             font-size: 13px;
         }
 
-        textarea.body-area { min-height: 180px; }
         textarea.headers-area { min-height: 80px; }
 
         .toolbar {
@@ -131,7 +121,6 @@
         .status-bar.error { color: #de350b; }
         .status-bar.ok    { color: #006644; }
 
-        /* Response accordion */
         .response-section { margin-top: 6px; }
 
         .response-toggle {
@@ -147,16 +136,9 @@
             font-size: 13px;
             font-weight: 600;
         }
-
         .response-toggle:hover { background: #ebecf0; }
 
-        .response-toggle .badge {
-            padding: 2px 8px;
-            border-radius: 10px;
-            font-size: 11px;
-            font-weight: 700;
-        }
-
+        .response-toggle .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
         .badge.ok  { background: #e3fcef; color: #006644; }
         .badge.err { background: #ffebe6; color: #de350b; }
 
@@ -175,7 +157,6 @@
             white-space: pre-wrap;
             word-break: break-all;
         }
-
         .response-body.open { display: block; }
 
         .chevron { transition: transform 0.15s; display: inline-block; }
@@ -184,14 +165,7 @@
         .auth-fields { display: none; }
         .auth-fields.visible { display: contents; }
 
-        .hint {
-            font-size: 11px;
-            color: #a5adba;
-            margin-top: 2px;
-        }
-
-        .validation-ok  { border-color: #57d9a3 !important; }
-        .validation-err { border-color: #de350b !important; }
+        .hint { font-size: 11px; color: #a5adba; margin-top: 2px; }
 
         .request-preview-header {
             display: none;
@@ -199,29 +173,15 @@
             gap: 8px;
             margin-bottom: 4px;
         }
-
         .request-preview-label {
-            font-size: 11px;
-            font-weight: 600;
-            color: #5e6c84;
-            text-transform: uppercase;
-            letter-spacing: 0.4px;
-            flex: 1;
+            font-size: 11px; font-weight: 600; color: #5e6c84;
+            text-transform: uppercase; letter-spacing: 0.4px; flex: 1;
         }
-
         .request-preview-actions { display: flex; gap: 6px; }
-
         .request-preview-actions button {
-            padding: 3px 10px;
-            font-size: 12px;
-            font-weight: 500;
-            border-radius: 4px;
-            cursor: pointer;
-            border: 1px solid #0052cc;
-            background: #fff;
-            color: #0052cc;
+            padding: 3px 10px; font-size: 12px; font-weight: 500; border-radius: 4px;
+            cursor: pointer; border: 1px solid #0052cc; background: #fff; color: #0052cc;
         }
-
         .request-preview-actions button:hover { background: #e9f0ff; }
 
         .request-preview {
@@ -246,8 +206,8 @@
 </head>
 <body>
 
-<div class="nav"><a href="/">&larr; Batch Runner</a></div>
-<h1>HTTP Post</h1>
+<div class="nav"><a href="/">&larr; Home</a></div>
+<h1>HTTP Get</h1>
 
 <!-- URL + Timeout -->
 <div class="panel">
@@ -262,10 +222,6 @@
             <input id="timeoutMs" type="number" value="30000" min="500" step="500" />
         </div>
         <div class="form-group">
-            <label>Content-Type</label>
-            <input id="contentType" type="text" value="application/json" placeholder="application/json" />
-        </div>
-        <div class="form-group">
             <label>Response Processor</label>
             <select id="responseProcessor" style="width:100%;padding:5px 6px;border:1px solid #ccc;border-radius:3px;font-size:13px;">
                 <option value="">(none)</option>
@@ -273,25 +229,13 @@
         </div>
     </div>
 
-    <!-- Body -->
-    <div class="form-group wide" style="margin-bottom:12px">
-        <label>Body</label>
-        <textarea id="body" class="body-area" spellcheck="false" placeholder='{"key": "value"}'></textarea>
-    </div>
-
     <!-- Extra headers -->
-    <div class="form-group wide">
+    <div class="form-group wide" style="margin-bottom:12px">
         <label>Headers (JSON object)</label>
         <textarea id="headers" class="headers-area" spellcheck="false" placeholder='{"Accept": "application/json", "X-Custom": "value"}'></textarea>
         <span class="hint">Merged on top of operation activity headers — these take precedence.</span>
     </div>
 
-    <!-- Extra properties -->
-    <div class="form-group wide">
-        <label>Extra Request Properties (JSON object)</label>
-        <textarea id="extraProps" class="headers-area" spellcheck="false" placeholder='{"debugMode": 1, "inputCount": 5}'></textarea>
-        <span class="hint">Keys are merged into the request and also exposed as <code style="font-size:10px">request.properties</code>, so <code style="font-size:10px">${var}</code> placeholders in URL / Body are resolved against them.</span>
-    </div>
     <!-- JSONata transform -->
     <div class="form-group wide">
         <label>JSONata Transform <span style="font-weight:400;text-transform:none;font-size:11px;color:#5e6c84">(optional — applied to response before returning)</span></label>
@@ -382,11 +326,7 @@
 
 <!-- Toolbar -->
 <div class="toolbar">
-    <button class="primary" id="postBtn" onclick="doPost()">POST</button>
-    <button class="secondary" onclick="validateJson()">Validate JSON</button>
-    <button class="secondary" onclick="validateXml()">Validate XML</button>
-    <button class="secondary" onclick="prettyJson()">Pretty JSON</button>
-    <button class="secondary" onclick="prettyXml()">Pretty XML</button>
+    <button class="primary" id="getBtn" onclick="doGet()">GET</button>
     <span style="margin-left:auto;display:flex;align-items:center;gap:6px;">
         <input id="runTemplateId" type="text" placeholder="template ID"
                style="padding:4px 8px;border:1px solid #ccc;border-radius:3px;font-size:13px;width:130px;" />
@@ -400,7 +340,6 @@
 <div class="request-preview-header" id="requestPreviewHeader">
     <span class="request-preview-label">Last Request</span>
     <div class="request-preview-actions">
-        <button onclick="validateLastRequest()">Validate JSON</button>
         <button onclick="sendRawRequest()">Resend</button>
     </div>
 </div>
@@ -433,9 +372,7 @@
     function onAuthMethodChange() {
         const method = document.getElementById('authMethod').value;
         document.querySelectorAll('.auth-fields').forEach(el => el.classList.remove('visible'));
-        (AUTH_GROUPS[method] || []).forEach(id => {
-            document.getElementById(id).classList.add('visible');
-        });
+        (AUTH_GROUPS[method] || []).forEach(id => document.getElementById(id).classList.add('visible'));
     }
 
     function toggleResponse() {
@@ -475,9 +412,7 @@
             const data = await res.json();
             if (res.ok) setStatus('Saved: ' + data.path, 'ok');
             else setStatus('Save failed: ' + (data.Errors?.[0]?.message ?? res.statusText), 'error');
-        } catch (e) {
-            setStatus('Save failed: ' + e.message, 'error');
-        }
+        } catch (e) { setStatus('Save failed: ' + e.message, 'error'); }
     }
 
     async function runTemplate() {
@@ -492,98 +427,13 @@
             showResponse(data, res.status, elapsed);
             if (res.ok) setStatus('Template run complete (' + elapsed + ' ms).', 'ok');
             else setStatus('Template run failed: ' + (data.Errors?.[0]?.message ?? res.statusText), 'error');
-        } catch (e) {
-            setStatus('Template run failed: ' + e.message, 'error');
-        }
+        } catch (e) { setStatus('Template run failed: ' + e.message, 'error'); }
     }
 
     function setStatus(msg, type = '') {
         const bar = document.getElementById('statusBar');
         bar.textContent = msg;
         bar.className = 'status-bar' + (type ? ' ' + type : '');
-    }
-
-    function validateJson() {
-        const ta = document.getElementById('body');
-        ta.classList.remove('validation-ok', 'validation-err');
-        if (!ta.value.trim()) { setStatus('Body is empty.'); return; }
-        try {
-            JSON.parse(ta.value);
-            ta.classList.add('validation-ok');
-            setStatus('Valid JSON.', 'ok');
-        } catch (e) {
-            ta.classList.add('validation-err');
-            setStatus('Invalid JSON: ' + e.message, 'error');
-        }
-    }
-
-    function validateXml() {
-        const ta = document.getElementById('body');
-        ta.classList.remove('validation-ok', 'validation-err');
-        if (!ta.value.trim()) { setStatus('Body is empty.'); return; }
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(ta.value, 'application/xml');
-        const err = doc.querySelector('parsererror');
-        if (err) {
-            ta.classList.add('validation-err');
-            setStatus('Invalid XML: ' + err.textContent.split('\n')[0], 'error');
-        } else {
-            ta.classList.add('validation-ok');
-            setStatus('Valid XML.', 'ok');
-        }
-    }
-
-    function prettyJson() {
-        const ta = document.getElementById('body');
-        ta.classList.remove('validation-ok', 'validation-err');
-        if (!ta.value.trim()) { setStatus('Body is empty.'); return; }
-        try {
-            ta.value = JSON.stringify(JSON.parse(ta.value), null, 2);
-            ta.classList.add('validation-ok');
-            setStatus('JSON formatted.', 'ok');
-        } catch (e) {
-            ta.classList.add('validation-err');
-            setStatus('Invalid JSON: ' + e.message, 'error');
-        }
-    }
-
-    function prettyXml() {
-        const ta = document.getElementById('body');
-        ta.classList.remove('validation-ok', 'validation-err');
-        if (!ta.value.trim()) { setStatus('Body is empty.'); return; }
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(ta.value.trim(), 'application/xml');
-        const err = doc.querySelector('parsererror');
-        if (err) {
-            ta.classList.add('validation-err');
-            setStatus('Invalid XML: ' + err.textContent.split('\n')[0], 'error');
-            return;
-        }
-        ta.value = formatXmlNode(doc.documentElement, 0);
-        ta.classList.add('validation-ok');
-        setStatus('XML formatted.', 'ok');
-    }
-
-    function formatXmlNode(node, depth) {
-        const indent = '  '.repeat(depth);
-        const childIndent = '  '.repeat(depth + 1);
-        const tag = node.nodeName;
-        let attrs = '';
-        for (const a of node.attributes) {
-            attrs += ` ${a.name}="${a.value.replace(/"/g, '&quot;')}"`;
-        }
-        const children = Array.from(node.childNodes);
-        const elementChildren = children.filter(c => c.nodeType === Node.ELEMENT_NODE);
-        const textChildren = children.filter(c => c.nodeType === Node.TEXT_NODE);
-        const text = textChildren.map(c => c.nodeValue).join('').trim();
-
-        if (elementChildren.length === 0) {
-            if (!text) return `${indent}<${tag}${attrs}/>`;
-            const safe = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-            return `${indent}<${tag}${attrs}>${safe}</${tag}>`;
-        }
-        const inner = elementChildren.map(c => formatXmlNode(c, depth + 1)).join('\n');
-        return `${indent}<${tag}${attrs}>\n${inner}\n${indent}</${tag}>`;
     }
 
     async function resolveAuthHeader() {
@@ -615,14 +465,11 @@
         return null; // NONE / DIGEST / NTLM / KERBEROS handled server-side via operation config
     }
 
-    async function doPost() {
-        const url  = document.getElementById('url').value.trim();
-        const body = document.getElementById('body').value;
+    async function doGet() {
+        const url     = document.getElementById('url').value.trim();
         const timeout = parseInt(document.getElementById('timeoutMs').value) || 30000;
-        const contentType = document.getElementById('contentType').value.trim() || 'application/json';
 
         if (!url) { setStatus('URL is required.', 'error'); return; }
-        if (!body.trim()) { setStatus('Body is required.', 'error'); return; }
 
         // Parse extra headers
         let extraHeaders = {};
@@ -632,21 +479,13 @@
             catch (e) { setStatus('Headers are not valid JSON: ' + e.message, 'error'); return; }
         }
 
-        // Parse extra request properties
-        let extraProps = {};
-        const extraPropsRaw = document.getElementById('extraProps').value.trim();
-        if (extraPropsRaw) {
-            try { extraProps = JSON.parse(extraPropsRaw); }
-            catch (e) { setStatus('Extra properties are not valid JSON: ' + e.message, 'error'); return; }
-        }
-
         // Resolve auth header
         let authHeader = null;
         try { authHeader = await resolveAuthHeader(); }
         catch (e) { setStatus(e.message, 'error'); return; }
         if (authHeader) extraHeaders['Authorization'] = authHeader;
 
-        // NTLM: validate fields and pass credentials as request properties for server-side handling
+        // NTLM: validate and pass credentials as request properties
         const authMethod = document.getElementById('authMethod').value;
         let ntlmProps = {};
         if (authMethod === 'NTLM') {
@@ -656,33 +495,22 @@
             ntlmProps = { ntlmUsername: ntlmUser, ntlmPassword: ntlmPass };
         }
 
-        // Always set content-type in the headers override so it reaches the activity
-        extraHeaders['Content-Type'] = contentType;
-
-        const btn = document.getElementById('postBtn');
+        const btn = document.getElementById('getBtn');
         btn.disabled = true;
         setStatus('Sending…');
 
         const responseProcessor = document.getElementById('responseProcessor').value;
         const jsonataValue = document.getElementById('jsonataTransform').value.trim();
         const request = {
-            operation: 'httppost',
-            raw: [{}],
-            inputHttpUrl:  url,
-            inputHttpBody: body,
+            operation:       'httpget',
+            inputSource:     'SPECIFIC',
+            raw:             [{}],
+            inputHttpUrl:    url,
             inputHttpHeader: extraHeaders,
             httpThreadCount: 1,
-            httpTimeoutMs: timeout,
+            httpTimeoutMs:   timeout,
             ...(responseProcessor ? { responseProcessor } : {}),
             ...(jsonataValue ? { jsonataTransform: { value: jsonataValue } } : {}),
-            ...extraProps,
-            // Also expose extraProps as request.properties so ${var} placeholders in
-            // inputHttpUrl and inputHttpBody are resolved by resolvePropertyVariables()
-            ...(Object.keys(extraProps).length > 0 ? {
-                properties: Object.fromEntries(
-                    Object.entries(extraProps).map(([k, v]) => [k, v === null || v === undefined ? '' : String(v)])
-                )
-            } : {}),
             ...ntlmProps
         };
 
@@ -692,9 +520,9 @@
         const t0 = Date.now();
         try {
             const res  = await fetch('/batch/run', {
-                method: 'POST',
+                method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: requestJson
+                body:    requestJson
             });
             const elapsed = Date.now() - t0;
             const json = await res.json();
@@ -712,32 +540,21 @@
         document.getElementById('requestPreviewHeader').style.display = 'flex';
     }
 
-    function validateLastRequest() {
-        const text = document.getElementById('requestPreview').value.trim();
-        if (!text) { setStatus('Last request is empty.', 'error'); return; }
-        try {
-            JSON.parse(text);
-            setStatus('JSON is valid.', 'ok');
-        } catch (e) {
-            setStatus('Invalid JSON: ' + e.message, 'error');
-        }
-    }
-
     async function sendRawRequest() {
         const text = document.getElementById('requestPreview').value.trim();
         if (!text) { setStatus('Last request is empty.', 'error'); return; }
         let parsed;
         try { parsed = JSON.parse(text); }
         catch (e) { setStatus('Fix JSON before sending: ' + e.message, 'error'); return; }
-        const btn = document.getElementById('postBtn');
+        const btn = document.getElementById('getBtn');
         btn.disabled = true;
         setStatus('Sending…');
         const t0 = Date.now();
         try {
             const res = await fetch('/batch/run', {
-                method: 'POST',
+                method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: text
+                body:    text
             });
             const elapsed = Date.now() - t0;
             const json = await res.json();
@@ -771,7 +588,7 @@
         setStatus(ok ? 'Done.' : 'Server returned HTTP ' + httpStatus + '.', ok ? 'ok' : 'error');
     }
 
-    // Load response processor names into dropdown on page load
+    // Load response processor names
     (async () => {
         try {
             const res  = await fetch('/batch/operations');
@@ -783,7 +600,7 @@
                 opt.value = n; opt.textContent = n;
                 sel.appendChild(opt);
             });
-        } catch (e) { /* silently ignore — dropdown stays with just (none) */ }
+        } catch (e) { /* silently ignore */ }
     })();
 </script>
 

@@ -316,6 +316,15 @@ public class EnricherService {
                 yield new String(java.util.Base64.getDecoder().decode(input.trim()));
             }
 
+            case "jsonpath" -> {
+                String json      = resolveExpr(attr.getString(), rowData, sys);
+                String jsonPath  = attr.getPath();
+                if (jsonPath == null || jsonPath.isBlank())
+                    throw new IllegalArgumentException("jsonpath type requires a 'path' field");
+                Object result = com.jayway.jsonpath.JsonPath.read(json, jsonPath);
+                yield result != null ? result.toString() : "";
+            }
+
             case "cascade" -> {
                 String cascadeExpr = attr.getString() != null ? attr.getString() : attr.getValue();
                 String[] candidates = cascadeExpr != null

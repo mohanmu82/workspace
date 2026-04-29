@@ -1,10 +1,11 @@
 {
   "data": [
 		{
-			"name": "TOKEN"
-			,"type": "cascade"
-			,"value": "TOKEN|BAMTOKEN|JWTTOKEN"
-			,"onError": "${errorMessage}"
+			"name": "TOKEN",
+			"type": "jsonpath",
+			"string": "${RESPONSEBODY}",
+			"path": "$.token",
+			"onError": "${errorMessage}"
 		},
 		{
 			"name": "claim",
@@ -20,6 +21,5 @@
 			"string": "${CLAIM}",
 			"onError": "${errorMessage}"
 		}
-
   ]
 }

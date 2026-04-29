@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>SSE Stream Tester</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #f4f6f9; color: #222; padding: 20px; }
+    h1 { font-size: 1.25rem; font-weight: 600; margin-bottom: 16px; }
+
+    .card {
+      background: #fff;
+      border: 1px solid #dde1e7;
+      border-radius: 6px;
+      padding: 16px 20px;
+      margin-bottom: 14px;
+    }
+
+    label { display: block; font-size: 0.8rem; font-weight: 600; margin-bottom: 5px; color: #555; }
+
+    input[type=text] {
+      padding: 6px 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 0.85rem;
+    }
+
+    textarea {
+      width: 100%;
+      font-family: monospace;
+      font-size: 0.82rem;
+      padding: 8px 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      resize: vertical;
+    }
+
+    button {
+      padding: 6px 16px;
+      font-size: 0.83rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      background: #0078d4;
+      color: #fff;
+      white-space: nowrap;
+    }
+    button:hover   { background: #005fa3; }
+    button:disabled { background: #9ec5e8; cursor: not-allowed; }
+    button.secondary { background: #6c757d; }
+    button.secondary:hover { background: #545b62; }
+    button.danger { background: #c0392b; }
+    button.danger:hover { background: #a93226; }
+
+    .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .row input[type=text] { flex: 1; min-width: 140px; }
+
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 10px;
+      font-size: 0.76rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .badge-connected    { background: #d1e7dd; color: #0a5c36; }
+    .badge-connecting   { background: #fff3cd; color: #856404; }
+    .badge-disconnected { background: #f8d7da; color: #842029; }
+
+    /* event-type badge colours */
+    .ev-session\\.created, .ev-session\\.closed,
+    .ev-execute\\.accepted, .ev-execute\\.error,
+    .ev-unsubscribe\\.response, .ev-unsubscribe\\.error { display: none; }
+
+    #eventLog {
+      height: 480px;
+      overflow-y: auto;
+      border: 1px solid #dde1e7;
+      border-radius: 4px;
+      padding: 8px;
+      background: #fafbfc;
+    }
+
+    .event-entry {
+      margin-bottom: 10px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #eee;
+    }
+    .event-entry:last-child { border-bottom: none; margin-bottom: 0; }
+
+    .event-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+    .event-time { color: #888; font-size: 0.73rem; }
+    .event-type-badge {
+      display: inline-block;
+      padding: 1px 7px;
+      border-radius: 8px;
+      font-size: 0.72rem;
+      font-weight: 600;
+    }
+
+    .type-session   { background: #cfe2ff; color: #084298; }
+    .type-load      { background: #d1e7dd; color: #0a5c36; }
+    .type-update    { background: #d0f0c0; color: #155724; }
+    .type-broadcast { background: #e2d9f3; color: #4a2d7a; }
+    .type-info      { background: #e2e3e5; color: #383d41; }
+    .type-error     { background: #f8d7da; color: #842029; }
+    .type-expired   { background: #fff3cd; color: #856404; }
+
+    .event-body {
+      margin: 0;
+      white-space: pre-wrap;
+      font-family: monospace;
+      font-size: 0.78rem;
+      color: #333;
+      max-height: 160px;
+      overflow-y: auto;
+      background: #f0f2f5;
+      border-radius: 3px;
+      padding: 5px 8px;
+    }
+
+    .section-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+
+    .hint { font-size: 0.77rem; color: #777; margin-top: 6px; }
+  </style>
+</head>
+<body>
+
+<h1>SSE Stream Tester</h1>
+
+<!-- ── Session ─────────────────────────────────────────────── -->
+<div class="card">
+  <label>Session</label>
+  <div class="row" style="margin-bottom: 8px;">
+    <input type="text" id="sessionId" placeholder="session ID" style="max-width:280px;">
+    <button class="secondary" onclick="generateId()">Generate UUID</button>
+    <input type="text" id="createdBy" placeholder="Created By (optional)" style="max-width:200px;">
+  </div>
+  <div class="row">
+    <button id="startBtn" onclick="startStream()">Start Stream</button>
+    <button id="stopBtn"  onclick="stopStream()" class="danger" disabled>Disconnect</button>
+    <span id="statusBadge" class="badge badge-disconnected">Disconnected</span>
+  </div>
+</div>
+
+<!-- ── Main two-column area ──────────────────────────────────── -->
+<div class="grid2">
+
+  <!-- Left: Execute request -->
+  <div class="card">
+    <div class="section-title">
+      <label style="margin:0;">Execute Request  <span style="font-weight:normal;color:#777;">→ POST /stream/execute</span></label>
+      <button class="secondary" style="padding:3px 10px;font-size:0.76rem;" onclick="resetTemplate()">Reset</button>
+    </div>
+    <textarea id="executeBody" rows="26" spellcheck="false"></textarea>
+    <p class="hint">
+      <code>stream.streamUri</code> is always overwritten with the active session.<br>
+      Set <code>url</code> to your batch endpoint, e.g. <code>/batch/run?operation=myOp</code>.<br>
+      For POST to that URL set <code>"urlMethod":"POST"</code> and <code>"urlBody":{…}</code>.
+    </p>
+    <div class="row" style="margin-top:10px;">
+      <button onclick="executeRequest()">Execute</button>
+      <button class="secondary" onclick="clearLog()">Clear Log</button>
+    </div>
+  </div>
+
+  <!-- Right: Event log -->
+  <div class="card">
+    <div class="section-title">
+      <label style="margin:0;">Live Events</label>
+      <button class="secondary" style="padding:3px 10px;font-size:0.76rem;" onclick="clearLog()">Clear</button>
+    </div>
+    <div id="eventLog"></div>
+  </div>
+
+</div>
+
+<!-- ── Unsubscribe ──────────────────────────────────────────── -->
+<div class="card">
+  <label>Unsubscribe Dataset</label>
+  <div class="row">
+    <input type="text" id="unsubAlias" placeholder="datasetAlias" style="max-width:280px;">
+    <button class="secondary" onclick="unsubscribe()">Unsubscribe</button>
+  </div>
+</div>
+
+<script>
+  let es = null;   // EventSource
+  let sid = '';    // active session id
+
+  // ── Session management ───────────────────────────────────────
+
+  function generateId() {
+    const raw = ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+      (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16));
+    document.getElementById('sessionId').value = 'sess-' + raw.substring(0, 8);
+    updateTemplate();
+  }
+
+  function startStream() {
+    const inputId = document.getElementById('sessionId').value.trim();
+    if (!inputId) { alert('Enter a Session ID'); return; }
+    sid = inputId;
+
+    if (es) { es.close(); es = null; }
+
+    const by  = encodeURIComponent(document.getElementById('createdBy').value.trim());
+    const url = '/stream/' + encodeURIComponent(sid) + (by ? '?createdBy=' + by : '');
+
+    setStatus('connecting');
+    es = new EventSource(url);
+
+    // named events from the server
+    const eventDefs = [
+      ['session.created',      'type-session'],
+      ['session.closed',       'type-session'],
+      ['dataset.load',         'type-load'],
+      ['dataset.rowUpdate',    'type-update'],
+      ['dataset.broadcast',    'type-broadcast'],
+      ['dataset.unsubscribed', 'type-info'],
+      ['dataset.expired',      'type-expired'],
+      ['dataset.error',        'type-error'],
+    ];
+    eventDefs.forEach(([name, cls]) => {
+      es.addEventListener(name, e => {
+        if (name === 'session.created') setStatus('connected');
+        if (name === 'session.closed')  setStatus('disconnected');
+        appendEvent(name, e.data, cls);
+      });
+    });
+
+    es.onerror = () => {
+      if (es && es.readyState === EventSource.CLOSED) {
+        setStatus('disconnected');
+        es = null;
+      }
+    };
+
+    updateTemplate();
+  }
+
+  function stopStream() {
+    if (es) { es.close(); es = null; }
+    setStatus('disconnected');
+  }
+
+  // ── Execute ──────────────────────────────────────────────────
+
+  function executeRequest() {
+    if (!sid) { alert('Start a stream session first.'); return; }
+
+    let body;
+    try {
+      body = JSON.parse(document.getElementById('executeBody').value);
+    } catch (e) {
+      alert('Invalid JSON in request body:\n' + e.message);
+      return;
+    }
+
+    // Always inject the active session into stream.streamUri
+    if (!body.stream) body.stream = {};
+    body.stream.streamUri = '/stream/' + sid;
+
+    // Fresh requestId and timestamp
+    if (!body.requestId) body.requestId = 'req-' + Date.now();
+    body.requestedAt = new Date().toISOString();
+
+    fetch('/stream/execute', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(body)
+    })
+    .then(r => r.json())
+    .then(data => appendEvent('execute.accepted', JSON.stringify(data, null, 2), 'type-info'))
+    .catch(e  => appendEvent('execute.error',    JSON.stringify({ error: e.message }), 'type-error'));
+  }
+
+  // ── Unsubscribe ──────────────────────────────────────────────
+
+  function unsubscribe() {
+    if (!sid) { alert('No active session.'); return; }
+    const alias = document.getElementById('unsubAlias').value.trim();
+    if (!alias) { alert('Enter a dataset alias.'); return; }
+
+    fetch('/stream/unsubscribe', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ sessionId: sid, datasetAlias: alias })
+    })
+    .then(r => r.json())
+    .then(d => appendEvent('unsubscribe.response', JSON.stringify(d, null, 2), 'type-info'))
+    .catch(e => appendEvent('unsubscribe.error',   JSON.stringify({ error: e.message }), 'type-error'));
+  }
+
+  // ── Status ───────────────────────────────────────────────────
+
+  function setStatus(state) {
+    const badge = document.getElementById('statusBadge');
+    const labels  = { connected: 'Connected', connecting: 'Connecting…', disconnected: 'Disconnected' };
+    const classes  = { connected: 'badge-connected', connecting: 'badge-connecting', disconnected: 'badge-disconnected' };
+    badge.textContent = labels[state] || state;
+    badge.className   = 'badge ' + (classes[state] || '');
+    document.getElementById('startBtn').disabled = (state !== 'disconnected');
+    document.getElementById('stopBtn').disabled  = (state === 'disconnected');
+  }
+
+  // ── Event log ────────────────────────────────────────────────
+
+  function appendEvent(type, rawData, badgeCls) {
+    let display = rawData;
+    try { display = JSON.stringify(JSON.parse(rawData), null, 2); } catch (_) {}
+
+    const log   = document.getElementById('eventLog');
+    const entry = document.createElement('div');
+    entry.className = 'event-entry';
+    entry.innerHTML =
+      '<div class="event-meta">' +
+        '<span class="event-time">' + new Date().toLocaleTimeString() + '</span>' +
+        '<span class="event-type-badge ' + badgeCls + '">' + esc(type) + '</span>' +
+      '</div>' +
+      '<pre class="event-body">' + esc(display) + '</pre>';
+    log.appendChild(entry);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function clearLog() {
+    document.getElementById('eventLog').innerHTML = '';
+  }
+
+  // ── Template ─────────────────────────────────────────────────
+
+  function updateTemplate() {
+    const current = document.getElementById('executeBody').value.trim();
+    // only overwrite if empty or still the default shape
+    if (!current || isDefaultTemplate(current)) {
+      document.getElementById('executeBody').value = buildTemplate();
+    }
+  }
+
+  function resetTemplate() {
+    document.getElementById('executeBody').value = buildTemplate();
+  }
+
+  function isDefaultTemplate(text) {
+    try { const o = JSON.parse(text); return 'url' in o && 'stream' in o && 'dataset' in o; }
+    catch (_) { return false; }
+  }
+
+  function buildTemplate() {
+    const s = sid || document.getElementById('sessionId').value.trim() || '{sessionId}';
+    return JSON.stringify({
+      requestId:   'req-' + Date.now(),
+      url:         '/batch/run',
+      urlMethod:   'POST',
+      urlBody:     JSON.stringify({
+        operation:   'myOperation',
+        inputSource: 'FILE'
+      }),
+      requestedBy: document.getElementById('createdBy').value.trim() || 'user',
+      requestedAt: new Date().toISOString(),
+      timeToLive:  3600,
+      stream: {
+        streamUri:   '/stream/' + s,
+        destination: 'response',
+        streamType:  'static'
+      },
+      dataset: {
+        datasetAlias: 'my-dataset'
+      }
+    }, null, 2);
+  }
+
+  // ── Utilities ────────────────────────────────────────────────
+
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  // ── Init ─────────────────────────────────────────────────────
+  generateId();
+</script>
+</body>
+</html>

@@ -3,7 +3,7 @@ package com.mycompany.batch.model;
 import com.fasterxml.jackson.annotation.JsonCreator;
 
 public enum AuthMethod {
-    NONE, BASIC, JWT, DIGEST, KERBEROS;
+    NONE, BASIC, JWT, DIGEST, KERBEROS, NTLM;
 
     @JsonCreator
     public static AuthMethod from(String value) {
@@ -12,6 +12,6 @@ public enum AuthMethod {
             if (m.name().equalsIgnoreCase(value.trim())) return m;
         }
         throw new IllegalArgumentException("Unknown auth method: '" + value
-                + "'. Valid values: NONE, BASIC, JWT, DIGEST, KERBEROS");
+                + "'. Valid values: NONE, BASIC, JWT, DIGEST, KERBEROS, NTLM");
     }
 }

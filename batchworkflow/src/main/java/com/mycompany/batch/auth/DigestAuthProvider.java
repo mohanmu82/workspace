@@ -30,6 +30,7 @@ public class DigestAuthProvider implements HttpAuthProvider {
 
     @Override
     public String getAuthorizationHeader() throws Exception {
+        if (url == null || url.isBlank()) return null;
         String token = cachedToken.get();
         if (token == null) {
             token = fetchToken();

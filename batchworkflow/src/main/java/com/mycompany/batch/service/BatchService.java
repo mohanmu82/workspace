@@ -21,6 +21,7 @@ import com.mycompany.batch.auth.DigestAuthProvider;
 import com.mycompany.batch.auth.HttpAuthProvider;
 import com.mycompany.batch.auth.JwtAuthProvider;
 import com.mycompany.batch.auth.KerberosAuthProvider;
+import com.mycompany.batch.auth.NtlmAuthProvider;
 import com.mycompany.batch.config.BatchProperties;
 import com.mycompany.batch.config.ServerPropertiesLoader;
 import com.mycompany.batch.xpath.XPathColumn;
@@ -105,10 +106,27 @@ public class BatchService {
         batchProperties.getOperations().forEach((name, op) -> {
             op.validate(name);
             try {
-                authProviders.put(name, buildAuthProvider(name, op.getAuth()));
+                authProviders.put(name, buildAuthProvider(name, op.getAuth(), null));
+                for (BatchProperties.ActivityProperties act : op.getActivity()) {
+                    BatchProperties.AuthProperties actAuth = act.getHttp() != null ? act.getHttp().getAuth() : null;
+                    if (actAuth != null && actAuth.getMethod() != com.mycompany.batch.model.AuthMethod.NONE) {
+                        String actHttpUrl = act.getHttp() != null ? act.getHttp().getUrl() : null;
+                        authProviders.put(name + "::" + act.getName(), buildAuthProvider(act.getName(), actAuth, actHttpUrl));
+                    }
+                    if (act.getHttp() != null) {
+                        String bt = act.getHttp().getBodyTemplate();
+                        if (bt != null && bt.startsWith("classpath:") && !bt.contains("${")) {
+                            String resource = bt.substring("classpath:".length());
+                            try (java.io.InputStream is = getClass().getClassLoader().getResourceAsStream(resource)) {
+                                if (is == null) throw new java.io.FileNotFoundException(
+                                        "bodyTemplate classpath resource not found: " + resource);
+                            }
+                        }
+                    }
+                }
             } catch (Exception e) {
                 throw new IllegalStateException(
-                        "Failed to initialise auth for operation '" + name + "': " + e.getMessage(), e);
+                        "Failed to initialise operation '" + name + "': " + e.getMessage(), e);
             }
         });
         loadResponseProcessorRegistry();
@@ -134,7 +152,8 @@ public class BatchService {
     }
 
     private HttpAuthProvider buildAuthProvider(String operationName,
-                                               BatchProperties.AuthProperties auth) throws Exception {
+                                               BatchProperties.AuthProperties auth,
+                                               String fallbackUrl) throws Exception {
         return switch (auth.getMethod()) {
             case BASIC -> {
                 if (auth.getBasic().getUsername().isBlank() || auth.getBasic().getPassword().isBlank()) {
@@ -162,16 +181,34 @@ public class BatchService {
                         auth.getKerberos().getKeytab(), auth.getKerberos().getServicePrincipal());
             }
             case DIGEST -> {
-                if (auth.getDigest().getUrl().isBlank() || auth.getDigest().getUsername().isBlank()
-                        || auth.getDigest().getPassword().isBlank()) {
+                if (auth.getDigest().getUsername().isBlank() || auth.getDigest().getPassword().isBlank()) {
                     throw new IllegalStateException(
-                            "DIGEST auth for '" + operationName + "' requires digest.url, digest.username and digest.password");
+                            "DIGEST auth for '" + operationName + "' requires digest.username and digest.password");
                 }
+                String digestUrl = (auth.getDigest().getUrl() != null && !auth.getDigest().getUrl().isBlank())
+                        ? auth.getDigest().getUrl()
+                        : (fallbackUrl != null ? fallbackUrl : "");
                 yield new DigestAuthProvider(auth.getDigest().getUsername(), auth.getDigest().getPassword(),
-                        auth.getDigest().getUrl(), objectMapper);
+                        digestUrl, objectMapper);
+            }
+            case NTLM -> {
+                if (auth.getNtlm().getUsername().isBlank() || auth.getNtlm().getPassword().isBlank()) {
+                    throw new IllegalStateException(
+                            "NTLM auth for '" + operationName + "' requires ntlm.username and ntlm.password");
+                }
+                yield new NtlmAuthProvider(auth.getNtlm().getUsername(), auth.getNtlm().getPassword());
             }
             default -> () -> null;
         };
+    }
+
+    /** Builds an {@link HttpClient}, adding an NTLM {@link java.net.Authenticator} when the operation uses NTLM auth. */
+    private HttpClient buildHttpClient(String operationKey) {
+        HttpAuthProvider provider = authProviders.get(operationKey);
+        if (provider instanceof NtlmAuthProvider ntlm) {
+            return HttpClient.newBuilder().authenticator(ntlm.toAuthenticator()).build();
+        }
+        return HttpClient.newBuilder().build();
     }
 
     // -------------------------------------------------------------------------
@@ -198,7 +235,8 @@ public class BatchService {
             String resolvedBodyTemplate,        // for HTTP activities
             Map<String, String> xpathMap,       // XPATH extraction (null otherwise)
             String jsonataTransform,            // JSON/JSONATA extraction (null otherwise)
-            List<JsonPathColumn> jsonPathColumns // JSONPATH extraction (null otherwise)
+            List<JsonPathColumn> jsonPathColumns, // JSONPATH extraction (null otherwise)
+            String activityAuthHeader           // non-null when activity has its own auth
     ) {}
 
     // -------------------------------------------------------------------------
@@ -409,7 +447,7 @@ public class BatchService {
             }
             case REQUEST, HTTPGET, HTTPPOST -> {
                 if (request.raw() != null && !request.raw().isEmpty()) {
-                    yield readDataRowsFromRaw(request.raw(), null);
+                    yield readDataRowsFromRaw(request.raw(), null, opProperties);
                 } else if (request.ids() != null && !request.ids().isEmpty()) {
                     yield readDataRowsFromRequest(request.ids(), null);
                 } else {
@@ -751,6 +789,17 @@ public class BatchService {
      * as a {@code raw} JSON array). Each map becomes a DataRow with {@code SEQUENCE_NUMBER} added.
      */
     public List<DataRow> readDataRowsFromRaw(List<Map<String, Object>> rawData, Integer inputCount) {
+        return readDataRowsFromRaw(rawData, inputCount, null);
+    }
+
+    /**
+     * Same as {@link #readDataRowsFromRaw(List, Integer)} but resolves {@code ${key}} / {@code {key}}
+     * placeholders in string values against {@code opProperties} so that raw rows can reference
+     * operation-level properties (e.g. {@code "id": "${zipCode}"} resolved from the request
+     * {@code properties} map).
+     */
+    public List<DataRow> readDataRowsFromRaw(List<Map<String, Object>> rawData, Integer inputCount,
+                                             Map<String, String> opProperties) {
         List<Map<String, Object>> list = inputCount != null
                 ? rawData.stream().limit(inputCount).toList()
                 : rawData;
@@ -758,7 +807,14 @@ public class BatchService {
         int seq = 1;
         for (Map<String, Object> rawRow : list) {
             DataRow row = new DataRow();
-            row.getData().putAll(rawRow);
+            for (Map.Entry<String, Object> entry : rawRow.entrySet()) {
+                Object val = entry.getValue();
+                if (val instanceof String s && opProperties != null && !opProperties.isEmpty()
+                        && (s.contains("${") || (s.contains("{") && s.contains("}")))) {
+                    try { val = resolveTemplate(s, Map.of(), opProperties); } catch (Exception ignored) {}
+                }
+                row.getData().put(entry.getKey(), val);
+            }
             row.getData().put("SEQUENCE_NUMBER", seq++);
             rows.add(row);
         }
@@ -1109,10 +1165,10 @@ public class BatchService {
 
             ExecutorService httpPool  = Executors.newFixedThreadPool(effectiveThreadCount);
             ExecutorService xpathPool = Executors.newFixedThreadPool(xpathThreadCount);
-            HttpClient httpClient     = HttpClient.newBuilder().build();
+            HttpClient httpClient     = buildHttpClient(operation);
 
             // Pre-load activity resources (classpath files, etc.) once for all rows
-            List<ResolvedActivity> resolvedActivities = preloadActivities(activities, effectiveTimeoutMs);
+            List<ResolvedActivity> resolvedActivities = preloadActivities(activities, effectiveTimeoutMs, operation);
 
             boolean includeMetadata = false;
 
@@ -1185,7 +1241,7 @@ public class BatchService {
 
             ExecutorService httpPool  = Executors.newFixedThreadPool(effectiveThreadCount);
             ExecutorService xpathPool = Executors.newFixedThreadPool(op.getXpath().getThreadCount());
-            HttpClient httpClient     = HttpClient.newBuilder().build();
+            HttpClient httpClient     = buildHttpClient(operation);
 
             final String resolvedBodyTemplate = resolveJsonataExpression(op.getHttp().getBodyTemplate());
 
@@ -1308,7 +1364,7 @@ public class BatchService {
         ExecutorService xpathPool = Executors.newFixedThreadPool(xpathThreadCount);
         HttpClient httpClient     = HttpClient.newBuilder().build();
 
-        List<ResolvedActivity> resolvedActivities = preloadActivities(activities, effectiveTimeoutMs);
+        List<ResolvedActivity> resolvedActivities = preloadActivities(activities, effectiveTimeoutMs, operation);
 
         boolean includeMetadata = false;
         Consumer<Map<String, Object>> effectiveCallback = debugMode < 3
@@ -1364,12 +1420,35 @@ public class BatchService {
     private List<ResolvedActivity> preloadActivities(
             List<BatchProperties.ActivityProperties> activities,
             int defaultTimeoutMs) throws Exception {
+        return preloadActivities(activities, defaultTimeoutMs, null);
+    }
+
+    private List<ResolvedActivity> preloadActivities(
+            List<BatchProperties.ActivityProperties> activities,
+            int defaultTimeoutMs,
+            String operationName) throws Exception {
         List<ResolvedActivity> resolved = new ArrayList<>(activities.size());
         for (BatchProperties.ActivityProperties act : activities) {
             ActivityType type = act.getType();
+            String activityAuthHeader = null;
+            if (type == ActivityType.HTTP && operationName != null) {
+                HttpAuthProvider actProvider = authProviders.get(operationName + "::" + act.getName());
+                if (actProvider != null) {
+                    try {
+                        activityAuthHeader = actProvider.getAuthorizationHeader();
+                    } catch (Exception e) {
+                        // token fetch failed at preload time (e.g. credentials are per-row templates);
+                        // auth header will be absent and the activity proceeds without it
+                    }
+                }
+            }
             if (type == ActivityType.HTTP) {
-                String bodyTemplate = resolveJsonataExpression(act.getHttp().getBodyTemplate());
-                resolved.add(new ResolvedActivity(act, bodyTemplate, null, null, null));
+                String rawBt = act.getHttp().getBodyTemplate();
+                // If the path itself has ${VAR} placeholders, keep it unloaded — resolved per-row at execute time
+                String bodyTemplate = (rawBt != null && rawBt.contains("${"))
+                        ? rawBt
+                        : resolveJsonataExpression(rawBt);
+                resolved.add(new ResolvedActivity(act, bodyTemplate, null, null, null, activityAuthHeader));
             } else if (type == ActivityType.DATAEXTRACTION) {
                 DataExtractionType extractType = act.getDataExtraction().getType();
                 if (extractType == DataExtractionType.XPATH) {
@@ -1379,7 +1458,7 @@ public class BatchService {
                                 "Activity '" + act.getName() + "': dataExtraction.config is required for XPATH extraction");
                     }
                     Map<String, String> xpathMap = loadXPathMap(config);
-                    resolved.add(new ResolvedActivity(act, null, xpathMap, null, null));
+                    resolved.add(new ResolvedActivity(act, null, xpathMap, null, null, null));
                 } else if (extractType == DataExtractionType.JSONPATH) {
                     String config = act.getDataExtraction().getConfig();
                     if (config == null || config.isBlank()) {
@@ -1387,16 +1466,16 @@ public class BatchService {
                                 "Activity '" + act.getName() + "': dataExtraction.config is required for JSONPATH extraction");
                     }
                     List<JsonPathColumn> cols = loadJsonPathColumns(config);
-                    resolved.add(new ResolvedActivity(act, null, null, null, cols));
+                    resolved.add(new ResolvedActivity(act, null, null, null, cols, null));
                 } else {
                     // JSON or JSONATA — JSONata transform
                     String transform = resolveJsonataExpression(act.getDataExtraction().getJsonataTransform());
-                    resolved.add(new ResolvedActivity(act, null, null, transform, null));
+                    resolved.add(new ResolvedActivity(act, null, null, transform, null, null));
                 }
             } else if (type == ActivityType.DB) {
-                resolved.add(new ResolvedActivity(act, null, null, null, null));
+                resolved.add(new ResolvedActivity(act, null, null, null, null, null));
             } else {
-                resolved.add(new ResolvedActivity(act, null, null, null, null));
+                resolved.add(new ResolvedActivity(act, null, null, null, null, null));
             }
         }
         return resolved;
@@ -1537,13 +1616,33 @@ public class BatchService {
         String resolvedUrl;
         String resolvedBody;
         try {
-            resolvedUrl  = resolveTemplate(httpConfig.getUrl(), row.getData(), effectiveProps);
-            resolvedBody = activity.resolvedBodyTemplate() != null
-                    ? resolveTemplate(activity.resolvedBodyTemplate(), row.getData(), effectiveProps)
-                    : "";
+            resolvedUrl = resolveTemplate(httpConfig.getUrl(), row.getData(), effectiveProps);
+            String bt = activity.resolvedBodyTemplate();
+            if (bt == null) {
+                resolvedBody = "";
+            } else {
+                // Resolve any ${VAR} in the path itself first, then load if still a classpath: ref
+                String resolvedBt = resolveTemplate(bt, row.getData(), effectiveProps);
+                if (resolvedBt.startsWith("classpath:")) {
+                    String resource = resolvedBt.substring("classpath:".length());
+                    try (java.io.InputStream is = getClass().getClassLoader().getResourceAsStream(resource)) {
+                        if (is == null) throw new IllegalArgumentException(
+                                "bodyTemplate classpath resource not found: " + resource);
+                        resolvedBt = new String(is.readAllBytes()).strip();
+                    }
+                    // Resolve ${VAR} inside the file content
+                    resolvedBody = resolveTemplate(resolvedBt, row.getData(), effectiveProps);
+                } else {
+                    resolvedBody = resolvedBt;
+                }
+            }
         } catch (IllegalArgumentException e) {
             CompletableFuture<DataRow> f = new CompletableFuture<>();
             f.completeExceptionally(e);
+            return f;
+        } catch (Exception e) {
+            CompletableFuture<DataRow> f = new CompletableFuture<>();
+            f.completeExceptionally(new RuntimeException(e.getMessage(), e));
             return f;
         }
 
@@ -1561,6 +1660,7 @@ public class BatchService {
                 if (cached != null) {
                     totalResponseBytes.addAndGet(cached.length());
                     row.setResponseBody(cached);
+                    applyHttpExtract(httpConfig.getExtract().getFields(), null, resolvedBody, null, cached, resolvedUrl, row);
                     httpDurationsMs.add(0L);
                     row.getMetadata().put(activityName + ".timetakenmillis", 0L);
                     row.getMetadata().put(activityName + ".httpurl", resolvedUrl + " [CACHED]");
@@ -1573,34 +1673,48 @@ public class BatchService {
             }
         }
 
-        HttpRequest request = buildRequestFromHttpConfig(resolvedUrl, authHeader, httpConfig, resolvedBody,
+        String effectiveAuthHeader = activity.activityAuthHeader() != null
+                ? activity.activityAuthHeader() : authHeader;
+
+        // Support NTLM credentials injected per-row via request properties (from the HTTP page)
+        String ntlmUser = effectiveProps.get("ntlmUsername");
+        String ntlmPass = effectiveProps.get("ntlmPassword");
+        HttpClient effectiveClient = (ntlmUser != null && !ntlmUser.isBlank()
+                && ntlmPass != null && !ntlmPass.isBlank())
+                ? HttpClient.newBuilder()
+                        .authenticator(new NtlmAuthProvider(ntlmUser, ntlmPass).toAuthenticator())
+                        .build()
+                : httpClient;
+
+        HttpRequest request = buildRequestFromHttpConfig(resolvedUrl, effectiveAuthHeader, httpConfig, resolvedBody,
                 httpConfig.getTimeoutMs(), httpConfig.getTimeoutMs(), extraHeaders);
 
-        final String finalCacheName       = cacheName;
+        final String finalCacheName        = cacheName;
         final String finalResolvedCacheKey = resolvedCacheKey;
         final String finalResolvedUrl      = resolvedUrl;
+        final String finalResolvedBody     = resolvedBody;
 
         return CompletableFuture.supplyAsync(() -> {
             long start = System.currentTimeMillis();
             try {
-                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                HttpResponse<String> response = effectiveClient.send(request, HttpResponse.BodyHandlers.ofString());
                 String body = response.body();
                 row.setLastHttpStatusCode(response.statusCode());
+                row.setResponseBody(body);
+                BatchProperties.HttpExtractProperties extract = httpConfig.getExtract();
+                applyHttpExtract(extract.getFields(), request, finalResolvedBody, response, body, finalResolvedUrl, row);
                 if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                    BatchProperties.HttpExtractProperties extract = httpConfig.getExtract();
                     if (extract != null && !extract.getIfError().isEmpty()) {
-                        applyHttpExtract(extract.getIfError(), request, response, body, finalResolvedUrl, row);
-                        row.setResponseBody(body);
+                        applyHttpExtract(extract.getIfError(), request, finalResolvedBody, response, body, finalResolvedUrl, row);
                         return row;
                     }
-                    throw new RuntimeException("HTTP " + response.statusCode());
+                    throw new RuntimeException("HTTP " + response.statusCode()
+                            + (body != null && !body.isBlank() ? " — " + body : ""));
                 }
                 totalResponseBytes.addAndGet(body.length());
                 if (finalCacheName != null) {
                     cacheFactory.save(finalCacheName, finalResolvedCacheKey, body, finalResolvedUrl);
                 }
-                row.setResponseBody(body);
-                applyHttpExtract(httpConfig.getExtract().getFields(), request, response, body, finalResolvedUrl, row);
                 return row;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -1732,11 +1846,13 @@ public class BatchService {
 
     /**
      * Applies the http.extract map to the DataRow.
-     * Special paths: $.statusCode, $.body, $.url, $.requestHeaders, $.responseHeaders, $.headers (alias for $.responseHeaders).
+     * Special paths: $.statusCode, $.body/$.responseBody, $.requestBody, $.url,
+     *                $.requestHeaders, $.responseHeaders, $.headers (alias for $.responseHeaders).
      * Any other path is evaluated as JSONPath against the response body.
      */
     private void applyHttpExtract(Map<String, String> extractMap,
                                   HttpRequest httpRequest,
+                                  String requestBody,
                                   HttpResponse<String> response,
                                   String body,
                                   String resolvedUrl,
@@ -1747,12 +1863,12 @@ public class BatchService {
             String path = entry.getValue();
             if (path == null) continue;
             switch (path) {
-                case "$.statusCode"      -> row.getData().put(key, response.statusCode());
-                case "$.body"            -> row.getData().put(key, body);
-                case "$.url"             -> row.getData().put(key, resolvedUrl);
-                case "$.requestHeaders"  -> row.getData().put(key, httpRequest.headers().map().toString());
-                case "$.responseHeaders",
-                     "$.headers"         -> row.getData().put(key, response.headers().map().toString());
+                case "$.statusCode"                  -> row.getData().put(key, response != null ? response.statusCode() : 200);
+                case "$.body", "$.responseBody"      -> row.getData().put(key, body);
+                case "$.requestBody"                 -> row.getData().put(key, requestBody);
+                case "$.url"                         -> row.getData().put(key, resolvedUrl);
+                case "$.requestHeaders"              -> row.getData().put(key, httpRequest != null ? httpRequest.headers().map().toString() : "");
+                case "$.responseHeaders", "$.headers"-> row.getData().put(key, response != null ? response.headers().map().toString() : "");
                 default -> {
                     try {
                         Object val = com.jayway.jsonpath.JsonPath.read(body, path);
@@ -2662,7 +2778,7 @@ public class BatchService {
             ciFallback = new java.util.TreeMap<>(String.CASE_INSENSITIVE_ORDER);
             ciFallback.putAll(fallback);
         }
-        Matcher m = Pattern.compile("\\$?\\{([^}]+)\\}").matcher(template);
+        Matcher m = Pattern.compile("\\$?\\{(\\w+)\\}").matcher(template);
         StringBuffer sb = new StringBuffer();
         while (m.find()) {
             String key = m.group(1);

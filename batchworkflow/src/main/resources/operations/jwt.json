@@ -1,21 +1,68 @@
   {
     "name": "jwt",
-    "properties": {
-        "attributes": {	
-          "inputSource": "FILE",
-          "inputFilePath": "${DATADIR}/jwt.txt",
-          "application": "APP",
-          "operationName": "JWT",
-          "operationDescription": "JWT Token Processing example"
-        }
-  	},    
     "mandatoryProperties": [
-      { "property": "application", "dataType": "string" },
-      { "property": "username",    "dataType": "string" },
-      { "property": "password",    "dataType": "string" }
+      { "property": "inputFilePath", "dataType": "string", "defaultValue": "${DATADIR}/jwt.txt" }
+      ,{ "property": "inputSource", "dataType": "string", "defaultValue": "FILE" }
+    ],
+    "activity": [
+      {
+        "name": "httpgetbamtoken",
+        "type": "HTTP",
+        "http": {
+          "url": "http://jwtbuilder.jamiekurtz.com/tokens",
+          "method": "POST",
+          "threadCount": 5,
+          "timeoutMs": 3000,
+          "bodyTemplate": "classpath:requestTemplate/jwtPayload.json",
+          "auth": {
+            "method": "DIGEST",
+            "digest": {
+              "username": "${USERNAME}",
+              "password": "${PASSWORD}"
+            }
+          },
+          "extract":{
+                "REQUESTURL": "$.url",
+                "RESPONSECODE": "$.statusCode",
+                "RESPONSEBODY": "$.responseBody",
+                "REQUESTBODY": "$.requestBody",
+                "REQUESTHEADERS": "$.requestHeaders",
+                "RESPONSEHEADERS": "$.responseHeaders"
+          },
+          "cache": {
+            "name": "jwt"
+            ,"key" : "jwt${APPLICATION}${USERNAME}"
+          }          
+        }
+      }
+    ],
+    "alias": [
+      {
+        "name": "NEWAPP",
+        "mandatoryProperties": [
+          { "property": "inputFilePath", "dataType": "string", "defaultValue": "${DATADIR}/jwt.txt" }
+          ,{ "property": "inputSource", "dataType": "string", "defaultValue": "FILE" }
+        ],
+        "request": {
+          "filterInput": [
+            { "column": "APPLICATION", "value": "NEWAPP", "operation": "eq" }
+          ]
+        }
+      },
+      {
+        "name": "FROMREQUEST",
+        "mandatoryProperties": [
+          { "property": "application",  "dataType": "string", "defaultValue": "APP" },
+          { "property": "username",     "dataType": "string" },
+          { "property": "password",     "dataType": "string" }
+        ],
+        "request": {
+          "inputSource": "SPECIFIC"
+        }
+      }
     ],
     "enricher": {
-      "type": "pre",
+      "type": "post",
       "enhancer": "classpath:enricher/jwt_enricher.json"
     }
   }

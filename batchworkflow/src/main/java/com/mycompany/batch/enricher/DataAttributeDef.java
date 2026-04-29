@@ -32,6 +32,8 @@ public class DataAttributeDef {
     private String delimiter;
     /** (tokenize only) 1-based index of the token to return. */
     private String token;
+    /** (jsonpath only) JSONPath expression to evaluate against {@code string}. */
+    private String path;
     /** Value written when evaluation fails. Supports {@code ${...}} placeholders. Null = skip attribute on error. */
     private String onError;
 
@@ -61,6 +63,9 @@ public class DataAttributeDef {
 
     public String getToken()              { return token; }
     public void   setToken(String v)      { this.token = v; }
+
+    public String getPath()               { return path; }
+    public void   setPath(String v)       { this.path = v; }
 
     public String getOnError()            { return onError; }
     public void   setOnError(String v)    { this.onError = v; }

@@ -212,10 +212,6 @@ public class BatchProperties {
                         throw new IllegalStateException(
                                 "Activity '" + act.getName() + "' in operation '" + operationName + "' requires http.url");
                     }
-                    if (!act.getHttp().getUrl().contains("{")) {
-                        throw new IllegalStateException(
-                                "Activity '" + act.getName() + "' http.url requires at least one {variable} placeholder");
-                    }
                 } else if (type == ActivityType.DATAEXTRACTION) {
                     if (act.getDataExtraction().getType() == null) {
                         throw new IllegalStateException(
@@ -502,7 +498,7 @@ public class BatchProperties {
         private String url;
         private HttpMethod method      = HttpMethod.GET;
         private String contentType  = "text/plain";
-        private String bodyTemplate = "{id}";
+        private String bodyTemplate = null;
         private int    threadCount  = 5;
         private int    timeoutMs    = 3000;
         private final Map<String, String> header  = new LinkedHashMap<>();
@@ -539,6 +535,11 @@ public class BatchProperties {
 
         public HttpExtractProperties getExtract()                      { return extract; }
         public void                  setExtract(HttpExtractProperties e) { this.extract = e != null ? e : new HttpExtractProperties(); }
+
+        /** Optional per-activity auth — overrides the operation-level auth when set. */
+        private AuthProperties auth;
+        public AuthProperties getAuth()                  { return auth; }
+        public void           setAuth(AuthProperties a)  { this.auth = a; }
     }
 
     // -------------------------------------------------------------------------
@@ -737,6 +738,7 @@ public class BatchProperties {
         private JwtProperties      jwt      = new JwtProperties();
         private KerberosProperties kerberos = new KerberosProperties();
         private DigestProperties   digest   = new DigestProperties();
+        private NtlmProperties     ntlm     = new NtlmProperties();
 
         public AuthMethod getMethod()                     { return method; }
         public void       setMethod(AuthMethod method)    { this.method = method != null ? method : AuthMethod.NONE; }
@@ -752,6 +754,18 @@ public class BatchProperties {
 
         public DigestProperties getDigest()                   { return digest; }
         public void setDigest(DigestProperties digest)        { this.digest = digest; }
+
+        public NtlmProperties getNtlm()                       { return ntlm; }
+        public void setNtlm(NtlmProperties ntlm)              { this.ntlm = ntlm; }
+    }
+
+    public static class NtlmProperties {
+        private String username = "";
+        private String password = "";
+        public String getUsername()                { return username; }
+        public void   setUsername(String username) { this.username = username; }
+        public String getPassword()                { return password; }
+        public void   setPassword(String password) { this.password = password; }
     }
 
     public static class DigestProperties {

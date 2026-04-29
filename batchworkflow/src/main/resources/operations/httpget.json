@@ -17,12 +17,10 @@
           "Accept": "application/json"
         },
         "extract":{
-            "ifError": {
               "RESPONSECODE": "$.statusCode",
               "RESPONSEBODY": "$.body",
               "REQUESTURL": "$.url",
               "REQUESTHEADERS": "$.headers"
-            }
         },
         "threadCount": 1,
         "timeoutMs": 30000

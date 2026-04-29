@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cert Manager</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #f4f6f9;
+      color: #222;
+      padding: 28px 28px 48px;
+    }
+
+    header { margin-bottom: 28px; }
+    header h1 { font-size: 1.3rem; font-weight: 700; }
+    header p  { font-size: 0.82rem; color: #666; margin-top: 4px; }
+    .back     { font-size: 0.8rem; color: #0078d4; text-decoration: none; }
+    .back:hover { text-decoration: underline; }
+
+    .card {
+      background: #fff;
+      border: 1px solid #dde1e7;
+      border-radius: 8px;
+      padding: 20px 22px;
+      margin-bottom: 22px;
+    }
+
+    .card-title {
+      font-size: 0.95rem;
+      font-weight: 700;
+      margin-bottom: 14px;
+      color: #111;
+    }
+
+    .row { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+
+    input[type=text] {
+      flex: 1;
+      min-width: 260px;
+      padding: 7px 10px;
+      font-size: 0.85rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    input[type=text]:focus { outline: none; border-color: #0078d4; }
+
+    button {
+      padding: 7px 18px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      background: #0078d4;
+      color: #fff;
+      white-space: nowrap;
+    }
+    button:hover:not(:disabled) { background: #005fa3; }
+    button:disabled { background: #9ec5e8; cursor: not-allowed; }
+    button.secondary { background: #6c757d; }
+    button.secondary:hover { background: #545b62; }
+
+    .filter-row { margin-bottom: 10px; }
+    .filter-row input { width: 280px; }
+
+    /* Trust store table */
+    .tbl-wrap { overflow-x: auto; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+    }
+    th {
+      background: #f0f2f5;
+      border: 1px solid #dde1e7;
+      padding: 7px 10px;
+      text-align: left;
+      font-weight: 600;
+      white-space: nowrap;
+      cursor: pointer;
+      user-select: none;
+    }
+    th:hover { background: #e4e8ef; }
+    td {
+      border: 1px solid #dde1e7;
+      padding: 6px 10px;
+      vertical-align: top;
+      word-break: break-word;
+    }
+    tr:nth-child(even) td { background: #fafbfc; }
+
+    .group-header td {
+      background: #e8f0fe;
+      font-weight: 700;
+      font-size: 0.78rem;
+      color: #1a3c78;
+      padding: 5px 10px;
+    }
+
+    /* Inspect result */
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+    .info-cell {
+      background: #f8f9fb;
+      border: 1px solid #dde1e7;
+      border-radius: 6px;
+      padding: 10px 14px;
+    }
+    .info-cell .lbl { font-size: 0.72rem; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 3px; }
+    .info-cell .val { font-size: 0.88rem; font-weight: 600; color: #111; word-break: break-all; }
+
+    /* Cert chain accordion */
+    .chain-title { font-size: 0.88rem; font-weight: 700; margin-bottom: 8px; color: #333; }
+
+    details { margin-bottom: 8px; border: 1px solid #dde1e7; border-radius: 6px; overflow: hidden; }
+    summary {
+      padding: 9px 14px;
+      background: #f0f2f5;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 600;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    summary::-webkit-details-marker { display: none; }
+    details[open] summary { background: #e4e8ef; }
+    .chevron { font-size: 0.7rem; transition: transform 0.2s; }
+    details[open] .chevron { transform: rotate(90deg); }
+
+    .cert-detail {
+      padding: 12px 16px;
+      font-size: 0.8rem;
+      display: grid;
+      grid-template-columns: 160px 1fr;
+      gap: 4px 10px;
+    }
+    .cert-detail .k { font-weight: 600; color: #555; }
+    .cert-detail .v { word-break: break-all; color: #111; }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .badge-ok      { background: #d1e7dd; color: #0a5c36; }
+    .badge-warn    { background: #fff3cd; color: #856404; }
+    .badge-err     { background: #f8d7da; color: #842029; }
+    .badge-ca      { background: #e2d9f3; color: #4a2d7a; }
+    .badge-self    { background: #fde8d8; color: #7a3b00; }
+
+    .status-msg { font-size: 0.82rem; color: #555; padding: 6px 0; }
+    .status-err { color: #842029; }
+
+    #trustStatus, #inspectStatus { min-height: 22px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <a class="back" href="index.html">&#8592; Home</a>
+  <h1>Certificate Manager</h1>
+  <p>Browse JVM trust store certificates and inspect TLS endpoints.</p>
+</header>
+
+<!-- ===== Trust Store ===== -->
+<div class="card">
+  <div class="card-title">JVM Trust Store</div>
+  <div class="row">
+    <button id="loadTrustBtn" onclick="loadTrustCerts()">Load Trust Certs</button>
+    <div id="trustStatus" class="status-msg"></div>
+  </div>
+  <div id="trustSection" style="display:none;">
+    <div class="filter-row row">
+      <input type="text" id="trustFilter" placeholder="Filter by subject, issuer, org…" oninput="filterTrust()">
+      <button class="secondary" onclick="clearTrustFilter()">Clear</button>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th onclick="sortTrust(0)">Subject CN</th>
+            <th onclick="sortTrust(1)">Subject O</th>
+            <th onclick="sortTrust(2)">Issuer CN</th>
+            <th onclick="sortTrust(3)">Valid From</th>
+            <th onclick="sortTrust(4)">Valid To</th>
+            <th>Status</th>
+            <th>Type</th>
+            <th>SHA-256 Fingerprint</th>
+          </tr>
+        </thead>
+        <tbody id="trustBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ===== URL Inspector ===== -->
+<div class="card">
+  <div class="card-title">URL / TLS Inspector</div>
+  <div class="row">
+    <input type="text" id="inspectUrl" placeholder="https://example.com or wss://host:443/ws"
+           onkeydown="if(event.key==='Enter') inspectUrl()">
+    <button id="inspectBtn" onclick="doInspect()">Inspect</button>
+  </div>
+  <div id="inspectStatus" class="status-msg"></div>
+  <div id="inspectResult" style="display:none;"></div>
+</div>
+
+<script>
+  /* ===================================================================
+   * Trust Store
+   * =================================================================== */
+
+  let allTrustCerts = [];
+  let trustSortCol  = -1;
+  let trustSortAsc  = true;
+
+  async function loadTrustCerts() {
+    const btn = document.getElementById('loadTrustBtn');
+    btn.disabled = true;
+    setStatus('trustStatus', 'Loading…');
+    try {
+      const r = await fetch('/certmanager/trustcerts');
+      const j = await r.json();
+      if (j.error) { setStatus('trustStatus', j.error, true); btn.disabled = false; return; }
+      allTrustCerts = j.data || [];
+      renderTrust(allTrustCerts);
+      setStatus('trustStatus', `Loaded ${allTrustCerts.length} certificate(s).`);
+      document.getElementById('trustSection').style.display = '';
+    } catch (e) {
+      setStatus('trustStatus', e.message, true);
+    }
+    btn.disabled = false;
+  }
+
+  function renderTrust(certs) {
+    const tbody = document.getElementById('trustBody');
+    tbody.innerHTML = '';
+    if (!certs.length) { tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#888">No certificates.</td></tr>'; return; }
+
+    // Group by issuerO
+    const groups = new Map();
+    for (const c of certs) {
+      const g = c.issuerO || c.issuerCN || '(Unknown)';
+      if (!groups.has(g)) groups.set(g, []);
+      groups.get(g).push(c);
+    }
+
+    for (const [org, list] of [...groups].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const gh = document.createElement('tr');
+      gh.className = 'group-header';
+      gh.innerHTML = `<td colspan="8">&#128196; ${escHtml(org)} (${list.length})</td>`;
+      tbody.appendChild(gh);
+      for (const c of list) tbody.appendChild(trustRow(c));
+    }
+  }
+
+  function trustRow(c) {
+    const tr = document.createElement('tr');
+    const expired = c.isExpired;
+    const valid   = !expired ? '<span class="badge badge-ok">Valid</span>' : '<span class="badge badge-err">Expired</span>';
+    const type    = c.isCA ? '<span class="badge badge-ca">CA</span>' : '';
+    const self    = c.isSelfSigned ? ' <span class="badge badge-self">Self</span>' : '';
+    tr.innerHTML = `
+      <td>${escHtml(c.subjectCN || c.subject)}</td>
+      <td>${escHtml(c.subjectO)}</td>
+      <td>${escHtml(c.issuerCN || c.issuer)}</td>
+      <td style="white-space:nowrap">${escHtml(c.validFrom)}</td>
+      <td style="white-space:nowrap">${escHtml(c.validTo)}</td>
+      <td>${valid}</td>
+      <td>${type}${self}</td>
+      <td style="font-family:monospace;font-size:0.72rem">${escHtml(c.sha256Fingerprint || '')}</td>`;
+    return tr;
+  }
+
+  function filterTrust() {
+    const q = document.getElementById('trustFilter').value.toLowerCase();
+    if (!q) { renderTrust(allTrustCerts); return; }
+    const filtered = allTrustCerts.filter(c =>
+      [c.subjectCN, c.subjectO, c.subject, c.issuerCN, c.issuerO, c.issuer, c.validFrom, c.validTo, c.sha256Fingerprint]
+        .some(v => v && v.toLowerCase().includes(q)));
+    renderTrust(filtered);
+  }
+
+  function clearTrustFilter() {
+    document.getElementById('trustFilter').value = '';
+    renderTrust(allTrustCerts);
+  }
+
+  function sortTrust(col) {
+    const keys = ['subjectCN', 'subjectO', 'issuerCN', 'validFrom', 'validTo'];
+    if (trustSortCol === col) trustSortAsc = !trustSortAsc;
+    else { trustSortCol = col; trustSortAsc = true; }
+    const k = keys[col];
+    const sorted = [...allTrustCerts].sort((a, b) => {
+      const av = (a[k] || '').toLowerCase();
+      const bv = (b[k] || '').toLowerCase();
+      return trustSortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
+    });
+    renderTrust(sorted);
+  }
+
+  /* ===================================================================
+   * URL Inspector
+   * =================================================================== */
+
+  async function doInspect() {
+    const url = document.getElementById('inspectUrl').value.trim();
+    if (!url) { setStatus('inspectStatus', 'Enter a URL.', true); return; }
+
+    const btn = document.getElementById('inspectBtn');
+    btn.disabled = true;
+    setStatus('inspectStatus', 'Connecting…');
+    document.getElementById('inspectResult').style.display = 'none';
+
+    try {
+      const r = await fetch('/certmanager/inspect?url=' + encodeURIComponent(url));
+      const j = await r.json();
+      setStatus('inspectStatus', '');
+      renderInspect(j);
+      document.getElementById('inspectResult').style.display = '';
+    } catch (e) {
+      setStatus('inspectStatus', e.message, true);
+    }
+    btn.disabled = false;
+  }
+
+  function renderInspect(d) {
+    const el = document.getElementById('inspectResult');
+    const isHttps = d.scheme === 'https';
+
+    const tlsVersionHtml = isHttps
+      ? `<div class="info-cell"><div class="lbl">TLS Version</div><div class="val">${escHtml(d.tlsVersion || '—')}</div></div>
+         <div class="info-cell"><div class="lbl">Cipher Suite</div><div class="val">${escHtml(d.cipherSuite || '—')}</div></div>
+         <div class="info-cell"><div class="lbl">ALPN Protocol</div><div class="val">${escHtml(d.negotiatedProtocol || '—')}</div></div>`
+      : '';
+
+    const httpVersionHtml = d.httpVersion
+      ? `<div class="info-cell"><div class="lbl">HTTP Version</div><div class="val">${escHtml(d.httpVersion)}</div></div>
+         <div class="info-cell"><div class="lbl">HTTP Status</div><div class="val">${escHtml(String(d.httpStatus || '—'))}</div></div>`
+      : (d.httpVersionError
+          ? `<div class="info-cell"><div class="lbl">HTTP Probe</div><div class="val" style="color:#842029">${escHtml(d.httpVersionError)}</div></div>`
+          : '');
+
+    const tlsError = d.tlsError
+      ? `<div class="info-cell" style="grid-column:1/-1"><div class="lbl">TLS Error</div><div class="val" style="color:#842029">${escHtml(d.tlsError)}</div></div>`
+      : '';
+
+    const infoGrid = `
+      <div class="info-grid">
+        <div class="info-cell"><div class="lbl">Host</div><div class="val">${escHtml(d.host || '—')}</div></div>
+        <div class="info-cell"><div class="lbl">Port</div><div class="val">${escHtml(String(d.port || '—'))}</div></div>
+        <div class="info-cell"><div class="lbl">Resolved IP</div><div class="val">${escHtml(d.resolvedIp || '—')}</div></div>
+        <div class="info-cell"><div class="lbl">Remote IP</div><div class="val">${escHtml(d.remoteIp || '—')}</div></div>
+        <div class="info-cell"><div class="lbl">Remote Port</div><div class="val">${escHtml(String(d.remotePort || d.port || '—'))}</div></div>
+        <div class="info-cell"><div class="lbl">Auth Type</div><div class="val">${escHtml(d.authType || '—')}</div></div>
+        ${tlsVersionHtml}
+        ${httpVersionHtml}
+        ${tlsError}
+      </div>`;
+
+    const certChain = Array.isArray(d.certChain) ? d.certChain : [];
+    let chainHtml = '';
+    if (isHttps && certChain.length > 0) {
+      chainHtml = `<div class="chain-title">Certificate Chain (${certChain.length})</div>`;
+      certChain.forEach((cert, i) => {
+        const label = i === 0 ? 'Server Certificate' : cert.isCA ? `CA: ${cert.subjectCN || cert.subjectO}` : `Intermediate: ${cert.subjectCN}`;
+        const open  = i === 0 ? ' open' : '';
+        const exp   = cert.isExpired ? '<span class="badge badge-err" style="margin-left:6px">Expired</span>' : '<span class="badge badge-ok" style="margin-left:6px">Valid</span>';
+        const ca    = cert.isCA ? '<span class="badge badge-ca" style="margin-left:4px">CA</span>' : '';
+        const self  = cert.isSelfSigned ? '<span class="badge badge-self" style="margin-left:4px">Self-signed</span>' : '';
+        const sans  = cert.subjectAltNames ? cert.subjectAltNames.join(', ') : '';
+        chainHtml += `
+          <details${open}>
+            <summary>
+              <span class="chevron">&#9658;</span>
+              ${escHtml(label)}${exp}${ca}${self}
+            </summary>
+            <div class="cert-detail">
+              <span class="k">Subject</span>        <span class="v">${escHtml(cert.subject)}</span>
+              <span class="k">Subject CN</span>     <span class="v">${escHtml(cert.subjectCN)}</span>
+              <span class="k">Subject O</span>      <span class="v">${escHtml(cert.subjectO)}</span>
+              <span class="k">Issuer</span>         <span class="v">${escHtml(cert.issuer)}</span>
+              <span class="k">Issuer CN</span>      <span class="v">${escHtml(cert.issuerCN)}</span>
+              <span class="k">Issuer O</span>       <span class="v">${escHtml(cert.issuerO)}</span>
+              <span class="k">Valid From</span>     <span class="v">${escHtml(cert.validFrom)}</span>
+              <span class="k">Valid To</span>       <span class="v">${escHtml(cert.validTo)}</span>
+              <span class="k">Serial Number</span>  <span class="v" style="font-family:monospace">${escHtml(cert.serialNumber)}</span>
+              <span class="k">Sig Algorithm</span>  <span class="v">${escHtml(cert.sigAlg)}</span>
+              <span class="k">Key Bits</span>       <span class="v">${cert.keyBits || '—'}</span>
+              ${sans ? `<span class="k">SANs</span><span class="v">${escHtml(sans)}</span>` : ''}
+              <span class="k">SHA-256</span>        <span class="v" style="font-family:monospace;font-size:0.75rem">${escHtml(cert.sha256Fingerprint)}</span>
+              <span class="k">SHA-1</span>          <span class="v" style="font-family:monospace;font-size:0.75rem">${escHtml(cert.sha1Fingerprint)}</span>
+            </div>
+          </details>`;
+      });
+    } else if (isHttps && !d.tlsError) {
+      chainHtml = '<div class="status-msg" style="color:#888">No certificate chain captured.</div>';
+    }
+
+    el.innerHTML = infoGrid + chainHtml;
+  }
+
+  /* ===================================================================
+   * Shared helpers
+   * =================================================================== */
+
+  function setStatus(id, msg, isErr) {
+    const el = document.getElementById(id);
+    el.textContent = msg;
+    el.className   = 'status-msg' + (isErr ? ' status-err' : '');
+  }
+
+  function escHtml(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+</script>
+</body>
+</html>

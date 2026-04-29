@@ -1,0 +1,1 @@
+{"claims":{"iss":"Online JWT Builder","iat":1777346409,"exp":1808882409,"aud":"www.example.com","sub":"jrocket@example.com","GivenName":"Johnny","Surname":"Rocket","Email":"jrocket@example.com","Role":["Manager","Project Administrator"]},"key":"qwertyuiopasdfghjklzxcvbnm123456","alg":"HS256"}

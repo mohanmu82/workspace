@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Port Checker</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #f4f6f9;
+      color: #222;
+      padding: 28px 28px 48px;
+    }
+
+    header { margin-bottom: 24px; }
+    header h1 { font-size: 1.3rem; font-weight: 700; }
+    header p  { font-size: 0.82rem; color: #666; margin-top: 4px; }
+    .back { font-size: 0.8rem; color: #0078d4; text-decoration: none; }
+    .back:hover { text-decoration: underline; }
+
+    .card {
+      background: #fff;
+      border: 1px solid #dde1e7;
+      border-radius: 8px;
+      padding: 18px 22px;
+      margin-bottom: 18px;
+    }
+
+    .card-title {
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: #111;
+      margin-bottom: 14px;
+    }
+
+    /* Input row */
+    .input-row {
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+      flex-wrap: wrap;
+    }
+
+    .field { display: flex; flex-direction: column; gap: 4px; }
+    .field label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+    input[type=text], input[type=number] {
+      padding: 7px 10px;
+      font-size: 0.85rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    input[type=text] { min-width: 220px; }
+    input[type=number] { width: 90px; }
+    input:focus { outline: none; border-color: #0078d4; }
+
+    /* Buttons */
+    button {
+      padding: 7px 18px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      background: #0078d4;
+      color: #fff;
+      white-space: nowrap;
+    }
+    button:hover:not(:disabled) { background: #005fa3; }
+    button:disabled { background: #9ec5e8; cursor: not-allowed; }
+    button.danger  { background: #c0392b; }
+    button.danger:hover { background: #a93226; }
+    button.secondary { background: #6c757d; }
+    button.secondary:hover { background: #545b62; }
+
+    /* Progress */
+    .progress-bar-wrap {
+      height: 6px;
+      background: #e4e8ef;
+      border-radius: 3px;
+      margin: 12px 0 8px;
+      overflow: hidden;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      background: #0078d4;
+      border-radius: 3px;
+      transition: width 0.3s ease;
+      width: 0%;
+    }
+    .progress-text { font-size: 0.81rem; color: #555; }
+
+    .status-msg { font-size: 0.82rem; margin-top: 8px; }
+    .status-err { color: #842029; }
+
+    /* Results table */
+    .tbl-wrap { overflow-x: auto; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.81rem;
+    }
+    th {
+      background: #f0f2f5;
+      border: 1px solid #dde1e7;
+      padding: 7px 12px;
+      text-align: left;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    td {
+      border: 1px solid #dde1e7;
+      padding: 6px 12px;
+      vertical-align: middle;
+    }
+    tr:nth-child(even) td { background: #fafbfc; }
+
+    .port-num {
+      font-family: monospace;
+      font-size: 0.88rem;
+      font-weight: 700;
+      color: #0078d4;
+    }
+
+    /* Protocol badges */
+    .badge {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 10px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .badge-https    { background: #d1e7dd; color: #0a5c36; }
+    .badge-http     { background: #cfe2ff; color: #084298; }
+    .badge-tls      { background: #d1f2e4; color: #0a5c36; }
+    .badge-ssh      { background: #e9d7f9; color: #4a2d7a; }
+    .badge-ftp      { background: #fff3cd; color: #856404; }
+    .badge-smtp     { background: #fde8d8; color: #7a3b00; }
+    .badge-pop3     { background: #fff3cd; color: #856404; }
+    .badge-imap     { background: #deeaff; color: #1a3c78; }
+    .badge-tcp      { background: #e4e8ef; color: #444; }
+
+    .service-tag {
+      display: inline-block;
+      padding: 1px 7px;
+      background: #f0f2f5;
+      border: 1px solid #dde1e7;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      color: #555;
+      white-space: nowrap;
+    }
+
+    .banner-cell {
+      font-family: monospace;
+      font-size: 0.74rem;
+      color: #555;
+      max-width: 260px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      cursor: default;
+    }
+
+    .resp-ms { font-size: 0.8rem; color: #333; }
+
+    /* Summary */
+    .summary-grid {
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+    .summary-cell {
+      background: #f8f9fb;
+      border: 1px solid #dde1e7;
+      border-radius: 6px;
+      padding: 10px 18px;
+      min-width: 130px;
+    }
+    .summary-cell .lbl { font-size: 0.72rem; font-weight: 700; color: #888; text-transform: uppercase; }
+    .summary-cell .val { font-size: 1.3rem; font-weight: 700; color: #111; margin-top: 2px; }
+
+    /* Filter + toolbar */
+    .toolbar {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    .toolbar input[type=text] { min-width: 200px; width: 200px; }
+    .result-count { font-size: 0.8rem; color: #666; margin-left: auto; }
+  </style>
+</head>
+<body>
+
+<header>
+  <a class="back" href="index.html">&#8592; Home</a>
+  <h1>Port Checker</h1>
+  <p>Scan a host for open ports and identify protocols (HTTP, HTTPS, SSH, TLS, FTP, etc.)</p>
+</header>
+
+<!-- ===== Input ===== -->
+<div class="card">
+  <div class="input-row">
+    <div class="field" style="flex:1;min-width:200px">
+      <label>Host / IP</label>
+      <input type="text" id="host" placeholder="hostname or IP address" value="localhost">
+    </div>
+    <div class="field">
+      <label>Start Port</label>
+      <input type="number" id="startPort" value="1" min="1" max="65535">
+    </div>
+    <div class="field">
+      <label>End Port</label>
+      <input type="number" id="endPort" value="1024" min="1" max="65535">
+    </div>
+    <div class="field">
+      <label>Timeout (ms)</label>
+      <input type="number" id="timeoutMs" value="500" min="100" max="10000" step="100">
+    </div>
+    <div class="field">
+      <label>Threads</label>
+      <input type="number" id="threads" value="50" min="1" max="200">
+    </div>
+    <div class="field" style="justify-content:flex-end">
+      <div style="display:flex;gap:8px">
+        <button id="scanBtn" onclick="startScan()">Scan</button>
+        <button id="stopBtn" class="danger" onclick="stopScan()" style="display:none">Stop</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Quick presets -->
+  <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+    <span style="font-size:0.75rem;color:#888;align-self:center">Presets:</span>
+    <button class="secondary" style="padding:4px 12px;font-size:0.75rem" onclick="preset(1,1024)">Common (1–1024)</button>
+    <button class="secondary" style="padding:4px 12px;font-size:0.75rem" onclick="preset(1,65535)">All Ports</button>
+    <button class="secondary" style="padding:4px 12px;font-size:0.75rem" onclick="presetList([21,22,23,25,53,80,110,143,389,443,445,465,587,636,993,995,1433,1521,3306,3389,5432,5672,6379,8080,8443,9092,27017])">Well-Known</button>
+  </div>
+
+  <!-- Progress -->
+  <div id="progressSection" style="display:none;margin-top:12px">
+    <div class="progress-bar-wrap"><div class="progress-bar-fill" id="progressFill"></div></div>
+    <div class="progress-text" id="progressText"></div>
+  </div>
+
+  <div id="statusMsg" class="status-msg"></div>
+</div>
+
+<!-- ===== Results ===== -->
+<div class="card" id="resultsCard" style="display:none">
+  <div class="card-title">Open Ports</div>
+  <div class="toolbar">
+    <input type="text" id="filterInput" placeholder="Filter by port, protocol, service…" oninput="filterRows()">
+    <button class="secondary" style="padding:6px 14px" onclick="exportCsv()">Export CSV</button>
+    <span class="result-count" id="resultCount"></span>
+  </div>
+  <div class="tbl-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Port</th>
+          <th>Well-Known Service</th>
+          <th>Protocol</th>
+          <th>Response (ms)</th>
+          <th>Banner / Notes</th>
+        </tr>
+      </thead>
+      <tbody id="resultBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ===== Summary ===== -->
+<div class="card" id="summaryCard" style="display:none">
+  <div class="card-title">Scan Summary</div>
+  <div class="summary-grid">
+    <div class="summary-cell"><div class="lbl">Ports Scanned</div><div class="val" id="sumScanned">—</div></div>
+    <div class="summary-cell"><div class="lbl">Open Ports</div><div class="val" id="sumOpen" style="color:#0a5c36">—</div></div>
+    <div class="summary-cell"><div class="lbl">Duration</div><div class="val" id="sumDuration">—</div></div>
+    <div class="summary-cell"><div class="lbl">Host</div><div class="val" id="sumHost" style="font-size:1rem">—</div></div>
+  </div>
+</div>
+
+<script>
+  let evtSource = null;
+  let allRows   = [];
+
+  // =====================================================================
+  // Presets
+  // =====================================================================
+
+  function preset(start, end) {
+    document.getElementById('startPort').value = start;
+    document.getElementById('endPort').value   = end;
+  }
+
+  function presetList(ports) {
+    // For "well-known" we scan range 1–65535 covering specific ports.
+    // Better UX: set start/end to cover the extremes but add a note.
+    const min = Math.min(...ports);
+    const max = Math.max(...ports);
+    document.getElementById('startPort').value = min;
+    document.getElementById('endPort').value   = max;
+    setStatus('Preset range set to ' + min + '–' + max + ' (covers selected well-known ports)');
+  }
+
+  // =====================================================================
+  // Scan
+  // =====================================================================
+
+  function startScan() {
+    const host      = document.getElementById('host').value.trim();
+    const startPort = parseInt(document.getElementById('startPort').value, 10);
+    const endPort   = parseInt(document.getElementById('endPort').value, 10);
+    const timeoutMs = parseInt(document.getElementById('timeoutMs').value, 10) || 500;
+    const threads   = parseInt(document.getElementById('threads').value, 10)   || 50;
+
+    if (!host)               { setStatus('Enter a host or IP address.', true); return; }
+    if (isNaN(startPort) || isNaN(endPort) || startPort < 1 || endPort > 65535 || startPort > endPort) {
+      setStatus('Invalid port range (1–65535, start ≤ end).', true); return;
+    }
+
+    stopScan();
+    allRows = [];
+    document.getElementById('resultBody').innerHTML = '';
+    document.getElementById('resultsCard').style.display  = 'none';
+    document.getElementById('summaryCard').style.display  = 'none';
+    document.getElementById('progressSection').style.display = '';
+    document.getElementById('scanBtn').disabled = true;
+    document.getElementById('stopBtn').style.display = '';
+    setStatus('');
+    updateResultCount();
+
+    const total = endPort - startPort + 1;
+    setProgress(0, total, 0);
+
+    document.getElementById('sumHost').textContent = host;
+
+    const url = '/portchecker/scan?host=' + encodeURIComponent(host)
+              + '&startPort=' + startPort
+              + '&endPort='   + endPort
+              + '&timeoutMs=' + timeoutMs
+              + '&threads='   + threads;
+
+    evtSource = new EventSource(url);
+
+    evtSource.addEventListener('open', e => {
+      const d = JSON.parse(e.data);
+      addRow(d);
+      document.getElementById('resultsCard').style.display = '';
+    });
+
+    evtSource.addEventListener('progress', e => {
+      const d = JSON.parse(e.data);
+      setProgress(d.checked, d.total, d.open);
+    });
+
+    evtSource.addEventListener('done', e => {
+      const d = JSON.parse(e.data);
+      setProgress(d.scanned, d.scanned, d.open);
+      showSummary(d);
+      scanDone();
+    });
+
+    evtSource.addEventListener('error', e => {
+      try {
+        const d = JSON.parse(e.data);
+        setStatus(d.error || 'Unknown error', true);
+      } catch (_) {
+        if (evtSource.readyState === EventSource.CLOSED) {
+          setStatus('Connection closed.', false);
+        }
+      }
+      scanDone();
+    });
+
+    evtSource.onerror = () => {
+      if (evtSource && evtSource.readyState === EventSource.CLOSED) {
+        scanDone();
+      }
+    };
+  }
+
+  function stopScan() {
+    if (evtSource) { evtSource.close(); evtSource = null; }
+    document.getElementById('stopBtn').style.display = 'none';
+    document.getElementById('scanBtn').disabled = false;
+  }
+
+  function scanDone() {
+    if (evtSource) { evtSource.close(); evtSource = null; }
+    document.getElementById('stopBtn').style.display = 'none';
+    document.getElementById('scanBtn').disabled = false;
+  }
+
+  // =====================================================================
+  // Table
+  // =====================================================================
+
+  function addRow(d) {
+    allRows.push(d);
+    const tbody = document.getElementById('resultBody');
+    tbody.appendChild(buildRow(d));
+    updateResultCount();
+  }
+
+  function buildRow(d) {
+    const tr = document.createElement('tr');
+    tr.dataset.port     = d.port;
+    tr.dataset.protocol = (d.protocol || '').toLowerCase();
+    tr.dataset.service  = (d.service  || '').toLowerCase();
+
+    const badgeCls = protocolBadge(d.protocol);
+    const svcHtml  = d.service ? `<span class="service-tag">${escHtml(d.service)}</span>` : '<span style="color:#aaa">—</span>';
+    const bannerHtml = d.banner
+        ? `<span class="banner-cell" title="${escAttr(d.banner)}">${escHtml(d.banner)}</span>`
+        : '<span style="color:#bbb">—</span>';
+
+    tr.innerHTML = `
+      <td><span class="port-num">${d.port}</span></td>
+      <td>${svcHtml}</td>
+      <td><span class="badge ${badgeCls}">${escHtml(d.protocol || 'TCP')}</span></td>
+      <td><span class="resp-ms">${d.responseMs >= 0 ? d.responseMs + ' ms' : '—'}</span></td>
+      <td>${bannerHtml}</td>`;
+    return tr;
+  }
+
+  function protocolBadge(proto) {
+    if (!proto) return 'badge-tcp';
+    switch (proto.toUpperCase()) {
+      case 'HTTPS':  return 'badge-https';
+      case 'HTTP':   return 'badge-http';
+      case 'TLS':    return 'badge-tls';
+      case 'SSH':    return 'badge-ssh';
+      case 'FTP':    return 'badge-ftp';
+      case 'SMTP':   return 'badge-smtp';
+      case 'POP3':   return 'badge-pop3';
+      case 'IMAP':   return 'badge-imap';
+      default:       return 'badge-tcp';
+    }
+  }
+
+  function filterRows() {
+    const q = document.getElementById('filterInput').value.toLowerCase();
+    const tbody = document.getElementById('resultBody');
+    tbody.innerHTML = '';
+    const filtered = q
+      ? allRows.filter(r =>
+          String(r.port).includes(q) ||
+          (r.protocol || '').toLowerCase().includes(q) ||
+          (r.service  || '').toLowerCase().includes(q) ||
+          (r.banner   || '').toLowerCase().includes(q))
+      : allRows;
+    filtered.forEach(r => tbody.appendChild(buildRow(r)));
+    updateResultCount(filtered.length);
+  }
+
+  function updateResultCount(shown) {
+    const n = shown !== undefined ? shown : allRows.length;
+    const el = document.getElementById('resultCount');
+    el.textContent = n === allRows.length
+        ? allRows.length + ' open port' + (allRows.length !== 1 ? 's' : '') + ' found'
+        : n + ' of ' + allRows.length + ' shown';
+  }
+
+  // =====================================================================
+  // Progress
+  // =====================================================================
+
+  function setProgress(checked, total, open) {
+    const pct = total > 0 ? Math.round(checked / total * 100) : 0;
+    document.getElementById('progressFill').style.width = pct + '%';
+    document.getElementById('progressText').textContent =
+        'Checked ' + checked.toLocaleString() + ' / ' + total.toLocaleString()
+        + ' ports  ·  ' + open + ' open found  ·  ' + pct + '%';
+  }
+
+  // =====================================================================
+  // Summary
+  // =====================================================================
+
+  function showSummary(d) {
+    document.getElementById('sumScanned').textContent  = d.scanned.toLocaleString();
+    document.getElementById('sumOpen').textContent     = d.open;
+    document.getElementById('sumDuration').textContent = formatDuration(d.durationMs);
+    document.getElementById('summaryCard').style.display = '';
+  }
+
+  function formatDuration(ms) {
+    if (ms < 1000) return ms + ' ms';
+    if (ms < 60000) return (ms / 1000).toFixed(1) + ' s';
+    return Math.floor(ms / 60000) + 'm ' + Math.round((ms % 60000) / 1000) + 's';
+  }
+
+  // =====================================================================
+  // Export
+  // =====================================================================
+
+  function exportCsv() {
+    const host = document.getElementById('host').value.trim();
+    const lines = ['Port,Service,Protocol,Response (ms),Banner'];
+    allRows.forEach(r => {
+      lines.push([
+        r.port,
+        csvCell(r.service  || ''),
+        csvCell(r.protocol || ''),
+        r.responseMs >= 0 ? r.responseMs : '',
+        csvCell(r.banner   || '')
+      ].join(','));
+    });
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const a    = document.createElement('a');
+    a.href     = URL.createObjectURL(blob);
+    a.download = 'portcheck-' + host + '-' + new Date().toISOString().slice(0,10) + '.csv';
+    a.click();
+  }
+
+  function csvCell(s) {
+    return '"' + String(s).replace(/"/g, '""') + '"';
+  }
+
+  // =====================================================================
+  // Utilities
+  // =====================================================================
+
+  function setStatus(msg, isErr) {
+    const el = document.getElementById('statusMsg');
+    el.textContent = msg || '';
+    el.className   = 'status-msg' + (isErr ? ' status-err' : '');
+  }
+
+  function escHtml(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function escAttr(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+  }
+</script>
+</body>
+</html>
