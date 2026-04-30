@@ -12,6 +12,8 @@ import com.mycompany.batch.model.InputSourceType;
 import com.mycompany.batch.model.OutputDataType;
 import com.mycompany.batch.model.RunRequest;
 import com.mycompany.batch.service.BatchService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -43,15 +45,19 @@ public class BatchController {
     private final CacheFactory cacheFactory;
     private final ObjectMapper objectMapper;
     private final ServerPropertiesLoader serverPropertiesLoader;
+    private final BatchWebSocketHandler batchWebSocketHandler;
 
+    @Autowired
     public BatchController(BatchService batchService, BatchProperties batchProperties,
                            CacheFactory cacheFactory, ObjectMapper objectMapper,
-                           ServerPropertiesLoader serverPropertiesLoader) {
+                           ServerPropertiesLoader serverPropertiesLoader,
+                           @Lazy BatchWebSocketHandler batchWebSocketHandler) {
         this.batchService = batchService;
         this.batchProperties = batchProperties;
         this.cacheFactory = cacheFactory;
         this.objectMapper = objectMapper;
         this.serverPropertiesLoader = serverPropertiesLoader;
+        this.batchWebSocketHandler = batchWebSocketHandler;
     }
 
     // -------------------------------------------------------------------------
@@ -314,6 +320,29 @@ public class BatchController {
     ResponseEntity<?> executeRun(RunRequest request) throws Exception {
         if (request.operation() == null || request.operation().isBlank()) {
             return badRequest("operation is required");
+        }
+
+        // ASYNC via WebSocket: return 202 immediately; results stream over the caller's WS session.
+        // The caller must supply wsSessionId (as a top-level property or inside "properties") matching
+        // the session ID received in the {"type":"connected","sessionId":"..."} handshake message.
+        if (request.executionMode() == ExecutionMode.ASYNC) {
+            String wsSessionId = request.properties() != null ? request.properties().get("wsSessionId") : null;
+            if (wsSessionId == null || wsSessionId.isBlank()) {
+                return badRequest("wsSessionId is required when executionMode=ASYNC");
+            }
+            try {
+                RunRequest resolvedReq = batchService.resolveAlias(request);
+                batchWebSocketHandler.runAsyncOnSession(wsSessionId, resolvedReq);
+            } catch (IllegalArgumentException e) {
+                return badRequest(e.getMessage());
+            } catch (Exception e) {
+                return errorsResponse("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+            }
+            Map<String, Object> ack = new LinkedHashMap<>();
+            ack.put("status",      "accepted");
+            ack.put("wsSessionId", wsSessionId);
+            ack.put("message",     "batch processing started asynchronously; results will stream to WebSocket session " + wsSessionId);
+            return ResponseEntity.accepted().body(ack);
         }
 
         BatchService.BatchResult result;

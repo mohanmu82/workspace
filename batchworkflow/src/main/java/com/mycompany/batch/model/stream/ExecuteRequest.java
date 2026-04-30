@@ -1,5 +1,8 @@
 package com.mycompany.batch.model.stream;
 
+import com.mycompany.batch.model.ExecutionMode;
+import com.mycompany.batch.model.RunRequest;
+
 public class ExecuteRequest {
 
     private String requestId;
@@ -11,8 +14,12 @@ public class ExecuteRequest {
     private String requestedBy;
     private String requestedAt;
     private int    timeToLive;
-    private StreamInfo  stream;
-    private DatasetInfo dataset;
+    private StreamInfo     stream;
+    private DatasetInfo    dataset;
+    /** When set together with {@code executionMode=ASYNC}, runs this batch operation and streams
+     *  each completed DataRow as a {@code batch.row} SSE event to the session at {@code stream.streamUri}. */
+    private RunRequest     batch;
+    private ExecutionMode  executionMode;
 
     public String      getRequestId()              { return requestId; }
     public void        setRequestId(String v)      { this.requestId = v; }
@@ -38,8 +45,14 @@ public class ExecuteRequest {
     public StreamInfo  getStream()                 { return stream; }
     public void        setStream(StreamInfo v)     { this.stream = v; }
 
-    public DatasetInfo getDataset()                { return dataset; }
-    public void        setDataset(DatasetInfo v)   { this.dataset = v; }
+    public DatasetInfo    getDataset()                    { return dataset; }
+    public void           setDataset(DatasetInfo v)       { this.dataset = v; }
+
+    public RunRequest     getBatch()                      { return batch; }
+    public void           setBatch(RunRequest v)          { this.batch = v; }
+
+    public ExecutionMode  getExecutionMode()              { return executionMode; }
+    public void           setExecutionMode(ExecutionMode v) { this.executionMode = v; }
 
     // -------------------------------------------------------------------------
 

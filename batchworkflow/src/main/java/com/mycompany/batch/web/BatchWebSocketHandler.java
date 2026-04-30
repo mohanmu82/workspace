@@ -9,6 +9,7 @@ import com.mycompany.batch.model.RunRequest;
 import com.mycompany.batch.service.BatchService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
+import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
@@ -17,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * WebSocket endpoint registered at {@code /batch/ws}.
@@ -54,6 +56,8 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
     private final ObjectMapper objectMapper;
     private final CacheFactory cacheFactory;
 
+    private final ConcurrentHashMap<String, WebSocketSession> activeSessions = new ConcurrentHashMap<>();
+
     public BatchWebSocketHandler(BatchService batchService,
                                  BatchController batchController,
                                  BatchProperties batchProperties,
@@ -64,6 +68,36 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
         this.batchProperties = batchProperties;
         this.objectMapper = objectMapper;
         this.cacheFactory = cacheFactory;
+    }
+
+    @Override
+    public void afterConnectionEstablished(@org.springframework.lang.NonNull WebSocketSession session) throws Exception {
+        activeSessions.put(session.getId(), session);
+        Map<String, Object> msg = new LinkedHashMap<>();
+        msg.put("type",      "connected");
+        msg.put("sessionId", session.getId());
+        sendWsSafe(session, objectMapper.writeValueAsString(msg));
+    }
+
+    @Override
+    public void afterConnectionClosed(@org.springframework.lang.NonNull WebSocketSession session,
+                                      @org.springframework.lang.NonNull CloseStatus status) {
+        activeSessions.remove(session.getId());
+    }
+
+    /**
+     * Called by {@link BatchController} when a REST /batch/run request arrives with
+     * {@code executionMode=ASYNC}. Looks up the open WebSocket session by ID and runs
+     * the batch asynchronously, streaming each row back over that session.
+     *
+     * @throws IllegalArgumentException if the session ID is unknown or the session is closed
+     */
+    public void runAsyncOnSession(String wsSessionId, RunRequest request) throws Exception {
+        WebSocketSession session = activeSessions.get(wsSessionId);
+        if (session == null || !session.isOpen()) {
+            throw new IllegalArgumentException("WebSocket session not found or not open: " + wsSessionId);
+        }
+        handleAsync(session, request);
     }
 
     @Override

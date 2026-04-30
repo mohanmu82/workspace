@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>HTTP Post</title>
+    <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@31/dist/ag-grid-community.min.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -242,6 +243,25 @@
             overflow: auto;
             outline: none;
         }
+
+        #gridSection {
+            display: none;
+            margin-top: 14px;
+        }
+
+        #gridSection .grid-title {
+            font-size: 12px;
+            font-weight: 700;
+            color: #5e6c84;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 6px;
+        }
+
+        #dataGrid {
+            width: 100%;
+            height: 400px;
+        }
     </style>
 </head>
 <body>
@@ -421,7 +441,47 @@
     <pre class="response-body" id="responseBody"></pre>
 </div>
 
+<!-- Data Grid (shown when response contains an array) -->
+<div id="gridSection">
+    <div class="grid-title" id="gridTitle">Data</div>
+    <div id="dataGrid" class="ag-theme-alpine"></div>
+</div>
+
 <script>
+    // ── AG Grid (lazy init — must show container before first createGrid call) ─
+    let dataGrid = null;
+
+    function getGrid() {
+        if (!dataGrid) {
+            dataGrid = agGrid.createGrid(document.getElementById('dataGrid'), {
+                columnDefs: [],
+                rowData: [],
+                defaultColDef: { sortable: true, filter: true, resizable: true, minWidth: 80 },
+                animateRows: true,
+            });
+        }
+        return dataGrid;
+    }
+
+    function showDataGrid(rows, label) {
+        if (!rows || rows.length === 0) { hideDataGrid(); return; }
+        document.getElementById('gridSection').style.display = 'block'; // must be block to override CSS rule
+        document.getElementById('gridTitle').textContent = label + ' — ' + rows.length + ' row' + (rows.length !== 1 ? 's' : '');
+        const grid = getGrid();
+        grid.setGridOption('columnDefs', Object.keys(rows[0]).map(k => ({ field: k, headerName: k })));
+        grid.setGridOption('rowData', rows);
+        grid.sizeColumnsToFit();
+    }
+
+    function hideDataGrid() {
+        document.getElementById('gridSection').style.display = 'none';
+        if (dataGrid) {
+            dataGrid.setGridOption('columnDefs', []);
+            dataGrid.setGridOption('rowData', []);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     const AUTH_GROUPS = {
         BASIC:    ['authBasicUser','authBasicPass'],
         JWT:      ['authJwtUrl','authJwtUser','authJwtPass','authJwtApp'],
@@ -456,6 +516,7 @@
         document.getElementById('responseBadge').textContent = '';
         document.getElementById('responseTime').textContent = '';
         document.getElementById('responseLabel').textContent = 'Response';
+        hideDataGrid();
     }
 
     async function saveTemplate() {
@@ -769,6 +830,16 @@
         section.style.display = '';
 
         setStatus(ok ? 'Done.' : 'Server returned HTTP ' + httpStatus + '.', ok ? 'ok' : 'error');
+
+        // Populate grid if response contains a data array
+        const rows = Array.isArray(json) ? json
+                   : Array.isArray(json?.data) ? json.data
+                   : null;
+        if (rows && rows.length > 0 && typeof rows[0] === 'object' && rows[0] !== null) {
+            showDataGrid(rows, Array.isArray(json) ? 'Response' : 'data');
+        } else {
+            hideDataGrid();
+        }
     }
 
     // Load response processor names into dropdown on page load

@@ -1,0 +1,49 @@
+{
+  "name": "sshfilechecker",
+  "mandatoryProperties": [
+        { "property": "inputFilePath", "dataType": "string", "defaultValue": "${DATADIR}/sshfilechecker.txt" }
+        ,{ "property": "inputSource", "dataType": "string", "defaultValue": "FILE" }
+        ,{ "property": "sshHost", "dataType": "string"}
+        ,{ "property": "sshPort", "dataType": "number", "defaultValue": 22}
+        ,{ "property": "sshUsername", "dataType": "string"}
+        ,{ "property": "sshPrivateKeyPath", "dataType": "string"}
+  ],
+  "initialization": [
+    {
+        "name": "sshconnection1"
+        , "type": "SSH"
+        , "ssh": {
+            "host": "${SSHHOST}",
+            "port": "${SSHPORT}",
+            "username": "${SSHUSERNAME}",
+            "privateKey": "${SSHPRIVATEKEYPATH}"
+        }
+        ,"onError": {
+            "type": "SSHFAILURE",
+            "message": "$ssh.getErrorMessage()"
+        }
+      }
+  ],
+  "activity": [
+    {
+      "name": "sshfilecheckergeneric",
+      "mandatoryProperties": [
+            { "property": "inputFilePath", "dataType": "string"}
+      ],
+      "type": "SSH",
+      "ssh": {
+        "reference": "sshconnection1",
+        "file": "${inputFilePath}",
+        "extract":{
+              "FILEEXISTS": "$.fileExists",
+              "FILELASTMODIFIEDTIME": "$.fileLastModifiedTime",
+              "FILESIZE": "$.fileSize",
+              "FILEROWCOUNT": "$.fileRowCount"
+        },
+        "threadCount": 10,
+        "timeoutMs": 30000
+      }
+    }
+  ]
+
+}

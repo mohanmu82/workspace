@@ -2,6 +2,9 @@ package com.mycompany.batch.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mycompany.batch.model.DataRow;
+import com.mycompany.batch.model.ExecutionMode;
+import com.mycompany.batch.model.RunRequest;
 import com.mycompany.batch.model.stream.DatasetSubscription;
 import com.mycompany.batch.model.stream.ExecuteRequest;
 import com.mycompany.batch.model.stream.LiveKeyInfo;
@@ -29,6 +32,7 @@ import java.util.concurrent.TimeUnit;
 public class StreamSessionService {
 
     private final ObjectMapper objectMapper;
+    private final BatchService batchService;
     private final ConcurrentHashMap<String, StreamSession> sessions = new ConcurrentHashMap<>();
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
     private final HttpClient httpClient = HttpClient.newBuilder().build();
@@ -36,8 +40,9 @@ public class StreamSessionService {
     @Value("${server.port:8080}")
     private int serverPort;
 
-    public StreamSessionService(ObjectMapper objectMapper) {
+    public StreamSessionService(ObjectMapper objectMapper, BatchService batchService) {
         this.objectMapper = objectMapper;
+        this.batchService = batchService;
     }
 
     // -------------------------------------------------------------------------
@@ -112,6 +117,16 @@ public class StreamSessionService {
                 if (di.getLiveKey()   == null) di.setLiveKey(proto.getLiveKey());
                 if (req.getUrl()      == null) req.setUrl(proto.getUrl());
             }
+        }
+
+        // Async batch streaming: run a batch operation and push each DataRow as an SSE event
+        if (req.getBatch() != null && req.getExecutionMode() == ExecutionMode.ASYNC) {
+            runBatchAsync(session, req.getBatch(), datasetAlias, req.getRequestId());
+            return Map.of(
+                    "status",       "accepted",
+                    "requestId",    req.getRequestId() != null ? req.getRequestId() : "",
+                    "datasetAlias", datasetAlias,
+                    "mode",         "batch.async");
         }
 
         // Register subscription for requesting session
@@ -194,6 +209,76 @@ public class StreamSessionService {
     // -------------------------------------------------------------------------
     // Internal helpers
     // -------------------------------------------------------------------------
+
+    private void runBatchAsync(StreamSession session, RunRequest batchReq,
+                               String datasetAlias, String requestId) {
+        Thread.ofVirtual().start(() -> {
+            String batchUuid = java.util.UUID.randomUUID().toString();
+            try {
+                RunRequest resolvedReq = batchService.resolveAlias(batchReq);
+                java.util.Map<String, String> opProps = batchService.loadRequestProperties(resolvedReq);
+                java.util.List<DataRow> rows = batchService.buildInputRows(resolvedReq, opProps);
+
+                Map<String, Object> ack = new LinkedHashMap<>();
+                ack.put("eventType",    "batch.ack");
+                ack.put("datasetAlias", datasetAlias);
+                ack.put("batchUuid",    batchUuid);
+                ack.put("rowCount",     rows.size());
+                if (requestId != null) ack.put("requestId", requestId);
+                ack.put("timestamp",    Instant.now().toString());
+                sendEvent(session, "batch.ack", ack);
+
+                batchService.runAsync(rows, resolvedReq, row -> {
+                    Map<String, Object> rowMsg = new LinkedHashMap<>();
+                    rowMsg.put("eventType",    "batch.row");
+                    rowMsg.put("datasetAlias", datasetAlias);
+                    rowMsg.put("batchUuid",    batchUuid);
+                    rowMsg.put("row",          row);
+                    rowMsg.put("timestamp",    Instant.now().toString());
+                    sendEvent(session, "batch.row", rowMsg);
+                }).thenAccept(result -> {
+                    Map<String, Object> meta = new LinkedHashMap<>();
+                    meta.put("processed",      result.processed());
+                    meta.put("succeeded",      result.succeeded());
+                    meta.put("failed",         result.failed());
+                    meta.put("timeTakenMs",    result.timeTakenMs());
+                    meta.put("responseSizeKb", result.responseSizeKb());
+                    meta.put("timestamp",      result.timestamp());
+                    meta.put("batchUuid",      batchUuid);
+
+                    Map<String, Object> done = new LinkedHashMap<>();
+                    done.put("eventType",    "batch.done");
+                    done.put("datasetAlias", datasetAlias);
+                    done.put("batchUuid",    batchUuid);
+                    done.put("metadata",     meta);
+                    done.put("columns",      result.columns());
+                    if (requestId != null) done.put("requestId", requestId);
+                    done.put("timestamp",    Instant.now().toString());
+                    sendEvent(session, "batch.done", done);
+                }).exceptionally(ex -> {
+                    Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
+                    Map<String, Object> err = new LinkedHashMap<>();
+                    err.put("eventType",    "batch.error");
+                    err.put("datasetAlias", datasetAlias);
+                    err.put("batchUuid",    batchUuid);
+                    err.put("error",        cause.getMessage() != null ? cause.getMessage() : cause.getClass().getSimpleName());
+                    if (requestId != null) err.put("requestId", requestId);
+                    err.put("timestamp",    Instant.now().toString());
+                    sendEvent(session, "batch.error", err);
+                    return null;
+                });
+            } catch (Exception e) {
+                Map<String, Object> err = new LinkedHashMap<>();
+                err.put("eventType",    "batch.error");
+                err.put("datasetAlias", datasetAlias);
+                err.put("batchUuid",    batchUuid);
+                err.put("error",        e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+                if (requestId != null) err.put("requestId", requestId);
+                err.put("timestamp",    Instant.now().toString());
+                sendEvent(session, "batch.error", err);
+            }
+        });
+    }
 
     private void sendEvent(StreamSession session, String eventType, Object data) {
         synchronized (session) {

@@ -112,6 +112,7 @@
             <button class="tool-btn" onclick="htmlEscapeBtn('valueArea')">HTML Escape</button>
             <button class="tool-btn" onclick="htmlUnescapeBtn('valueArea')">HTML Unescape</button>
             <button class="tool-btn" onclick="xmlToJson('valueArea')">XML to JSON</button>
+            <button class="tool-btn" onclick="jsonStringify('valueArea')">JSON Stringify</button>
         </div>
     </div>
 
@@ -146,6 +147,7 @@
             <button class="tool-btn" onclick="htmlEscapeBtn('responseArea')">HTML Escape</button>
             <button class="tool-btn" onclick="htmlUnescapeBtn('responseArea')">HTML Unescape</button>
             <button class="tool-btn" onclick="xmlToJson('responseArea')">XML to JSON</button>
+            <button class="tool-btn" onclick="jsonStringify('responseArea')">JSON Stringify</button>
         </div>
     </div>
 
@@ -364,6 +366,19 @@
         }
     }
 
+    function jsonStringify(sourceId) {
+        const src = document.getElementById(sourceId).value;
+        if (!src) { setStatus('Nothing to stringify', 'error'); return; }
+        try {
+            const parsed = JSON.parse(src);
+            setOutput(JSON.stringify(parsed).replace(/"/g, '\\"'));
+            setStatus('JSON stringified', 'ok');
+        } catch (_) {
+            setOutput(JSON.stringify(src).replace(/"/g, '\\"'));
+            setStatus('String wrapped as JSON', 'ok');
+        }
+    }
+
     function base64Decode(sourceId) {
         const src = document.getElementById(sourceId).value.trim();
         if (!src) { setStatus('Nothing to decode', 'error'); return; }
@@ -550,17 +565,23 @@
     }
 
     function doCopyHtml() {
-        navigator.clipboard.writeText(_lastHtml)
-            .then(() => {
-                const btn = document.getElementById('htmlCopyBtn');
-                const orig = btn.textContent; btn.textContent = 'Copied!'; btn.style.background = '#006644';
-                setTimeout(() => { btn.textContent = orig; btn.style.background = '#0052cc'; }, 1500);
-            })
-            .catch(() => {
-                const ta = document.createElement('textarea');
-                ta.value = _lastHtml; document.body.appendChild(ta); ta.select();
-                document.execCommand('copy'); document.body.removeChild(ta);
-            });
+        const btn = document.getElementById('htmlCopyBtn');
+        const flash = () => { const orig = btn.textContent; btn.textContent = 'Copied!'; btn.style.background = '#006644'; setTimeout(() => { btn.textContent = orig; btn.style.background = '#0052cc'; }, 1500); };
+        const fallback = () => {
+            const div = document.createElement('div');
+            div.contentEditable = true; div.innerHTML = _lastHtml;
+            div.style.cssText = 'position:fixed;left:-9999px;top:0';
+            document.body.appendChild(div);
+            const sel = window.getSelection(); sel.removeAllRanges();
+            const range = document.createRange(); range.selectNodeContents(div);
+            sel.addRange(range); document.execCommand('copy');
+            sel.removeAllRanges(); document.body.removeChild(div);
+            flash();
+        };
+        try {
+            const blob = new Blob([_lastHtml], { type: 'text/html' });
+            navigator.clipboard.write([new ClipboardItem({ 'text/html': blob })]).then(flash).catch(fallback);
+        } catch (e) { fallback(); }
     }
 </script>
 </body>

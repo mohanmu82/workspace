@@ -93,6 +93,7 @@ public class BatchProperties {
     public static class OperationProperties {
 
         private String                   name           = "";
+        private List<InitializationProperties> initialization = new ArrayList<>();
         private List<ActivityProperties> activity       = new ArrayList<>();
         private HttpProperties           http           = new HttpProperties();
         private XPathProperties          xpath          = new XPathProperties();
@@ -112,6 +113,9 @@ public class BatchProperties {
 
         public String getName()           { return name; }
         public void   setName(String name){ this.name = name; }
+
+        public List<InitializationProperties> getInitialization()                                        { return initialization; }
+        public void                           setInitialization(List<InitializationProperties> list)     { this.initialization = list != null ? list : new ArrayList<>(); }
 
         public List<ActivityProperties>  getActivity()           { return activity; }
         public void setActivity(List<ActivityProperties> activity) { this.activity = activity; }
@@ -258,6 +262,7 @@ public class BatchProperties {
         private HttpProperties               http                = new HttpProperties();
         private DataExtractionProperties     dataExtraction      = new DataExtractionProperties();
         private DbProperties                 db                  = new DbProperties();
+        private SshProperties                ssh                 = new SshProperties();
         /** Operation-level property overrides visible inside this activity. */
         private Map<String, String>          properties          = new LinkedHashMap<>();
         /** Property definitions that must be non-blank before this activity runs. */
@@ -275,8 +280,11 @@ public class BatchProperties {
         public DataExtractionProperties getDataExtraction()                       { return dataExtraction; }
         public void setDataExtraction(DataExtractionProperties dataExtraction)    { this.dataExtraction = dataExtraction; }
 
-        public DbProperties getDb()               { return db; }
-        public void         setDb(DbProperties d) { this.db = d != null ? d : new DbProperties(); }
+        public DbProperties  getDb()               { return db; }
+        public void          setDb(DbProperties d) { this.db = d != null ? d : new DbProperties(); }
+
+        public SshProperties getSsh()               { return ssh; }
+        public void          setSsh(SshProperties s){ this.ssh = s != null ? s : new SshProperties(); }
 
         public Map<String, String> getProperties()                   { return properties; }
         public void setProperties(Map<String, String> p) {
@@ -814,5 +822,73 @@ public class BatchProperties {
         public void   setKeytab(String keytab)            { this.keytab = keytab; }
         public String getServicePrincipal()               { return servicePrincipal; }
         public void   setServicePrincipal(String sp)      { this.servicePrincipal = sp; }
+    }
+
+    // -------------------------------------------------------------------------
+    // SSH initialization block
+    // -------------------------------------------------------------------------
+
+    public static class InitializationProperties {
+        private String                  name = "";
+        private String                  type = "";
+        private SshConnectionProperties ssh  = new SshConnectionProperties();
+
+        public String                  getName()                         { return name; }
+        public void                    setName(String n)                 { this.name = n != null ? n : ""; }
+        public String                  getType()                         { return type; }
+        public void                    setType(String t)                 { this.type = t != null ? t : ""; }
+        public SshConnectionProperties getSsh()                          { return ssh; }
+        public void                    setSsh(SshConnectionProperties s) { this.ssh = s != null ? s : new SshConnectionProperties(); }
+    }
+
+    public static class SshConnectionProperties {
+        private String host       = "";
+        private String port       = "22";
+        private String username   = "";
+        private String privateKey = "";
+
+        public String getHost()                   { return host; }
+        public void   setHost(String h)           { this.host = h != null ? h : ""; }
+        public String getPort()                   { return port; }
+        public void   setPort(Object p)           { this.port = p != null ? p.toString() : "22"; }
+        public String getUsername()               { return username; }
+        public void   setUsername(String u)       { this.username = u != null ? u : ""; }
+        public String getPrivateKey()             { return privateKey; }
+        public void   setPrivateKey(String pk)    { this.privateKey = pk != null ? pk : ""; }
+    }
+
+    // -------------------------------------------------------------------------
+    // SSH activity
+    // -------------------------------------------------------------------------
+
+    public static class SshProperties {
+        private String               reference   = "";
+        private String               file        = "";
+        private int                  threadCount = 5;
+        private int                  timeoutMs   = 30000;
+        private SshExtractProperties extract     = new SshExtractProperties();
+
+        public String               getReference()                      { return reference; }
+        public void                 setReference(String r)              { this.reference = r != null ? r : ""; }
+        public String               getFile()                           { return file; }
+        public void                 setFile(String f)                   { this.file = f != null ? f : ""; }
+        public int                  getThreadCount()                    { return threadCount; }
+        public void                 setThreadCount(int tc)              { this.threadCount = tc; }
+        public int                  getTimeoutMs()                      { return timeoutMs; }
+        public void                 setTimeoutMs(int ms)                { this.timeoutMs = ms; }
+        public SshExtractProperties getExtract()                        { return extract; }
+        public void                 setExtract(SshExtractProperties e)  { this.extract = e != null ? e : new SshExtractProperties(); }
+    }
+
+    public static class SshExtractProperties {
+        private final Map<String, String> fields = new LinkedHashMap<>();
+
+        @com.fasterxml.jackson.annotation.JsonAnySetter
+        public void addField(String key, Object value) {
+            if (value instanceof String s) fields.put(key, s);
+        }
+
+        @com.fasterxml.jackson.annotation.JsonAnyGetter
+        public Map<String, String> getFields() { return fields; }
     }
 }

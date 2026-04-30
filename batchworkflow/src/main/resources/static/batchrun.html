@@ -2190,17 +2190,23 @@
     }
 
     function doCopyHtml() {
-        navigator.clipboard.writeText(_indexLastHtml)
-            .then(() => {
-                const btn = document.getElementById('htmlCopyBtn2');
-                const orig = btn.textContent; btn.textContent = 'Copied!'; btn.style.background = '#006644';
-                setTimeout(() => { btn.textContent = orig; btn.style.background = '#0052cc'; }, 1500);
-            })
-            .catch(() => {
-                const ta = document.createElement('textarea');
-                ta.value = _indexLastHtml; document.body.appendChild(ta); ta.select();
-                document.execCommand('copy'); document.body.removeChild(ta);
-            });
+        const btn = document.getElementById('htmlCopyBtn2');
+        const flash = () => { const orig = btn.textContent; btn.textContent = 'Copied!'; btn.style.background = '#006644'; setTimeout(() => { btn.textContent = orig; btn.style.background = '#0052cc'; }, 1500); };
+        const fallback = () => {
+            const div = document.createElement('div');
+            div.contentEditable = true; div.innerHTML = _indexLastHtml;
+            div.style.cssText = 'position:fixed;left:-9999px;top:0';
+            document.body.appendChild(div);
+            const sel = window.getSelection(); sel.removeAllRanges();
+            const range = document.createRange(); range.selectNodeContents(div);
+            sel.addRange(range); document.execCommand('copy');
+            sel.removeAllRanges(); document.body.removeChild(div);
+            flash();
+        };
+        try {
+            const blob = new Blob([_indexLastHtml], { type: 'text/html' });
+            navigator.clipboard.write([new ClipboardItem({ 'text/html': blob })]).then(flash).catch(fallback);
+        } catch (e) { fallback(); }
     }
 
     function buildHtmlTable(headers, rows, cellStyleFn) {
