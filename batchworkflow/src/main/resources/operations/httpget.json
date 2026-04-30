@@ -12,15 +12,15 @@
       "http": {
         "url": "${inputHttpUrl}",
         "method": "GET",
-        "contentType": "application/json",
-        "header": {
-          "Accept": "application/json"
-        },
+        "httpHeaders": "${inputHttpHeader}",
         "extract":{
               "RESPONSECODE": "$.statusCode",
-              "RESPONSEBODY": "$.body",
               "REQUESTURL": "$.url",
-              "REQUESTHEADERS": "$.headers"
+              "REQUESTHEADERS": "$.requestHeaders",
+              "RESPONSEHEADERS": "$.responseHeaders",
+              "RESPONSEBODY": "$.responseBody",
+              "REQUESTBODY": "$.requestBody",
+              "RESPONSETIMEMS": "$.responseTimeMs"
         },
         "threadCount": 1,
         "timeoutMs": 30000

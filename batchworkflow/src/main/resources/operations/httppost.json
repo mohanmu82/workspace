@@ -3,7 +3,8 @@
   "mandatoryProperties": [
     { "property": "inputHttpUrl",  "dataType": "string" },
     { "property": "inputHttpBody", "dataType": "string","elementType" : "textarea"  },
-    { "property": "inputSource", "dataType": "string", "defaultValue":"SPECIFIC", "readOnly": true }
+    { "property": "inputSource", "dataType": "string", "defaultValue":"SPECIFIC", "readOnly": true },
+    { "property": "inputHttpHeader", "dataType": "json", "elementType": "textarea", "required": false, "displayType": {"label": "Headers (JSON object)"} }
   ],
   "alias": [
     {
@@ -40,16 +41,17 @@
       "http": {
         "url": "${inputHttpUrl}",
         "bodyTemplate": "${inputHttpBody}",
+        "httpHeaders": "${inputHttpHeader}",
         "method": "POST",
         "contentType": "application/json",
         "extract":{
-            "ifError": {
-              "RESPONSECODE": "$.statusCode",
-              "RESPONSEBODY": "$.body",
-              "REQUESTURL": "$.url",
-              "REQUESTHEADERS": "$.requestHeaders",
-              "RESPONSEHEADERS": "$.responseHeaders"
-            }
+            "RESPONSECODE": "$.statusCode",
+            "REQUESTURL": "$.url",
+            "REQUESTHEADERS": "$.requestHeaders",
+            "RESPONSEHEADERS": "$.responseHeaders",
+            "RESPONSEBODY": "$.responseBody",
+            "REQUESTBODY": "$.requestBody",
+            "RESPONSETIMEMS": "$.responseTimeMs"
         },
         "threadCount": 1,
         "timeoutMs": 30000

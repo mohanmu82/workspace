@@ -123,26 +123,11 @@ public class SshCommandWebSocketHandler extends TextWebSocketHandler {
             InputStream stdout = channel.getInputStream();
             channel.connect();
 
-            byte[] buf     = new byte[4096];
+            byte[] buf = new byte[4096];
             StringBuilder lineBuf = new StringBuilder();
-
-            while (true) {
-                while (stdout.available() > 0) {
-                    int n = stdout.read(buf, 0, Math.min(buf.length, stdout.available()));
-                    if (n < 0) break;
-                    flushLines(ws, new String(buf, 0, n), lineBuf);
-                }
-                if (channel.isClosed()) {
-                    int rem;
-                    while ((rem = stdout.available()) > 0) {
-                        int n = stdout.read(buf, 0, Math.min(buf.length, rem));
-                        if (n < 0) break;
-                        flushLines(ws, new String(buf, 0, n), lineBuf);
-                    }
-                    break;
-                }
-                //noinspection BusyWait
-                Thread.sleep(50);
+            int n;
+            while ((n = stdout.read(buf)) != -1) {
+                flushLines(ws, new String(buf, 0, n), lineBuf);
             }
 
             if (!lineBuf.isEmpty()) sendLine(ws, lineBuf.toString());

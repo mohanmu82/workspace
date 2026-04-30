@@ -473,6 +473,8 @@ public class BatchService {
                     Map<String, String> urlProps = new LinkedHashMap<>(opProperties);
                     System.getenv().forEach(urlProps::putIfAbsent);
                     httpUrl = resolveTemplate(httpUrl.trim(), Map.of(), urlProps);
+                    if (!httpUrl.startsWith("http://") && !httpUrl.startsWith("https://"))
+                        yield readDataRowsFromLocal(httpUrl);
                     BatchProperties.HttpConfigSourceProperties override =
                             new BatchProperties.HttpConfigSourceProperties();
                     override.setUrl(httpUrl);
@@ -1519,7 +1521,8 @@ public class BatchService {
 
         return chain.thenAccept(row -> {
             int httpStatus = row.getLastHttpStatusCode();
-            String opStatus = (httpStatus != 0 && httpStatus != 200) ? "FAILURE" : "SUCCESS";
+            boolean httpSuccess = httpStatus == 0 || (httpStatus >= 200 && httpStatus < 300);
+            String opStatus = httpSuccess ? "SUCCESS" : "FAILURE";
             List<Map<String, Object>> expandedRows = row.getExpandedRows();
             if (expandedRows != null && !expandedRows.isEmpty()) {
                 // JSON extraction produced multiple output rows — expand them
@@ -1546,7 +1549,11 @@ public class BatchService {
                     }
                 }
             }
-            succeeded.incrementAndGet();
+            if (httpSuccess) {
+                succeeded.incrementAndGet();
+            } else {
+                failed.incrementAndGet();
+            }
         }).exceptionally(ex -> {
             failed.incrementAndGet();
             Throwable cause   = ex.getCause() != null ? ex.getCause() : ex;
@@ -1660,7 +1667,7 @@ public class BatchService {
                 if (cached != null) {
                     totalResponseBytes.addAndGet(cached.length());
                     row.setResponseBody(cached);
-                    applyHttpExtract(httpConfig.getExtract().getFields(), null, resolvedBody, null, cached, resolvedUrl, row);
+                    applyHttpExtract(httpConfig.getExtract().getFields(), null, resolvedBody, null, cached, resolvedUrl, 0L, row);
                     httpDurationsMs.add(0L);
                     row.getMetadata().put(activityName + ".timetakenmillis", 0L);
                     row.getMetadata().put(activityName + ".httpurl", resolvedUrl + " [CACHED]");
@@ -1672,6 +1679,10 @@ public class BatchService {
                 return f;
             }
         }
+
+        if (!resolvedUrl.startsWith("http://") && !resolvedUrl.startsWith("https://"))
+            return executeLocalHttpActivity(row, activity, resolvedUrl, resolvedBody,
+                    httpDurationsMs, totalResponseBytes, cacheName, resolvedCacheKey, httpConfig);
 
         String effectiveAuthHeader = activity.activityAuthHeader() != null
                 ? activity.activityAuthHeader() : authHeader;
@@ -1698,18 +1709,20 @@ public class BatchService {
             long start = System.currentTimeMillis();
             try {
                 HttpResponse<String> response = effectiveClient.send(request, HttpResponse.BodyHandlers.ofString());
+                long responseTimeMs = System.currentTimeMillis() - start;
                 String body = response.body();
                 row.setLastHttpStatusCode(response.statusCode());
                 row.setResponseBody(body);
                 BatchProperties.HttpExtractProperties extract = httpConfig.getExtract();
-                applyHttpExtract(extract.getFields(), request, finalResolvedBody, response, body, finalResolvedUrl, row);
+                applyHttpExtract(extract.getFields(), request, finalResolvedBody, response, body, finalResolvedUrl, responseTimeMs, row);
                 if (response.statusCode() < 200 || response.statusCode() >= 300) {
                     if (extract != null && !extract.getIfError().isEmpty()) {
-                        applyHttpExtract(extract.getIfError(), request, finalResolvedBody, response, body, finalResolvedUrl, row);
-                        return row;
+                        applyHttpExtract(extract.getIfError(), request, finalResolvedBody, response, body, finalResolvedUrl, responseTimeMs, row);
+                    } else if (extract == null || extract.getFields().isEmpty()) {
+                        throw new RuntimeException("HTTP " + response.statusCode()
+                                + (body != null && !body.isBlank() ? " — " + body : ""));
                     }
-                    throw new RuntimeException("HTTP " + response.statusCode()
-                            + (body != null && !body.isBlank() ? " — " + body : ""));
+                    return row;
                 }
                 totalResponseBytes.addAndGet(body.length());
                 if (finalCacheName != null) {
@@ -1850,12 +1863,88 @@ public class BatchService {
      *                $.requestHeaders, $.responseHeaders, $.headers (alias for $.responseHeaders).
      * Any other path is evaluated as JSONPath against the response body.
      */
+
+    private CompletableFuture<DataRow> executeLocalHttpActivity(
+            DataRow row, ResolvedActivity activity,
+            String localUrl, String requestBody,
+            List<Long> httpDurationsMs, AtomicLong totalResponseBytes,
+            String cacheName, String resolvedCacheKey,
+            BatchProperties.HttpProperties httpConfig) {
+        long start = System.currentTimeMillis();
+        try {
+            String body = callLocalEndpointToJson(localUrl);
+            long responseTimeMs = System.currentTimeMillis() - start;
+            row.setLastHttpStatusCode(200);
+            row.setResponseBody(body);
+            totalResponseBytes.addAndGet(body.length());
+            String activityName = activity.config().getName();
+            applyHttpExtract(httpConfig.getExtract().getFields(), null, requestBody, null, body, localUrl, responseTimeMs, row);
+            httpDurationsMs.add(responseTimeMs);
+            row.getMetadata().put(activityName + ".timetakenmillis", responseTimeMs);
+            row.getMetadata().put(activityName + ".httpurl", localUrl + " [LOCAL]");
+            if (cacheName != null)
+                cacheFactory.save(cacheName, resolvedCacheKey, body, localUrl);
+            return CompletableFuture.completedFuture(row);
+        } catch (Exception e) {
+            CompletableFuture<DataRow> f = new CompletableFuture<>();
+            f.completeExceptionally(new RuntimeException(
+                    "Local endpoint call failed for '" + localUrl + "': " + e.getMessage(), e));
+            return f;
+        }
+    }
+
+    private String callLocalEndpointToJson(String url) throws Exception {
+        int q = url.indexOf('?');
+        String path = (q >= 0 ? url.substring(0, q) : url).trim();
+        Map<String, String> params = parseQueryString(url);
+        if (path.endsWith("/run")) {
+            String operation = params.get("operation");
+            if (operation == null || operation.isBlank())
+                throw new IllegalArgumentException(
+                        "Local URL must include an 'operation' query parameter: " + url);
+            String idsParam = params.get("ids");
+            List<String> ids = null;
+            if (idsParam != null && !idsParam.isBlank()) {
+                ids = Arrays.stream(idsParam.split(","))
+                        .map(String::trim).filter(s -> !s.isBlank()).toList();
+            }
+            RunRequest inner = new RunRequest(
+                    operation,
+                    InputSourceType.from(params.get("inputSource")),
+                    params.get("inputFilePath"),
+                    params.get("inputHttpUrl"),
+                    null, null,
+                    ids,
+                    null,
+                    parseLocalInt(params.get("inputCount")),
+                    null, null,
+                    parseLocalInt(params.get("debugMode")),
+                    parseLocalInt(params.get("httpThreadCount")),
+                    parseLocalInt(params.get("httpTimeoutMs")),
+                    null, null, null, null, null,
+                    params.get("alias"),
+                    params.get("responseProcessor"),
+                    null,
+                    params.get("inputJsonPath"),
+                    params.get("cacheName"),
+                    null, null, null
+            );
+            BatchResult result = run(inner);
+            Map<String, Object> resp = new LinkedHashMap<>();
+            resp.put("data", result.results());
+            return objectMapper.writeValueAsString(resp);
+        }
+        throw new IllegalArgumentException(
+                "Unsupported local URL path '" + path + "' — only /batch/run?operation=... is supported");
+    }
+
     private void applyHttpExtract(Map<String, String> extractMap,
                                   HttpRequest httpRequest,
                                   String requestBody,
                                   HttpResponse<String> response,
                                   String body,
                                   String resolvedUrl,
+                                  long responseTimeMs,
                                   DataRow row) {
         if (extractMap == null || extractMap.isEmpty()) return;
         for (Map.Entry<String, String> entry : extractMap.entrySet()) {
@@ -1869,6 +1958,7 @@ public class BatchService {
                 case "$.url"                         -> row.getData().put(key, resolvedUrl);
                 case "$.requestHeaders"              -> row.getData().put(key, httpRequest != null ? httpRequest.headers().map().toString() : "");
                 case "$.responseHeaders", "$.headers"-> row.getData().put(key, response != null ? response.headers().map().toString() : "");
+                case "$.responseTimeMs"              -> row.getData().put(key, responseTimeMs);
                 default -> {
                     try {
                         Object val = com.jayway.jsonpath.JsonPath.read(body, path);

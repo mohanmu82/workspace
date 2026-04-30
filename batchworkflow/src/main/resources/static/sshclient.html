@@ -243,6 +243,7 @@
         }
         appendPrompt(command);
         ws.send(JSON.stringify({ type: 'exec', command }));
+        document.getElementById('commandInput').value = '';
     }
 
     // -------------------------------------------------------------------------
@@ -337,9 +338,9 @@
         return document.getElementById(id).value.trim();
     }
 
-    // Execute on Ctrl+Enter in command textarea
+    // Execute on Enter (plain) in command textarea; Shift+Enter inserts a newline
     document.getElementById('commandInput').addEventListener('keydown', e => {
-        if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); execCommand(); }
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); execCommand(); }
     });
 
     // -------------------------------------------------------------------------

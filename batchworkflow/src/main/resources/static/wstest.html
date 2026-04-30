@@ -101,6 +101,41 @@
     .cert-info .ci-v   { word-break: break-all; }
     .cert-loading { font-size: 0.75rem; color: #888; }
     .cert-na      { font-size: 0.75rem; color: #aaa; }
+
+    .cert-chain-toggle {
+      display: inline-block;
+      margin-top: 6px;
+      font-size: 0.73rem;
+      color: #0078d4;
+      cursor: pointer;
+      user-select: none;
+      border: none;
+      background: none;
+      padding: 0;
+      font-family: inherit;
+      font-weight: 600;
+    }
+    .cert-chain-toggle:hover { text-decoration: underline; }
+
+    .cert-chain-list { display: none; margin-top: 8px; }
+    .cert-chain-list.open { display: block; }
+
+    .cert-chain-entry {
+      border-left: 2px solid #0078d4;
+      padding: 6px 0 6px 10px;
+      margin-bottom: 8px;
+      font-size: 0.73rem;
+      line-height: 1.5;
+    }
+    .cert-chain-entry:last-child { margin-bottom: 0; }
+    .cert-chain-entry .chain-label {
+      font-weight: 700;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #0078d4;
+      margin-bottom: 3px;
+    }
   </style>
 </head>
 <body>
@@ -180,8 +215,27 @@
     });
   }
 
+  const WS_CLOSE_CODES = {
+    1000: 'Normal closure',
+    1001: 'Endpoint going away (server shutting down or browser navigating away)',
+    1002: 'Protocol error',
+    1003: 'Unsupported data type',
+    1005: 'No status code received',
+    1006: 'Abnormal closure — server unreachable, refused connection, wrong URL/path, TLS certificate rejected, or CORS blocked',
+    1007: 'Invalid frame payload (encoding error)',
+    1008: 'Policy violation',
+    1009: 'Message too large',
+    1010: 'Missing extension negotiation',
+    1011: 'Internal server error',
+    1012: 'Service restart',
+    1013: 'Try again later',
+    1014: 'Bad gateway',
+    1015: 'TLS handshake failure',
+  };
+
   function testOne(url, timeoutMs, cb) {
     let settled = false;
+    let lastCloseCode = null;
 
     function settle(status, errMsg) {
       if (settled) return;
@@ -202,11 +256,25 @@
 
     const timer = setTimeout(() => settle('timeout', 'No response within ' + timeoutMs + ' ms'), timeoutMs);
 
-    ws.addEventListener('open',    ()  => settle('open', ''));
-    ws.addEventListener('error',   ()  => settle('failed', 'Connection error (check URL / CORS / TLS)'));
-    ws.addEventListener('close',   (e) => {
-      const reason = e.reason ? e.reason : (e.code ? 'Code ' + e.code : '');
-      settle('failed', 'Closed' + (reason ? ': ' + reason : ''));
+    ws.addEventListener('open', () => settle('open', ''));
+
+    ws.addEventListener('error', () => {
+      // Don't settle yet — let the close event fire next so we capture the close code.
+      // If close never fires, the timeout will handle it.
+    });
+
+    ws.addEventListener('close', (e) => {
+      const code = e.code || 0;
+      const decoded = WS_CLOSE_CODES[code];
+      let msg = '';
+      if (e.reason) {
+        msg = e.reason + (decoded ? ' (' + decoded + ')' : '');
+      } else if (decoded) {
+        msg = 'Code ' + code + ': ' + decoded;
+      } else if (code) {
+        msg = 'Code ' + code;
+      }
+      settle('failed', msg || 'Connection closed unexpectedly');
     });
   }
 
@@ -230,22 +298,59 @@
         cell.innerHTML = `<span class="cert-info" style="color:#842029">${escHtml(d.error || d.tlsError)}</span>`;
         return;
       }
-      const chain = Array.isArray(d.certChain) && d.certChain.length ? d.certChain[0] : null;
-      if (!chain) { cell.innerHTML = '<span class="cert-na">No cert captured</span>'; return; }
+      const certChain = Array.isArray(d.certChain) && d.certChain.length ? d.certChain : null;
+      if (!certChain) { cell.innerHTML = '<span class="cert-na">No cert captured</span>'; return; }
 
-      const fp  = chain.sha256Fingerprint || '';
-      const fpS = fp.length > 29 ? fp.slice(0, 29) + '…' : fp;
+      const leaf = certChain[0];
+      const fp   = leaf.sha256Fingerprint || '';
+      const fpS  = fp.length > 29 ? fp.slice(0, 29) + '…' : fp;
+
+      const chainToggleId = cellId + '-chain';
+      const hasChain = certChain.length > 1;
+
+      const chainEntriesHtml = certChain.map((c, i) => {
+        const cfp  = c.sha256Fingerprint || '';
+        const cfpS = cfp.length > 29 ? cfp.slice(0, 29) + '…' : cfp;
+        const labels = ['Leaf (end-entity)', 'Intermediate CA', 'Intermediate CA', 'Root CA'];
+        const depthLabel = i === 0 ? labels[0]
+          : i === certChain.length - 1 ? labels[3]
+          : labels[1];
+        return `
+          <div class="cert-chain-entry">
+            <div class="chain-label">[${i + 1}] ${escHtml(depthLabel)}</div>
+            <div class="ci-row"><span class="ci-k">Subject CN</span><span class="ci-v">${escHtml(c.subjectCN || c.subject || '—')}</span></div>
+            <div class="ci-row"><span class="ci-k">Issuer CN</span><span class="ci-v">${escHtml(c.issuerCN || c.issuerO || c.issuer || '—')}</span></div>
+            <div class="ci-row"><span class="ci-k">Valid From</span><span class="ci-v">${escHtml(c.validFrom || '—')}</span></div>
+            <div class="ci-row"><span class="ci-k">Valid To</span><span class="ci-v">${escHtml(c.validTo || '—')}${c.isExpired ? ' <span style="color:#842029;font-weight:700">[EXPIRED]</span>' : ''}</span></div>
+            <div class="ci-row"><span class="ci-k">SHA-256</span><span class="ci-v" title="${escHtml(cfp)}" style="font-family:monospace;font-size:0.7rem">${escHtml(cfpS)}</span></div>
+          </div>`;
+      }).join('');
+
       cell.innerHTML = `
         <div class="cert-info">
-          <div class="ci-row"><span class="ci-k">Subject CN</span><span class="ci-v">${escHtml(chain.subjectCN || chain.subject)}</span></div>
-          <div class="ci-row"><span class="ci-k">Issuer</span><span class="ci-v">${escHtml(chain.issuerCN || chain.issuerO || chain.issuer)}</span></div>
-          <div class="ci-row"><span class="ci-k">Valid To</span><span class="ci-v">${escHtml(chain.validTo)}${chain.isExpired ? ' <span style="color:#842029;font-weight:700">[EXPIRED]</span>' : ''}</span></div>
+          <div class="ci-row"><span class="ci-k">Subject CN</span><span class="ci-v">${escHtml(leaf.subjectCN || leaf.subject || '—')}</span></div>
+          <div class="ci-row"><span class="ci-k">Issuer</span><span class="ci-v">${escHtml(leaf.issuerCN || leaf.issuerO || leaf.issuer || '—')}</span></div>
+          <div class="ci-row"><span class="ci-k">Valid To</span><span class="ci-v">${escHtml(leaf.validTo || '—')}${leaf.isExpired ? ' <span style="color:#842029;font-weight:700">[EXPIRED]</span>' : ''}</span></div>
           <div class="ci-row"><span class="ci-k">Server IP</span><span class="ci-v">${escHtml(d.remoteIp || d.resolvedIp || '—')}</span></div>
           <div class="ci-row"><span class="ci-k">Remote Port</span><span class="ci-v">${escHtml(String(d.remotePort || d.port || '—'))}</span></div>
           <div class="ci-row"><span class="ci-k">SHA-256</span><span class="ci-v" title="${escHtml(fp)}" style="font-family:monospace;font-size:0.7rem">${escHtml(fpS)}</span></div>
-        </div>`;
+          ${hasChain ? `<button class="cert-chain-toggle" onclick="toggleChain('${chainToggleId}', this)">&#9654; Show full chain (${certChain.length} certs)</button>` : ''}
+        </div>
+        ${hasChain ? `<div class="cert-chain-list" id="${chainToggleId}">${chainEntriesHtml}</div>` : ''}`;
     } catch (e) {
       if (cell) cell.innerHTML = `<span class="cert-info" style="color:#842029">${escHtml(e.message)}</span>`;
+    }
+  }
+
+  function toggleChain(listId, btn) {
+    const list = document.getElementById(listId);
+    if (!list) return;
+    const open = list.classList.toggle('open');
+    if (open) {
+      btn.dataset.collapsed = btn.textContent;
+      btn.textContent = '▼ Hide chain';
+    } else {
+      btn.textContent = btn.dataset.collapsed || '► Show full chain';
     }
   }
 
