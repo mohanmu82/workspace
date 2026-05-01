@@ -64,8 +64,19 @@ public class CompareController {
             return badRequest("Dataset 2 failed: " + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()));
         }
 
-        List<Map<String, Object>> data1 = result1.results();
-        List<Map<String, Object>> data2 = result2.results();
+        List<Map<String, Object>> data1;
+        try {
+            data1 = extractData(result1, req1);
+        } catch (Exception e) {
+            return badRequest("Dataset 1 responseProcessor failed: " + e.getMessage());
+        }
+
+        List<Map<String, Object>> data2;
+        try {
+            data2 = extractData(result2, req2);
+        } catch (Exception e) {
+            return badRequest("Dataset 2 responseProcessor failed: " + e.getMessage());
+        }
 
         // Validate key presence
         if (!data1.isEmpty()) {
@@ -104,6 +115,20 @@ public class CompareController {
     // -------------------------------------------------------------------------
     // Comparison logic
     // -------------------------------------------------------------------------
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> extractData(BatchService.BatchResult result, RunRequest req) throws Exception {
+        if (req.responseProcessor() == null || req.responseProcessor().isBlank()) {
+            return result.results();
+        }
+        Object response = batchController.buildHttpResponse(req.operation(), result, req.httpThreadCount());
+        response = batchService.applyResponseProcessor(response, req.responseProcessor());
+        if (response instanceof Map<?, ?> m && m.get("data") instanceof List<?> list) {
+            return (List<Map<String, Object>>) list;
+        }
+        throw new IllegalStateException("responseProcessor '" + req.responseProcessor()
+                + "' must return a map with a 'data' list for use in comparison");
+    }
 
     private Map<String, Object> compare(
             List<Map<String, Object>> data1,

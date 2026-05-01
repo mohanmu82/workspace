@@ -466,22 +466,26 @@
     // Init
     // -------------------------------------------------------------------------
 
+    const templateBodyCache = {};
+
     async function reloadTemplates() {
         const sel = document.getElementById('templateSelect');
         const prev = sel.value;
         while (sel.options.length > 1) sel.remove(1);
+        Object.keys(templateBodyCache).forEach(k => delete templateBodyCache[k]);
         try {
             const res = await fetch('/batch/template');
             const data = await res.json();
-            const names = data.data || [];
-            names.forEach(name => {
+            const items = data.data || [];
+            items.forEach(item => {
+                templateBodyCache[item.templateName] = item.templateBody;
                 const opt = document.createElement('option');
-                opt.value = name;
-                opt.textContent = name;
+                opt.value = item.templateName;
+                opt.textContent = item.templateName;
                 sel.appendChild(opt);
             });
             if (prev) sel.value = prev;
-            document.getElementById('templateEmptyHint').style.display = names.length === 0 ? '' : 'none';
+            document.getElementById('templateEmptyHint').style.display = items.length === 0 ? '' : 'none';
             setStatus('');
         } catch (e) {
             setStatus('Failed to load templates: ' + e.message, 'error');

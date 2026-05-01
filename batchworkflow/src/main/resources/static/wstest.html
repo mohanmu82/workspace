@@ -143,6 +143,11 @@
 <h1>WebSocket Connection Tester</h1>
 
 <div class="card">
+  <label for="groupSelect">URL Group</label>
+  <select id="groupSelect" onchange="onGroupSelect()" style="width:100%;padding:6px 8px;border:1px solid #ccc;border-radius:4px;font-size:0.85rem;margin-bottom:12px;">
+    <option value="">— select a group —</option>
+  </select>
+
   <label>WebSocket URLs (one per line)</label>
   <textarea id="urlInput" placeholder="ws://localhost:8080/ws&#10;wss://example.com/socket&#10;wss://api.example.com/feed"></textarea>
 
@@ -375,6 +380,33 @@
   function escHtml(s) {
     return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
+
+  let wsGroups = [];
+
+  async function loadWsGroups() {
+    try {
+      const r = await fetch('/batch/template?name=wsgroups');
+      if (!r.ok) return;
+      const d = await r.json();
+      wsGroups = Array.isArray(d.data) ? d.data : [];
+      const sel = document.getElementById('groupSelect');
+      wsGroups.forEach(g => {
+        const opt = document.createElement('option');
+        opt.value = g.ALIAS;
+        opt.textContent = g.ALIAS;
+        sel.appendChild(opt);
+      });
+    } catch (_) {}
+  }
+
+  function onGroupSelect() {
+    const sel = document.getElementById('groupSelect');
+    const group = wsGroups.find(g => g.ALIAS === sel.value);
+    if (!group) return;
+    document.getElementById('urlInput').value = (group.URLLIST || '').split(';').join('\n');
+  }
+
+  window.addEventListener('load', loadWsGroups);
 </script>
 </body>
 </html>

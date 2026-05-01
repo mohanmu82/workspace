@@ -25,6 +25,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
+
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -612,6 +615,70 @@ public class BatchController {
     }
 
     // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // GET /batch/joindataset        — list all joindataset config names
+    // GET /batch/joindataset/{name} — get a specific joindataset config
+    // -------------------------------------------------------------------------
+
+    @GetMapping("/joindataset")
+    public ResponseEntity<?> listJoinDatasets() {
+        List<String> names = new ArrayList<>();
+        try {
+            PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
+            Resource[] resources = resolver.getResources("classpath:joindataset/*.json");
+            for (Resource r : resources) {
+                String filename = r.getFilename();
+                if (filename != null && filename.endsWith(".json")) {
+                    names.add(filename.substring(0, filename.length() - 5));
+                }
+            }
+            names.sort(String::compareTo);
+        } catch (Exception ignored) {}
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("data", names);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/joindataset/{name}")
+    public ResponseEntity<?> getJoinDataset(@PathVariable String name) throws Exception {
+        if (!name.matches("[\\w\\-]+")) return badRequest("invalid joindataset name");
+        String path = "joindataset/" + name + ".json";
+        try (InputStream is = getClass().getClassLoader().getResourceAsStream(path)) {
+            if (is == null) return badRequest("joindataset not found: " + name);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> content = objectMapper.readValue(is, Map.class);
+            applyJoinDatasetDefaults(content);
+            return ResponseEntity.ok(content);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void applyJoinDatasetDefaults(Map<String, Object> config) {
+        if (!(config.get("datasets") instanceof List<?> rawList)) return;
+        for (Object rawDs : rawList) {
+            if (!(rawDs instanceof Map<?, ?> dsRaw)) continue;
+            Map<String, Object> ds = (Map<String, Object>) dsRaw;
+            Object uk = ds.get("uniqueKey");
+            boolean missingKey = !(uk instanceof List<?> l) || ((List<?>) l).isEmpty();
+            if (missingKey) {
+                Object cols = ds.get("columns");
+                if (cols instanceof List<?> cl && !cl.isEmpty() && cl.get(0) instanceof Map<?, ?> cm
+                        && cm.get("name") instanceof String firstCol) {
+                    ds.put("uniqueKey", List.of(firstCol));
+                }
+            }
+        }
+    }
+
+    RunRequest resolveTemplateToRequest(String name) throws Exception {
+        Path file = templateDir().resolve(name + ".json");
+        if (!Files.exists(file)) throw new IllegalArgumentException("template not found: " + name);
+        Map<String, Object> templateMap = objectMapper.readValue(file.toFile(),
+                new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+        return deserializeRunRequest(templateMap);
+    }
+
+    // -------------------------------------------------------------------------
     // GET /batch/resource?classpath=path/to/resource  — read a classpath resource as text
     // -------------------------------------------------------------------------
 
@@ -649,17 +716,22 @@ public class BatchController {
         }
         // List mode
         Path dir = templateDir();
-        List<String> names = new ArrayList<>();
+        List<Map<String, Object>> templates = new ArrayList<>();
         if (Files.isDirectory(dir)) {
             try (var stream = Files.list(dir)) {
-                stream.filter(p -> p.toString().endsWith(".json"))
-                      .map(p -> p.getFileName().toString().replaceAll("\\.json$", ""))
-                      .sorted()
-                      .forEach(names::add);
+                List<Path> files = stream.filter(p -> p.toString().endsWith(".json")).sorted().toList();
+                for (Path p : files) {
+                    String templateName = p.getFileName().toString().replaceAll("\\.json$", "");
+                    Object templateBody = objectMapper.readValue(p.toFile(), Object.class);
+                    Map<String, Object> entry = new LinkedHashMap<>();
+                    entry.put("templateName", templateName);
+                    entry.put("templateBody", templateBody);
+                    templates.add(entry);
+                }
             } catch (Exception ignored) {}
         }
         Map<String, Object> response = new LinkedHashMap<>();
-        response.put("data", names);
+        response.put("data", templates);
         return ResponseEntity.ok(response);
     }
 
@@ -707,7 +779,9 @@ public class BatchController {
         if (!Files.exists(file)) return badRequest("template not found: " + name);
         RunRequest template;
         try {
-            template = objectMapper.readValue(file.toFile(), RunRequest.class);
+            Map<String, Object> templateMap = objectMapper.readValue(file.toFile(),
+                    new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+            template = deserializeRunRequest(templateMap);
         } catch (Exception e) {
             return badRequest("failed to parse template '" + name + "': " + e.getMessage());
         }
@@ -731,8 +805,8 @@ public class BatchController {
     }
 
     private Path templateDir() {
-        String dataDir = serverPropertiesLoader.getProperties().getOrDefault("DATADIR", ".");
-        return Path.of(dataDir).resolve("operationTemplate");
+        String templateDir = serverPropertiesLoader.getProperties().getOrDefault("TEMPLATEDIR", ".");
+        return Path.of(templateDir);
     }
 
     private ResponseEntity<Map<String, Object>> badRequest(String message) {

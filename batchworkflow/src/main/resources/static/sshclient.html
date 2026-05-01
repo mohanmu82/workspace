@@ -197,7 +197,10 @@
                     appendLine(msg.text);
                     break;
                 case 'done':
-                    appendDone(msg.exitCode, msg.stderr);
+                    appendDone(msg.exitCode);
+                    break;
+                case 'system':
+                    appendSystem(msg.message);
                     break;
                 case 'error':
                     setStatus('Error: ' + msg.message, 'error');
@@ -259,19 +262,11 @@
         box.scrollTop = box.scrollHeight;
     }
 
-    function appendDone(exitCode, stderr) {
-        const box = document.getElementById('outputBox');
-        if (stderr) {
-            stderr.split('\n').forEach(line => {
-                if (!line) return;
-                const s = document.createElement('span');
-                s.className   = 'out-line stderr';
-                s.textContent = line;
-                box.appendChild(s);
-            });
-        }
+    function appendDone(exitCode) {
+        if (exitCode === 0) return;
+        const box  = document.getElementById('outputBox');
         const done = document.createElement('span');
-        done.className   = exitCode === 0 ? 'out-line done-ok' : 'out-line done-err';
+        done.className   = 'out-line done-err';
         done.textContent = `[exit ${exitCode}]`;
         box.appendChild(done);
         box.scrollTop = box.scrollHeight;

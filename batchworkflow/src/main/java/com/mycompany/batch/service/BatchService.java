@@ -32,6 +32,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Service;
 
+import com.jcraft.jsch.ChannelExec;
+import com.jcraft.jsch.JSch;
+import com.jcraft.jsch.Session;
 import java.io.BufferedWriter;
 import java.io.FileInputStream;
 import java.sql.Connection;
@@ -1179,7 +1182,7 @@ public class BatchService {
                             row, resolvedActivities, httpClient, httpPool, xpathPool,
                             succeeded, failed, results, extraHeaders,
                             httpDurationsMs, totalResponseBytes,
-                            authHeader, includeMetadata, opProperties, null, null))
+                            authHeader, includeMetadata, opProperties, op, null, null))
                     .collect(Collectors.toList());
 
             CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
@@ -1378,7 +1381,7 @@ public class BatchService {
                         row, resolvedActivities, httpClient, httpPool, xpathPool,
                         succeeded, failed, results, extraHeaders,
                         httpDurationsMs, totalResponseBytes,
-                        authHeader, includeMetadata, opProperties,
+                        authHeader, includeMetadata, opProperties, op,
                         filterOutput, effectiveCallback))
                 .collect(Collectors.toList());
 
@@ -1500,6 +1503,7 @@ public class BatchService {
             String authHeader,
             boolean includeMetadata,
             Map<String, String> opProperties,
+            BatchProperties.OperationProperties op,
             List<FilterRule> filterOutput,          // nullable — only used when rowCallback != null
             Consumer<Map<String, Object>> rowCallback) { // nullable — ASYNC streaming
 
@@ -1516,6 +1520,8 @@ public class BatchService {
                 chain = chain.thenCompose(row -> executeExtractionActivity(row, activity, xpathPool));
             } else if (type == ActivityType.DB) {
                 chain = chain.thenCompose(row -> executeDbActivity(row, activity, httpPool, opProperties));
+            } else if (type == ActivityType.SSH) {
+                chain = chain.thenCompose(row -> executeSshActivity(row, activity, httpPool, opProperties, op));
             }
         }
 
@@ -1853,6 +1859,114 @@ public class BatchService {
                 long elapsed = System.currentTimeMillis() - start;
                 row.getMetadata().put(activityName + ".timetakenmillis", elapsed);
                 row.getMetadata().put(activityName + ".sql", finalResolvedSql);
+            }
+        }, pool);
+    }
+
+    private CompletableFuture<DataRow> executeSshActivity(
+            DataRow row,
+            ResolvedActivity activity,
+            ExecutorService pool,
+            Map<String, String> opProperties,
+            BatchProperties.OperationProperties op) {
+
+        BatchProperties.SshProperties sshConfig = activity.config().getSsh();
+        Map<String, String> effectiveProps = new LinkedHashMap<>(opProperties);
+        if (activity.config().getProperties() != null) effectiveProps.putAll(activity.config().getProperties());
+
+        String resolvedFile;
+        String host;
+        String portStr;
+        String username;
+        String privateKey;
+
+        try {
+            resolvedFile = resolveTemplate(sshConfig.getFile(), row.getData(), effectiveProps);
+
+            String ref = sshConfig.getReference();
+            BatchProperties.InitializationProperties initEntry = op.getInitialization().stream()
+                    .filter(ip -> ip.getName().equalsIgnoreCase(ref))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "SSH activity '" + activity.config().getName() + "': initialization reference '"
+                                    + ref + "' not found"));
+
+            BatchProperties.SshConnectionProperties conn = initEntry.getSsh();
+            host       = resolveTemplate(conn.getHost(),       row.getData(), effectiveProps);
+            portStr    = resolveTemplate(conn.getPort(),       row.getData(), effectiveProps);
+            username   = resolveTemplate(conn.getUsername(),   row.getData(), effectiveProps);
+            privateKey = resolveTemplate(conn.getPrivateKey(), row.getData(), effectiveProps);
+        } catch (IllegalArgumentException e) {
+            CompletableFuture<DataRow> f = new CompletableFuture<>();
+            f.completeExceptionally(e);
+            return f;
+        }
+
+        int port = 22;
+        try { port = Integer.parseInt(portStr.trim()); } catch (NumberFormatException ignored) {}
+
+        final int    finalPort       = port;
+        final String finalHost       = host;
+        final String finalUsername   = username;
+        final String finalPrivateKey = privateKey;
+        final String finalFile       = resolvedFile;
+        final String activityName    = activity.config().getName();
+        final int    timeoutMs       = sshConfig.getTimeoutMs();
+
+        return CompletableFuture.supplyAsync(() -> {
+            long start = System.currentTimeMillis();
+            Session session = null;
+            try {
+                JSch jsch = new JSch();
+                jsch.addIdentity(finalPrivateKey);
+                session = jsch.getSession(finalUsername, finalHost, finalPort);
+                session.setConfig("StrictHostKeyChecking", "no");
+                session.setConfig("PreferredAuthentications", "publickey");
+                session.connect(timeoutMs);
+
+                String safeFile = finalFile.replace("'", "'\"'\"'");
+                String cmd = "if [ -f '" + safeFile + "' ]; then "
+                        + "printf '{\"fileExists\":true,\"fileSize\":%d,\"fileLastModifiedTime\":%d,\"fileRowCount\":%d}\\n' "
+                        + "$(wc -c < '" + safeFile + "' 2>/dev/null || echo 0) "
+                        + "$(stat -c%Y '" + safeFile + "' 2>/dev/null || stat -f%m '" + safeFile + "' 2>/dev/null || echo 0) "
+                        + "$(wc -l < '" + safeFile + "' 2>/dev/null || echo 0); "
+                        + "else echo '{\"fileExists\":false,\"fileSize\":0,\"fileLastModifiedTime\":0,\"fileRowCount\":0}'; fi";
+
+                ChannelExec channel = (ChannelExec) session.openChannel("exec");
+                channel.setCommand(cmd);
+                channel.setInputStream(null);
+                java.io.InputStream in = channel.getInputStream();
+                channel.connect();
+
+                StringBuilder sb = new StringBuilder();
+                byte[] buf = new byte[1024];
+                int n;
+                while ((n = in.read(buf)) != -1) sb.append(new String(buf, 0, n, java.nio.charset.StandardCharsets.UTF_8));
+                channel.disconnect();
+
+                String body = sb.toString().trim();
+                row.setResponseBody(body);
+
+                Map<String, String> extractFields = sshConfig.getExtract().getFields();
+                for (Map.Entry<String, String> entry : extractFields.entrySet()) {
+                    String key  = entry.getKey();
+                    String path = entry.getValue();
+                    if (path == null) continue;
+                    try {
+                        Object val = com.jayway.jsonpath.JsonPath.read(body, path);
+                        row.getData().put(key, val);
+                    } catch (Exception ignored) {}
+                }
+
+                return row;
+            } catch (Exception e) {
+                throw new RuntimeException("SSH activity '" + activityName + "' failed: " + e.getMessage(), e);
+            } finally {
+                long elapsed = System.currentTimeMillis() - start;
+                row.getMetadata().put(activityName + ".timetakenmillis", elapsed);
+                row.getMetadata().put(activityName + ".sshhost", finalHost);
+                row.getMetadata().put(activityName + ".file", finalFile);
+                if (session != null && session.isConnected()) session.disconnect();
             }
         }, pool);
     }

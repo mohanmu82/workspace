@@ -1,0 +1,105 @@
+{
+  "name": "infra",
+  "type": "joindataset",
+  "datasets": [
+    {
+      "name": "SERVER",
+      "request": {
+        "operation": "filereader",
+        "debugMode": 0,
+        "inputSource": "FILE",
+        "inputFilePath": "${DATADIR}/SERVER.txt"
+      },
+      "uniqueKey": ["SERVERNAME"],
+      "columns": [
+        { "name": "SERVERNAME", "attribute": "SERVERNAME", "type": "string" },
+        { "name": "OSTYPE",     "attribute": "OSTYPE",     "type": "string" },
+        { "name": "TYPE",       "attribute": "TYPE",       "type": "string" },
+        { "name": "MEMORY_GB",  "attribute": "RAM",        "type": "number" },
+        { "name": "CPU_COUNT",  "attribute": "CPU",        "type": "number" },
+        { "name": "DATACENTER", "attribute": "DATACENTER", "type": "string" },
+        { "name": "STATUS",     "attribute": "STATUS",     "type": "string" }
+      ]
+    },
+    {
+      "name": "AUTOSYSJOB",
+      "request": {
+        "operation": "filereader",
+        "debugMode": 0,
+        "inputSource": "FILE",
+        "inputFilePath": "${DATADIR}/AUTOSYSJOB.txt"
+      },
+      "uniqueKey": ["AUTOSYSJOBNAME"],
+      "foreignKey": [
+        {
+          "column": "SERVER",
+          "reference": {
+            "dataset": "SERVER",
+            "column": "SERVERNAME"
+          }
+        }
+      ],
+      "columns": [
+        { "name": "AUTOSYSJOBNAME", "attribute": "AUTOSYSJOBNAME", "type": "string" },
+        { "name": "JOB_STATUS",     "attribute": "STATUS",         "type": "string" },
+        { "name": "SCHEDULE",       "attribute": "SCHEDULE",       "type": "string" },
+        { "name": "SERVER",         "attribute": "SERVER",         "type": "string" }
+      ]
+    },
+    {
+      "name": "COMPONENT",
+      "request": {
+        "operation": "httpget",
+        "debugMode": 0,
+        "alias": "COMPONENTS",
+        "httpThreadCount": 10,
+        "httpTimeoutMs": 3000
+      },
+      "uniqueKey": ["COMPONENTKEY"],
+      "foreignKey": [
+        {
+          "column": "SERVER",
+          "reference": {
+            "dataset": "SERVER",
+            "column": "SERVERNAME"
+          }
+        }
+      ],
+      "columns": [
+        { "name": "COMPONENTKEY",  "attribute": "COMPONENTKEY",  "type": "string" },
+        { "name": "COMP_TYPE",     "attribute": "TYPE",          "type": "string" },
+        { "name": "COMP_STATUS",   "attribute": "STATUS",        "type": "string" },
+        { "name": "COMP_VERSION",  "attribute": "VERSION",       "type": "string" },
+        { "name": "SERVER",        "attribute": "SERVER",        "type": "string" }
+      ]
+    },
+    {
+      "name": "RUNTIME",
+      "request": {
+        "operation": "httpget",
+        "debugMode": 0,
+        "alias": "RUNTIME",
+        "httpThreadCount": 10,
+        "httpTimeoutMs": 3000
+      },
+      "uniqueKey": ["COMPONENTKEY"],
+      "foreignKey": [
+        {
+          "column": "SERVER",
+          "reference": {
+            "dataset": "SERVER",
+            "column": "SERVERNAME"
+          }
+        }
+      ],
+      "columns": [
+        { "name": "COMPONENTKEY",   "attribute": "COMPONENTKEY",  "type": "string" },
+        { "name": "RT_STATUS",      "attribute": "STATUS",        "type": "string" },
+        { "name": "LASTSTARTTIME",  "attribute": "LASTSTARTTIME", "type": "string" },
+        { "name": "MEMORY_USED",    "attribute": "MEMORY",        "type": "number" },
+        { "name": "PID",            "attribute": "PID",           "type": "number" },
+        { "name": "SERVER",         "attribute": "SERVER",        "type": "string" }
+      ]
+    }
+  ]
+}
