@@ -7,6 +7,7 @@
         ,{ "property": "sshPort", "dataType": "number", "defaultValue": 22}
         ,{ "property": "sshUsername", "dataType": "string"}
         ,{ "property": "sshPrivateKeyPath", "dataType": "string"}
+        ,{ "property": "sshThreadCount", "dataType": "number", "defaultValue": 10}
   ],
   "initialization": [
     {
@@ -19,7 +20,7 @@
             "privateKey": "${SSHPRIVATEKEYPATH}"
         }
         ,"onError": {
-            "type": "SSHFAILURE",
+            "status": "SSHFAILURE",
             "message": "$ssh.getErrorMessage()"
         }
       }
@@ -34,13 +35,15 @@
       "ssh": {
         "reference": "sshconnection1",
         "file": "${inputFilePath}",
+        "threadCount": "${SSHTHREADCOUNT}",
         "extract":{
               "FILEEXISTS": "$.fileExists",
+              "FILETYPE": "$.fileType",
               "FILELASTMODIFIEDTIME": "$.fileLastModifiedTime",
+              "FILEMODIFIEDTIMEHUMANREADABLE": "$.fileLastModifiedTimeHumanReadable",
               "FILESIZE": "$.fileSize",
               "FILEROWCOUNT": "$.fileRowCount"
         },
-        "threadCount": 10,
         "timeoutMs": 30000
       }
     }

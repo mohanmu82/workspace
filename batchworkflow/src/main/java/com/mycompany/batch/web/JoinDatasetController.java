@@ -79,6 +79,18 @@ public class JoinDatasetController {
         List<Map<String, Object>> rows = result.results() != null
                 ? new ArrayList<>(result.results()) : new ArrayList<>();
 
+        // Apply responseProcessor if specified — mirrors what BatchController does
+        if (req.responseProcessor() != null && !req.responseProcessor().isBlank()) {
+            try {
+                Map<String, Object> httpResponse = batchController.buildHttpResponse(
+                        req.operation(), result, req.httpThreadCount());
+                Object processed = batchService.applyResponseProcessor(httpResponse, req.responseProcessor());
+                rows = extractRowList(processed);
+            } catch (Exception e) {
+                return badRequest("responseProcessor failed: " + e.getMessage());
+            }
+        }
+
         // If no columns configured, auto-generate string column defs from data keys
         if (columnDefs.isEmpty() && !rows.isEmpty()) {
             columnDefs = rows.get(0).keySet().stream().map(k -> {
@@ -526,6 +538,28 @@ public class JoinDatasetController {
             String json = objectMapper.writeValueAsString(rows);
             cacheFactory.save("DATASET." + dsName.toUpperCase(), "rows", json, loadedTime);
         } catch (Exception ignored) {}
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> extractRowList(Object processed) {
+        if (processed instanceof List<?> list) {
+            List<Map<String, Object>> out = new ArrayList<>();
+            for (Object item : list) {
+                if (item instanceof Map<?, ?> m) out.add((Map<String, Object>) m);
+            }
+            return out;
+        }
+        if (processed instanceof Map<?, ?> m) {
+            Object data = m.get("data");
+            if (data instanceof List<?> list) {
+                List<Map<String, Object>> out = new ArrayList<>();
+                for (Object item : list) {
+                    if (item instanceof Map<?, ?> row) out.add((Map<String, Object>) row);
+                }
+                return out;
+            }
+        }
+        return new ArrayList<>();
     }
 
     private ResponseEntity<Map<String, Object>> badRequest(String message) {

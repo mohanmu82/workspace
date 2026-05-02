@@ -1152,7 +1152,13 @@ public class BatchService {
                     .findFirst()
                     .map(a -> a.getHttp().getThreadCount())
                     .orElse(op.getHttp().getThreadCount());
-            int effectiveThreadCount = threadCountOverride != null ? threadCountOverride : activityHttpThreads;
+            int sshThreadCount = activities.stream()
+                    .filter(a -> a.getType() == ActivityType.SSH)
+                    .findFirst()
+                    .map(a -> resolveSshThreadCount(a.getSsh(), opProperties))
+                    .orElse(0);
+            int effectiveThreadCount = threadCountOverride != null ? threadCountOverride
+                    : Math.max(activityHttpThreads, sshThreadCount > 0 ? sshThreadCount : activityHttpThreads);
 
             int activityTimeoutMs = activities.stream()
                     .filter(a -> a.getType() == ActivityType.HTTP)
@@ -1175,6 +1181,9 @@ public class BatchService {
             // Pre-load activity resources (classpath files, etc.) once for all rows
             List<ResolvedActivity> resolvedActivities = preloadActivities(activities, effectiveTimeoutMs, operation);
 
+            // Create shared SSH sessions (one per initialization reference) for SSH activities
+            Map<String, Session> sshSessions = buildSharedSshSessions(activities, op, opProperties);
+
             boolean includeMetadata = false;
 
             futures = rows.stream()
@@ -1182,13 +1191,14 @@ public class BatchService {
                             row, resolvedActivities, httpClient, httpPool, xpathPool,
                             succeeded, failed, results, extraHeaders,
                             httpDurationsMs, totalResponseBytes,
-                            authHeader, includeMetadata, opProperties, op, null, null))
+                            authHeader, includeMetadata, opProperties, op, null, null, sshSessions))
                     .collect(Collectors.toList());
 
             CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
             long timeTakenMs = System.currentTimeMillis() - batchStart;
             httpPool.shutdown();
             xpathPool.shutdown();
+            sshSessions.values().forEach(s -> { if (s != null && s.isConnected()) s.disconnect(); });
 
             LongSummaryStatistics stats = httpDurationsMs.stream().mapToLong(Long::longValue).summaryStatistics();
             HttpStats httpStats = httpDurationsMs.isEmpty() ? new HttpStats(0, 0, 0)
@@ -1349,7 +1359,13 @@ public class BatchService {
                 .findFirst()
                 .map(a -> a.getHttp().getThreadCount())
                 .orElse(op.getHttp().getThreadCount());
-        int effectiveThreadCount = threadCountOverride != null ? threadCountOverride : activityHttpThreads;
+        int sshThreadCountAsync = activities.stream()
+                .filter(a -> a.getType() == ActivityType.SSH)
+                .findFirst()
+                .map(a -> resolveSshThreadCount(a.getSsh(), opProperties))
+                .orElse(0);
+        int effectiveThreadCount = threadCountOverride != null ? threadCountOverride
+                : Math.max(activityHttpThreads, sshThreadCountAsync > 0 ? sshThreadCountAsync : activityHttpThreads);
 
         int activityTimeoutMs = activities.stream()
                 .filter(a -> a.getType() == ActivityType.HTTP)
@@ -1370,6 +1386,7 @@ public class BatchService {
         HttpClient httpClient     = HttpClient.newBuilder().build();
 
         List<ResolvedActivity> resolvedActivities = preloadActivities(activities, effectiveTimeoutMs, operation);
+        Map<String, Session> sshSessionsAsync = buildSharedSshSessions(activities, op, opProperties);
 
         boolean includeMetadata = false;
         Consumer<Map<String, Object>> effectiveCallback = debugMode < 3
@@ -1382,7 +1399,7 @@ public class BatchService {
                         succeeded, failed, results, extraHeaders,
                         httpDurationsMs, totalResponseBytes,
                         authHeader, includeMetadata, opProperties, op,
-                        filterOutput, effectiveCallback))
+                        filterOutput, effectiveCallback, sshSessionsAsync))
                 .collect(Collectors.toList());
 
         return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
@@ -1390,6 +1407,7 @@ public class BatchService {
                     long timeTakenMs = System.currentTimeMillis() - batchStart;
                     httpPool.shutdown();
                     xpathPool.shutdown();
+                    sshSessionsAsync.values().forEach(s -> { if (s != null && s.isConnected()) s.disconnect(); });
 
                     LongSummaryStatistics stats = httpDurationsMs.stream()
                             .mapToLong(Long::longValue).summaryStatistics();
@@ -1505,7 +1523,8 @@ public class BatchService {
             Map<String, String> opProperties,
             BatchProperties.OperationProperties op,
             List<FilterRule> filterOutput,          // nullable — only used when rowCallback != null
-            Consumer<Map<String, Object>> rowCallback) { // nullable — ASYNC streaming
+            Consumer<Map<String, Object>> rowCallback, // nullable — ASYNC streaming
+            Map<String, Session> sharedSshSessions) { // shared SSH sessions keyed by reference name
 
         // Chain activities as CompletableFuture stages
         CompletableFuture<DataRow> chain = CompletableFuture.completedFuture(inputRow);
@@ -1521,7 +1540,8 @@ public class BatchService {
             } else if (type == ActivityType.DB) {
                 chain = chain.thenCompose(row -> executeDbActivity(row, activity, httpPool, opProperties));
             } else if (type == ActivityType.SSH) {
-                chain = chain.thenCompose(row -> executeSshActivity(row, activity, httpPool, opProperties, op));
+                chain = chain.thenCompose(row -> executeSshActivity(
+                        row, activity, httpPool, opProperties, op, sharedSshSessions));
             }
         }
 
@@ -1868,42 +1888,54 @@ public class BatchService {
             ResolvedActivity activity,
             ExecutorService pool,
             Map<String, String> opProperties,
-            BatchProperties.OperationProperties op) {
+            BatchProperties.OperationProperties op,
+            Map<String, Session> sharedSessions) {
 
         BatchProperties.SshProperties sshConfig = activity.config().getSsh();
         Map<String, String> effectiveProps = new LinkedHashMap<>(opProperties);
         if (activity.config().getProperties() != null) effectiveProps.putAll(activity.config().getProperties());
 
         String resolvedFile;
-        String host;
-        String portStr;
-        String username;
-        String privateKey;
+        String host = null;
+        String portStr = null;
+        String username = null;
+        String privateKey = null;
 
         try {
             resolvedFile = resolveTemplate(sshConfig.getFile(), row.getData(), effectiveProps);
+            // Second pass: resolve any ${VAR} that appeared inside the first-pass result
+            if (resolvedFile.contains("${") || resolvedFile.contains("{")) {
+                resolvedFile = resolveTemplate(resolvedFile, row.getData(), effectiveProps);
+            }
 
             String ref = sshConfig.getReference();
-            BatchProperties.InitializationProperties initEntry = op.getInitialization().stream()
-                    .filter(ip -> ip.getName().equalsIgnoreCase(ref))
-                    .findFirst()
-                    .orElseThrow(() -> new IllegalArgumentException(
-                            "SSH activity '" + activity.config().getName() + "': initialization reference '"
-                                    + ref + "' not found"));
-
-            BatchProperties.SshConnectionProperties conn = initEntry.getSsh();
-            host       = resolveTemplate(conn.getHost(),       row.getData(), effectiveProps);
-            portStr    = resolveTemplate(conn.getPort(),       row.getData(), effectiveProps);
-            username   = resolveTemplate(conn.getUsername(),   row.getData(), effectiveProps);
-            privateKey = resolveTemplate(conn.getPrivateKey(), row.getData(), effectiveProps);
+            // Only need connection details when NOT using a shared session
+            if (sharedSessions == null || !sharedSessions.containsKey(ref)) {
+                BatchProperties.InitializationProperties initEntry = op.getInitialization().stream()
+                        .filter(ip -> ip.getName().equalsIgnoreCase(ref))
+                        .findFirst()
+                        .orElseThrow(() -> new IllegalArgumentException(
+                                "SSH activity '" + activity.config().getName() + "': initialization reference '"
+                                        + ref + "' not found"));
+                BatchProperties.SshConnectionProperties conn = initEntry.getSsh();
+                host       = resolveTemplate(conn.getHost(),       row.getData(), effectiveProps);
+                portStr    = resolveTemplate(conn.getPort(),       row.getData(), effectiveProps);
+                username   = resolveTemplate(conn.getUsername(),   row.getData(), effectiveProps);
+                privateKey = resolveTemplate(conn.getPrivateKey(), row.getData(), effectiveProps);
+            }
         } catch (IllegalArgumentException e) {
             CompletableFuture<DataRow> f = new CompletableFuture<>();
             f.completeExceptionally(e);
             return f;
         }
 
+        final String ref = sshConfig.getReference();
+        final Session sharedSession = sharedSessions != null ? sharedSessions.get(ref) : null;
+
         int port = 22;
-        try { port = Integer.parseInt(portStr.trim()); } catch (NumberFormatException ignored) {}
+        if (portStr != null) {
+            try { port = Integer.parseInt(portStr.trim()); } catch (NumberFormatException ignored) {}
+        }
 
         final int    finalPort       = port;
         final String finalHost       = host;
@@ -1915,22 +1947,39 @@ public class BatchService {
 
         return CompletableFuture.supplyAsync(() -> {
             long start = System.currentTimeMillis();
-            Session session = null;
+            Session session = sharedSession;
+            boolean ownSession = session == null;
             try {
-                JSch jsch = new JSch();
-                jsch.addIdentity(finalPrivateKey);
-                session = jsch.getSession(finalUsername, finalHost, finalPort);
-                session.setConfig("StrictHostKeyChecking", "no");
-                session.setConfig("PreferredAuthentications", "publickey");
-                session.connect(timeoutMs);
+                if (ownSession) {
+                    JSch jsch = new JSch();
+                    jsch.addIdentity(finalPrivateKey);
+                    session = jsch.getSession(finalUsername, finalHost, finalPort);
+                    session.setConfig("StrictHostKeyChecking", "no");
+                    session.setConfig("PreferredAuthentications", "publickey");
+                    session.connect(timeoutMs);
+                }
 
                 String safeFile = finalFile.replace("'", "'\"'\"'");
-                String cmd = "if [ -f '" + safeFile + "' ]; then "
-                        + "printf '{\"fileExists\":true,\"fileSize\":%d,\"fileLastModifiedTime\":%d,\"fileRowCount\":%d}\\n' "
-                        + "$(wc -c < '" + safeFile + "' 2>/dev/null || echo 0) "
-                        + "$(stat -c%Y '" + safeFile + "' 2>/dev/null || stat -f%m '" + safeFile + "' 2>/dev/null || echo 0) "
-                        + "$(wc -l < '" + safeFile + "' 2>/dev/null || echo 0); "
-                        + "else echo '{\"fileExists\":false,\"fileSize\":0,\"fileLastModifiedTime\":0,\"fileRowCount\":0}'; fi";
+                String cmd = "P='" + safeFile + "'; "
+                        + "if [ -e \"$P\" ]; then "
+                        + "if [ -L \"$P\" ]; then FT=symlink; "
+                        + "elif [ -f \"$P\" ]; then FT=file; "
+                        + "elif [ -d \"$P\" ]; then FT=directory; "
+                        + "else FT=other; fi; "
+                        + "MT=$(stat -c%Y \"$P\" 2>/dev/null || stat -f%m \"$P\" 2>/dev/null || echo 0); "
+                        + "HR=$(date -d \"@${MT}\" '+%Y-%m-%d %H:%M:%S' 2>/dev/null "
+                        +     "|| date -r \"${MT}\" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo ''); "
+                        + "SZ=0; RC=0; "
+                        + "if [ \"$FT\" = file ]; then "
+                        + "SZ=$(wc -c < \"$P\" 2>/dev/null || echo 0); "
+                        + "RC=$(wc -l < \"$P\" 2>/dev/null || echo 0); fi; "
+                        + "printf '{\"fileExists\":true,\"fileType\":\"%s\",\"fileSize\":%d,"
+                        + "\"fileLastModifiedTime\":%d,\"fileLastModifiedTimeHumanReadable\":\"%s\","
+                        + "\"fileRowCount\":%d}\\n' \"$FT\" $SZ $MT \"$HR\" $RC; "
+                        + "else "
+                        + "printf '{\"fileExists\":false,\"fileType\":\"unknown\",\"fileSize\":0,"
+                        + "\"fileLastModifiedTime\":0,\"fileLastModifiedTimeHumanReadable\":\"\","
+                        + "\"fileRowCount\":0}\\n'; fi";
 
                 ChannelExec channel = (ChannelExec) session.openChannel("exec");
                 channel.setCommand(cmd);
@@ -1964,11 +2013,64 @@ public class BatchService {
             } finally {
                 long elapsed = System.currentTimeMillis() - start;
                 row.getMetadata().put(activityName + ".timetakenmillis", elapsed);
-                row.getMetadata().put(activityName + ".sshhost", finalHost);
+                if (finalHost != null) row.getMetadata().put(activityName + ".sshhost", finalHost);
                 row.getMetadata().put(activityName + ".file", finalFile);
-                if (session != null && session.isConnected()) session.disconnect();
+                // Only disconnect if we own this session (not a shared one)
+                if (ownSession && session != null && session.isConnected()) session.disconnect();
             }
         }, pool);
+    }
+
+    /** Resolves the SSH threadCount string (may contain ${VAR}) to an integer. */
+    private int resolveSshThreadCount(BatchProperties.SshProperties sshConfig,
+                                      Map<String, String> opProperties) {
+        String raw = sshConfig.getThreadCountRaw();
+        if (raw == null || raw.isBlank()) return 5;
+        if (raw.contains("$") || raw.contains("{")) {
+            try {
+                raw = resolveTemplate(raw, Map.of(), opProperties);
+            } catch (Exception ignored) {}
+        }
+        try { return Integer.parseInt(raw.trim()); }
+        catch (NumberFormatException e) { return 5; }
+    }
+
+    /** Creates one shared JSch Session per SSH initialization reference found in the activity list. */
+    private Map<String, Session> buildSharedSshSessions(
+            List<BatchProperties.ActivityProperties> activities,
+            BatchProperties.OperationProperties op,
+            Map<String, String> opProperties) {
+        Map<String, Session> sessions = new java.util.LinkedHashMap<>();
+        for (BatchProperties.ActivityProperties act : activities) {
+            if (act.getType() != ActivityType.SSH) continue;
+            String ref = act.getSsh().getReference();
+            if (ref == null || ref.isBlank() || sessions.containsKey(ref)) continue;
+            BatchProperties.InitializationProperties initEntry = op.getInitialization() == null ? null
+                    : op.getInitialization().stream()
+                            .filter(ip -> ip.getName().equalsIgnoreCase(ref))
+                            .findFirst().orElse(null);
+            if (initEntry == null || initEntry.getSsh() == null) continue;
+            BatchProperties.SshConnectionProperties conn = initEntry.getSsh();
+            try {
+                String host       = resolveTemplate(conn.getHost(),       Map.of(), opProperties);
+                String portStr    = resolveTemplate(conn.getPort(),       Map.of(), opProperties);
+                String username   = resolveTemplate(conn.getUsername(),   Map.of(), opProperties);
+                String privateKey = resolveTemplate(conn.getPrivateKey(), Map.of(), opProperties);
+                int port = 22;
+                try { port = Integer.parseInt(portStr.trim()); } catch (NumberFormatException ignored) {}
+                int timeout = act.getSsh().getTimeoutMs();
+                JSch jsch = new JSch();
+                jsch.addIdentity(privateKey);
+                Session s = jsch.getSession(username, host, port);
+                s.setConfig("StrictHostKeyChecking", "no");
+                s.setConfig("PreferredAuthentications", "publickey");
+                s.connect(timeout);
+                sessions.put(ref, s);
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to create shared SSH session for '" + ref + "': " + e.getMessage(), e);
+            }
+        }
+        return sessions;
     }
 
     /**

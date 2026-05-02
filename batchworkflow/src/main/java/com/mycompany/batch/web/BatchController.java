@@ -50,6 +50,9 @@ public class BatchController {
     private final ServerPropertiesLoader serverPropertiesLoader;
     private final BatchWebSocketHandler batchWebSocketHandler;
 
+    @org.springframework.beans.factory.annotation.Value("${server.port:8080}")
+    private int serverPort;
+
     @Autowired
     public BatchController(BatchService batchService, BatchProperties batchProperties,
                            CacheFactory cacheFactory, ObjectMapper objectMapper,
@@ -777,36 +780,87 @@ public class BatchController {
     private ResponseEntity<?> executeTemplateRun(String name, Map<String, String> extraProps) throws Exception {
         Path file = templateDir().resolve(name + ".json");
         if (!Files.exists(file)) return badRequest("template not found: " + name);
-        RunRequest template;
+        Map<String, Object> templateMap;
         try {
-            Map<String, Object> templateMap = objectMapper.readValue(file.toFile(),
+            templateMap = objectMapper.readValue(file.toFile(),
                     new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
-            template = deserializeRunRequest(templateMap);
         } catch (Exception e) {
             return badRequest("failed to parse template '" + name + "': " + e.getMessage());
         }
-        RunRequest request = template;
-        if (!extraProps.isEmpty()) {
-            Map<String, String> mergedProps = new LinkedHashMap<>();
-            if (template.properties() != null) mergedProps.putAll(template.properties());
-            mergedProps.putAll(extraProps);
-            request = new RunRequest(
-                    template.operation(), template.inputSource(), template.inputFilePath(),
-                    template.inputHttpUrl(), template.inputHttpHeader(), template.inputHttpBody(),
-                    template.ids(), template.raw(), template.inputCount(), template.outputData(),
-                    template.outputFilePath(), template.debugMode(), template.httpThreadCount(),
-                    template.httpTimeoutMs(), template.filterInput(), template.filterOutput(),
-                    template.searchKeyword(), template.cache(), template.executionMode(),
-                    template.alias(), template.responseProcessor(), template.appendOutput(),
-                    template.inputJsonPath(), template.cacheName(), mergedProps,
-                    template.jsonataTransform(), template.templateName());
-        }
+        // Merge extra params into the template map so known RunRequest fields (responseProcessor,
+        // debugMode, inputFilePath, etc.) are routed correctly, not buried in properties.
+        Map<String, Object> mergedMap = new LinkedHashMap<>(templateMap);
+        extraProps.forEach(mergedMap::put);
+        RunRequest request = deserializeRunRequest(mergedMap);
         return executeRun(request);
     }
 
     private Path templateDir() {
         String templateDir = serverPropertiesLoader.getProperties().getOrDefault("TEMPLATEDIR", ".");
         return Path.of(templateDir);
+    }
+
+    // -------------------------------------------------------------------------
+    // GET /batch/admin
+    //   Returns server.json properties, dynamic runtime attributes, and the
+    //   classpath/filesystem directories scanned for operations, templates, etc.
+    // -------------------------------------------------------------------------
+
+    @GetMapping("/admin")
+    public ResponseEntity<?> getAdminInfo() throws Exception {
+        Map<String, Object> response = new LinkedHashMap<>();
+
+        // 1. Static server.json properties
+        response.put("serverProperties", new LinkedHashMap<>(serverPropertiesLoader.getProperties()));
+
+        // 2. Dynamic attributes added to every batch run
+        Map<String, Object> dynamic = new LinkedHashMap<>();
+        String hostname;
+        try { hostname = java.net.InetAddress.getLocalHost().getHostName(); }
+        catch (Exception e) { hostname = "localhost"; }
+        long pid = ProcessHandle.current().pid();
+        dynamic.put("HOSTNAME",   hostname);
+        dynamic.put("PORTNUMBER", serverPort);
+        dynamic.put("DATESTAMP",  java.time.LocalDate.now()
+                .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd")));
+        dynamic.put("DATETIME",   java.time.LocalDateTime.now()
+                .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")));
+        dynamic.put("PROCESSID",  pid);
+        dynamic.put("JVMID",      hostname + "." + pid);
+        response.put("dynamicAttributes", dynamic);
+
+        // 3. Resource directories scanned at startup and runtime
+        Map<String, List<String>> dirs = new LinkedHashMap<>();
+        String dataDir = serverPropertiesLoader.getProperties().getOrDefault("DATADIR", "");
+        String templateDir = serverPropertiesLoader.getProperties().getOrDefault("TEMPLATEDIR",
+                dataDir.isBlank() ? "" : Path.of(dataDir).resolve("operationTemplate").toString());
+
+        dirs.put("operations",        resourceDirs("classpath*:operations/", dataDir.isBlank() ? null : Path.of(dataDir).resolve("operations").toString()));
+        dirs.put("joindataset",       resourceDirs("classpath*:joindataset/", null));
+        dirs.put("requestTemplate",   resourceDirs("classpath*:requestTemplate/", null));
+        dirs.put("templates",         resourceDirs(null, templateDir.isBlank() ? null : templateDir));
+        dirs.put("operationTemplate", resourceDirs("classpath*:operationTemplate/", null));
+        response.put("resourceDirectories", dirs);
+
+        return ResponseEntity.ok(response);
+    }
+
+    private List<String> resourceDirs(String classpathPattern, String filesystemPath) {
+        List<String> result = new ArrayList<>();
+        if (classpathPattern != null) {
+            try {
+                Resource[] res = new PathMatchingResourcePatternResolver().getResources(classpathPattern);
+                for (Resource r : res) {
+                    try { result.add(r.getURL().toString()); } catch (Exception ignored) {}
+                }
+            } catch (Exception ignored) {}
+            if (result.isEmpty()) result.add(classpathPattern + " (not found)");
+        }
+        if (filesystemPath != null && !filesystemPath.isBlank()) {
+            Path p = Path.of(filesystemPath);
+            result.add(p.toAbsolutePath() + (Files.isDirectory(p) ? " ✓" : " (not found)"));
+        }
+        return result;
     }
 
     private ResponseEntity<Map<String, Object>> badRequest(String message) {

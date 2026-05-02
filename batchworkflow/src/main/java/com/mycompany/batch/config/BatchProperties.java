@@ -864,7 +864,7 @@ public class BatchProperties {
     public static class SshProperties {
         private String               reference   = "";
         private String               file        = "";
-        private int                  threadCount = 5;
+        private String               threadCount = "5";
         private int                  timeoutMs   = 30000;
         private SshExtractProperties extract     = new SshExtractProperties();
 
@@ -872,8 +872,9 @@ public class BatchProperties {
         public void                 setReference(String r)              { this.reference = r != null ? r : ""; }
         public String               getFile()                           { return file; }
         public void                 setFile(String f)                   { this.file = f != null ? f : ""; }
-        public int                  getThreadCount()                    { return threadCount; }
-        public void                 setThreadCount(int tc)              { this.threadCount = tc; }
+        public String               getThreadCountRaw()                 { return threadCount; }
+        @com.fasterxml.jackson.annotation.JsonSetter("threadCount")
+        public void                 setThreadCount(Object tc)           { this.threadCount = tc != null ? tc.toString() : "5"; }
         public int                  getTimeoutMs()                      { return timeoutMs; }
         public void                 setTimeoutMs(int ms)                { this.timeoutMs = ms; }
         public SshExtractProperties getExtract()                        { return extract; }

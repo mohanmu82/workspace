@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Utils</title>
     <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@31/dist/ag-grid-community.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsonata/jsonata.min.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -157,6 +158,42 @@
         <label>Result</label>
         <textarea id="resultArea" readonly placeholder="Transform result will appear here..."
                   aria-label="Transform result (read-only)" style="min-height:100px"></textarea>
+    </div>
+</div>
+
+<div class="panel">
+    <div class="panel-title">JSONata Transform</div>
+
+    <div class="form-group">
+        <label>JSON Input</label>
+        <textarea id="jsonataInput" placeholder="Paste JSON data here, or use the buttons below to copy from Value Area or Response..."></textarea>
+    </div>
+
+    <div class="toolbar">
+        <button class="tool-btn" onclick="jsonataCopyFromValue()">&#8593; From Value Area</button>
+        <button class="tool-btn" onclick="jsonataCopyFromResponse()">&#8593; From Response</button>
+    </div>
+
+    <div class="form-group">
+        <label>JSONata Expression</label>
+        <textarea id="jsonataExpr" placeholder="e.g.  Account.Order.Product.(Price * Quantity)" style="min-height:60px"></textarea>
+    </div>
+
+    <div class="toolbar">
+        <button class="primary"  onclick="runJsonata()">Apply</button>
+        <button class="danger"   onclick="clearJsonata()" style="margin-left:auto">Clear</button>
+    </div>
+
+    <div id="jsonataStatus" class="status-bar"></div>
+
+    <div class="form-group">
+        <label>Result</label>
+        <textarea id="jsonataResult" readonly placeholder="JSONata result will appear here..."></textarea>
+    </div>
+
+    <div class="toolbar">
+        <button class="tool-btn" onclick="jsonataLoadGrid()">Load Result to Grid</button>
+        <button class="tool-btn" onclick="jsonataPrettyPrint()">Pretty Print Result</button>
     </div>
 </div>
 
@@ -562,6 +599,74 @@
         }
         document.getElementById('htmlPreviewArea').innerHTML = html;
         modal.style.display = 'flex';
+    }
+
+    // ---- JSONata ----
+
+    async function runJsonata() {
+        const inputText = document.getElementById('jsonataInput').value.trim();
+        const exprText  = document.getElementById('jsonataExpr').value.trim();
+        if (!inputText) { setJsonataStatus('No JSON input provided', 'error'); return; }
+        if (!exprText)  { setJsonataStatus('No JSONata expression provided', 'error'); return; }
+        let data;
+        try {
+            data = JSON.parse(inputText);
+        } catch (e) {
+            setJsonataStatus('Invalid JSON input: ' + e.message, 'error');
+            return;
+        }
+        try {
+            const expression = jsonata(exprText);
+            const result = await expression.evaluate(data);
+            document.getElementById('jsonataResult').value =
+                result === undefined ? '(no match)' : JSON.stringify(result, null, 2);
+            setJsonataStatus('Expression applied', 'ok');
+        } catch (e) {
+            document.getElementById('jsonataResult').value = '';
+            setJsonataStatus('JSONata error: ' + e.message, 'error');
+        }
+    }
+
+    function setJsonataStatus(msg, type) {
+        const el = document.getElementById('jsonataStatus');
+        el.textContent = msg;
+        el.className   = 'status-bar' + (type ? ' ' + type : '');
+    }
+
+    function clearJsonata() {
+        ['jsonataInput', 'jsonataExpr', 'jsonataResult'].forEach(id => {
+            document.getElementById(id).value = '';
+        });
+        document.getElementById('jsonataStatus').textContent = '';
+        document.getElementById('jsonataStatus').className   = 'status-bar';
+    }
+
+    function jsonataCopyFromValue() {
+        document.getElementById('jsonataInput').value = document.getElementById('valueArea').value;
+        setJsonataStatus('Copied from Value Area', 'ok');
+    }
+
+    function jsonataCopyFromResponse() {
+        document.getElementById('jsonataInput').value = document.getElementById('responseArea').value;
+        setJsonataStatus('Copied from Response', 'ok');
+    }
+
+    function jsonataLoadGrid() {
+        const text = document.getElementById('jsonataResult').value.trim();
+        if (!text || text === '(no match)') { setJsonataStatus('No result to load', 'error'); return; }
+        const loaded = tryLoadGridFromText(text, true);
+        if (!loaded) setJsonataStatus('Result does not contain a JSON array for the grid', 'error');
+    }
+
+    function jsonataPrettyPrint() {
+        const src = document.getElementById('jsonataResult').value.trim();
+        if (!src) { setJsonataStatus('Nothing to format', 'error'); return; }
+        try {
+            document.getElementById('jsonataResult').value = JSON.stringify(JSON.parse(src), null, 2);
+            setJsonataStatus('Result formatted', 'ok');
+        } catch (e) {
+            setJsonataStatus('Invalid JSON: ' + e.message, 'error');
+        }
     }
 
     function doCopyHtml() {

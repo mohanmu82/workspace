@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f4f5f7;
+            color: #172b4d;
+            padding: 24px;
+        }
+
+        .nav { margin-bottom: 18px; }
+        .nav a { font-size: 13px; color: #0052cc; text-decoration: none; margin-right: 12px; }
+        .nav a:hover { text-decoration: underline; }
+
+        h1 { font-size: 20px; font-weight: 600; margin-bottom: 20px; }
+
+        .card {
+            background: #fff;
+            border: 1px solid #dfe1e6;
+            border-radius: 6px;
+            margin-bottom: 16px;
+            overflow: hidden;
+        }
+
+        .card-header {
+            display: flex; align-items: center; gap: 10px;
+            padding: 12px 16px;
+            background: #f4f5f7;
+            border-bottom: 1px solid #dfe1e6;
+        }
+        .card-header h2 {
+            font-size: 13px; font-weight: 700; color: #5e6c84;
+            text-transform: uppercase; letter-spacing: 0.5px; flex: 1;
+        }
+        .card-header .badge {
+            font-size: 11px; color: #5e6c84; background: #ebecf0;
+            padding: 2px 8px; border-radius: 10px; font-weight: 600;
+        }
+
+        /* Key-value table */
+        .kv-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .kv-table td { padding: 8px 16px; border-bottom: 1px solid #f0f1f3; vertical-align: top; }
+        .kv-table tr:last-child td { border-bottom: none; }
+        .kv-table tr:hover td { background: #fafbfc; }
+        .kv-key {
+            font-family: Consolas, "Cascadia Code", monospace;
+            font-size: 12px; color: #0052cc; font-weight: 600;
+            width: 260px; white-space: nowrap;
+        }
+        .kv-val {
+            font-family: Consolas, "Cascadia Code", monospace;
+            font-size: 12px; color: #172b4d; word-break: break-all;
+        }
+        .kv-empty { padding: 16px; font-size: 13px; color: #b3bac5; font-style: italic; }
+
+        /* Directory list */
+        .dir-section { padding: 10px 0; border-bottom: 1px solid #f0f1f3; }
+        .dir-section:last-child { border-bottom: none; }
+        .dir-section-label {
+            font-size: 11px; font-weight: 700; color: #5e6c84;
+            text-transform: uppercase; letter-spacing: 0.5px;
+            padding: 4px 16px 6px; display: block;
+        }
+        .dir-entry {
+            display: flex; align-items: flex-start; gap: 8px;
+            padding: 4px 16px; font-size: 12px; font-family: Consolas, monospace;
+        }
+        .dir-entry .dir-icon { flex-shrink: 0; margin-top: 1px; }
+        .dir-entry .dir-path { word-break: break-all; color: #172b4d; }
+        .dir-entry.ok .dir-path    { color: #006644; }
+        .dir-entry.warn .dir-path  { color: #7a4600; }
+        .dir-entry.error .dir-path { color: #de350b; }
+
+        /* Toolbar */
+        .toolbar { padding: 12px 16px; display: flex; gap: 8px; align-items: center; }
+        button {
+            padding: 7px 16px; font-size: 13px; font-weight: 500;
+            border: none; border-radius: 4px; cursor: pointer;
+        }
+        button.primary { background: #0052cc; color: #fff; }
+        button.primary:hover { background: #0065ff; }
+        button.secondary { background: #fff; color: #0052cc; border: 1px solid #0052cc; }
+        button.secondary:hover { background: #e9f0ff; }
+
+        .status-bar { font-size: 13px; color: #5e6c84; margin-bottom: 14px; min-height: 18px; }
+        .status-bar.error { color: #de350b; }
+        .status-bar.ok    { color: #006644; }
+
+        /* Spinner */
+        .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #dfe1e6; border-top-color: #0052cc; border-radius: 50%; animation: spin .6s linear infinite; vertical-align: middle; margin-right: 6px; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Copy-on-click feedback */
+        .copyable { cursor: pointer; }
+        .copyable:hover { background: #e9f0ff !important; }
+    </style>
+</head>
+<body>
+
+<div class="nav">
+    <a href="/">&larr; Home</a>
+</div>
+<h1>Admin</h1>
+
+<div class="toolbar" style="padding:0;margin-bottom:16px">
+    <button class="primary" onclick="load()">&#8635; Refresh</button>
+</div>
+
+<div id="statusBar" class="status-bar"></div>
+
+<!-- Server Properties -->
+<div class="card" id="cardServerProps">
+    <div class="card-header">
+        <h2>Server Properties</h2>
+        <span class="badge" id="badgeServerProps">—</span>
+    </div>
+    <div id="serverPropsBody"><div class="kv-empty"><span class="spinner"></span> Loading…</div></div>
+</div>
+
+<!-- Dynamic Attributes -->
+<div class="card" id="cardDynamic">
+    <div class="card-header">
+        <h2>Dynamic Attributes</h2>
+        <span class="badge" id="badgeDynamic">—</span>
+    </div>
+    <div id="dynamicBody"><div class="kv-empty"><span class="spinner"></span> Loading…</div></div>
+</div>
+
+<!-- Resource Directories -->
+<div class="card" id="cardDirs">
+    <div class="card-header">
+        <h2>Resource Directories</h2>
+        <span class="badge" id="badgeDirs">—</span>
+    </div>
+    <div id="dirsBody"><div class="kv-empty"><span class="spinner"></span> Loading…</div></div>
+</div>
+
+<script>
+function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function setStatus(msg, type) {
+    const bar = document.getElementById('statusBar');
+    bar.textContent = msg;
+    bar.className = 'status-bar' + (type ? ' ' + type : '');
+}
+
+function copyText(text) {
+    navigator.clipboard.writeText(text).catch(() => {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+        document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+        document.body.removeChild(ta);
+    });
+}
+
+function renderKvTable(entries, container, badgeId) {
+    if (!entries || entries.length === 0) {
+        container.innerHTML = '<div class="kv-empty">No properties.</div>';
+        document.getElementById(badgeId).textContent = '0';
+        return;
+    }
+    document.getElementById(badgeId).textContent = entries.length;
+
+    const table = document.createElement('table');
+    table.className = 'kv-table';
+    const tbody = document.createElement('tbody');
+
+    entries.forEach(([key, val]) => {
+        const tr = document.createElement('tr');
+        tr.title = 'Click value to copy';
+
+        const tdKey = document.createElement('td');
+        tdKey.className = 'kv-key';
+        tdKey.textContent = key;
+        tr.appendChild(tdKey);
+
+        const tdVal = document.createElement('td');
+        tdVal.className = 'kv-val copyable';
+        tdVal.textContent = String(val ?? '');
+        tdVal.addEventListener('click', () => copyText(String(val ?? '')));
+        tr.appendChild(tdVal);
+
+        tbody.appendChild(tr);
+    });
+
+    table.appendChild(tbody);
+    container.innerHTML = '';
+    container.appendChild(table);
+}
+
+function renderDirs(dirs, container, badgeId) {
+    const sections = Object.entries(dirs || {});
+    if (!sections.length) {
+        container.innerHTML = '<div class="kv-empty">No directories found.</div>';
+        document.getElementById(badgeId).textContent = '0';
+        return;
+    }
+
+    const totalDirs = sections.reduce((sum, [, arr]) => sum + (arr?.length || 0), 0);
+    document.getElementById(badgeId).textContent = sections.length + ' types';
+
+    container.innerHTML = '';
+    sections.forEach(([type, paths]) => {
+        const section = document.createElement('div');
+        section.className = 'dir-section';
+
+        const label = document.createElement('span');
+        label.className = 'dir-section-label';
+        label.textContent = type;
+        section.appendChild(label);
+
+        (paths || []).forEach(p => {
+            const entry = document.createElement('div');
+            const pathStr = String(p);
+            const isOk    = pathStr.endsWith(' ✓');
+            const isMiss  = pathStr.includes('not found');
+            entry.className = 'dir-entry ' + (isOk ? 'ok' : isMiss ? 'error' : 'warn');
+            entry.title = 'Click to copy';
+            entry.style.cursor = 'pointer';
+
+            const icon = document.createElement('span');
+            icon.className = 'dir-icon';
+            icon.textContent = isOk ? '✓' : isMiss ? '✗' : '○';
+
+            const path = document.createElement('span');
+            path.className = 'dir-path';
+            path.textContent = pathStr.replace(/ ✓$/, '');
+
+            entry.appendChild(icon);
+            entry.appendChild(path);
+            entry.addEventListener('click', () => copyText(pathStr.replace(/ ✓$/, '')));
+            section.appendChild(entry);
+        });
+
+        if (!paths || paths.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'dir-entry';
+            empty.innerHTML = '<span class="dir-path" style="color:#b3bac5;font-style:italic">—</span>';
+            section.appendChild(empty);
+        }
+
+        container.appendChild(section);
+    });
+}
+
+async function load() {
+    setStatus('Loading…');
+    document.getElementById('serverPropsBody').innerHTML = '<div class="kv-empty"><span class="spinner"></span> Loading…</div>';
+    document.getElementById('dynamicBody').innerHTML     = '<div class="kv-empty"><span class="spinner"></span> Loading…</div>';
+    document.getElementById('dirsBody').innerHTML        = '<div class="kv-empty"><span class="spinner"></span> Loading…</div>';
+
+    try {
+        const res  = await fetch('/batch/admin');
+        if (!res.ok) { setStatus('Error: ' + res.statusText, 'error'); return; }
+        const data = await res.json();
+
+        // Server properties
+        const serverProps = data.serverProperties || {};
+        renderKvTable(Object.entries(serverProps).sort(([a],[b]) => a.localeCompare(b)),
+                      document.getElementById('serverPropsBody'), 'badgeServerProps');
+
+        // Dynamic attributes
+        const dynamic = data.dynamicAttributes || {};
+        renderKvTable(Object.entries(dynamic),
+                      document.getElementById('dynamicBody'), 'badgeDynamic');
+
+        // Resource directories
+        renderDirs(data.resourceDirectories || {},
+                   document.getElementById('dirsBody'), 'badgeDirs');
+
+        setStatus('Loaded at ' + new Date().toLocaleTimeString(), 'ok');
+    } catch (e) {
+        setStatus('Failed to load: ' + e.message, 'error');
+        ['serverPropsBody','dynamicBody','dirsBody'].forEach(id => {
+            document.getElementById(id).innerHTML = '<div class="kv-empty">Load failed.</div>';
+        });
+    }
+}
+
+load();
+</script>
+</body>
+</html>
