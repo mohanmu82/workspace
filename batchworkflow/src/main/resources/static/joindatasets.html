@@ -178,18 +178,30 @@
         }
         /* Available columns grouped by dataset */
         #pivotBuilderAvail {
-            display: flex; flex-wrap: wrap; gap: 10px;
+            display: flex; flex-direction: column; gap: 6px;
             padding: 8px; background: #f4f5f7;
             border: 1px solid #dfe1e6; border-radius: 4px;
-            margin-bottom: 10px; max-height: 130px; overflow-y: auto;
+            margin-bottom: 10px; max-height: 220px; overflow-y: auto;
         }
-        .ds-avail-group { display: flex; flex-direction: column; gap: 4px; }
+        #pivotColSearch {
+            padding: 5px 8px; font-size: 12px; border: 1px solid #ccc;
+            border-radius: 4px; outline: none; width: 200px;
+        }
+        #pivotColSearch:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.25); }
+        .ds-avail-group { display: flex; flex-direction: row; align-items: flex-start; gap: 6px; }
         .ds-avail-label {
             font-size: 10px; font-weight: 700; text-transform: uppercase;
-            letter-spacing: 0.4px; padding: 1px 7px; border-radius: 3px;
+            letter-spacing: 0.4px; padding: 3px 7px; border-radius: 3px;
             border: 1px solid rgba(0,0,0,0.12); color: #172b4d; white-space: nowrap;
+            flex-shrink: 0; min-width: 80px; text-align: center; margin-top: 2px;
         }
-        .ds-avail-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+        .ds-avail-chips { display: flex; flex-wrap: wrap; gap: 4px; flex: 1; }
+        .pivot-more-btn {
+            padding: 2px 8px; border-radius: 12px; font-size: 11px;
+            background: #fff; border: 1px dashed #b3bac5; color: #5e6c84;
+            cursor: pointer; white-space: nowrap;
+        }
+        .pivot-more-btn:hover { background: #f4f5f7; border-color: #5e6c84; color: #172b4d; }
         .ds-avail-chip {
             display: inline-flex; align-items: center; padding: 2px 8px;
             border-radius: 12px; font-size: 12px; cursor: grab; user-select: none;
@@ -343,6 +355,10 @@
             <span style="font-size:12px;color:#5e6c84" id="pivotResultInfo"></span>
         </div>
         <!-- Available columns by dataset -->
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+            <input type="text" id="pivotColSearch" placeholder="Search columns…" oninput="onPivotSearch(this.value)">
+            <span style="font-size:11px;color:#5e6c84">Click to add to Row Groups &bull; drag to any zone</span>
+        </div>
         <div id="pivotBuilderAvail"></div>
         <!-- Three drop zones -->
         <div class="piv-zones-row">
@@ -1042,30 +1058,54 @@ let iPivValues   = [];
 let iPivDrag     = null;
 let _iPivMenu    = null;
 
+// Pivot builder available-columns state
+let _pivotAvailGroups   = {};
+let _pivotAvailDatasets = [];
+let _pivotColFilter     = '';
+const PIVOT_MAX_COLS    = 10;
+
 const AGG_OPTS   = ['count','sum','avg','min','max','dcount','getdistinct','first','last'];
 const AGG_LABELS = { count:'count', sum:'sum', avg:'avg', min:'min', max:'max', dcount:'dcount (distinct)', getdistinct:'get distinct', first:'first', last:'last' };
 
 function _initPivotBuilder(cols) {
     iPivRowGrps = []; iPivPivCols = []; iPivValues = [];
+    _pivotColFilter = '';
+    const searchInput = document.getElementById('pivotColSearch');
+    if (searchInput) searchInput.value = '';
 
     const dsMap = buildColumnDatasetMap();
+    _pivotAvailDatasets = currentConfig?.datasets || [];
 
-    // Group columns by dataset index
-    const groups = {}; // dsIdx → colName[]
-    const datasets = currentConfig?.datasets || [];
+    _pivotAvailGroups = {};
     cols.forEach(col => {
         const dsIdx = dsMap[col] ?? -1;
-        if (!groups[dsIdx]) groups[dsIdx] = [];
-        groups[dsIdx].push(col);
+        if (!_pivotAvailGroups[dsIdx]) _pivotAvailGroups[dsIdx] = [];
+        _pivotAvailGroups[dsIdx].push(col);
     });
 
+    _renderPivotAvailRows();
+
+    _renderIPivZone('iPivRowGroupsZone', iPivRowGrps, 'row-grp');
+    _renderIPivZone('iPivPivColsZone',   iPivPivCols, 'piv-col');
+    _renderIPivValuesZone();
+    _setupIPivDropZones();
+
+    document.getElementById('pivotBuilderSection').style.display = 'block';
+    document.getElementById('pivotResultInfo').textContent = '';
+}
+
+function _renderPivotAvailRows() {
     const avail = document.getElementById('pivotBuilderAvail');
     avail.innerHTML = '';
+    const q = _pivotColFilter.toLowerCase();
 
-    Object.entries(groups).sort(([a], [b]) => +a - +b).forEach(([dsIdxStr, colList]) => {
+    Object.entries(_pivotAvailGroups).sort(([a], [b]) => +a - +b).forEach(([dsIdxStr, colList]) => {
         const dsIdx = parseInt(dsIdxStr);
         const { bg, border } = dsIdx >= 0 ? dsColor(dsIdx) : { bg: '#f4f5f7', border: '#dfe1e6' };
-        const dsName = dsIdx >= 0 ? (datasets[dsIdx]?.name || 'Dataset ' + dsIdx) : 'Other';
+        const dsName = dsIdx >= 0 ? (_pivotAvailDatasets[dsIdx]?.name || 'Dataset ' + dsIdx) : 'Other';
+
+        const filtered = q ? colList.filter(c => c.toLowerCase().includes(q)) : colList;
+        if (!filtered.length) return;
 
         const group = document.createElement('div');
         group.className = 'ds-avail-group';
@@ -1078,18 +1118,40 @@ function _initPivotBuilder(cols) {
 
         const chipsDiv = document.createElement('div');
         chipsDiv.className = 'ds-avail-chips';
-        colList.forEach(col => chipsDiv.appendChild(_makeAvailChip(col, bg, border)));
+
+        const visible = filtered.slice(0, PIVOT_MAX_COLS);
+        const hidden  = filtered.slice(PIVOT_MAX_COLS);
+
+        visible.forEach(col => chipsDiv.appendChild(_makeAvailChip(col, bg, border)));
+
+        if (hidden.length > 0) {
+            const extraChips = hidden.map(col => {
+                const c = _makeAvailChip(col, bg, border);
+                c.style.display = 'none';
+                return c;
+            });
+            extraChips.forEach(c => chipsDiv.appendChild(c));
+
+            const moreBtn = document.createElement('button');
+            moreBtn.className = 'pivot-more-btn';
+            moreBtn.textContent = '+' + hidden.length + ' more';
+            let expanded = false;
+            moreBtn.addEventListener('click', () => {
+                expanded = !expanded;
+                extraChips.forEach(c => { c.style.display = expanded ? '' : 'none'; });
+                moreBtn.textContent = expanded ? 'Show less' : '+' + hidden.length + ' more';
+            });
+            chipsDiv.appendChild(moreBtn);
+        }
+
         group.appendChild(chipsDiv);
         avail.appendChild(group);
     });
+}
 
-    _renderIPivZone('iPivRowGroupsZone', iPivRowGrps, 'row-grp');
-    _renderIPivZone('iPivPivColsZone',   iPivPivCols, 'piv-col');
-    _renderIPivValuesZone();
-    _setupIPivDropZones();
-
-    document.getElementById('pivotBuilderSection').style.display = 'block';
-    document.getElementById('pivotResultInfo').textContent = '';
+function onPivotSearch(val) {
+    _pivotColFilter = val;
+    _renderPivotAvailRows();
 }
 
 function _makeAvailChip(col, bg, border) {
@@ -1104,7 +1166,14 @@ function _makeAvailChip(col, bg, border) {
         setTimeout(() => chip.classList.add('dragging'), 0);
     });
     chip.addEventListener('dragend', () => chip.classList.remove('dragging'));
-    chip.addEventListener('click', () => _showIPivColMenu(col, chip));
+    chip.title = 'Click to add to Row Groups; drag to any zone';
+    chip.addEventListener('click', () => {
+        if (!iPivRowGrps.find(r => r.col === col)) {
+            iPivRowGrps.push({ col });
+            _refreshIPivZones();
+            applyInlinePivot();
+        }
+    });
     return chip;
 }
 

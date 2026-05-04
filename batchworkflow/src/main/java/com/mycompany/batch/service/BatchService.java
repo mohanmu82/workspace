@@ -157,52 +157,77 @@ public class BatchService {
     private HttpAuthProvider buildAuthProvider(String operationName,
                                                BatchProperties.AuthProperties auth,
                                                String fallbackUrl) throws Exception {
+        return buildAuthProvider(operationName, auth, fallbackUrl, null);
+    }
+
+    /**
+     * Builds an {@link HttpAuthProvider}, resolving any {@code ${KEY}} placeholders in credential
+     * fields via {@code opProperties} when supplied (request-scoped call). At startup the param is
+     * {@code null} and values are used as-is.
+     */
+    private HttpAuthProvider buildAuthProvider(String operationName,
+                                               BatchProperties.AuthProperties auth,
+                                               String fallbackUrl,
+                                               Map<String, String> opProperties) throws Exception {
         return switch (auth.getMethod()) {
             case BASIC -> {
-                if (auth.getBasic().getUsername().isBlank() || auth.getBasic().getPassword().isBlank()) {
+                String u = rp(auth.getBasic().getUsername(), opProperties);
+                String p = rp(auth.getBasic().getPassword(), opProperties);
+                if (u.isBlank() || p.isBlank()) {
                     throw new IllegalStateException(
                             "BASIC auth for '" + operationName + "' requires basic.username and basic.password");
                 }
-                yield new BasicAuthProvider(auth.getBasic().getUsername(), auth.getBasic().getPassword());
+                yield new BasicAuthProvider(u, p);
             }
             case JWT -> {
-                if (auth.getJwt().getUrl().isBlank() || auth.getJwt().getUsername().isBlank()
-                        || auth.getJwt().getPassword().isBlank()) {
+                String url = rp(auth.getJwt().getUrl(), opProperties);
+                String u   = rp(auth.getJwt().getUsername(), opProperties);
+                String p   = rp(auth.getJwt().getPassword(), opProperties);
+                if (url.isBlank() || u.isBlank() || p.isBlank()) {
                     throw new IllegalStateException(
                             "JWT auth for '" + operationName + "' requires jwt.url, jwt.username and jwt.password");
                 }
-                yield new JwtAuthProvider(auth.getJwt().getApplicationName(), auth.getJwt().getUsername(),
-                        auth.getJwt().getPassword(), auth.getJwt().getUrl(), objectMapper);
+                yield new JwtAuthProvider(rp(auth.getJwt().getApplicationName(), opProperties),
+                        u, p, url, objectMapper);
             }
             case KERBEROS -> {
-                if (auth.getKerberos().getUsername().isBlank() || auth.getKerberos().getKeytab().isBlank()
-                        || auth.getKerberos().getServicePrincipal().isBlank()) {
+                String u  = rp(auth.getKerberos().getUsername(), opProperties);
+                String kt = rp(auth.getKerberos().getKeytab(), opProperties);
+                String sp = rp(auth.getKerberos().getServicePrincipal(), opProperties);
+                if (u.isBlank() || kt.isBlank() || sp.isBlank()) {
                     throw new IllegalStateException(
                             "KERBEROS auth for '" + operationName + "' requires kerberos.username, kerberos.keytab and kerberos.service-principal");
                 }
-                yield new KerberosAuthProvider(auth.getKerberos().getUsername(),
-                        auth.getKerberos().getKeytab(), auth.getKerberos().getServicePrincipal());
+                yield new KerberosAuthProvider(u, kt, sp);
             }
             case DIGEST -> {
-                if (auth.getDigest().getUsername().isBlank() || auth.getDigest().getPassword().isBlank()) {
+                String u = rp(auth.getDigest().getUsername(), opProperties);
+                String p = rp(auth.getDigest().getPassword(), opProperties);
+                if (u.isBlank() || p.isBlank()) {
                     throw new IllegalStateException(
                             "DIGEST auth for '" + operationName + "' requires digest.username and digest.password");
                 }
-                String digestUrl = (auth.getDigest().getUrl() != null && !auth.getDigest().getUrl().isBlank())
-                        ? auth.getDigest().getUrl()
-                        : (fallbackUrl != null ? fallbackUrl : "");
-                yield new DigestAuthProvider(auth.getDigest().getUsername(), auth.getDigest().getPassword(),
-                        digestUrl, objectMapper);
+                String digestUrl = rp(auth.getDigest().getUrl(), opProperties);
+                if (digestUrl.isBlank()) digestUrl = fallbackUrl != null ? fallbackUrl : "";
+                yield new DigestAuthProvider(u, p, digestUrl, objectMapper);
             }
             case NTLM -> {
-                if (auth.getNtlm().getUsername().isBlank() || auth.getNtlm().getPassword().isBlank()) {
+                String u = rp(auth.getNtlm().getUsername(), opProperties);
+                String p = rp(auth.getNtlm().getPassword(), opProperties);
+                if (u.isBlank() || p.isBlank()) {
                     throw new IllegalStateException(
                             "NTLM auth for '" + operationName + "' requires ntlm.username and ntlm.password");
                 }
-                yield new NtlmAuthProvider(auth.getNtlm().getUsername(), auth.getNtlm().getPassword());
+                yield new NtlmAuthProvider(u, p);
             }
             default -> () -> null;
         };
+    }
+
+    /** Resolves a single {@code ${KEY}} placeholder string via opProperties; returns the value as-is when no placeholders or props are absent. */
+    private static String rp(String val, Map<String, String> props) {
+        if (val == null || props == null || !val.contains("${")) return val != null ? val : "";
+        try { return resolveTemplate(val, Map.of(), props); } catch (Exception e) { return val; }
     }
 
     /** Builds an {@link HttpClient}, adding an NTLM {@link java.net.Authenticator} when the operation uses NTLM auth. */
@@ -1179,7 +1204,7 @@ public class BatchService {
             HttpClient httpClient     = buildHttpClient(operation);
 
             // Pre-load activity resources (classpath files, etc.) once for all rows
-            List<ResolvedActivity> resolvedActivities = preloadActivities(activities, effectiveTimeoutMs, operation);
+            List<ResolvedActivity> resolvedActivities = preloadActivities(activities, effectiveTimeoutMs, operation, opProperties);
 
             // Create shared SSH sessions (one per initialization reference) for SSH activities
             Map<String, Session> sshSessions = buildSharedSshSessions(activities, op, opProperties);
@@ -1385,7 +1410,7 @@ public class BatchService {
         ExecutorService xpathPool = Executors.newFixedThreadPool(xpathThreadCount);
         HttpClient httpClient     = HttpClient.newBuilder().build();
 
-        List<ResolvedActivity> resolvedActivities = preloadActivities(activities, effectiveTimeoutMs, operation);
+        List<ResolvedActivity> resolvedActivities = preloadActivities(activities, effectiveTimeoutMs, operation, opProperties);
         Map<String, Session> sshSessionsAsync = buildSharedSshSessions(activities, op, opProperties);
 
         boolean includeMetadata = false;
@@ -1443,25 +1468,48 @@ public class BatchService {
     private List<ResolvedActivity> preloadActivities(
             List<BatchProperties.ActivityProperties> activities,
             int defaultTimeoutMs) throws Exception {
-        return preloadActivities(activities, defaultTimeoutMs, null);
+        return preloadActivities(activities, defaultTimeoutMs, null, null);
     }
 
     private List<ResolvedActivity> preloadActivities(
             List<BatchProperties.ActivityProperties> activities,
             int defaultTimeoutMs,
             String operationName) throws Exception {
+        return preloadActivities(activities, defaultTimeoutMs, operationName, null);
+    }
+
+    private List<ResolvedActivity> preloadActivities(
+            List<BatchProperties.ActivityProperties> activities,
+            int defaultTimeoutMs,
+            String operationName,
+            Map<String, String> opProperties) throws Exception {
         List<ResolvedActivity> resolved = new ArrayList<>(activities.size());
         for (BatchProperties.ActivityProperties act : activities) {
             ActivityType type = act.getType();
             String activityAuthHeader = null;
             if (type == ActivityType.HTTP && operationName != null) {
-                HttpAuthProvider actProvider = authProviders.get(operationName + "::" + act.getName());
+                BatchProperties.AuthProperties actAuth = act.getHttp() != null ? act.getHttp().getAuth() : null;
+                HttpAuthProvider actProvider = null;
+                // When opProperties are available, build a fresh per-request provider so that
+                // ${USERNAME}/${PASSWORD} placeholders in the activity auth config are resolved
+                // from the current request's properties rather than the startup-time literals.
+                if (actAuth != null && actAuth.getMethod() != com.mycompany.batch.model.AuthMethod.NONE
+                        && opProperties != null) {
+                    try {
+                        String actUrl = act.getHttp() != null ? act.getHttp().getUrl() : null;
+                        actProvider = buildAuthProvider(act.getName(), actAuth, actUrl, opProperties);
+                    } catch (Exception ignored) {
+                        // placeholder resolution failed — fall through to the static startup provider
+                    }
+                }
+                if (actProvider == null) {
+                    actProvider = authProviders.get(operationName + "::" + act.getName());
+                }
                 if (actProvider != null) {
                     try {
                         activityAuthHeader = actProvider.getAuthorizationHeader();
                     } catch (Exception e) {
-                        // token fetch failed at preload time (e.g. credentials are per-row templates);
-                        // auth header will be absent and the activity proceeds without it
+                        // token fetch failed at preload time
                     }
                 }
             }
@@ -1649,7 +1697,9 @@ public class BatchService {
         String resolvedUrl;
         String resolvedBody;
         try {
-            resolvedUrl = resolveTemplate(httpConfig.getUrl(), row.getData(), effectiveProps);
+            // Two-pass: resolve ${inputHttpUrl} first, then resolve any dataRow vars embedded in that URL.
+            String urlTemplate = resolveTemplate(httpConfig.getUrl(), row.getData(), effectiveProps);
+            resolvedUrl = resolveTemplate(urlTemplate, row.getData(), effectiveProps);
             String bt = activity.resolvedBodyTemplate();
             if (bt == null) {
                 resolvedBody = "";
@@ -1909,14 +1959,17 @@ public class BatchService {
             }
 
             String ref = sshConfig.getReference();
-            // Only need connection details when NOT using a shared session
-            if (sharedSessions == null || !sharedSessions.containsKey(ref)) {
-                BatchProperties.InitializationProperties initEntry = op.getInitialization().stream()
-                        .filter(ip -> ip.getName().equalsIgnoreCase(ref))
-                        .findFirst()
-                        .orElseThrow(() -> new IllegalArgumentException(
-                                "SSH activity '" + activity.config().getName() + "': initialization reference '"
-                                        + ref + "' not found"));
+            // Always load connection details so we can reconnect if the shared session drops
+            BatchProperties.InitializationProperties initEntry = op.getInitialization() == null ? null
+                    : op.getInitialization().stream()
+                            .filter(ip -> ip.getName().equalsIgnoreCase(ref))
+                            .findFirst().orElse(null);
+            if (initEntry == null && (sharedSessions == null || !sharedSessions.containsKey(ref))) {
+                throw new IllegalArgumentException(
+                        "SSH activity '" + activity.config().getName() + "': initialization reference '"
+                                + ref + "' not found");
+            }
+            if (initEntry != null && initEntry.getSsh() != null) {
                 BatchProperties.SshConnectionProperties conn = initEntry.getSsh();
                 host       = resolveTemplate(conn.getHost(),       row.getData(), effectiveProps);
                 portStr    = resolveTemplate(conn.getPort(),       row.getData(), effectiveProps);
@@ -1930,7 +1983,10 @@ public class BatchService {
         }
 
         final String ref = sshConfig.getReference();
-        final Session sharedSession = sharedSessions != null ? sharedSessions.get(ref) : null;
+        // Use shared session only if it is still connected; otherwise fall back to per-row session
+        final Session sharedSession = (sharedSessions != null && sharedSessions.containsKey(ref)
+                && sharedSessions.get(ref) != null && sharedSessions.get(ref).isConnected())
+                ? sharedSessions.get(ref) : null;
 
         int port = 22;
         if (portStr != null) {
@@ -1948,9 +2004,16 @@ public class BatchService {
         return CompletableFuture.supplyAsync(() -> {
             long start = System.currentTimeMillis();
             Session session = sharedSession;
-            boolean ownSession = session == null;
+            // Re-check connectivity inside the async block; the session may have dropped
+            // between buildSharedSshSessions() and this thread's execution
+            boolean ownSession = session == null || !session.isConnected();
+            if (ownSession) session = null;
             try {
                 if (ownSession) {
+                    if (finalHost == null) {
+                        throw new IllegalStateException(
+                                "Shared SSH session '" + ref + "' is disconnected and no init config is available to reconnect");
+                    }
                     JSch jsch = new JSch();
                     jsch.addIdentity(finalPrivateKey);
                     session = jsch.getSession(finalUsername, finalHost, finalPort);
@@ -2935,6 +2998,7 @@ public class BatchService {
         }
         if (defs.isEmpty()) return;
         Map<String, Object> reqMap = objectMapper.convertValue(request, new TypeReference<>() {});
+        boolean anyDefaultsInjected = false;
         for (BatchProperties.MandatoryPropertyDef def : defs) {
             String prop = def.getProperty();
             if (prop == null || prop.isBlank()) continue;
@@ -2943,8 +3007,11 @@ public class BatchService {
             if (opProperties.containsKey(prop) && !opProperties.get(prop).isBlank()) continue;
             if (def.getDefaultValue() != null && !def.getDefaultValue().isBlank()) {
                 opProperties.put(prop, resolveDefaultValue(def.getDefaultValue()));
+                anyDefaultsInjected = true;
             }
         }
+        // Resolve ${VAR} placeholders in any newly injected default values (e.g. ${DATADIR}/file.txt)
+        if (anyDefaultsInjected) resolvePropertyVariables(opProperties);
     }
 
     private static void checkMandatoryAttributes(List<DataRow> rows,
