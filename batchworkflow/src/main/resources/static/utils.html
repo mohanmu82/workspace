@@ -71,6 +71,16 @@
 
         #utilGrid { width: 100%; height: 420px; }
         #gridSection { display: none; }
+
+        .ag-cell { cursor: pointer !important; }
+        #copyToast {
+            position: fixed; bottom: 24px; right: 24px; z-index: 9999;
+            background: #172b4d; color: #fff; padding: 8px 18px;
+            border-radius: 6px; font-size: 13px; font-weight: 500;
+            opacity: 0; pointer-events: none;
+            transition: opacity 0.15s ease;
+        }
+        #copyToast.show { opacity: 1; }
     </style>
 </head>
 <body>
@@ -208,6 +218,13 @@
 
 <script>
     let utilGrid = null;
+    let _toastTimer;
+    function showCopyToast() {
+        const t = document.getElementById('copyToast');
+        t.classList.add('show');
+        clearTimeout(_toastTimer);
+        _toastTimer = setTimeout(() => t.classList.remove('show'), 1200);
+    }
 
     // ---- HTTP ----
 
@@ -321,7 +338,19 @@
                 columnDefs:    cols,
                 rowData:       rows,
                 defaultColDef: { sortable: true, filter: true, resizable: true, minWidth: 80 },
-                tooltipShowDelay: 300
+                tooltipShowDelay: 300,
+                onCellClicked: params => {
+                    if (params.value == null) return;
+                    const text = String(params.value);
+                    const copy = () => {
+                        const ta = document.createElement('textarea');
+                        ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+                        document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+                        document.body.removeChild(ta);
+                        showCopyToast();
+                    };
+                    navigator.clipboard.writeText(text).then(showCopyToast).catch(copy);
+                },
             });
         }
         document.getElementById('gridRowCount').textContent = rows.length.toLocaleString() + ' row(s)';
@@ -689,5 +718,6 @@
         } catch (e) { fallback(); }
     }
 </script>
+<div id="copyToast">Copied!</div>
 </body>
 </html>

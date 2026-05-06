@@ -130,6 +130,16 @@
                                 border: 1px solid #dfe1e6; white-space: nowrap; }
         table.html-preview td { padding: 4px 10px; border: 1px solid #dfe1e6; white-space: nowrap; }
         table.html-preview tr:nth-child(even) td { background: #fafbfc; }
+
+        .ag-cell { cursor: pointer !important; }
+        #copyToast {
+            position: fixed; bottom: 24px; right: 24px; z-index: 9999;
+            background: #172b4d; color: #fff; padding: 8px 18px;
+            border-radius: 6px; font-size: 13px; font-weight: 500;
+            opacity: 0; pointer-events: none;
+            transition: opacity 0.15s ease;
+        }
+        #copyToast.show { opacity: 1; }
     </style>
 </head>
 <body>
@@ -260,6 +270,13 @@
     // PieHeaderComp — custom ag-Grid header
     // ─────────────────────────────────────────────
     let chartsVisible = false;
+    let _toastTimer;
+    function showCopyToast() {
+        const t = document.getElementById('copyToast');
+        t.classList.add('show');
+        clearTimeout(_toastTimer);
+        _toastTimer = setTimeout(() => t.classList.remove('show'), 1200);
+    }
 
     class PieHeaderComp {
         init(params) {
@@ -364,7 +381,19 @@
         animateRows: true,
         onRowDataUpdated:     updateRowCount,
         onFilterChanged:      updateRowCount,
-        onGridColumnsChanged: rebuildColChooser
+        onGridColumnsChanged: rebuildColChooser,
+        onCellClicked: params => {
+            if (params.value == null) return;
+            const text = String(params.value);
+            const copy = () => {
+                const ta = document.createElement('textarea');
+                ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+                document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+                document.body.removeChild(ta);
+                showCopyToast();
+            };
+            navigator.clipboard.writeText(text).then(showCopyToast).catch(copy);
+        },
     };
     const grid = agGrid.createGrid(document.getElementById('grid'), gridOptions);
 
@@ -942,5 +971,6 @@
         }
     }
 </script>
+<div id="copyToast">Copied!</div>
 </body>
 </html>

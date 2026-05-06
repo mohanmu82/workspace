@@ -1,5 +1,6 @@
 package com.mycompany.batch.model;
 
+import com.mycompany.batch.config.BatchProperties;
 import java.util.List;
 import java.util.Map;
 
@@ -110,5 +111,10 @@ public record RunRequest(
          */
         JsonataTransform jsonataTransform,
         /** Template name used as input source when {@code inputSource=TEMPLATE}. */
-        String templateName) {
+        String templateName,
+        /**
+         * Optional per-request auth override. When set, overrides the operation-level auth
+         * configured in {@code operations.json} for this run only.
+         */
+        BatchProperties.AuthProperties auth) {
 }

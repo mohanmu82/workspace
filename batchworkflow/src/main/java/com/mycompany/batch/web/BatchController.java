@@ -510,7 +510,8 @@ public class BatchController {
                 params.get("cacheName"),
                 null,  // properties — not supported via query params
                 null,  // jsonataTransform
-                null   // templateName
+                null,  // templateName
+                null   // auth
         );
     }
 
@@ -578,7 +579,7 @@ public class BatchController {
             "debugMode", "httpThreadCount", "httpTimeoutMs", "filterInput", "filterOutput",
             "searchKeyword", "cache", "executionMode", "alias", "responseProcessor",
             "appendOutput", "inputJsonPath", "cacheName", "properties",
-            "jsonataTransform", "templateName");
+            "jsonataTransform", "templateName", "auth");
 
     /**
      * Converts a raw JSON body map to a {@link RunRequest}, capturing any unrecognised

@@ -224,6 +224,13 @@ public class BatchService {
         };
     }
 
+    private String buildRequestAuthHeader(BatchProperties.AuthProperties auth,
+                                          String operation,
+                                          Map<String, String> opProperties) throws Exception {
+        if (auth == null) return null;
+        return buildAuthProvider(operation, auth, null, opProperties).getAuthorizationHeader();
+    }
+
     /** Resolves a single {@code ${KEY}} placeholder string via opProperties; returns the value as-is when no placeholders or props are absent. */
     private static String rp(String val, Map<String, String> props) {
         if (val == null || props == null || !val.contains("${")) return val != null ? val : "";
@@ -327,7 +334,8 @@ public class BatchService {
                 mergeStr(req.cacheName(),             a.cacheName()),
                 mergeMap(req.properties(),            a.properties()),
                 mergeObj(req.jsonataTransform(),      a.jsonataTransform()),
-                mergeStr(req.templateName(),          a.templateName()));
+                mergeStr(req.templateName(),          a.templateName()),
+                mergeObj(req.auth(),                  a.auth()));
     }
 
     /** Returns {@code a} if non-null and non-blank, otherwise {@code b}. */
@@ -399,9 +407,10 @@ public class BatchService {
         // Mode 2: return after input source + pre-enricher (no activities)
         if (debugMode == 2) return debugResult(rows);
 
+        String reqAuthHeader = buildRequestAuthHeader(request.auth(), operation, opProperties);
         BatchResult result = runCore(rows, op, operation,
                 request.httpThreadCount(), request.httpTimeoutMs(), debugMode, opProperties,
-                request.inputHttpHeader() != null ? request.inputHttpHeader() : Map.of());
+                request.inputHttpHeader() != null ? request.inputHttpHeader() : Map.of(), reqAuthHeader);
 
         // Mode 3: return after activities
         if (debugMode == 3) return result;
@@ -615,10 +624,11 @@ public class BatchService {
             effectiveCallback = row -> { saveSingleRowToCache(row, cacheOut); prev.accept(row); };
         }
 
+        String reqAuthHeaderAsync = buildRequestAuthHeader(request.auth(), operation, opProperties);
         return runCoreAsync(rows, op, operation,
                 request.httpThreadCount(), request.httpTimeoutMs(), debugMode,
                 request.filterOutput(), effectiveCallback, opProperties,
-                request.inputHttpHeader() != null ? request.inputHttpHeader() : Map.of());
+                request.inputHttpHeader() != null ? request.inputHttpHeader() : Map.of(), reqAuthHeaderAsync);
     }
 
     // -------------------------------------------------------------------------
@@ -629,14 +639,14 @@ public class BatchService {
     public BatchResult run(String filePath, Integer inputCount, String operation) throws Exception {
         BatchProperties.OperationProperties op = batchProperties.getOperation(operation);
         List<DataRow> rows = readDataRowsFromFile(filePath, inputCount, op);
-        return runCore(rows, op, operation, null, null, 0, Map.of(), Map.of());
+        return runCore(rows, op, operation, null, null, 0, Map.of(), Map.of(), null);
     }
 
     /** Direct list of identifiers — each ID becomes a DataRow with key "id". */
     public BatchResult run(List<String> identifiers, String operation) throws Exception {
         BatchProperties.OperationProperties op = batchProperties.getOperation(operation);
         List<DataRow> rows = readDataRowsFromRequest(identifiers, null);
-        return runCore(rows, op, operation, null, null, 0, Map.of(), Map.of());
+        return runCore(rows, op, operation, null, null, 0, Map.of(), Map.of(), null);
     }
 
     /** Runs from file and writes PSV output; returns summary metadata. */
@@ -644,7 +654,7 @@ public class BatchService {
                               Integer inputCount, String operation) throws Exception {
         BatchProperties.OperationProperties op = batchProperties.getOperation(operation);
         List<DataRow> rows = readDataRowsFromFile(inputFilePath, inputCount, op);
-        BatchResult batch = runCore(rows, op, operation, null, null, 0, Map.of(), Map.of());
+        BatchResult batch = runCore(rows, op, operation, null, null, 0, Map.of(), Map.of(), null);
         writeToPsv(batch, outputFilePath, false);
         return new PsvResult(batch.processed(), batch.succeeded(), batch.failed(),
                 Path.of(outputFilePath).toAbsolutePath().toString(),
@@ -960,7 +970,8 @@ public class BatchService {
                 params.get("cacheName"),
                 null,   // properties
                 null,   // jsonataTransform
-                null    // templateName
+                null,   // templateName
+                null    // auth
         );
 
         BatchResult innerResult = run(innerRequest);
@@ -1149,7 +1160,8 @@ public class BatchService {
                                 Integer timeoutMsOverride,
                                 int debugMode,
                                 Map<String, String> opProperties,
-                                Map<String, String> extraHeaders) throws Exception {
+                                Map<String, String> extraHeaders,
+                                String authHeaderOverride) throws Exception {
 
         List<BatchProperties.ActivityProperties> activities =
                 op.getActivity() != null ? op.getActivity() : List.of();
@@ -1163,7 +1175,7 @@ public class BatchService {
         List<Long> httpDurationsMs    = new CopyOnWriteArrayList<>();
         AtomicLong totalResponseBytes = new AtomicLong();
 
-        String authHeader = authProviders.get(operation).getAuthorizationHeader();
+        String authHeader = authHeaderOverride != null ? authHeaderOverride : authProviders.get(operation).getAuthorizationHeader();
         long batchStart   = System.currentTimeMillis();
 
         List<CompletableFuture<Void>> futures;
@@ -1290,14 +1302,14 @@ public class BatchService {
                 futures = rows.stream()
                         .map(row -> processOneJson(row.getData(), httpClient, httpPool, jsonataTransform,
                                 succeeded, failed, results, httpDurationsMs, totalResponseBytes,
-                                authHeader, op, resolvedBodyTemplate, effectiveTimeoutMs))
+                                authHeader, op, resolvedBodyTemplate, effectiveTimeoutMs, extraHeaders))
                         .collect(Collectors.toList());
             } else {
                 final Map<String, String> finalXpathMap = Map.copyOf(xpathMap);
                 futures = rows.stream()
                         .map(row -> processOneXpath(row.getData(), httpClient, httpPool, finalXpathMap, xpathPool,
                                 succeeded, failed, results, httpDurationsMs, totalResponseBytes,
-                                authHeader, op, resolvedBodyTemplate, effectiveTimeoutMs))
+                                authHeader, op, resolvedBodyTemplate, effectiveTimeoutMs, extraHeaders))
                         .collect(Collectors.toList());
             }
 
@@ -1343,7 +1355,8 @@ public class BatchService {
             List<FilterRule> filterOutput,
             Consumer<Map<String, Object>> rowCallback,
             Map<String, String> opProperties,
-            Map<String, String> extraHeaders) throws Exception {
+            Map<String, String> extraHeaders,
+            String authHeaderOverride) throws Exception {
 
         List<BatchProperties.ActivityProperties> activities =
                 op.getActivity() != null ? op.getActivity() : List.of();
@@ -1376,7 +1389,7 @@ public class BatchService {
         List<Long> httpDurationsMs    = new CopyOnWriteArrayList<>();
         AtomicLong totalResponseBytes = new AtomicLong();
 
-        String authHeader = authProviders.get(operation).getAuthorizationHeader();
+        String authHeader = authHeaderOverride != null ? authHeaderOverride : authProviders.get(operation).getAuthorizationHeader();
         long batchStart   = System.currentTimeMillis();
 
         int activityHttpThreads = activities.stream()
@@ -2048,7 +2061,32 @@ public class BatchService {
                 channel.setCommand(cmd);
                 channel.setInputStream(null);
                 java.io.InputStream in = channel.getInputStream();
-                channel.connect();
+                try {
+                    channel.connect(timeoutMs);
+                } catch (com.jcraft.jsch.JSchException channelEx) {
+                    // Shared session may be half-open (JSch still reports isConnected=true but
+                    // the server has silently dropped it). Reconnect with a fresh per-row session.
+                    try { channel.disconnect(); } catch (Exception ignored) {}
+                    if (!ownSession && finalHost != null) {
+                        if (session != null && session.isConnected()) {
+                            try { session.disconnect(); } catch (Exception ignored) {}
+                        }
+                        JSch retryJsch = new JSch();
+                        retryJsch.addIdentity(finalPrivateKey);
+                        session = retryJsch.getSession(finalUsername, finalHost, finalPort);
+                        session.setConfig("StrictHostKeyChecking", "no");
+                        session.setConfig("PreferredAuthentications", "publickey");
+                        session.connect(timeoutMs);
+                        ownSession = true;
+                        channel = (ChannelExec) session.openChannel("exec");
+                        channel.setCommand(cmd);
+                        channel.setInputStream(null);
+                        in = channel.getInputStream();
+                        channel.connect(timeoutMs);
+                    } else {
+                        throw channelEx;
+                    }
+                }
 
                 StringBuilder sb = new StringBuilder();
                 byte[] buf = new byte[1024];
@@ -2078,6 +2116,7 @@ public class BatchService {
                 row.getMetadata().put(activityName + ".timetakenmillis", elapsed);
                 if (finalHost != null) row.getMetadata().put(activityName + ".sshhost", finalHost);
                 row.getMetadata().put(activityName + ".file", finalFile);
+                row.getData().put(activityName + ".file", finalFile);
                 // Only disconnect if we own this session (not a shared one)
                 if (ownSession && session != null && session.isConnected()) session.disconnect();
             }
@@ -2206,7 +2245,8 @@ public class BatchService {
                     null,
                     params.get("inputJsonPath"),
                     params.get("cacheName"),
-                    null, null, null
+                    null, null, null,
+                    null    // auth
             );
             BatchResult result = run(inner);
             Map<String, Object> resp = new LinkedHashMap<>();
@@ -2317,11 +2357,12 @@ public class BatchService {
             Map<String, String> xpaths, ExecutorService xpathPool,
             AtomicInteger succeeded, AtomicInteger failed, List<Map<String, Object>> results,
             List<Long> httpDurationsMs, AtomicLong totalResponseBytes, String authHeader,
-            BatchProperties.OperationProperties op, String resolvedBodyTemplate, int timeoutMs) {
+            BatchProperties.OperationProperties op, String resolvedBodyTemplate, int timeoutMs,
+            Map<String, String> extraHeaders) {
 
         HttpRequest request;
         try {
-            request = buildRequest(row, authHeader, op, resolvedBodyTemplate, timeoutMs);
+            request = buildRequest(row, authHeader, op, resolvedBodyTemplate, timeoutMs, extraHeaders);
         } catch (IllegalArgumentException e) {
             failed.incrementAndGet();
             Map<String, Object> entry = new LinkedHashMap<>(row);
@@ -2377,11 +2418,12 @@ public class BatchService {
             String jsonataTransform,
             AtomicInteger succeeded, AtomicInteger failed, List<Map<String, Object>> results,
             List<Long> httpDurationsMs, AtomicLong totalResponseBytes, String authHeader,
-            BatchProperties.OperationProperties op, String resolvedBodyTemplate, int timeoutMs) {
+            BatchProperties.OperationProperties op, String resolvedBodyTemplate, int timeoutMs,
+            Map<String, String> extraHeaders) {
 
         HttpRequest request;
         try {
-            request = buildRequest(row, authHeader, op, resolvedBodyTemplate, timeoutMs);
+            request = buildRequest(row, authHeader, op, resolvedBodyTemplate, timeoutMs, extraHeaders);
         } catch (IllegalArgumentException e) {
             failed.incrementAndGet();
             Map<String, Object> entry = new LinkedHashMap<>(row);
@@ -2555,12 +2597,13 @@ public class BatchService {
     /** Legacy request builder for the non-activity path. */
     private HttpRequest buildRequest(Map<String, Object> row, String authHeader,
                                      BatchProperties.OperationProperties op,
-                                     String resolvedBodyTemplate, int timeoutMs) {
+                                     String resolvedBodyTemplate, int timeoutMs,
+                                     Map<String, String> extraHeaders) {
         BatchProperties.HttpProperties http = op.getHttp();
         String resolvedUrl  = resolveTemplate(http.getUrl(), row);
         String resolvedBody = resolvedBodyTemplate != null ? resolveTemplate(resolvedBodyTemplate, row) : "";
         return buildRequestFromHttpConfig(resolvedUrl, authHeader, http, resolvedBody, timeoutMs,
-                http.getTimeoutMs());
+                http.getTimeoutMs(), extraHeaders);
     }
 
     private HttpRequest buildRequestFromHttpConfig(
@@ -2801,10 +2844,22 @@ public class BatchService {
         long pid = ProcessHandle.current().pid();
         result.put("HOSTNAME",   hostname);
         result.put("PORTNUMBER", String.valueOf(serverPort));
-        result.put("DATESTAMP",  java.time.LocalDate.now()
-                .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd")));
+        java.time.LocalDate today = java.time.LocalDate.now();
+        result.put("DATESTAMP",  today.format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd")));
         result.put("DATETIME",   java.time.LocalDateTime.now()
                 .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")));
+        java.time.LocalDate prevBizDate = today.minusDays(1);
+        while (prevBizDate.getDayOfWeek() == java.time.DayOfWeek.SATURDAY
+                || prevBizDate.getDayOfWeek() == java.time.DayOfWeek.SUNDAY) {
+            prevBizDate = prevBizDate.minusDays(1);
+        }
+        result.put("PREVDATESTAMP", prevBizDate.format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd")));
+        java.time.LocalDate nextBizDate = today.plusDays(1);
+        while (nextBizDate.getDayOfWeek() == java.time.DayOfWeek.SATURDAY
+                || nextBizDate.getDayOfWeek() == java.time.DayOfWeek.SUNDAY) {
+            nextBizDate = nextBizDate.plusDays(1);
+        }
+        result.put("NEXTDATESTAMP", nextBizDate.format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd")));
         result.put("PROCESSID",  String.valueOf(pid));
         result.put("JVMID",      hostname + "." + pid);
 

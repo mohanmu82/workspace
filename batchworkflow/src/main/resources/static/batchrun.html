@@ -436,6 +436,16 @@
             min-height: 300px; position: relative;
         }
         #pivotCanvas { max-height: 480px; }
+
+        .ag-cell { cursor: pointer !important; }
+        #copyToast {
+            position: fixed; bottom: 24px; right: 24px; z-index: 9999;
+            background: #172b4d; color: #fff; padding: 8px 18px;
+            border-radius: 6px; font-size: 13px; font-weight: 500;
+            opacity: 0; pointer-events: none;
+            transition: opacity 0.15s ease;
+        }
+        #copyToast.show { opacity: 1; }
     </style>
 </head>
 <body>
@@ -691,6 +701,14 @@
 </div>
 
 <script>
+    let _toastTimer;
+    function showCopyToast() {
+        const t = document.getElementById('copyToast');
+        t.classList.add('show');
+        clearTimeout(_toastTimer);
+        _toastTimer = setTimeout(() => t.classList.remove('show'), 1200);
+    }
+
     // -------------------------------------------------------------------------
     // Custom ag-Grid header component — adds a pie chart button to every column
     // -------------------------------------------------------------------------
@@ -857,12 +875,14 @@
         onCellClicked: params => {
             if (params.value == null) return;
             const text = String(params.value);
-            navigator.clipboard.writeText(text).catch(() => {
+            const copy = () => {
                 const ta = document.createElement('textarea');
                 ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px;top:0';
                 document.body.appendChild(ta); ta.select(); document.execCommand('copy');
                 document.body.removeChild(ta);
-            });
+                showCopyToast();
+            };
+            navigator.clipboard.writeText(text).then(showCopyToast).catch(copy);
         }
     };
 
@@ -2534,5 +2554,6 @@
     });
 </script>
 
+<div id="copyToast">Copied!</div>
 </body>
 </html>

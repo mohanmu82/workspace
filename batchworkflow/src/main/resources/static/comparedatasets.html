@@ -119,6 +119,16 @@
                            padding:10px; min-height:380px; background:#fff; }
 
         #resultsSection { display:none; }
+
+        .ag-cell { cursor: pointer !important; }
+        #copyToast {
+            position: fixed; bottom: 24px; right: 24px; z-index: 9999;
+            background: #172b4d; color: #fff; padding: 8px 18px;
+            border-radius: 6px; font-size: 13px; font-weight: 500;
+            opacity: 0; pointer-events: none;
+            transition: opacity 0.15s ease;
+        }
+        #copyToast.show { opacity: 1; }
     </style>
 </head>
 <body>
@@ -259,6 +269,13 @@
     let _meta        = null;
     let _activeFilter = 'ALL';
     let _hiddenCols   = new Set();
+    let _toastTimer;
+    function showCopyToast() {
+        const t = document.getElementById('copyToast');
+        t.classList.add('show');
+        clearTimeout(_toastTimer);
+        _toastTimer = setTimeout(() => t.classList.remove('show'), 1200);
+    }
 
     // -------------------------------------------------------------------------
     // Compare
@@ -466,6 +483,18 @@
                 onRowDataUpdated: updateRowCount,
                 onFilterChanged:  updateRowCount,
                 tooltipShowDelay: 300,
+                onCellClicked: params => {
+                    if (params.value == null) return;
+                    const text = String(params.value);
+                    const copy = () => {
+                        const ta = document.createElement('textarea');
+                        ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+                        document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+                        document.body.removeChild(ta);
+                        showCopyToast();
+                    };
+                    navigator.clipboard.writeText(text).then(showCopyToast).catch(copy);
+                },
             });
         }
         updateRowCount();
@@ -668,5 +697,6 @@
     // Load template list on page load
     loadTemplateList();
 </script>
+<div id="copyToast">Copied!</div>
 </body>
 </html>
