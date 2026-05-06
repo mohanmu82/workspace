@@ -464,6 +464,9 @@ public class BatchService {
             // Fall back to opProperties (populated from request fields + alias defaults),
             // then operation-level config attributes, then the operation default (FILE).
             String fromProps = opProperties.get("inputSource");
+            // ALIAS is a meta-type (directs alias lookup); it leaks into opProperties from the raw
+            // request via loadOperationProperties step 4, but must never be used as a real source.
+            if ("ALIAS".equalsIgnoreCase(fromProps)) fromProps = null;
             String fromAttrs = fromProps != null && !fromProps.isBlank() ? fromProps
                     : op.getProperties().getAttributes().get("inputSource");
             inputSourceType = (fromAttrs != null && !fromAttrs.isBlank())
@@ -1693,7 +1696,7 @@ public class BatchService {
                 if (rowVal != null && !String.valueOf(rowVal).isBlank()) continue;
                 String propVal = effectiveProps.get(p);
                 if (propVal != null && !propVal.isBlank()) continue;
-                if (def.getDefaultValue() != null && !def.getDefaultValue().isBlank()) {
+                if (def.getDefaultValue() != null) {
                     effectiveProps.put(p, resolveDefaultValue(def.getDefaultValue()));
                 } else {
                     missing.add(p);
@@ -1786,8 +1789,13 @@ public class BatchService {
                         .build()
                 : httpClient;
 
+        Map<String, String> resolvedExtraHeaders = (extraHeaders == null || extraHeaders.isEmpty()) ? extraHeaders
+                : extraHeaders.entrySet().stream().collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        e -> { try { return resolveTemplate(e.getValue(), row.getData(), effectiveProps); } catch (Exception ex) { return e.getValue(); } },
+                        (a, b) -> b, LinkedHashMap::new));
         HttpRequest request = buildRequestFromHttpConfig(resolvedUrl, effectiveAuthHeader, httpConfig, resolvedBody,
-                httpConfig.getTimeoutMs(), httpConfig.getTimeoutMs(), extraHeaders);
+                httpConfig.getTimeoutMs(), httpConfig.getTimeoutMs(), resolvedExtraHeaders);
 
         final String finalCacheName        = cacheName;
         final String finalResolvedCacheKey = resolvedCacheKey;
@@ -2602,8 +2610,13 @@ public class BatchService {
         BatchProperties.HttpProperties http = op.getHttp();
         String resolvedUrl  = resolveTemplate(http.getUrl(), row);
         String resolvedBody = resolvedBodyTemplate != null ? resolveTemplate(resolvedBodyTemplate, row) : "";
+        Map<String, String> resolvedExtraHeaders = (extraHeaders == null || extraHeaders.isEmpty()) ? extraHeaders
+                : extraHeaders.entrySet().stream().collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        e -> { try { return resolveTemplate(e.getValue(), row); } catch (Exception ex) { return e.getValue(); } },
+                        (a, b) -> b, LinkedHashMap::new));
         return buildRequestFromHttpConfig(resolvedUrl, authHeader, http, resolvedBody, timeoutMs,
-                http.getTimeoutMs(), extraHeaders);
+                http.getTimeoutMs(), resolvedExtraHeaders);
     }
 
     private HttpRequest buildRequestFromHttpConfig(
@@ -2983,8 +2996,8 @@ public class BatchService {
             if (val != null && !val.toString().isBlank()) continue;
             String opVal = opProperties.get(prop);
             if (opVal != null && !opVal.isBlank()) continue;
-            // Property absent — apply defaultValue if present, otherwise it is missing
-            if (def.getDefaultValue() != null && !def.getDefaultValue().isBlank()) {
+            // Property absent — apply defaultValue if present (empty string is valid), otherwise it is missing
+            if (def.getDefaultValue() != null) {
                 opProperties.put(prop, resolveDefaultValue(def.getDefaultValue()));
             } else {
                 missing.add(prop);
@@ -3014,7 +3027,7 @@ public class BatchService {
             if (val != null && !val.toString().isBlank()) continue;
             String opVal = opProperties.get(prop);
             if (opVal != null && !opVal.isBlank()) continue;
-            if (def.getDefaultValue() != null && !def.getDefaultValue().isBlank()) {
+            if (def.getDefaultValue() != null) {
                 opProperties.put(prop, resolveDefaultValue(def.getDefaultValue()));
             } else {
                 missing.add(prop);
@@ -3060,7 +3073,7 @@ public class BatchService {
             Object val = reqMap.get(prop);
             if (val != null && !val.toString().isBlank()) continue;
             if (opProperties.containsKey(prop) && !opProperties.get(prop).isBlank()) continue;
-            if (def.getDefaultValue() != null && !def.getDefaultValue().isBlank()) {
+            if (def.getDefaultValue() != null) {
                 opProperties.put(prop, resolveDefaultValue(def.getDefaultValue()));
                 anyDefaultsInjected = true;
             }

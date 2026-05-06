@@ -703,11 +703,12 @@ public class BatchController {
     // -------------------------------------------------------------------------
     // Template endpoints
     //
-    // GET  /batch/template                  — list saved templates
-    // GET  /batch/template?name=X&k=v       — run template X with extra props {k:v}
-    // GET  /batch/template/{name}           — fetch template content as JSON
-    // POST /batch/template  {"name","content"} — save template
-    // POST /batch/template  {"name","k":"v"} — run template with extra props
+    // GET  /batch/template                      — list saved templates
+    // GET  /batch/template?name=X&k=v           — run template X; extra params merged into top-level fields and inputHttpBody
+    // GET  /batch/template/{name}               — fetch template content as JSON
+    // GET  /batch/template/{name}/run?k=v       — run template X; extra params merged into top-level fields and inputHttpBody
+    // POST /batch/template  {"name","content"}  — save template
+    // POST /batch/template  {"name","k":"v"}    — run template with extra props
     // -------------------------------------------------------------------------
 
     @GetMapping("/template")
@@ -748,6 +749,13 @@ public class BatchController {
         response.put("name",    name);
         response.put("content", content);
         return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/template/{name}/run")
+    public ResponseEntity<?> runTemplateByName(
+            @PathVariable String name,
+            @RequestParam Map<String, String> params) throws Exception {
+        return executeTemplateRun(name.trim(), new LinkedHashMap<>(params));
     }
 
     @PostMapping("/template")
@@ -792,6 +800,22 @@ public class BatchController {
         // debugMode, inputFilePath, etc.) are routed correctly, not buried in properties.
         Map<String, Object> mergedMap = new LinkedHashMap<>(templateMap);
         extraProps.forEach(mergedMap::put);
+        // If the template declares a JSON-object inputHttpBody, also inject the extra params into
+        // it so callers can supply dynamic API request parameters via query string.
+        if (!extraProps.isEmpty()) {
+            Object rawBody = templateMap.get("inputHttpBody");
+            if (rawBody != null) {
+                String bodyStr = rawBody instanceof String s ? s : objectMapper.writeValueAsString(rawBody);
+                try {
+                    Map<String, Object> bodyMap = objectMapper.readValue(bodyStr,
+                            new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+                    extraProps.forEach(bodyMap::put);
+                    mergedMap.put("inputHttpBody", objectMapper.writeValueAsString(bodyMap));
+                } catch (Exception ignored) {
+                    // not a JSON-object body — leave it as-is
+                }
+            }
+        }
         RunRequest request = deserializeRunRequest(mergedMap);
         return executeRun(request);
     }
