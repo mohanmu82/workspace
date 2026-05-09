@@ -363,6 +363,25 @@ public class BatchService {
     }
 
     // -------------------------------------------------------------------------
+    // Runtime operation registration — registers an operation without restart
+    // -------------------------------------------------------------------------
+
+    public synchronized void registerOperation(BatchProperties.OperationProperties op) throws Exception {
+        String name = op.getName();
+        if (name == null || name.isBlank()) throw new IllegalArgumentException("operation name is required");
+        op.validate(name);
+        batchProperties.getOperations().put(name, op);
+        authProviders.put(name, buildAuthProvider(name, op.getAuth(), null));
+        for (BatchProperties.ActivityProperties act : op.getActivity()) {
+            BatchProperties.AuthProperties actAuth = act.getHttp() != null ? act.getHttp().getAuth() : null;
+            if (actAuth != null && actAuth.getMethod() != com.mycompany.batch.model.AuthMethod.NONE) {
+                String actHttpUrl = act.getHttp() != null ? act.getHttp().getUrl() : null;
+                authProviders.put(name + "::" + act.getName(), buildAuthProvider(act.getName(), actAuth, actHttpUrl));
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Public API — unified RunRequest entry point
     // -------------------------------------------------------------------------
 
@@ -1794,8 +1813,13 @@ public class BatchService {
                         Map.Entry::getKey,
                         e -> { try { return resolveTemplate(e.getValue(), row.getData(), effectiveProps); } catch (Exception ex) { return e.getValue(); } },
                         (a, b) -> b, LinkedHashMap::new));
+        Map<String, String> resolvedConfigHeaders = (httpConfig.getHeader() == null || httpConfig.getHeader().isEmpty()) ? httpConfig.getHeader()
+                : httpConfig.getHeader().entrySet().stream().collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        e -> { try { return resolveTemplate(e.getValue(), row.getData(), effectiveProps); } catch (Exception ex) { return e.getValue(); } },
+                        (a, b) -> b, LinkedHashMap::new));
         HttpRequest request = buildRequestFromHttpConfig(resolvedUrl, effectiveAuthHeader, httpConfig, resolvedBody,
-                httpConfig.getTimeoutMs(), httpConfig.getTimeoutMs(), resolvedExtraHeaders);
+                httpConfig.getTimeoutMs(), httpConfig.getTimeoutMs(), resolvedExtraHeaders, resolvedConfigHeaders);
 
         final String finalCacheName        = cacheName;
         final String finalResolvedCacheKey = resolvedCacheKey;
@@ -1828,9 +1852,11 @@ public class BatchService {
                 return row;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new RuntimeException("Interrupted while calling HTTP endpoint", e);
+                throw new RuntimeException("Interrupted while calling HTTP endpoint: " + finalResolvedUrl, e);
             } catch (Exception e) {
-                throw new RuntimeException(e.getMessage(), e);
+                String detail = e.getMessage();
+                if (detail == null || detail.isBlank()) detail = e.getClass().getSimpleName();
+                throw new RuntimeException("HTTP activity failed for '" + finalResolvedUrl + "': " + detail, e);
             } finally {
                 long elapsed = System.currentTimeMillis() - start;
                 httpDurationsMs.add(elapsed);
@@ -2631,6 +2657,14 @@ public class BatchService {
             BatchProperties.HttpProperties http, String resolvedBody,
             int timeoutMs, int ignored,
             Map<String, String> extraHeaders) {
+        return buildRequestFromHttpConfig(resolvedUrl, authHeader, http, resolvedBody, timeoutMs, ignored, extraHeaders, http.getHeader());
+    }
+
+    private HttpRequest buildRequestFromHttpConfig(
+            String resolvedUrl, String authHeader,
+            BatchProperties.HttpProperties http, String resolvedBody,
+            int timeoutMs, int ignored,
+            Map<String, String> extraHeaders, Map<String, String> resolvedConfigHeaders) {
         HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .timeout(Duration.ofMillis(timeoutMs))
                 .uri(URI.create(resolvedUrl));
@@ -2641,7 +2675,7 @@ public class BatchService {
             builder.header("Content-Type", http.getContentType())
                    .POST(HttpRequest.BodyPublishers.ofString(resolvedBody != null ? resolvedBody : ""));
         }
-        http.getHeader().forEach(builder::header);
+        if (resolvedConfigHeaders != null) resolvedConfigHeaders.forEach(builder::header);
         // extraHeaders override activity-level headers
         if (extraHeaders != null) extraHeaders.forEach(builder::header);
         if (authHeader != null) {

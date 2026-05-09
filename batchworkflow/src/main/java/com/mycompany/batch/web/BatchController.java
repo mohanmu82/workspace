@@ -67,6 +67,54 @@ public class BatchController {
     }
 
     // -------------------------------------------------------------------------
+    // POST /batch/operation  — save an operation JSON to DATADIR/operations/ and register it live
+    // -------------------------------------------------------------------------
+
+    @PostMapping("/operation")
+    public ResponseEntity<?> saveOperation(@RequestBody Map<String, Object> body) throws Exception {
+        String name = body.get("name") instanceof String s ? s.trim() : "";
+        if (name.isBlank()) return badRequest("name is required");
+        if (!name.matches("[\\w\\-.]+")) return badRequest("name contains invalid characters (use letters, digits, _ - .)");
+
+        Object content = body.get("content");
+        if (content == null) return badRequest("content is required");
+
+        BatchProperties.OperationProperties op;
+        try {
+            op = objectMapper.convertValue(content, BatchProperties.OperationProperties.class);
+        } catch (Exception e) {
+            return badRequest("invalid operation JSON: " + e.getMessage());
+        }
+        if (op.getName() == null || op.getName().isBlank()) op.setName(name);
+
+        String dataDir = serverPropertiesLoader.getProperties().getOrDefault("DATADIR", "");
+        String filePath = null;
+        if (!dataDir.isBlank()) {
+            Path dir = Path.of(dataDir).resolve("operations");
+            Files.createDirectories(dir);
+            Path file = dir.resolve(name + ".json");
+            objectMapper.writerWithDefaultPrettyPrinter().writeValue(file.toFile(), content);
+            filePath = file.toAbsolutePath().toString();
+        }
+
+        try {
+            batchService.registerOperation(op);
+        } catch (Exception e) {
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("status", filePath != null ? "saved_with_errors" : "error");
+            response.put("error", e.getMessage());
+            if (filePath != null) response.put("path", filePath);
+            return ResponseEntity.ok(response);
+        }
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("status", "saved");
+        response.put("name", op.getName());
+        if (filePath != null) response.put("path", filePath);
+        return ResponseEntity.ok(response);
+    }
+
+    // -------------------------------------------------------------------------
     // GET /batch/operations  — flat key-value listing of all configured operations
     // -------------------------------------------------------------------------
 

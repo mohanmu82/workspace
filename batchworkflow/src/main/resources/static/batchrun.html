@@ -484,6 +484,7 @@
             <option value="JSON">JSON</option>
             <option value="ALIAS">ALIAS</option>
             <option value="HTTPLOCAL">HTTPLOCAL</option>
+            <option value="SPECIFIC">SPECIFIC</option>
         </select>
     </div>
 
@@ -971,6 +972,7 @@
         document.getElementById('inputJsonPathGroup').classList.toggle('hidden', src !== 'JSON');
         document.getElementById('inputIdsGroup').classList.toggle('hidden', src !== 'REQUEST');
         document.getElementById('inputHttpUrlGroup').classList.toggle('hidden', src !== 'HTTPLOCAL');
+        // SPECIFIC uses a single empty DataRow — no input fields needed
     }
 
     function onOutputDataChange() {
@@ -1049,6 +1051,8 @@
         } else if (inputSource === 'FILE') {
             body.inputSource   = 'FILE';
             body.inputFilePath = inputFilePath;
+        } else if (inputSource === 'SPECIFIC') {
+            body.inputSource = 'SPECIFIC';
         } else {
             // Parse textarea as CSV (header on first line, data rows below).
             // Delimiter auto-detection: comma if header splits into >1 token, else pipe.
