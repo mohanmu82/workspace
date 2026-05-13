@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Operation Tester</title>
 <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@31/dist/ag-grid-community.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f5f7; color: #172b4d; padding: 20px; }
@@ -116,11 +117,99 @@ button.sm { padding: 4px 10px; font-size: 12px; }
 /* Test section */
 .test-section { margin-top: 10px; }
 #results-wrap { display: none; margin-top: 10px; }
-#grid { width: 100%; height: 320px; }
+#grid { width: 100%; height: 360px; }
 .stats-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 .stat { background: #fff; border: 1px solid #dfe1e6; border-radius: 4px; padding: 5px 14px; display: flex; flex-direction: column; align-items: center; }
 .stat-lbl { font-size: 10px; color: #5e6c84; text-transform: uppercase; letter-spacing: 0.4px; }
 .stat-val { font-size: 15px; font-weight: 700; color: #172b4d; }
+
+/* Grid toolbar */
+.grid-toolbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; }
+.grid-toolbar button { padding: 4px 10px; font-size: 12px; font-weight: 500; border-radius: 4px;
+    cursor: pointer; background: #f4f5f7; color: #172b4d; border: 1px solid #dfe1e6; }
+.grid-toolbar button:hover { background: #ebecf0; }
+.row-count-bar { font-size: 11px; color: #5e6c84; text-align: right; margin-bottom: 3px; min-height: 14px; }
+
+/* Column chooser */
+#colChooserBar {
+    display: none; flex-wrap: wrap; gap: 5px; padding: 6px 10px;
+    background: #fff; border: 1px solid #dfe1e6; border-radius: 6px;
+    margin-bottom: 6px; align-items: center;
+}
+#colChooserBar .chooser-lbl {
+    font-size: 11px; font-weight: 700; color: #5e6c84;
+    text-transform: uppercase; letter-spacing: .4px; margin-right: 4px; flex-shrink: 0;
+}
+.col-chip-t {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 9px; background: #f4f5f7; border: 1px solid #dfe1e6;
+    border-radius: 14px; font-size: 12px; cursor: pointer; user-select: none;
+}
+.col-chip-t:hover { background: #ebecf0; }
+.col-chip-t input[type=checkbox] { cursor: pointer; margin: 0; }
+
+.pie-btn-t { padding: 0 4px; font-size: 11px; border: 1px solid #ccc; border-radius: 3px;
+    cursor: pointer; background: #fff; color: #0052cc; line-height: 1.5; margin-left: 3px; }
+.pie-btn-t:hover { background: #e9f0ff; }
+
+/* Chart modal */
+.chart-modal-overlay-t { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center; }
+.chart-modal-overlay-t.open { display: flex; }
+.chart-modal-box-t { background: #fff; border-radius: 8px; padding: 20px 24px; width: 480px;
+    max-width: 95vw; box-shadow: 0 8px 32px rgba(0,0,0,0.25); }
+.chart-modal-header-t { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.chart-modal-header-t h3 { font-size: 16px; font-weight: 600; margin: 0; }
+.chart-modal-header-t button { background: none; border: none; font-size: 18px; cursor: pointer;
+    color: #5e6c84; padding: 2px 6px; border-radius: 4px; }
+.chart-modal-header-t button:hover { background: #f4f5f7; }
+
+/* Pivot modal */
+.pivot-overlay-t { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+    z-index: 1100; align-items: flex-start; justify-content: center; padding: 24px 0; overflow-y: auto; }
+.pivot-overlay-t.open { display: flex; }
+.pivot-box-t { background: #fff; border-radius: 8px; width: 96vw; max-width: 1200px;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.28); display: flex; flex-direction: column; }
+.pivot-header-t { display: flex; justify-content: space-between; align-items: center;
+    padding: 14px 20px; border-bottom: 1px solid #e0e4ea; flex-shrink: 0; }
+.pivot-header-t h3 { font-size: 16px; font-weight: 600; margin: 0; }
+.pivot-header-t button { background: none; border: none; font-size: 18px; cursor: pointer; color: #5e6c84; padding: 2px 6px; border-radius: 4px; }
+.pivot-header-t button:hover { background: #f4f5f7; }
+.pivot-body-t { display: flex; gap: 0; min-height: 0; }
+.pivot-config-t { width: 340px; min-width: 260px; border-right: 1px solid #e0e4ea; padding: 14px;
+    display: flex; flex-direction: column; gap: 10px; overflow-y: auto; max-height: calc(90vh - 56px); }
+.pivot-section-lbl { font-size: 11px; font-weight: 600; color: #5e6c84; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 3px; }
+.pivot-avail-t { display: flex; flex-wrap: wrap; gap: 4px; max-height: 110px; overflow-y: auto;
+    padding: 5px; background: #f4f5f7; border: 1px solid #dfe1e6; border-radius: 4px; }
+.pivot-chip-t { display: inline-flex; align-items: center; gap: 3px; padding: 2px 7px;
+    border-radius: 12px; font-size: 12px; cursor: pointer; user-select: none; white-space: nowrap; }
+.pivot-chip-t.avail   { background: #e9f0ff; color: #0052cc; border: 1px solid #4c9aff; }
+.pivot-chip-t.avail:hover { background: #d0e4ff; }
+.pivot-chip-t.row-grp { background: #e3fcef; color: #006644; border: 1px solid #57d9a3; }
+.pivot-chip-t.piv-col { background: #fff0b3; color: #7a4600; border: 1px solid #ffab00; }
+.pivot-chip-t.val-col { background: #ffe2dd; color: #bf2600; border: 1px solid #ff7452; }
+.pivot-chip-t .rm-t   { font-size: 14px; line-height: 1; color: inherit; opacity: .7; }
+.pivot-chip-t .rm-t:hover { opacity: 1; }
+.pivot-drop-t { min-height: 34px; display: flex; flex-wrap: wrap; gap: 4px; padding: 5px;
+    background: #f4f5f7; border: 1px dashed #b3bac5; border-radius: 4px; }
+.pivot-drop-t.empty::after { content: attr(data-hint); color: #b3bac5; font-size: 11px; font-style: italic; }
+.pivot-controls-t { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+.pivot-controls-t select { flex: 1; padding: 4px 7px; border: 1px solid #dfe1e6; border-radius: 4px; font-size: 12px; }
+.pivot-result-t { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 14px; overflow: hidden; }
+.pivot-result-bar-t { display: flex; gap: 7px; align-items: center; margin-bottom: 8px; flex-shrink: 0; }
+.pivot-table-wrap-t { flex: 1; overflow: auto; border: 1px solid #dfe1e6; border-radius: 4px; }
+.pivot-tbl { border-collapse: collapse; font-size: 12px; width: 100%; }
+.pivot-tbl th { background: #f4f5f7; padding: 4px 9px; text-align: left; border: 1px solid #dfe1e6; white-space: nowrap; position: sticky; top: 0; z-index: 1; }
+.pivot-tbl td { padding: 3px 9px; border: 1px solid #dfe1e6; white-space: nowrap; }
+.pivot-tbl tr:nth-child(even) td { background: #fafbfc; }
+.pivot-chart-wrap-t { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 240px; position: relative; }
+#pivotCanvasT { max-height: 400px; }
+
+/* WS dot */
+.ws-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #a5adba; margin-right: 3px; vertical-align: middle; }
+.ws-dot.connected    { background: #57d9a3; }
+.ws-dot.connecting   { background: #ffab00; }
+.ws-dot.disconnected { background: #de350b; }
 
 /* Badges */
 .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
@@ -135,6 +224,27 @@ button.sm { padding: 4px 10px; font-size: 12px; }
 .m-put { background: #fff7e0; color: #974900; }
 .m-delete { background: #ffebe6; color: #de350b; }
 .m-other { background: #f4f5f7; color: #5e6c84; }
+
+/* Panel count badges */
+.panel-badge { background: #0052cc; color: #fff; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 8px; min-width: 18px; text-align: center; display: none; }
+.panel-badge.visible { display: inline-block; }
+
+/* RP cards (dedicated class separate from alias-card) */
+.rp-card { border: 1px solid #dfe1e6; border-radius: 5px; margin-bottom: 8px; overflow: hidden; }
+.rp-header { display: flex; align-items: center; gap: 8px; padding: 7px 12px; background: #f4f5f7; border-bottom: 1px solid #dfe1e6; }
+.rp-title { font-size: 12px; font-weight: 700; color: #172b4d; flex: 1; }
+.rp-body { padding: 10px 12px; }
+
+/* Edited JSON preview indicator */
+#json-preview.edited { box-shadow: inset 3px 0 0 #f0a05a; }
+.preview-edited-note { font-size: 11px; color: #f0a05a; display: none; padding: 4px 12px; background: #1e2a3a; border-top: 1px solid #2d3f52; }
+.preview-edited-note.visible { display: block; }
+
+/* Inline template-save form */
+.template-save-form { display: none; padding: 8px 12px; background: #1a2535; border-top: 1px solid #2d3f52; gap: 6px; align-items: center; }
+.template-save-form.visible { display: flex; }
+.template-save-form input { flex: 1; padding: 4px 8px; font-size: 12px; border: 1px solid #3d4f62; border-radius: 3px; background: #2d3f52; color: #c0d0e0; outline: none; font-family: Consolas, monospace; }
+.template-save-form input:focus { border-color: #4c9aff; }
 </style>
 </head>
 <body>
@@ -147,6 +257,13 @@ button.sm { padding: 4px 10px; font-size: 12px; }
     <option value="">— select —</option>
   </select>
   <span class="status" id="op-loader-status" style="font-size:12px"></span>
+  <span style="color:#dfe1e6">|</span>
+  <button class="secondary sm" id="reload-ops-btn" onclick="reloadOps()" title="Rescan classpath and DATADIR to reload all operations">↺ Reload Ops</button>
+  <span class="status" id="reload-ops-status" style="font-size:12px"></span>
+  <span style="color:#dfe1e6">|</span>
+  <button class="secondary sm" onclick="resetForm()" title="Clear all fields and start a new operation">New Operation</button>
+  <button class="secondary sm" onclick="toggleAllPanels(false)" title="Collapse all panels">Collapse All</button>
+  <button class="secondary sm" onclick="toggleAllPanels(true)" title="Expand all panels">Expand All</button>
 </div>
 <h1>Operation Tester</h1>
 
@@ -187,16 +304,27 @@ button.sm { padding: 4px 10px; font-size: 12px; }
       </div>
       <span class="add-row-btn" onclick="addKvRow('props-attrs-wrap','props-attrs',genJson)">+ Add attribute</span>
     </div>
-    <div class="form-row">
-      <div class="fg">
-        <label>Properties File Path</label>
-        <input id="f-props-file" type="text" placeholder="C:/config/op.properties" oninput="genJson()">
-      </div>
-      <div class="fg">
-        <label>Properties HTTP URL</label>
-        <input id="f-props-http-url" type="text" placeholder="http://config.example.com/props" oninput="genJson()">
+    <div class="act-section" style="margin-top:8px">File Sources</div>
+    <div id="props-file-list"></div>
+    <span class="add-row-btn" onclick="addPropsFile()">+ Add file source</span>
+    <div class="act-section" style="margin-top:10px">HTTP Sources</div>
+    <div id="props-http-list"></div>
+    <span class="add-row-btn" onclick="addPropsHttp()">+ Add HTTP source</span>
+  </div>
+</div>
+
+<!-- Operation-level Mandatory Properties -->
+<div class="panel" id="p-mandprops">
+  <div class="panel-header collapsed" onclick="togglePanel('p-mandprops')">
+    <h2>Mandatory Properties</h2><span class="panel-badge" id="badge-mandprops"></span><span class="toggle">▾</span>
+  </div>
+  <div class="panel-body hidden">
+    <div class="kv-wrap" id="act-mp-wrap-op">
+      <div class="kv-row kv-head" style="grid-template-columns:2fr 80px 2fr 32px">
+        <span>Property</span><span>Data Type</span><span>Default Value</span><span></span>
       </div>
     </div>
+    <span class="add-row-btn" onclick="addMandPropRow('op',null,function(){genJson();updateBadge('badge-mandprops','act-mp-wrap-op','.kv-row:not(.kv-head)')})">+ Add property</span>
   </div>
 </div>
 
@@ -218,6 +346,7 @@ button.sm { padding: 4px 10px; font-size: 12px; }
           <option value="CACHE">CACHE</option>
           <option value="TEMPLATE">TEMPLATE</option>
           <option value="SPECIFIC">SPECIFIC</option>
+          <option value="DB">DB</option>
         </select>
       </div>
     </div>
@@ -236,6 +365,41 @@ button.sm { padding: 4px 10px; font-size: 12px; }
         <div class="fg wide">
           <label>JSONata Transform</label>
           <input id="f-is-jsonata" type="text" placeholder="data.items.{ 'id': id }" oninput="genJson()">
+        </div>
+      </div>
+    </div>
+    <div id="input-template" style="display:none">
+      <div class="form-row">
+        <div class="fg">
+          <label>Template Name</label>
+          <select id="f-is-templateName" onchange="genJson()" style="flex:1">
+            <option value="">— select a template —</option>
+          </select>
+          <span class="hint">Reusable input source from inputSourceTemplate directory</span>
+        </div>
+      </div>
+    </div>
+    <div id="input-db" style="display:none">
+      <div class="form-row">
+        <div class="fg wide">
+          <label>JDBC URL</label>
+          <input id="f-is-db-url" type="text" placeholder="jdbc:oracle:thin:@host:1521/service" oninput="genJson()">
+        </div>
+        <div class="fg">
+          <label>Username</label>
+          <input id="f-is-db-user" type="text" placeholder="${DB_USER}" oninput="genJson()">
+        </div>
+        <div class="fg">
+          <label>Password</label>
+          <input id="f-is-db-pass" type="password" placeholder="${DB_PASS}" oninput="genJson()">
+        </div>
+        <div class="fg wide">
+          <label>SQL</label>
+          <textarea id="f-is-db-sql" rows="2" placeholder="SELECT id, name FROM accounts WHERE active = 1" oninput="genJson()"></textarea>
+        </div>
+        <div class="fg">
+          <label>Timeout (ms)</label>
+          <input id="f-is-db-timeout" type="number" placeholder="3000" oninput="genJson()">
         </div>
       </div>
     </div>
@@ -263,16 +427,16 @@ button.sm { padding: 4px 10px; font-size: 12px; }
     </div>
     <div id="auth-basic" style="display:none">
       <div class="form-row">
-        <div class="fg"><label>Username</label><input id="f-basic-user" type="text" oninput="genJson()"></div>
-        <div class="fg"><label>Password</label><input id="f-basic-pass" type="password" oninput="genJson()"></div>
+        <div class="fg"><label>Username</label><input id="f-basic-user" type="text" oninput="genJson()"><span class="hint">Supports $variable (replaced from dataRow)</span></div>
+        <div class="fg"><label>Password</label><input id="f-basic-pass" type="text" oninput="genJson()"><span class="hint">Supports $variable (replaced from dataRow)</span></div>
       </div>
     </div>
     <div id="auth-jwt" style="display:none">
       <div class="form-row">
         <div class="fg wide"><label>Token URL</label><input id="f-jwt-url" type="text" placeholder="http://auth.example.com/token" oninput="genJson()"></div>
         <div class="fg"><label>Application Name</label><input id="f-jwt-app" type="text" oninput="genJson()"></div>
-        <div class="fg"><label>Username</label><input id="f-jwt-user" type="text" oninput="genJson()"></div>
-        <div class="fg"><label>Password</label><input id="f-jwt-pass" type="password" oninput="genJson()"></div>
+        <div class="fg"><label>Username</label><input id="f-jwt-user" type="text" oninput="genJson()"><span class="hint">Supports $variable</span></div>
+        <div class="fg"><label>Password</label><input id="f-jwt-pass" type="text" oninput="genJson()"><span class="hint">Supports $variable</span></div>
       </div>
     </div>
     <div id="auth-kerberos" style="display:none">
@@ -285,14 +449,14 @@ button.sm { padding: 4px 10px; font-size: 12px; }
     <div id="auth-digest" style="display:none">
       <div class="form-row">
         <div class="fg"><label>Digest URL</label><input id="f-dig-url" type="text" oninput="genJson()"></div>
-        <div class="fg"><label>Username</label><input id="f-dig-user" type="text" oninput="genJson()"></div>
-        <div class="fg"><label>Password</label><input id="f-dig-pass" type="password" oninput="genJson()"></div>
+        <div class="fg"><label>Username</label><input id="f-dig-user" type="text" oninput="genJson()"><span class="hint">Supports $variable</span></div>
+        <div class="fg"><label>Password</label><input id="f-dig-pass" type="text" oninput="genJson()"><span class="hint">Supports $variable</span></div>
       </div>
     </div>
     <div id="auth-ntlm" style="display:none">
       <div class="form-row">
-        <div class="fg"><label>Username</label><input id="f-ntlm-user" type="text" oninput="genJson()"></div>
-        <div class="fg"><label>Password</label><input id="f-ntlm-pass" type="password" oninput="genJson()"></div>
+        <div class="fg"><label>Username</label><input id="f-ntlm-user" type="text" oninput="genJson()"><span class="hint">Supports $variable</span></div>
+        <div class="fg"><label>Password</label><input id="f-ntlm-pass" type="text" oninput="genJson()"><span class="hint">Supports $variable</span></div>
       </div>
     </div>
   </div>
@@ -301,7 +465,7 @@ button.sm { padding: 4px 10px; font-size: 12px; }
 <!-- Initialization -->
 <div class="panel" id="p-init">
   <div class="panel-header collapsed" onclick="togglePanel('p-init')">
-    <h2>Initialization</h2><span class="toggle">▾</span>
+    <h2>Initialization</h2><span class="panel-badge" id="badge-init"></span><span class="toggle">▾</span>
   </div>
   <div class="panel-body hidden">
     <div id="init-list"></div>
@@ -367,7 +531,7 @@ button.sm { padding: 4px 10px; font-size: 12px; }
 <!-- Activities -->
 <div class="panel" id="p-activities">
   <div class="panel-header" onclick="togglePanel('p-activities')">
-    <h2>Activities</h2><span class="toggle">▾</span>
+    <h2>Activities</h2><span class="panel-badge" id="badge-activities"></span><span class="toggle">▾</span>
   </div>
   <div class="panel-body">
     <div id="activities-list"></div>
@@ -378,7 +542,7 @@ button.sm { padding: 4px 10px; font-size: 12px; }
 <!-- Aliases -->
 <div class="panel" id="p-aliases">
   <div class="panel-header collapsed" onclick="togglePanel('p-aliases')">
-    <h2>Aliases</h2><span class="toggle">▾</span>
+    <h2>Aliases</h2><span class="panel-badge" id="badge-aliases"></span><span class="toggle">▾</span>
   </div>
   <div class="panel-body hidden">
     <div id="aliases-list"></div>
@@ -389,7 +553,7 @@ button.sm { padding: 4px 10px; font-size: 12px; }
 <!-- Response Processors -->
 <div class="panel" id="p-rp">
   <div class="panel-header collapsed" onclick="togglePanel('p-rp')">
-    <h2>Response Processors</h2><span class="toggle">▾</span>
+    <h2>Response Processors</h2><span class="panel-badge" id="badge-rp"></span><span class="toggle">▾</span>
   </div>
   <div class="panel-body hidden">
     <div id="rp-list"></div>
@@ -407,10 +571,11 @@ button.sm { padding: 4px 10px; font-size: 12px; }
       <div class="fg">
         <label>Input Source</label>
         <select id="t-inputSource" onchange="showTestFields()">
+          <option value="SPECIFIC">SPECIFIC (no input)</option>
           <option value="REQUEST">REQUEST (IDs)</option>
           <option value="FILE">FILE</option>
-          <option value="SPECIFIC">SPECIFIC (no input)</option>
           <option value="HTTPCONFIG">HTTPCONFIG</option>
+          <option value="DB">DB</option>
         </select>
       </div>
       <div class="fg" id="t-alias-fg">
@@ -427,9 +592,23 @@ button.sm { padding: 4px 10px; font-size: 12px; }
           <option value="-1">-1 — dry run</option>
         </select>
       </div>
+      <div class="fg">
+        <label>Operation Type</label>
+        <select id="t-operationType">
+          <option value="">ARRAY (default)</option>
+          <option value="SINGLE">SINGLE (first row only)</option>
+        </select>
+      </div>
       <div class="fg" id="t-file-fg" style="display:none">
         <label>Input File Path</label>
         <input id="t-inputFilePath" type="text" placeholder="/data/ids.csv">
+      </div>
+      <div class="fg">
+        <label>Request Mode &nbsp;<span id="wsDot" class="ws-dot"></span></label>
+        <select id="t-requestMode">
+          <option value="WS" selected>WS (WebSocket)</option>
+          <option value="REST">REST (HTTP)</option>
+        </select>
       </div>
       <div class="fg" id="t-count-fg">
         <label>Input Count</label>
@@ -443,6 +622,14 @@ button.sm { padding: 4px 10px; font-size: 12px; }
         <label>Timeout (ms)</label>
         <input id="t-timeoutMs" type="number" placeholder="default" min="100">
       </div>
+      <div class="fg">
+        <label>Response Processor</label>
+        <select id="t-responseProcessor" style="display:none">
+          <option value="">— none —</option>
+        </select>
+        <input id="t-responseProcessor-text" type="text" placeholder="e.g. ROW0RESPONSEBODY">
+        <span class="hint" id="t-rp-hint">Named processor from responseprocessors.json</span>
+      </div>
     </div>
     <div class="fg wide" id="t-ids-fg">
       <label>IDs (one per line or comma-separated)</label>
@@ -452,14 +639,86 @@ button.sm { padding: 4px 10px; font-size: 12px; }
       <label>HTTP Input URL</label>
       <input id="t-inputHttpUrl" type="text" placeholder="http://api.example.com/ids">
     </div>
+    <div class="fg wide" style="margin-top:8px">
+      <label>Extra Properties <span style="font-weight:400;text-transform:none;font-size:10px;color:#a5adba">(key=value per line — merged into the request as top-level properties)</span></label>
+      <textarea id="t-extraProps" rows="3" placeholder="username=alice&#10;environment=prod&#10;customFlag=true" style="font-family:Consolas,monospace;font-size:12px"></textarea>
+    </div>
     <div class="toolbar" style="padding:10px 0 0; border:none; background:none;">
       <button class="primary" id="t-run-btn" onclick="runTest()">Run Test</button>
+      <span style="font-size:0.78em; color:#888; margin-left:8px;">Ctrl+Enter</span>
       <div class="status" id="t-status"></div>
     </div>
     <div id="results-wrap">
-      <div class="stats-row" id="t-stats"></div>
-      <div id="grid"></div>
+      <div class="stats-row" id="t-stats" style="margin-bottom:8px"></div>
+      <div class="grid-toolbar">
+        <button onclick="tGrid && tGrid.autoSizeAllColumns()">Expand Cols</button>
+        <button onclick="tGrid && tGrid.sizeColumnsToFit()">Fit Cols</button>
+        <button onclick="exportCsvT()">Export CSV</button>
+        <button id="toggleChartsBtn" onclick="toggleChartsT()">&#9685; Charts</button>
+        <button onclick="openPivotT()">&#8644; Pivot</button>
+        <button onclick="clearGridT()">Clear</button>
+      </div>
+      <div id="colChooserBar"><span class="chooser-lbl">Columns:</span></div>
+      <div class="row-count-bar" id="rowCountBar"></div>
+      <div id="grid" class="ag-theme-alpine"></div>
     </div>
+
+<!-- Chart modal -->
+<div id="chartModalT" class="chart-modal-overlay-t" onclick="if(event.target===this)closeChartT()">
+  <div class="chart-modal-box-t">
+    <div class="chart-modal-header-t">
+      <h3 id="chartTitleT"></h3>
+      <button onclick="closeChartT()">&#10005;</button>
+    </div>
+    <canvas id="pieCanvasT"></canvas>
+  </div>
+</div>
+
+<!-- Pivot modal -->
+<div id="pivotModalT" class="pivot-overlay-t" onclick="if(event.target===this)closePivotT()">
+  <div class="pivot-box-t">
+    <div class="pivot-header-t">
+      <h3>&#8644; Pivot &amp; Chart</h3>
+      <button onclick="closePivotT()">&#10005;</button>
+    </div>
+    <div class="pivot-body-t">
+      <div class="pivot-config-t">
+        <div>
+          <div class="pivot-section-lbl">Available Columns <span style="font-weight:400;text-transform:none;font-size:10px;color:#b3bac5">(click to add)</span></div>
+          <div id="pivotAvailT" class="pivot-avail-t"></div>
+        </div>
+        <div><div class="pivot-section-lbl">Row Groups</div><div id="pivotRowGrpsT" class="pivot-drop-t" data-hint="Add row group columns…"></div></div>
+        <div><div class="pivot-section-lbl">Pivot Columns</div><div id="pivotColsZoneT" class="pivot-drop-t" data-hint="Add pivot columns (optional)…"></div></div>
+        <div><div class="pivot-section-lbl">Values</div><div id="pivotValsT" class="pivot-drop-t" data-hint="Add value columns + aggregation…"></div></div>
+        <div>
+          <div class="pivot-section-lbl">Display</div>
+          <div class="pivot-controls-t">
+            <select id="pivotDisplayT">
+              <option value="table">Table</option>
+              <option value="bar">Bar Chart</option>
+              <option value="line">Line Chart</option>
+              <option value="horizontalBar">Horizontal Bar</option>
+              <option value="pie">Pie Chart</option>
+            </select>
+            <button onclick="applyPivotT()" style="padding:4px 10px;font-size:12px">&#9654; Apply</button>
+            <button onclick="resetPivotT()" style="padding:4px 10px;font-size:12px">Reset</button>
+          </div>
+        </div>
+      </div>
+      <div class="pivot-result-t">
+        <div class="pivot-result-bar-t">
+          <button id="pivotExportBtnT" onclick="exportPivotCsvT()" style="display:none;padding:4px 10px;font-size:12px">Export CSV</button>
+          <span id="pivotResultInfoT" style="font-size:12px;color:#5e6c84"></span>
+        </div>
+        <div id="pivotTableWrapT" class="pivot-table-wrap-t" style="display:none"></div>
+        <div id="pivotChartWrapT" class="pivot-chart-wrap-t" style="display:none"><canvas id="pivotCanvasT"></canvas></div>
+        <div id="pivotEmptyT" style="flex:1;display:flex;align-items:center;justify-content:center;color:#b3bac5;font-size:12px">
+          Configure row groups &amp; values to display.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
   </div>
 </div>
 
@@ -474,7 +733,8 @@ button.sm { padding: 4px 10px; font-size: 12px; }
         <div class="status" id="import-status" style="font-size:12px"></div>
       </div>
     </div>
-    <textarea id="json-preview" spellcheck="false" oninput="previewEdited=true"></textarea>
+    <textarea id="json-preview" spellcheck="false" oninput="onPreviewEdit()"></textarea>
+    <div class="preview-edited-note" id="preview-edited-note">Manually edited — form fields won't overwrite this until you click "Import into Form"</div>
     <div class="preview-toolbar">
       <button onclick="copyJson()">Copy</button>
       <button onclick="downloadJson()">Download</button>
@@ -494,21 +754,59 @@ button.sm { padding: 4px 10px; font-size: 12px; }
         </div>
       </div>
       <div class="toolbar" style="padding:0;border:none;background:none">
-        <button class="success" id="save-btn" onclick="saveOperation()">Save to Operations Directory</button>
+        <button class="success" id="save-btn" onclick="saveOperation()">Save into Operations Directory</button>
         <div class="status" id="save-status"></div>
       </div>
     </div>
   </div>
+  <div class="panel" id="request-json-panel" style="display:none; overflow:hidden">
+    <div class="panel-header" style="cursor:default">
+      <h2>Request JSON</h2>
+      <div style="display:flex;gap:6px;align-items:center">
+        <div class="status" id="req-json-status" style="font-size:12px"></div>
+        <button onclick="toggleTemplateSaveForm()" style="padding:3px 10px;font-size:12px;background:#2d3f52;color:#c0d0e0;border:1px solid #3d4f62;border-radius:3px;cursor:pointer">Save as Template</button>
+        <button onclick="copyRequestJson()" style="padding:3px 10px;font-size:12px;background:#2d3f52;color:#c0d0e0;border:1px solid #3d4f62;border-radius:3px;cursor:pointer">Copy</button>
+      </div>
+    </div>
+    <textarea id="request-json" spellcheck="false" readonly
+      style="font-family:Consolas,'Cascadia Code',monospace;font-size:12px;background:#1e2a3a;color:#e0e8f0;border:none;border-radius:0;padding:12px;width:100%;resize:none;outline:none;line-height:1.5;height:220px"></textarea>
+    <div class="template-save-form" id="template-save-form">
+      <input id="template-save-name" type="text" placeholder="Template name (no .json)">
+      <button onclick="saveRequestAsTemplate()" style="padding:4px 12px;font-size:12px;background:#2d4f3a;color:#90c8a0;border:1px solid #3a6e4a;border-radius:3px;cursor:pointer">Save</button>
+      <button onclick="toggleTemplateSaveForm()" style="padding:4px 12px;font-size:12px;background:#2d3f52;color:#c0d0e0;border:1px solid #3d4f62;border-radius:3px;cursor:pointer">Cancel</button>
+    </div>
+  </div>
   <div class="panel" id="response-json-panel" style="display:none; overflow:hidden">
     <div class="panel-header" style="cursor:default">
-      <h2>Response JSON</h2>
+      <h2>Response Data</h2>
       <div style="display:flex;gap:6px;align-items:center">
+        <label style="display:flex;align-items:center;gap:4px;font-size:12px;font-weight:400;color:#c0d0e0;cursor:pointer;user-select:none">
+          <input type="checkbox" id="hideResponseJson" onchange="toggleResponseJsonVisibility()" style="cursor:pointer">
+          Hide JSON
+        </label>
         <div class="status" id="resp-json-status" style="font-size:12px"></div>
+        <button onclick="validateResponseJson()" style="padding:3px 10px;font-size:12px;background:#2d3f52;color:#c0d0e0;border:1px solid #3d4f62;border-radius:3px;cursor:pointer">Validate JSON</button>
         <button onclick="copyResponseJson()" style="padding:3px 10px;font-size:12px;background:#2d3f52;color:#c0d0e0;border:1px solid #3d4f62;border-radius:3px;cursor:pointer">Copy</button>
       </div>
     </div>
+    <div id="response-json-body">
     <textarea id="response-json" spellcheck="false" readonly
       style="font-family:Consolas,'Cascadia Code',monospace;font-size:12px;background:#1e2a3a;color:#e0e8f0;border:none;border-radius:0;padding:12px;width:100%;resize:none;outline:none;line-height:1.5;height:420px"></textarea>
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:#1a2535;border-top:1px solid #2d3f52">
+      <label style="font-size:12px;color:#8fa8c0;white-space:nowrap">Content Type</label>
+      <select id="resp-content-type" onchange="renderFormattedResponse()" style="font-size:12px;background:#2d3f52;color:#c0d0e0;border:1px solid #3d4f62;border-radius:3px;padding:2px 6px">
+        <option value="">— select —</option>
+        <option value="text">Text</option>
+        <option value="html">HTML</option>
+        <option value="xml">XML</option>
+        <option value="json">JSON</option>
+      </select>
+    </div>
+    <div id="resp-formatted-panel" style="display:none;border-top:1px solid #2d3f52">
+      <div style="padding:6px 12px;background:#162030;font-size:11px;color:#5a7a9a;font-style:italic" id="resp-formatted-label"></div>
+      <div id="resp-formatted-content" style="overflow:auto;max-height:420px;background:#f5f5f5"></div>
+    </div>
+    </div><!-- end response-json-body -->
   </div>
 
 </div><!-- end preview-col -->
@@ -520,9 +818,17 @@ let initCount = 0;
 let activityCount = 0;
 let aliasCount = 0;
 let rpCount = 0;
+let propsFileCount = 0;
+let propsHttpCount = 0;
 let kvCounters = {};  // counters per kv-wrap id
 let previewEdited = false;
 let grid = null;
+let tGrid = null;
+let _tGridData = [];
+let _tGridCols = [];
+let _tChartInstances = [];
+let _tChartsVisible = false;
+let _tPivotChart = null;
 
 // ─── Panel toggle ─────────────────────────────────────────────────────────────
 function togglePanel(id) {
@@ -586,10 +892,68 @@ function setKvMap(wrapId, prefix, map) {
   });
 }
 
+// ─── Properties file / http arrays ────────────────────────────────────────────
+function addPropsFile(data) {
+  propsFileCount++;
+  const id = propsFileCount;
+  const card = document.createElement('div');
+  card.className = 'activity-card';
+  card.id = `props-file-card-${id}`;
+  card.innerHTML = `
+    <div class="act-body" style="display:flex;align-items:center;gap:8px;padding:8px 12px">
+      <div class="fg wide" style="margin:0;flex:1">
+        <label>Path</label>
+        <input id="props-file-path-${id}" type="text" placeholder="C:/config/op.properties or \${DATADIR}/config.properties" value="${esc(data?.path||'')}" oninput="genJson()">
+      </div>
+      <button class="danger sm" style="margin-top:16px" onclick="removePropsFile(${id})">✕</button>
+    </div>`;
+  document.getElementById('props-file-list').appendChild(card);
+  genJson();
+}
+function removePropsFile(id) { document.getElementById(`props-file-card-${id}`)?.remove(); genJson(); }
+
+function addPropsHttp(data) {
+  propsHttpCount++;
+  const id = propsHttpCount;
+  const method = data?.method || 'GET';
+  const card = document.createElement('div');
+  card.className = 'activity-card';
+  card.id = `props-http-card-${id}`;
+  card.innerHTML = `
+    <div class="act-body" style="padding:8px 12px">
+      <div class="form-row" style="margin-bottom:0">
+        <div class="fg wide"><label>URL</label>
+          <input id="props-http-url-${id}" type="text" placeholder="http://config.example.com/props" value="${esc(data?.url||'')}" oninput="genJson()"></div>
+        <div class="fg"><label>Method</label>
+          <select id="props-http-method-${id}" onchange="genJson()">
+            <option value="GET" ${method==='GET'?'selected':''}>GET</option>
+            <option value="POST" ${method==='POST'?'selected':''}>POST</option>
+          </select></div>
+        <div class="fg"><label>Timeout (ms)</label>
+          <input id="props-http-timeout-${id}" type="number" placeholder="5000" value="${data?.timeoutMs||''}" oninput="genJson()"></div>
+        <div style="display:flex;align-items:flex-end;padding-bottom:2px">
+          <button class="danger sm" onclick="removePropsHttp(${id})">✕</button>
+        </div>
+      </div>
+    </div>`;
+  document.getElementById('props-http-list').appendChild(card);
+  genJson();
+}
+function removePropsHttp(id) { document.getElementById(`props-http-card-${id}`)?.remove(); genJson(); }
+
 // ─── Conditional visibility ───────────────────────────────────────────────────
 function showInputFields() {
-  const v = document.getElementById('f-inputSource').value;
-  document.getElementById('input-httpconfig').style.display = v === 'HTTPCONFIG' ? '' : 'none';
+  const val = document.getElementById('f-inputSource').value;
+  document.getElementById('input-httpconfig').style.display = val === 'HTTPCONFIG' ? '' : 'none';
+  document.getElementById('input-template').style.display = val === 'TEMPLATE' ? '' : 'none';
+  document.getElementById('input-db').style.display = val === 'DB' ? '' : 'none';
+  if (val === 'TEMPLATE') loadInputSourceTemplateNames();
+  // Sync test input source to match the operation's configured source
+  const testSel = document.getElementById('t-inputSource');
+  if (val && testSel) {
+    const matchingOpt = [...testSel.options].find(o => o.value === val);
+    if (matchingOpt) { testSel.value = val; showTestFields(); }
+  }
 }
 
 function showAuthFields() {
@@ -600,10 +964,11 @@ function showAuthFields() {
 }
 
 function showTestFields() {
-  const v = document.getElementById('t-inputSource').value;
-  document.getElementById('t-ids-fg').style.display = v === 'REQUEST' ? '' : 'none';
-  document.getElementById('t-file-fg').style.display = v === 'FILE' ? '' : 'none';
-  document.getElementById('t-http-fg').style.display = v === 'HTTPCONFIG' ? '' : 'none';
+  const val = document.getElementById('t-inputSource').value;
+  document.getElementById('t-ids-fg').style.display = val === 'REQUEST' ? '' : 'none';
+  document.getElementById('t-file-fg').style.display = val === 'FILE' ? '' : 'none';
+  document.getElementById('t-http-fg').style.display = val === 'HTTPCONFIG' ? '' : 'none';
+  document.getElementById('t-count-fg').style.display = val === 'SPECIFIC' ? 'none' : '';
 }
 
 // ─── Initialization ───────────────────────────────────────────────────────────
@@ -620,44 +985,65 @@ function addInitItem(data) {
       <span class="act-title" id="init-title-${id}">${esc(data?.name || 'Init ' + id)}</span>
       <select id="init-type-${id}" style="font-size:12px;padding:2px 6px;border:1px solid #ccc;border-radius:3px" onchange="renderInitItem(${id});genJson()">
         <option value="SSH" ${type==='SSH'?'selected':''}>SSH</option>
+        <option value="DB" ${type==='DB'?'selected':''}>DB</option>
       </select>
       <button class="danger sm" onclick="removeInitItem(${id})">✕</button>
     </div>
     <div class="act-body" id="init-body-${id}"></div>`;
   container.appendChild(card);
   renderInitItem(id, data);
+  updateBadge('badge-init', 'init-list', '.activity-card');
   genJson();
 }
 
 function renderInitItem(id, data) {
   const body = document.getElementById(`init-body-${id}`);
-  const ssh = data?.ssh || {};
-  const onErr = data?.onError || {};
-  body.innerHTML = `
-    <div class="form-row">
-      <div class="fg"><label>Name</label>
-        <input id="init-name-${id}" type="text" placeholder="sshconnection1" value="${esc(data?.name||'')}"
-          oninput="document.getElementById('init-title-${id}').textContent=this.value||'Init ${id}';genJson()"></div>
-      <div class="fg"><label>Host</label>
-        <input id="init-ssh-host-${id}" type="text" placeholder="\${SSHHOST}" value="${esc(ssh.host||'')}" oninput="genJson()"></div>
-      <div class="fg"><label>Port</label>
-        <input id="init-ssh-port-${id}" type="text" placeholder="22 or \${SSHPORT}" value="${esc(String(ssh.port??''))}" oninput="genJson()"></div>
-      <div class="fg"><label>Username</label>
-        <input id="init-ssh-user-${id}" type="text" placeholder="\${SSHUSERNAME}" value="${esc(ssh.username||'')}" oninput="genJson()"></div>
-      <div class="fg wide"><label>Private Key Path</label>
-        <input id="init-ssh-key-${id}" type="text" placeholder="\${SSHPRIVATEKEYPATH}" value="${esc(ssh.privateKey||'')}" oninput="genJson()"></div>
-    </div>
-    <div class="act-section">On Error (optional)</div>
-    <div class="form-row">
-      <div class="fg"><label>Status</label>
-        <input id="init-err-status-${id}" type="text" placeholder="SSHFAILURE" value="${esc(onErr.status||'')}" oninput="genJson()"></div>
-      <div class="fg"><label>Message</label>
-        <input id="init-err-msg-${id}" type="text" placeholder="\$ssh.getErrorMessage()" value="${esc(onErr.message||'')}" oninput="genJson()"></div>
-    </div>`;
+  const type = document.getElementById(`init-type-${id}`)?.value || 'SSH';
+  if (type === 'DB') {
+    const db = data?.db || {};
+    body.innerHTML = `
+      <div class="form-row">
+        <div class="fg"><label>Name</label>
+          <input id="init-name-${id}" type="text" placeholder="db-connection-1" value="${esc(data?.name||'')}"
+            oninput="document.getElementById('init-title-${id}').textContent=this.value||'Init ${id}';genJson()"></div>
+        <div class="fg wide"><label>JDBC URL</label>
+          <input id="init-db-url-${id}" type="text" placeholder="\${DB_JDBC_URL}" value="${esc(db.jdbcUrl||'')}" oninput="genJson()">
+          <span class="hint">Supports \${PROPERTY} substitution from operation properties</span></div>
+        <div class="fg"><label>Username</label>
+          <input id="init-db-user-${id}" type="text" placeholder="\${DB_USER}" value="${esc(db.userName||'')}" oninput="genJson()"></div>
+        <div class="fg"><label>Password</label>
+          <input id="init-db-pass-${id}" type="password" placeholder="\${DB_PASS}" value="${esc(db.password||'')}" oninput="genJson()"></div>
+      </div>`;
+  } else {
+    const ssh = data?.ssh || {};
+    const onErr = data?.onError || {};
+    body.innerHTML = `
+      <div class="form-row">
+        <div class="fg"><label>Name</label>
+          <input id="init-name-${id}" type="text" placeholder="sshconnection1" value="${esc(data?.name||'')}"
+            oninput="document.getElementById('init-title-${id}').textContent=this.value||'Init ${id}';genJson()"></div>
+        <div class="fg"><label>Host</label>
+          <input id="init-ssh-host-${id}" type="text" placeholder="\${SSHHOST}" value="${esc(ssh.host||'')}" oninput="genJson()"></div>
+        <div class="fg"><label>Port</label>
+          <input id="init-ssh-port-${id}" type="text" placeholder="22 or \${SSHPORT}" value="${esc(String(ssh.port??''))}" oninput="genJson()"></div>
+        <div class="fg"><label>Username</label>
+          <input id="init-ssh-user-${id}" type="text" placeholder="\${SSHUSERNAME}" value="${esc(ssh.username||'')}" oninput="genJson()"></div>
+        <div class="fg wide"><label>Private Key Path</label>
+          <input id="init-ssh-key-${id}" type="text" placeholder="\${SSHPRIVATEKEYPATH}" value="${esc(ssh.privateKey||'')}" oninput="genJson()"></div>
+      </div>
+      <div class="act-section">On Error (optional)</div>
+      <div class="form-row">
+        <div class="fg"><label>Status</label>
+          <input id="init-err-status-${id}" type="text" placeholder="SSHFAILURE" value="${esc(onErr.status||'')}" oninput="genJson()"></div>
+        <div class="fg"><label>Message</label>
+          <input id="init-err-msg-${id}" type="text" placeholder="\$ssh.getErrorMessage()" value="${esc(onErr.message||'')}" oninput="genJson()"></div>
+      </div>`;
+  }
 }
 
 function removeInitItem(id) {
   document.getElementById(`init-${id}`)?.remove();
+  updateBadge('badge-init', 'init-list', '.activity-card');
   genJson();
 }
 
@@ -670,20 +1056,26 @@ function addActivity(data) {
   card.className = 'activity-card';
   card.id = `act-${id}`;
   const type = data?.type || 'HTTP';
-  const method = data?.http?.method || 'GET';
+  const initialTitle = data?.name || `Activity ${id}`;
   card.innerHTML = `
     <div class="act-header">
-      <span class="act-title" id="act-title-${id}">Activity ${id}</span>
+      <span class="act-title" id="act-title-${id}">${esc(initialTitle)}</span>
       <select id="act-type-${id}" style="font-size:12px;padding:2px 6px;border:1px solid #ccc;border-radius:3px" onchange="renderActivity(${id});genJson()">
         <option value="HTTP" ${type==='HTTP'?'selected':''}>HTTP</option>
         <option value="dataextraction" ${type==='dataextraction'?'selected':''}>Data Extraction</option>
         <option value="SSH" ${type==='SSH'?'selected':''}>SSH</option>
+        <option value="validation" ${type==='validation'?'selected':''}>Validation</option>
+        <option value="DATAENRICHER" ${type==='DATAENRICHER'?'selected':''}>Data Enricher</option>
+        <option value="DB" ${type==='DB'?'selected':''}>DB</option>
+        <option value="INITIALIZE" ${type==='INITIALIZE'?'selected':''}>Initialize</option>
       </select>
+      <button class="secondary sm" onclick="duplicateActivity(${id})" title="Duplicate this activity">⧉</button>
       <button class="danger sm" onclick="removeActivity(${id})">✕</button>
     </div>
     <div class="act-body" id="act-body-${id}"></div>`;
   container.appendChild(card);
   renderActivity(id, data);
+  updateBadge('badge-activities', 'activities-list', '.activity-card');
   genJson();
 }
 
@@ -703,7 +1095,8 @@ function renderActivity(id, data) {
             ${['GET','POST','PUT','PATCH','DELETE'].map(m=>`<option value="${m}" ${method===m?'selected':''}>${m}</option>`).join('')}
           </select></div>
         <div class="fg" style="grid-column:1/-1"><label>URL</label>
-          <input id="act-url-${id}" type="text" placeholder="https://api.example.com/items/{id}" value="${esc(d.url||'')}" oninput="genJson()"></div>
+          <input id="act-url-${id}" type="text" placeholder="https://api.example.com/items/{id}" value="${esc(d.url||'')}" oninput="genJson()">
+          <span class="hint">Reference prior activity outputs with $activityName.ATTRIBUTE (e.g. $fetch.RESPONSEBODY, $fetch.RESPONSECODE)</span></div>
         <div class="fg"><label>Thread Count</label>
           <input id="act-threads-${id}" type="number" placeholder="5" value="${d.threadCount||''}" min="1" oninput="genJson()"></div>
         <div class="fg"><label>Timeout (ms)</label>
@@ -713,29 +1106,36 @@ function renderActivity(id, data) {
       </div>
       <div id="act-body-wrap-${id}" style="display:${isPost?'':'none'}">
         <div class="fg wide"><label>Body Template</label>
-          <textarea id="act-body-${id}" rows="3" oninput="genJson()">${esc(d.bodyTemplate||'')}</textarea></div>
+          <textarea id="act-bodyTpl-${id}" rows="3" oninput="genJson()">${esc(d.bodyTemplate||'')}</textarea>
+          <span class="hint">Use $activityName.ATTRIBUTE to inject prior activity outputs</span></div>
       </div>
       <div class="act-section">Headers</div>
       <div class="kv-wrap" id="act-hdr-wrap-${id}">
         <div class="kv-row kv-head"><span>Header</span><span>Value</span><span></span></div>
       </div>
       <span class="add-row-btn" onclick="addKvRow('act-hdr-wrap-${id}','act-hdr-${id}',genJson)">+ Add header</span>
+      ${actAuthHtml(id, data?.http?.auth)}
       <div class="act-section">Cache</div>
       <div class="form-row">
         <div class="fg"><label>Cache Name</label>
           <input id="act-cache-name-${id}" type="text" placeholder="my-cache" value="${esc(d.cache?.name||'')}" oninput="genJson()"></div>
         <div class="fg"><label>Cache Key</label>
           <input id="act-cache-key-${id}" type="text" placeholder="item-{id}" value="${esc(d.cache?.key||'')}" oninput="genJson()"></div>
+        <div class="fg"><label>Max Retention Time (mins)</label>
+          <input id="act-cache-maxRetentionTime-${id}" type="text" placeholder="unlimited or $variable" value="${esc(String(d.cache?.maxRetentionTime??''))}" oninput="genJson()">
+          <span class="hint">Number of minutes or $variable from dataRow</span></div>
       </div>
       <div class="act-section">Extract</div>
       <div class="kv-wrap" id="act-http-ext-wrap-${id}">
         <div class="kv-row kv-head"><span>Column Name</span><span>JSONPath</span><span></span></div>
       </div>
       <span class="add-row-btn" onclick="addKvRow('act-http-ext-wrap-${id}','act-http-ext-${id}',genJson)">+ Add extraction</span>
+      ${outputVarHtml(id, data)}
       ${mandPropSection(id)}`;
     if (data?.http?.header) setKvMap(`act-hdr-wrap-${id}`, `act-hdr-${id}`, data.http.header);
     if (data?.http?.extract) setKvMap(`act-http-ext-wrap-${id}`, `act-http-ext-${id}`, data.http.extract);
     if (data?.mandatoryProperties) setMandProps(id, data.mandatoryProperties);
+    showActAuthFields(id);
   } else if (type === 'SSH') {
     const ssh = data?.ssh || {};
     body.innerHTML = `
@@ -756,9 +1156,147 @@ function renderActivity(id, data) {
         <div class="kv-row kv-head"><span>Column Name</span><span>JSONPath</span><span></span></div>
       </div>
       <span class="add-row-btn" onclick="addKvRow('act-ssh-ext-wrap-${id}','act-ssh-ext-${id}',genJson)">+ Add extraction</span>
+      ${outputVarHtml(id, data)}
       ${mandPropSection(id)}`;
     if (ssh.extract) setKvMap(`act-ssh-ext-wrap-${id}`, `act-ssh-ext-${id}`, ssh.extract);
     if (data?.mandatoryProperties) setMandProps(id, data.mandatoryProperties);
+  } else if (type === 'validation') {
+    const val = data?.validation || {};
+    const conditions = val.conditions || {};
+    const condType = conditions.type || 'OR';
+    const condList = conditions.condition || [];
+    kvCounters[`val-cond-${id}`] = 0;
+    body.innerHTML = `
+      <div class="form-row">
+        <div class="fg"><label>Activity Name</label>
+          <input id="act-name-${id}" type="text" placeholder="check-response" value="${esc(data?.name||'')}" oninput="genJson()"></div>
+        <div class="fg wide"><label>Error Message</label>
+          <input id="act-val-errmsg-${id}" type="text" placeholder="Validation failed — execution stopped" value="${esc(val.errorMessage||'')}" oninput="genJson()"></div>
+      </div>
+      <div class="act-section">Conditions — execution stops and error is returned if conditions are met</div>
+      <div class="form-row" style="margin-bottom:8px">
+        <div class="fg">
+          <label>Match Type</label>
+          <select id="act-val-condtype-${id}" onchange="genJson()">
+            <option value="OR" ${condType==='OR'?'selected':''}>OR — stop if ANY condition is met</option>
+            <option value="AND" ${condType==='AND'?'selected':''}>AND — stop if ALL conditions are met</option>
+          </select>
+        </div>
+      </div>
+      <div class="kv-wrap" id="val-cond-wrap-${id}">
+        <div class="kv-row kv-head" style="grid-template-columns:2fr 130px 2fr 32px">
+          <span>Column ($activityName.ATTR)</span><span>Operator</span><span>Value</span><span></span>
+        </div>
+      </div>
+      <span class="add-row-btn" onclick="addValCondRow(${id},null,genJson)">+ Add condition</span>
+      ${outputVarHtml(id, data)}`;
+    condList.forEach(c => addValCondRow(id, c, null));
+  } else if (type === 'DATAENRICHER') {
+    const den = data?.dataEnricher || {};
+    body.innerHTML = `
+      <div class="form-row">
+        <div class="fg"><label>Activity Name</label>
+          <input id="act-name-${id}" type="text" placeholder="enrich-data" value="${esc(data?.name||'')}" oninput="genJson()"></div>
+        <div class="fg wide"><label>Enricher File (classpath)</label>
+          <input id="act-den-file-${id}" type="text" placeholder="classpath:enricher/my_enricher.json" value="${esc(den.file||'')}" oninput="genJson()"></div>
+      </div>
+      ${outputVarHtml(id, data)}
+      ${mandPropSection(id)}`;
+    if (data?.mandatoryProperties) setMandProps(id, data.mandatoryProperties);
+  } else if (type === 'DB') {
+    const db = data?.db || {};
+    body.innerHTML = `
+      <div class="form-row">
+        <div class="fg"><label>Activity Name</label>
+          <input id="act-name-${id}" type="text" placeholder="db-query" value="${esc(data?.name||'')}" oninput="genJson()"></div>
+        <div class="fg"><label>DB Reference</label>
+          <input id="act-db-ref-${id}" type="text" placeholder="db-connection-1" value="${esc(db.reference||'')}" oninput="genJson()">
+          <span class="hint">Name of initialization DB entry to borrow credentials from</span></div>
+        <div class="fg wide"><label>JDBC URL (if not using reference)</label>
+          <input id="act-db-url-${id}" type="text" placeholder="\${DB_JDBC_URL}" value="${esc(db.jdbcUrl||'')}" oninput="genJson()">
+          <span class="hint">Supports \${PROPERTY} substitution from operation properties</span></div>
+        <div class="fg"><label>Username</label>
+          <input id="act-db-user-${id}" type="text" placeholder="\${DB_USER}" value="${esc(db.userName||'')}" oninput="genJson()"></div>
+        <div class="fg"><label>Password</label>
+          <input id="act-db-pass-${id}" type="password" placeholder="\${DB_PASS}" value="${esc(db.password||'')}" oninput="genJson()"></div>
+        <div class="fg wide"><label>SQL</label>
+          <textarea id="act-db-sql-${id}" rows="2" placeholder="SELECT * FROM table WHERE id = \${id}" oninput="genJson()">${esc(db.sql||'')}</textarea>
+          <span class="hint">Use \${column} or \${PROPERTY} for runtime substitution</span></div>
+        <div class="fg"><label>Timeout (ms)</label>
+          <input id="act-db-timeout-${id}" type="number" placeholder="3000" value="${db.timeoutMs||''}" oninput="genJson()"></div>
+        <div class="fg"><label>Thread Count</label>
+          <input id="act-db-threads-${id}" type="number" placeholder="5" value="${db.threadCount||''}" oninput="genJson()"></div>
+      </div>
+      <div class="act-section">Cache</div>
+      <div class="form-row">
+        <div class="fg"><label>Cache Name</label>
+          <input id="act-db-cache-name-${id}" type="text" placeholder="my-cache" value="${esc(db.cache?.name||'')}" oninput="genJson()"></div>
+        <div class="fg"><label>Cache Key</label>
+          <input id="act-db-cache-key-${id}" type="text" placeholder="item-\${id}" value="${esc(db.cache?.key||'')}" oninput="genJson()"></div>
+        <div class="fg"><label>Max Retention (mins)</label>
+          <input id="act-db-cache-maxRetention-${id}" type="text" placeholder="unlimited or $variable" value="${esc(String(db.cache?.maxRetentionTime??''))}" oninput="genJson()">
+          <span class="hint">Number of minutes or $variable from dataRow</span></div>
+      </div>
+      ${outputVarHtml(id, data)}
+      ${mandPropSection(id)}`;
+    if (data?.mandatoryProperties) setMandProps(id, data.mandatoryProperties);
+  } else if (type === 'INITIALIZE') {
+    const subMode = (data?.db?.jdbcUrl) ? 'DB' : 'HTTP';
+    const d = data?.http || {};
+    const db = data?.db || {};
+    const method = d.method || 'GET';
+    const isPost = ['POST','PUT','PATCH'].includes(method);
+    body.innerHTML = `
+      <div class="form-row">
+        <div class="fg"><label>Activity Name</label>
+          <input id="act-name-${id}" type="text" placeholder="init-step" value="${esc(data?.name||'')}" oninput="genJson()"></div>
+        <div class="fg"><label>Mode</label>
+          <select id="act-init-mode-${id}" onchange="onInitModeChange(${id});genJson()">
+            <option value="HTTP" ${subMode==='HTTP'?'selected':''}>HTTP</option>
+            <option value="DB" ${subMode==='DB'?'selected':''}>DB</option>
+          </select></div>
+      </div>
+      <div id="act-init-http-wrap-${id}" style="display:${subMode==='HTTP'?'':'none'}">
+        <div class="form-row">
+          <div class="fg"><label>Method</label>
+            <select id="act-init-method-${id}" onchange="onInitMethodChange(${id});genJson()">
+              ${['GET','POST','PUT','PATCH','DELETE'].map(m=>`<option value="${m}" ${method===m?'selected':''}>${m}</option>`).join('')}
+            </select></div>
+          <div class="fg" style="grid-column:1/-1"><label>URL</label>
+            <input id="act-init-url-${id}" type="text" placeholder="https://api.example.com/init" value="${esc(d.url||'')}" oninput="genJson()">
+            <span class="hint">Runs once before row processing; result is merged into operation properties</span></div>
+          <div class="fg"><label>Timeout (ms)</label>
+            <input id="act-init-timeout-${id}" type="number" placeholder="3000" value="${d.timeoutMs||''}" oninput="genJson()"></div>
+          <div class="fg"><label>Content-Type</label>
+            <input id="act-init-ct-${id}" type="text" placeholder="application/json" value="${esc(d.contentType||'')}" oninput="genJson()"></div>
+        </div>
+        <div id="act-init-body-wrap-${id}" style="display:${isPost?'':'none'}">
+          <div class="fg wide"><label>Body Template</label>
+            <textarea id="act-init-bodyTpl-${id}" rows="3" oninput="genJson()">${esc(d.bodyTemplate||'')}</textarea></div>
+        </div>
+        <div class="act-section">Headers</div>
+        <div class="kv-wrap" id="act-init-hdr-wrap-${id}">
+          <div class="kv-row kv-head"><span>Header</span><span>Value</span><span></span></div>
+        </div>
+        <span class="add-row-btn" onclick="addKvRow('act-init-hdr-wrap-${id}','act-init-hdr-${id}',genJson)">+ Add header</span>
+      </div>
+      <div id="act-init-db-wrap-${id}" style="display:${subMode==='DB'?'':'none'}">
+        <div class="form-row">
+          <div class="fg wide"><label>JDBC URL</label>
+            <input id="act-init-db-url-${id}" type="text" placeholder="\${DB_JDBC_URL}" value="${esc(db.jdbcUrl||'')}" oninput="genJson()">
+            <span class="hint">Supports \${PROPERTY} substitution from operation properties</span></div>
+          <div class="fg"><label>Username</label>
+            <input id="act-init-db-user-${id}" type="text" placeholder="\${DB_USER}" value="${esc(db.userName||'')}" oninput="genJson()"></div>
+          <div class="fg"><label>Password</label>
+            <input id="act-init-db-pass-${id}" type="password" placeholder="\${DB_PASS}" value="${esc(db.password||'')}" oninput="genJson()"></div>
+          <div class="fg wide"><label>SQL (optional — first result row merged into operation properties)</label>
+            <textarea id="act-init-db-sql-${id}" rows="2" placeholder="SELECT key, value FROM config_table" oninput="genJson()">${esc(db.sql||'')}</textarea></div>
+          <div class="fg"><label>Timeout (ms)</label>
+            <input id="act-init-db-timeout-${id}" type="number" placeholder="3000" value="${db.timeoutMs||''}" oninput="genJson()"></div>
+        </div>
+      </div>
+      ${outputVarHtml(id, data)}`;
+    if (data?.http?.header) setKvMap(`act-init-hdr-wrap-${id}`, `act-init-hdr-${id}`, data.http.header);
   } else {
     const de = data?.dataExtraction || {};
     const deType = de.type || 'JSON';
@@ -788,6 +1326,7 @@ function renderActivity(id, data) {
         <div class="fg wide"><label>Value (embedded JSON)</label>
           <textarea id="act-de-value-${id}" rows="5" placeholder='[{"column":"title","xpath":"//ArticleTitle"}]' oninput="genJson()">${esc(de.value ? JSON.stringify(de.value, null, 2) : '')}</textarea></div>
       </div>
+      ${outputVarHtml(id, data)}
       ${mandPropSection(id)}`;
     if (data?.mandatoryProperties) setMandProps(id, data.mandatoryProperties);
   }
@@ -796,6 +1335,18 @@ function renderActivity(id, data) {
 function onActMethodChange(id) {
   const m = document.getElementById(`act-method-${id}`)?.value;
   const wrap = document.getElementById(`act-body-wrap-${id}`);
+  if (wrap) wrap.style.display = ['POST','PUT','PATCH'].includes(m) ? '' : 'none';
+}
+
+function onInitModeChange(id) {
+  const mode = document.getElementById(`act-init-mode-${id}`)?.value;
+  document.getElementById(`act-init-http-wrap-${id}`).style.display = mode === 'HTTP' ? '' : 'none';
+  document.getElementById(`act-init-db-wrap-${id}`).style.display = mode === 'DB' ? '' : 'none';
+}
+
+function onInitMethodChange(id) {
+  const m = document.getElementById(`act-init-method-${id}`)?.value;
+  const wrap = document.getElementById(`act-init-body-wrap-${id}`);
   if (wrap) wrap.style.display = ['POST','PUT','PATCH'].includes(m) ? '' : 'none';
 }
 
@@ -827,7 +1378,130 @@ function onEnrModeChange(type) {
 
 function removeActivity(id) {
   document.getElementById(`act-${id}`)?.remove();
+  updateBadge('badge-activities', 'activities-list', '.activity-card');
   genJson();
+}
+
+// ─── Validation Conditions ────────────────────────────────────────────────────
+function addValCondRow(actId, data, callback) {
+  const prefix = `val-cond-${actId}`;
+  kvCounters[prefix] = (kvCounters[prefix] || 0) + 1;
+  const idx = kvCounters[prefix];
+  const wrap = document.getElementById(`val-cond-wrap-${actId}`);
+  if (!wrap) return;
+  const op = data?.op || 'eq';
+  const ops = ['eq','neq','contains','notContains','startsWith','endsWith','gt','lt','gte','lte','isEmpty','isNotEmpty'];
+  const row = document.createElement('div');
+  row.className = 'kv-row';
+  row.style.gridTemplateColumns = '2fr 130px 2fr 32px';
+  row.id = `${prefix}-row-${idx}`;
+  row.innerHTML = `
+    <input type="text" id="${prefix}-col-${idx}" placeholder="$activityName.ATTRIBUTE" value="${esc(data?.column||'')}" oninput="genJson()">
+    <select id="${prefix}-op-${idx}" style="border:none;padding:5px 4px;font-size:12px;background:transparent;font-family:Consolas,monospace;outline:none" onchange="genJson()">
+      ${ops.map(o=>`<option value="${o}" ${op===o?'selected':''}>${o}</option>`).join('')}
+    </select>
+    <input type="text" id="${prefix}-val-${idx}" placeholder="value" value="${esc(data?.value||'')}" oninput="genJson()">
+    <span class="kv-del" onclick="delValCondRow(${actId},${idx})" title="Remove">×</span>`;
+  wrap.appendChild(row);
+  if (callback) callback();
+}
+
+function delValCondRow(actId, idx) {
+  const prefix = `val-cond-${actId}`;
+  document.getElementById(`${prefix}-row-${idx}`)?.remove();
+  genJson();
+}
+
+function getValConditions(actId) {
+  const prefix = `val-cond-${actId}`;
+  const result = [];
+  document.querySelectorAll(`[id^="${prefix}-row-"]`).forEach(row => {
+    const idx = row.id.split('-').pop();
+    const col = (document.getElementById(`${prefix}-col-${idx}`)?.value || '').trim();
+    const op = document.getElementById(`${prefix}-op-${idx}`)?.value || 'eq';
+    const val = (document.getElementById(`${prefix}-val-${idx}`)?.value || '');
+    if (col) result.push({ column: col, op, value: val });
+  });
+  return result;
+}
+
+// ─── Per-activity Auth ────────────────────────────────────────────────────────
+function actAuthHtml(id, auth) {
+  const method = auth?.method || '';
+  const basic = auth?.basic || {};
+  const jwt = auth?.jwt || {};
+  const kerberos = auth?.kerberos || {};
+  const digest = auth?.digest || {};
+  const ntlm = auth?.ntlm || {};
+  return `<div class="act-section">Auth <span style="font-weight:400;text-transform:none;font-size:10px;color:#a5adba">(overrides operation-level auth for this activity)</span></div>
+    <div class="form-row">
+      <div class="fg">
+        <label>Auth Method</label>
+        <select id="act-auth-method-${id}" onchange="showActAuthFields(${id});genJson()">
+          <option value="" ${!method?'selected':''}>NONE</option>
+          <option value="BASIC" ${method==='BASIC'?'selected':''}>BASIC</option>
+          <option value="JWT" ${method==='JWT'?'selected':''}>JWT</option>
+          <option value="KERBEROS" ${method==='KERBEROS'?'selected':''}>KERBEROS</option>
+          <option value="DIGEST" ${method==='DIGEST'?'selected':''}>DIGEST</option>
+          <option value="NTLM" ${method==='NTLM'?'selected':''}>NTLM</option>
+        </select>
+      </div>
+    </div>
+    <div id="act-auth-basic-${id}" style="display:${method==='BASIC'?'':'none'}">
+      <div class="form-row">
+        <div class="fg"><label>Username</label><input id="act-auth-basic-user-${id}" type="text" placeholder="user or \${VAR}" value="${esc(basic.username||'')}" oninput="genJson()"><span class="hint">Supports \$variable (replaced from dataRow)</span></div>
+        <div class="fg"><label>Password</label><input id="act-auth-basic-pass-${id}" type="text" placeholder="\${password} or literal" value="${esc(basic.password||'')}" oninput="genJson()"><span class="hint">Supports \$variable (replaced from dataRow)</span></div>
+      </div>
+    </div>
+    <div id="act-auth-jwt-${id}" style="display:${method==='JWT'?'':'none'}">
+      <div class="form-row">
+        <div class="fg wide"><label>Token URL</label><input id="act-auth-jwt-url-${id}" type="text" placeholder="http://auth.example.com/token" value="${esc(jwt.url||'')}" oninput="genJson()"></div>
+        <div class="fg"><label>App Name</label><input id="act-auth-jwt-app-${id}" type="text" value="${esc(jwt.applicationName||'')}" oninput="genJson()"></div>
+        <div class="fg"><label>Username</label><input id="act-auth-jwt-user-${id}" type="text" placeholder="\${username}" value="${esc(jwt.username||'')}" oninput="genJson()"><span class="hint">Supports \$variable</span></div>
+        <div class="fg"><label>Password</label><input id="act-auth-jwt-pass-${id}" type="text" placeholder="\${password}" value="${esc(jwt.password||'')}" oninput="genJson()"><span class="hint">Supports \$variable</span></div>
+      </div>
+    </div>
+    <div id="act-auth-kerberos-${id}" style="display:${method==='KERBEROS'?'':'none'}">
+      <div class="form-row">
+        <div class="fg"><label>Username</label><input id="act-auth-kerb-user-${id}" type="text" placeholder="svc@REALM.COM" value="${esc(kerberos.username||'')}" oninput="genJson()"></div>
+        <div class="fg"><label>Keytab Path</label><input id="act-auth-kerb-keytab-${id}" type="text" placeholder="C:/keytabs/svc.keytab" value="${esc(kerberos.keytab||'')}" oninput="genJson()"></div>
+        <div class="fg"><label>Service Principal</label><input id="act-auth-kerb-sp-${id}" type="text" placeholder="HTTP/api@REALM.COM" value="${esc(kerberos.servicePrincipal||'')}" oninput="genJson()"></div>
+      </div>
+    </div>
+    <div id="act-auth-digest-${id}" style="display:${method==='DIGEST'?'':'none'}">
+      <div class="form-row">
+        <div class="fg"><label>Digest URL</label><input id="act-auth-dig-url-${id}" type="text" value="${esc(digest.url||'')}" oninput="genJson()"></div>
+        <div class="fg"><label>Username</label><input id="act-auth-dig-user-${id}" type="text" placeholder="\${username}" value="${esc(digest.username||'')}" oninput="genJson()"><span class="hint">Supports \$variable</span></div>
+        <div class="fg"><label>Password</label><input id="act-auth-dig-pass-${id}" type="text" placeholder="\${password}" value="${esc(digest.password||'')}" oninput="genJson()"><span class="hint">Supports \$variable</span></div>
+      </div>
+    </div>
+    <div id="act-auth-ntlm-${id}" style="display:${method==='NTLM'?'':'none'}">
+      <div class="form-row">
+        <div class="fg"><label>Username</label><input id="act-auth-ntlm-user-${id}" type="text" placeholder="\${username}" value="${esc(ntlm.username||'')}" oninput="genJson()"><span class="hint">Supports \$variable</span></div>
+        <div class="fg"><label>Password</label><input id="act-auth-ntlm-pass-${id}" type="text" placeholder="\${password}" value="${esc(ntlm.password||'')}" oninput="genJson()"><span class="hint">Supports \$variable</span></div>
+      </div>
+    </div>`;
+}
+
+function showActAuthFields(id) {
+  const m = document.getElementById(`act-auth-method-${id}`)?.value || '';
+  ['basic','jwt','kerberos','digest','ntlm'].forEach(t => {
+    const el = document.getElementById(`act-auth-${t}-${id}`);
+    if (el) el.style.display = m.toLowerCase() === t ? '' : 'none';
+  });
+}
+
+// ─── Output Variable (per-activity) ──────────────────────────────────────────
+function outputVarHtml(id, data) {
+  return `<div class="act-section">Output Variable</div>
+    <div class="form-row">
+      <div class="fg"><label>Output Var</label>
+        <input id="act-outputVar-${id}" type="text" placeholder="myDataset" value="${esc(data?.outputVar||'')}" oninput="genJson()">
+        <span class="hint">Store results as a named dataset</span></div>
+      <div class="fg"><label>Output Key</label>
+        <input id="act-outputKey-${id}" type="text" placeholder="id" value="${esc(data?.outputKey||'')}" oninput="genJson()">
+        <span class="hint">Row key field to index the dataset</span></div>
+    </div>`;
 }
 
 // ─── Mandatory Properties (per-activity) ─────────────────────────────────────
@@ -941,12 +1615,14 @@ function addAlias(data) {
     </div>`;
   container.appendChild(card);
   syncAliasSel();
+  updateBadge('badge-aliases', 'aliases-list', '.alias-card');
   genJson();
 }
 
 function removeAlias(id) {
   document.getElementById(`alias-${id}`)?.remove();
   syncAliasSel();
+  updateBadge('badge-aliases', 'aliases-list', '.alias-card');
   genJson();
 }
 
@@ -971,15 +1647,16 @@ function addResponseProcessor(data) {
   const id = rpCount;
   const container = document.getElementById('rp-list');
   const card = document.createElement('div');
-  card.className = 'alias-card';
+  card.className = 'rp-card';
   card.id = `rp-${id}`;
-  const rp = data?.responseProcessor || {};
+  const rp = (Array.isArray(data?.responseProcessor) ? data.responseProcessor[0] : data?.responseProcessor) || {};
+  const onErrVal = rp.onError || '';
   card.innerHTML = `
-    <div class="alias-header">
-      <span class="alias-title" id="rp-title-${id}">Processor ${id}</span>
+    <div class="rp-header">
+      <span class="rp-title" id="rp-title-${id}">${esc(data?.name || 'Processor ' + id)}</span>
       <button class="danger sm" onclick="removeRp(${id})">✕</button>
     </div>
-    <div class="alias-body">
+    <div class="rp-body">
       <div class="form-row">
         <div class="fg"><label>Name</label>
           <input id="rp-name-${id}" type="text" placeholder="convert-xml" value="${esc(data?.name||'')}"
@@ -989,17 +1666,78 @@ function addResponseProcessor(data) {
             <option value="XML2JSON" ${rp.type==='XML2JSON'?'selected':''}>XML2JSON</option>
             <option value="JSONATA" ${rp.type==='JSONATA'?'selected':''}>JSONATA</option>
           </select></div>
+        <div class="fg"><label>On Error</label>
+          <select id="rp-onError-${id}" onchange="genJson()">
+            <option value="" ${onErrVal===''?'selected':''}>— none —</option>
+            <option value="SKIP" ${onErrVal==='SKIP'?'selected':''}>SKIP</option>
+            <option value="THROW" ${onErrVal==='THROW'?'selected':''}>THROW</option>
+            <option value="$.error" ${onErrVal==='$.error'?'selected':''}>$.error</option>
+          </select></div>
         <div class="fg wide"><label>JSONata Transform (if JSONATA)</label>
           <input id="rp-transform-${id}" type="text" placeholder="$[status='ACTIVE'] or classpath:..." value="${esc(rp.jsonataTransform||'')}" oninput="genJson()"></div>
       </div>
     </div>`;
   container.appendChild(card);
+  syncRpSel();
+  updateBadge('badge-rp', 'rp-list', '.rp-card');
   genJson();
 }
 
 function removeRp(id) {
   document.getElementById(`rp-${id}`)?.remove();
+  syncRpSel();
+  updateBadge('badge-rp', 'rp-list', '.rp-card');
   genJson();
+}
+
+function syncRpSel() {
+  const sel = document.getElementById('t-responseProcessor');
+  const hint = document.getElementById('t-rp-hint');
+  const cur = sel.value;
+  // Collect names from the operation's response processors panel
+  const opNames = [];
+  document.querySelectorAll('[id^="rp-name-"]').forEach(inp => {
+    const n = inp.value.trim();
+    if (n) opNames.push(n);
+  });
+  sel.innerHTML = '<option value="">— none —</option>';
+  if (opNames.length) {
+    opNames.forEach(n => {
+      const opt = document.createElement('option');
+      opt.value = n; opt.textContent = n;
+      if (n === cur) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    hint.textContent = 'Processors defined in this operation';
+  } else {
+    // No operation-level processors — allow free text via an editable option
+    if (cur) {
+      const opt = document.createElement('option');
+      opt.value = cur; opt.textContent = cur; opt.selected = true;
+      sel.appendChild(opt);
+    }
+    hint.textContent = 'No operation processors — select none or type a global name below';
+    // Switch to text input mode when no operation processors are defined
+  }
+  syncRpInputMode(opNames.length > 0);
+}
+
+function syncRpInputMode(hasOpProcessors) {
+  const sel = document.getElementById('t-responseProcessor');
+  const txt = document.getElementById('t-responseProcessor-text');
+  if (hasOpProcessors) {
+    sel.style.display = '';
+    txt.style.display = 'none';
+  } else {
+    sel.style.display = 'none';
+    txt.style.display = '';
+  }
+}
+
+function getRpValue() {
+  const sel = document.getElementById('t-responseProcessor');
+  const txt = document.getElementById('t-responseProcessor-text');
+  return sel.style.display !== 'none' ? sel.value : txt.value.trim();
 }
 
 // ─── JSON Generation ──────────────────────────────────────────────────────────
@@ -1012,15 +1750,33 @@ function buildJson() {
   const ma = v('f-mandatoryAttributes');
   if (ma) op.mandatoryAttributes = ma;
 
+  const opMandProps = getMandProps('op');
+  if (opMandProps.length) op.mandatoryProperties = opMandProps;
+
   // Properties
   const propsAttrs = getKvMap('props-attrs');
-  const propsFile = v('f-props-file');
-  const propsHttpUrl = v('f-props-http-url');
-  if (Object.keys(propsAttrs).length || propsFile || propsHttpUrl) {
+  const propsFiles = [];
+  document.querySelectorAll('[id^="props-file-card-"]').forEach(card => {
+    const fid = card.id.replace('props-file-card-', '');
+    const path = v(`props-file-path-${fid}`).trim();
+    if (path) propsFiles.push({ path });
+  });
+  const propsHttps = [];
+  document.querySelectorAll('[id^="props-http-card-"]').forEach(card => {
+    const hid = card.id.replace('props-http-card-', '');
+    const url = v(`props-http-url-${hid}`).trim();
+    if (url) {
+      const entry = { url };
+      const m = v(`props-http-method-${hid}`); if (m) entry.method = m;
+      const t = vi(`props-http-timeout-${hid}`); if (t) entry.timeoutMs = t;
+      propsHttps.push(entry);
+    }
+  });
+  if (Object.keys(propsAttrs).length || propsFiles.length || propsHttps.length) {
     op.properties = {};
     if (Object.keys(propsAttrs).length) op.properties.attributes = propsAttrs;
-    if (propsFile) op.properties.file = { path: propsFile };
-    if (propsHttpUrl) op.properties.http = { url: propsHttpUrl, method: 'GET', timeoutMs: 3000 };
+    if (propsFiles.length) op.properties.file = propsFiles;
+    if (propsHttps.length) op.properties.http = propsHttps;
   }
 
   // Input source
@@ -1033,6 +1789,16 @@ function buildJson() {
       const method = v('f-is-method'); if (method) httpCfg.method = method;
       const jt = v('f-is-jsonata'); if (jt) httpCfg.jsonataTransform = jt;
       if (Object.keys(httpCfg).length) op.inputSource.httpConfig = httpCfg;
+    } else if (isType === 'TEMPLATE') {
+      const tmpl = v('f-is-templateName'); if (tmpl) op.inputSource.templateName = tmpl;
+    } else if (isType === 'DB') {
+      const dbCfg = {};
+      const url = v('f-is-db-url'); if (url) dbCfg.jdbcUrl = url;
+      const user = v('f-is-db-user'); if (user) dbCfg.userName = user;
+      const pass = v('f-is-db-pass'); if (pass) dbCfg.password = pass;
+      const sql = v('f-is-db-sql'); if (sql) dbCfg.sql = sql;
+      const timeout = vi('f-is-db-timeout'); if (timeout) dbCfg.timeoutMs = timeout;
+      if (Object.keys(dbCfg).length) op.inputSource.dbConfig = dbCfg;
     }
   }
 
@@ -1063,7 +1829,13 @@ function buildJson() {
     const name = v(`init-name-${id}`);
     const type = document.getElementById(`init-type-${id}`)?.value || 'SSH';
     const item = { name: name || `init-${id}`, type };
-    if (type === 'SSH') {
+    if (type === 'DB') {
+      const db = {};
+      const url = v(`init-db-url-${id}`); if (url) db.jdbcUrl = url;
+      const user = v(`init-db-user-${id}`); if (user) db.userName = user;
+      const pass = v(`init-db-pass-${id}`); if (pass) db.password = pass;
+      if (Object.keys(db).length) item.db = db;
+    } else {
       const ssh = {};
       const host = v(`init-ssh-host-${id}`); if (host) ssh.host = host;
       const port = v(`init-ssh-port-${id}`);
@@ -1071,13 +1843,13 @@ function buildJson() {
       const user = v(`init-ssh-user-${id}`); if (user) ssh.username = user;
       const key = v(`init-ssh-key-${id}`); if (key) ssh.privateKey = key;
       if (Object.keys(ssh).length) item.ssh = ssh;
-    }
-    const errStatus = v(`init-err-status-${id}`);
-    const errMsg = v(`init-err-msg-${id}`);
-    if (errStatus || errMsg) {
-      item.onError = {};
-      if (errStatus) item.onError.status = errStatus;
-      if (errMsg) item.onError.message = errMsg;
+      const errStatus = v(`init-err-status-${id}`);
+      const errMsg = v(`init-err-msg-${id}`);
+      if (errStatus || errMsg) {
+        item.onError = {};
+        if (errStatus) item.onError.status = errStatus;
+        if (errMsg) item.onError.message = errMsg;
+      }
     }
     initItems.push(item);
   });
@@ -1085,8 +1857,7 @@ function buildJson() {
 
   // Activities
   const activities = [];
-  document.querySelectorAll('[id^="act-"]:not([id*="-body"]):not([id*="-header"]):not([id*="-title"]):not([id*="-type"]):not([id*="-name"]):not([id*="-method"]):not([id*="-url"]):not([id*="-threads"]):not([id*="-timeout"]):not([id*="-ct"]):not([id*="-cache"]):not([id*="-de"]):not([id*="-hdr"])').forEach(() => {});
-  document.querySelectorAll('.activity-card').forEach(card => {
+  document.querySelectorAll('.activity-card[id^="act-"]').forEach(card => {
     const id = card.id.replace('act-', '');
     const type = document.getElementById(`act-type-${id}`)?.value;
     const name = v(`act-name-${id}`);
@@ -1099,15 +1870,43 @@ function buildJson() {
       const threads = vi(`act-threads-${id}`); if (threads) http.threadCount = threads;
       const timeout = vi(`act-timeout-${id}`); if (timeout) http.timeoutMs = timeout;
       const ct = v(`act-ct-${id}`); if (ct) http.contentType = ct;
-      const bodyTpl = v(`act-body-${id}`); if (bodyTpl) http.bodyTemplate = bodyTpl;
+      const bodyTpl = v(`act-bodyTpl-${id}`); if (bodyTpl) http.bodyTemplate = bodyTpl;
       const headers = getKvMap(`act-hdr-${id}`);
       if (Object.keys(headers).length) http.header = headers;
       const cacheName = v(`act-cache-name-${id}`);
       const cacheKey = v(`act-cache-key-${id}`);
-      if (cacheName) http.cache = { name: cacheName, key: cacheKey || '' };
+      const cacheMaxRetention = v(`act-cache-maxRetentionTime-${id}`).trim();
+      if (cacheName) {
+        http.cache = { name: cacheName, key: cacheKey || '' };
+        if (cacheMaxRetention) {
+          const n = parseInt(cacheMaxRetention, 10);
+          http.cache.maxRetentionTime = (!isNaN(n) && String(n) === cacheMaxRetention) ? n : cacheMaxRetention;
+        }
+      }
       const httpExtract = getKvMap(`act-http-ext-${id}`);
       if (Object.keys(httpExtract).length) http.extract = httpExtract;
       if (Object.keys(http).length) act.http = http;
+      const actAuthMethod = v(`act-auth-method-${id}`);
+      if (actAuthMethod) {
+        if (!act.http) act.http = http;
+        act.http.auth = { method: actAuthMethod };
+        if (actAuthMethod === 'BASIC') {
+          const u = v(`act-auth-basic-user-${id}`), p = v(`act-auth-basic-pass-${id}`);
+          if (u || p) { act.http.auth.basic = {}; if (u) act.http.auth.basic.username = u; if (p) act.http.auth.basic.password = p; }
+        } else if (actAuthMethod === 'JWT') {
+          const ju = v(`act-auth-jwt-url-${id}`), ja = v(`act-auth-jwt-app-${id}`), juser = v(`act-auth-jwt-user-${id}`), jp = v(`act-auth-jwt-pass-${id}`);
+          if (ju || ja || juser || jp) { act.http.auth.jwt = {}; if (ju) act.http.auth.jwt.url = ju; if (ja) act.http.auth.jwt.applicationName = ja; if (juser) act.http.auth.jwt.username = juser; if (jp) act.http.auth.jwt.password = jp; }
+        } else if (actAuthMethod === 'KERBEROS') {
+          const ku = v(`act-auth-kerb-user-${id}`), kk = v(`act-auth-kerb-keytab-${id}`), ksp = v(`act-auth-kerb-sp-${id}`);
+          if (ku || kk || ksp) { act.http.auth.kerberos = {}; if (ku) act.http.auth.kerberos.username = ku; if (kk) act.http.auth.kerberos.keytab = kk; if (ksp) act.http.auth.kerberos.servicePrincipal = ksp; }
+        } else if (actAuthMethod === 'DIGEST') {
+          const du = v(`act-auth-dig-url-${id}`), duser = v(`act-auth-dig-user-${id}`), dp = v(`act-auth-dig-pass-${id}`);
+          if (du || duser || dp) { act.http.auth.digest = {}; if (du) act.http.auth.digest.url = du; if (duser) act.http.auth.digest.username = duser; if (dp) act.http.auth.digest.password = dp; }
+        } else if (actAuthMethod === 'NTLM') {
+          const nu = v(`act-auth-ntlm-user-${id}`), np = v(`act-auth-ntlm-pass-${id}`);
+          if (nu || np) { act.http.auth.ntlm = {}; if (nu) act.http.auth.ntlm.username = nu; if (np) act.http.auth.ntlm.password = np; }
+        }
+      }
     } else if (type === 'SSH') {
       const ssh = {};
       const ref = v(`act-ssh-ref-${id}`); if (ref) ssh.reference = ref;
@@ -1118,6 +1917,56 @@ function buildJson() {
       const extract = getKvMap(`act-ssh-ext-${id}`);
       if (Object.keys(extract).length) ssh.extract = extract;
       if (Object.keys(ssh).length) act.ssh = ssh;
+    } else if (type === 'validation') {
+      const condType = v(`act-val-condtype-${id}`) || 'OR';
+      const conds = getValConditions(id);
+      const errMsg = v(`act-val-errmsg-${id}`);
+      act.validation = { conditions: { type: condType, condition: conds } };
+      if (errMsg) act.validation.errorMessage = errMsg;
+    } else if (type === 'DATAENRICHER') {
+      const file = v(`act-den-file-${id}`);
+      act.dataEnricher = { file: file || '' };
+    } else if (type === 'DB') {
+      const db = {};
+      const ref = v(`act-db-ref-${id}`); if (ref) db.reference = ref;
+      const url = v(`act-db-url-${id}`); if (url) db.jdbcUrl = url;
+      const user = v(`act-db-user-${id}`); if (user) db.userName = user;
+      const pass = v(`act-db-pass-${id}`); if (pass) db.password = pass;
+      const sql = v(`act-db-sql-${id}`); if (sql) db.sql = sql;
+      const timeout = vi(`act-db-timeout-${id}`); if (timeout) db.timeoutMs = timeout;
+      const threads = vi(`act-db-threads-${id}`); if (threads) db.threadCount = threads;
+      const cacheName = v(`act-db-cache-name-${id}`);
+      const cacheKey = v(`act-db-cache-key-${id}`);
+      const cacheMaxRetention = v(`act-db-cache-maxRetention-${id}`).trim();
+      if (cacheName) {
+        db.cache = { name: cacheName, key: cacheKey || '' };
+        if (cacheMaxRetention) {
+          const n = parseInt(cacheMaxRetention, 10);
+          db.cache.maxRetentionTime = (!isNaN(n) && String(n) === cacheMaxRetention) ? n : cacheMaxRetention;
+        }
+      }
+      if (Object.keys(db).length) act.db = db;
+    } else if (type === 'INITIALIZE') {
+      const initMode = v(`act-init-mode-${id}`) || 'HTTP';
+      if (initMode === 'DB') {
+        const db = {};
+        const url = v(`act-init-db-url-${id}`); if (url) db.jdbcUrl = url;
+        const user = v(`act-init-db-user-${id}`); if (user) db.userName = user;
+        const pass = v(`act-init-db-pass-${id}`); if (pass) db.password = pass;
+        const sql = v(`act-init-db-sql-${id}`); if (sql) db.sql = sql;
+        const timeout = vi(`act-init-db-timeout-${id}`); if (timeout) db.timeoutMs = timeout;
+        if (Object.keys(db).length) act.db = db;
+      } else {
+        const http = {};
+        const url = v(`act-init-url-${id}`); if (url) http.url = url;
+        const method = v(`act-init-method-${id}`); if (method) http.method = method;
+        const timeout = vi(`act-init-timeout-${id}`); if (timeout) http.timeoutMs = timeout;
+        const ct = v(`act-init-ct-${id}`); if (ct) http.contentType = ct;
+        const bodyTpl = v(`act-init-bodyTpl-${id}`); if (bodyTpl) http.bodyTemplate = bodyTpl;
+        const headers = getKvMap(`act-init-hdr-${id}`);
+        if (Object.keys(headers).length) http.header = headers;
+        if (Object.keys(http).length) act.http = http;
+      }
     } else {
       const deType = v(`act-de-type-${id}`);
       const deMode = v(`act-de-mode-${id}`) || 'config';
@@ -1136,6 +1985,10 @@ function buildJson() {
       }
       act.dataExtraction = de;
     }
+    const outputVar = v(`act-outputVar-${id}`);
+    if (outputVar) act.outputVar = outputVar;
+    const outputKey = v(`act-outputKey-${id}`);
+    if (outputKey) act.outputKey = outputKey;
     const mp = getMandProps(id);
     if (mp.length) act.mandatoryProperties = mp;
     activities.push(act);
@@ -1164,15 +2017,17 @@ function buildJson() {
 
   // Response processors
   const rps = [];
-  document.querySelectorAll('.alias-card[id^="rp-"]').forEach(card => {
+  document.querySelectorAll('.rp-card[id^="rp-"]').forEach(card => {
     const id = card.id.replace('rp-', '');
     const name = v(`rp-name-${id}`);
     const type = v(`rp-type-${id}`);
     const transform = v(`rp-transform-${id}`);
+    const onError = v(`rp-onError-${id}`);
     if (!name && !type) return;
-    const rp = { name: name || `processor-${id}`, responseProcessor: { type: type || 'JSONATA' } };
-    if (type === 'JSONATA' && transform) rp.responseProcessor.jsonataTransform = transform;
-    rps.push(rp);
+    const rpStep = { type: type || 'JSONATA' };
+    if (type === 'JSONATA' && transform) rpStep.jsonataTransform = transform;
+    if (onError) rpStep.onError = onError;
+    rps.push({ name: name || `processor-${id}`, responseProcessor: [rpStep] });
   });
   if (rps.length) op.responseProcessor = rps;
 
@@ -1189,7 +2044,7 @@ function buildJson() {
       const cfg = v(`enr-${type}-config`);
       if (cfg) enr.enhancer = cfg;
     }
-    enricherItems.push(enr);
+    if (enr.enhancer !== undefined) enricherItems.push(enr);
   });
   if (enricherItems.length === 1) op.enricher = enricherItems[0];
   else if (enricherItems.length > 1) op.enricher = enricherItems;
@@ -1198,9 +2053,11 @@ function buildJson() {
 }
 
 function genJson() {
-  previewEdited = false;
+  if (previewEdited) return;
   const op = buildJson();
   document.getElementById('json-preview').value = JSON.stringify(op, null, 2);
+  document.getElementById('json-preview').classList.remove('edited');
+  document.getElementById('preview-edited-note').classList.remove('visible');
   // Auto-fill save name
   const saveName = document.getElementById('save-name');
   if (!saveName.value || saveName.dataset.autoFilled === 'true') {
@@ -1216,29 +2073,56 @@ function importFromPreview() {
   let op;
   try { op = JSON.parse(raw); }
   catch (e) { setStatus('import-status', 'Invalid JSON: ' + e.message, 'err'); return; }
+  previewEdited = false;
+  document.getElementById('json-preview').classList.remove('edited');
+  document.getElementById('preview-edited-note').classList.remove('visible');
   loadOperationIntoForm(op);
   setStatus('import-status', 'Imported ✓', 'ok');
   setTimeout(() => setStatus('import-status', '', ''), 2500);
 }
 
 function loadOperationIntoForm(op) {
-  set('f-name', op.name || '');
+  set('f-name', op.name || op.operation || '');
   set('f-mandatoryAttributes', op.mandatoryAttributes || '');
+
+  // Operation-level mandatory properties
+  setMandProps('op', op.mandatoryProperties || []);
+  updateBadge('badge-mandprops', 'act-mp-wrap-op', '.kv-row:not(.kv-head)');
+  if ((op.mandatoryProperties || []).length) {
+    const mp = document.getElementById('p-mandprops');
+    mp.querySelector('.panel-header').classList.remove('collapsed');
+    mp.querySelector('.panel-body').classList.remove('hidden');
+  }
 
   // Properties
   const props = op.properties || {};
   setKvMap('props-attrs-wrap', 'props-attrs', props.attributes || {});
-  set('f-props-file', props.file?.path || '');
-  set('f-props-http-url', props.http?.url || '');
+  document.querySelectorAll('[id^="props-file-card-"]').forEach(c => c.remove());
+  propsFileCount = 0;
+  (Array.isArray(props.file) ? props.file : (props.file ? [props.file] : [])).forEach(f => addPropsFile(f));
+  document.querySelectorAll('[id^="props-http-card-"]').forEach(c => c.remove());
+  propsHttpCount = 0;
+  (Array.isArray(props.http) ? props.http : (props.http ? [props.http] : [])).forEach(h => addPropsHttp(h));
 
-  // Input source
-  const is = op.inputSource || {};
+  // Input source — accept both object { type: "REQUEST" } and plain string "REQUEST"
+  const isRaw = op.inputSource;
+  const is = typeof isRaw === 'string' ? { type: isRaw } : (isRaw || {});
   set('f-inputSource', is.type || '');
   showInputFields();
   if (is.httpConfig) {
     set('f-is-url', is.httpConfig.url || '');
     set('f-is-method', is.httpConfig.method || 'GET');
     set('f-is-jsonata', is.httpConfig.jsonataTransform || '');
+  }
+  if (is.type === 'TEMPLATE' && is.templateName) {
+    loadInputSourceTemplateNames().then(() => set('f-is-templateName', is.templateName || ''));
+  }
+  if (is.dbConfig) {
+    set('f-is-db-url', is.dbConfig.jdbcUrl || '');
+    set('f-is-db-user', is.dbConfig.userName || '');
+    set('f-is-db-pass', is.dbConfig.password || '');
+    set('f-is-db-sql', is.dbConfig.sql || '');
+    if (is.dbConfig.timeoutMs) set('f-is-db-timeout', String(is.dbConfig.timeoutMs));
   }
 
   // Auth
@@ -1300,14 +2184,31 @@ function loadOperationIntoForm(op) {
   document.getElementById('rp-list').innerHTML = '';
   rpCount = 0;
   (op.responseProcessor || []).forEach(r => addResponseProcessor(r));
+  syncRpSel();
 
   // Save name
   const saveName = document.getElementById('save-name');
-  saveName.value = op.name || '';
+  saveName.value = op.name || op.operation || '';
   saveName.dataset.autoFilled = 'true';
 
   syncAliasSel();
   genJson();
+
+  // Populate test-run section from RunRequest-style fields (inputSource string, ids, operationType, jsonataTransform)
+  const testSrc = is.type || '';
+  if (testSrc) { set('t-inputSource', testSrc); showTestFields(); }
+  if (op.operationType) set('t-operationType', op.operationType);
+  if (testSrc === 'REQUEST' && Array.isArray(op.ids) && op.ids.length) {
+    document.getElementById('t-ids').value = op.ids.join('\n');
+  }
+  if (op.jsonataTransform) {
+    const jt = op.jsonataTransform;
+    const jtStr = typeof jt === 'object' ? JSON.stringify(jt) : String(jt);
+    const extraEl = document.getElementById('t-extraProps');
+    const existing = extraEl.value.trim();
+    const line = `jsonataTransform=${jtStr}`;
+    extraEl.value = existing ? existing + '\n' + line : line;
+  }
 }
 
 // ─── Test Run ─────────────────────────────────────────────────────────────────
@@ -1315,19 +2216,20 @@ async function runTest() {
   const opName = v('f-name').trim();
   if (!opName) { setStatus('t-status', 'Enter an operation name first.', 'err'); return; }
 
-  // Save+register first
-  setStatus('t-status', 'Registering operation…', '');
-  const saveResult = await doSave(true);
-  if (!saveResult) return;
+  // Register the operation with the server before running
+  const saved = await doSave(true);
+  if (!saved) return;
 
   // Build run request
   const req = { operation: opName };
   const src = v('t-inputSource'); if (src) req.inputSource = src;
   const alias = v('t-alias'); if (alias) req.alias = alias;
   const dbg = v('t-debugMode'); if (dbg !== '') req.debugMode = parseInt(dbg);
+  const opType = v('t-operationType'); if (opType) req.operationType = opType;
   const tc = vi('t-threadCount'); if (tc) req.httpThreadCount = tc;
   const tm = vi('t-timeoutMs'); if (tm) req.httpTimeoutMs = tm;
   const ic = vi('t-inputCount'); if (ic) req.inputCount = ic;
+  const rp = getRpValue(); if (rp) req.responseProcessor = rp;
 
   if (src === 'FILE') {
     const fp = v('t-inputFilePath'); if (fp) req.inputFilePath = fp;
@@ -1338,16 +2240,38 @@ async function runTest() {
     const url = v('t-inputHttpUrl'); if (url) req.inputHttpUrl = url;
   }
 
+  // Extra properties — merged as top-level keys (unknown keys are captured as properties by the server)
+  // Values that parse as JSON (objects/arrays) are sent as structured data, not strings.
+  v('t-extraProps').trim().split('\n').forEach(line => {
+    const eq = line.indexOf('=');
+    if (eq > 0) {
+      const k = line.substring(0, eq).trim();
+      const valStr = line.substring(eq + 1).trim();
+      if (k && !Object.prototype.hasOwnProperty.call(req, k)) {
+        try { req[k] = JSON.parse(valStr); } catch { req[k] = valStr; }
+      }
+    }
+  });
+
+  showRequestJson(req);
+  setStatus('t-status', '', '');
+  document.getElementById('results-wrap').style.display = 'none';
   setStatus('t-status', 'Running…', '');
   document.getElementById('t-run-btn').disabled = true;
+  const requestMode = document.getElementById('t-requestMode').value;
   try {
-    const res = await fetch('/batch/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req) });
-    const data = await res.json();
-    if (!res.ok) {
-      const msg = data?.errors?.[0]?.message || data?.message || 'Error ' + res.status;
-      setStatus('t-status', msg, 'err');
-      showResponseJson(data);
-      return;
+    let data;
+    if (requestMode === 'WS') {
+      data = await _sendViaWs(JSON.stringify(req));
+    } else {
+      const res = await fetch('/batch/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req) });
+      data = await res.json();
+      if (!res.ok) {
+        const msg = data?.Errors?.[0]?.message || data?.errors?.[0]?.message || data?.message || 'Error ' + res.status;
+        setStatus('t-status', msg, 'err');
+        showResponseJson(data);
+        return;
+      }
     }
     renderResults(data);
     const meta = data.metadata || {};
@@ -1376,10 +2300,12 @@ function renderResults(data) {
 
   const rows = data.data || [];
   const cols = data.columns || (rows.length ? Object.keys(rows[0]).map(k => ({ columnName: k })) : []);
+  _tGridData = rows;
+  _tGridCols = cols.map(c => c.columnName || c);
 
   const colDefs = cols.map(c => ({
-    field: c.columnName,
-    headerName: c.displayName || c.columnName,
+    field: c.columnName || c,
+    headerName: c.displayName || c.columnName || c,
     flex: 1,
     minWidth: 100,
     resizable: true,
@@ -1388,24 +2314,306 @@ function renderResults(data) {
     cellStyle: params => params.data?._failed ? { color: '#bf2600' } : null
   }));
 
-  if (grid) { grid.destroy && grid.destroy(); grid = null; }
+  showResponseJson(data);
+
+  if (tGrid) { try { tGrid.destroy(); } catch(e){} tGrid = null; }
   const el = document.getElementById('grid');
   el.innerHTML = '';
-  grid = agGrid.createGrid(el, {
+  tGrid = agGrid.createGrid(el, {
     columnDefs: colDefs,
     rowData: rows,
     defaultColDef: { resizable: true, sortable: true, filter: true },
     pagination: true,
     paginationPageSize: 50,
-    getRowStyle: p => p.data?._failed ? { background: '#ffebe6' } : null
+    getRowStyle: p => p.data?._failed ? { background: '#ffebe6' } : null,
+    onGridReady: () => {
+      document.getElementById('rowCountBar').textContent = rows.length + ' row' + (rows.length !== 1 ? 's' : '');
+      buildColChooserT(cols);
+    }
+  });
+}
+
+function buildColChooserT(cols) {
+  const bar = document.getElementById('colChooserBar');
+  bar.innerHTML = '<span class="chooser-lbl">Columns:</span>';
+  if (!cols || !cols.length) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+  cols.forEach(c => {
+    const field = c.columnName || c;
+    const label = c.displayName || field;
+    const chip = document.createElement('label');
+    chip.className = 'col-chip-t';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = true;
+    cb.addEventListener('change', () => {
+      if (!tGrid) return;
+      tGrid.setColumnVisible(field, cb.checked);
+    });
+    const span = document.createElement('span');
+    span.textContent = label;
+    // pie chart button
+    const pie = document.createElement('button');
+    pie.className = 'pie-btn-t'; pie.textContent = '&#9685;'; pie.title = 'Chart: ' + label;
+    pie.type = 'button';
+    pie.addEventListener('click', e => { e.preventDefault(); openChartT(field, label); });
+    chip.appendChild(cb); chip.appendChild(span); chip.appendChild(pie);
+    bar.appendChild(chip);
+  });
+}
+
+// ─── Charts ───────────────────────────────────────────────────────────────────
+let _tPieChart = null;
+function openChartT(field, label) {
+  const counts = {};
+  _tGridData.forEach(r => {
+    const v = String(r[field] ?? '(empty)');
+    counts[v] = (counts[v] || 0) + 1;
+  });
+  const entries = Object.entries(counts).sort((a,b) => b[1]-a[1]).slice(0, 30);
+  if (_tPieChart) { _tPieChart.destroy(); _tPieChart = null; }
+  document.getElementById('chartTitleT').textContent = label;
+  const canvas = document.getElementById('pieCanvasT');
+  const ctx = canvas.getContext('2d');
+  _tPieChart = new Chart(ctx, {
+    type: 'pie',
+    data: {
+      labels: entries.map(e => e[0]),
+      datasets: [{ data: entries.map(e => e[1]),
+        backgroundColor: ['#4c9aff','#57d9a3','#ffab00','#ff7452','#a08af0','#79e2f2','#f4c8e8',
+          '#b3bac5','#36b37e','#ff5630','#6554c0','#00b8d9','#ff991f','#8777d9','#2684ff','#00875a'] }]
+    },
+    options: { plugins: { legend: { position: 'right' } }, maintainAspectRatio: true }
+  });
+  document.getElementById('chartModalT').classList.add('open');
+}
+function closeChartT() {
+  document.getElementById('chartModalT').classList.remove('open');
+}
+function toggleChartsT() {
+  _tChartsVisible = !_tChartsVisible;
+  document.getElementById('toggleChartsBtn').textContent = _tChartsVisible ? '✕ Charts' : '⬕ Charts';
+}
+
+// ─── Export ───────────────────────────────────────────────────────────────────
+function exportCsvT() {
+  if (!tGrid) return;
+  tGrid.exportDataAsCsv({ fileName: 'operationtester-results.csv' });
+}
+
+function clearGridT() {
+  if (tGrid) { try { tGrid.setRowData([]); } catch(e){} }
+  _tGridData = [];
+  document.getElementById('rowCountBar').textContent = '';
+  document.getElementById('results-wrap').style.display = 'none';
+}
+
+// ─── Pivot ────────────────────────────────────────────────────────────────────
+let _pivotRowGrpsT = [], _pivotColsT = [], _pivotValsT = [];
+
+function openPivotT() {
+  const avail = document.getElementById('pivotAvailT');
+  avail.innerHTML = '';
+  _tGridCols.forEach(f => {
+    const chip = document.createElement('span');
+    chip.className = 'pivot-chip-t avail'; chip.textContent = f;
+    chip.addEventListener('click', () => addToPivotT(f));
+    avail.appendChild(chip);
+  });
+  _pivotRowGrpsT = []; _pivotColsT = []; _pivotValsT = [];
+  renderPivotDropzonesT();
+  document.getElementById('pivotModalT').classList.add('open');
+}
+
+function closePivotT() { document.getElementById('pivotModalT').classList.remove('open'); }
+function resetPivotT() {
+  _pivotRowGrpsT = []; _pivotColsT = []; _pivotValsT = [];
+  renderPivotDropzonesT();
+  document.getElementById('pivotTableWrapT').style.display = 'none';
+  document.getElementById('pivotChartWrapT').style.display = 'none';
+  document.getElementById('pivotEmptyT').style.display = 'flex';
+  document.getElementById('pivotResultInfoT').textContent = '';
+  document.getElementById('pivotExportBtnT').style.display = 'none';
+}
+
+function addToPivotT(field) {
+  if (!_pivotRowGrpsT.includes(field)) { _pivotRowGrpsT.push(field); renderPivotDropzonesT(); }
+}
+
+function renderPivotDropzonesT() {
+  const renderZone = (zoneId, arr, cls) => {
+    const zone = document.getElementById(zoneId);
+    zone.innerHTML = '';
+    if (!arr.length) { zone.classList.add('empty'); return; }
+    zone.classList.remove('empty');
+    arr.forEach((f, i) => {
+      const chip = document.createElement('span');
+      chip.className = 'pivot-chip-t ' + cls; chip.textContent = f;
+      const rm = document.createElement('span'); rm.className = 'rm-t'; rm.textContent = '×';
+      rm.addEventListener('click', () => { arr.splice(i, 1); renderPivotDropzonesT(); });
+      chip.appendChild(rm); zone.appendChild(chip);
+    });
+  };
+  renderZone('pivotRowGrpsT', _pivotRowGrpsT, 'row-grp');
+  renderZone('pivotColsZoneT', _pivotColsT, 'piv-col');
+  renderZone('pivotValsT', _pivotValsT, 'val-col');
+}
+
+function applyPivotT() {
+  if (!_pivotRowGrpsT.length) { alert('Add at least one Row Group to pivot.'); return; }
+  const displayType = document.getElementById('pivotDisplayT').value;
+  const grouped = {};
+  _tGridData.forEach(row => {
+    const key = _pivotRowGrpsT.map(f => row[f] ?? '').join(' | ');
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(row);
+  });
+  const valueFields = _pivotValsT.length ? _pivotValsT : (_tGridCols.filter(f => !_pivotRowGrpsT.includes(f)).slice(0, 1));
+  const rows = Object.entries(grouped).map(([key, recs]) => {
+    const out = {};
+    _pivotRowGrpsT.forEach((f, i) => { out[f] = key.split(' | ')[i]; });
+    valueFields.forEach(f => {
+      const nums = recs.map(r => parseFloat(r[f])).filter(n => !isNaN(n));
+      out[f + '_count'] = recs.length;
+      if (nums.length) { out[f + '_sum'] = nums.reduce((a,b) => a+b, 0); out[f + '_avg'] = (out[f + '_sum'] / nums.length).toFixed(2); }
+    });
+    return out;
   });
 
-  showResponseJson(data);
+  document.getElementById('pivotEmptyT').style.display = 'none';
+
+  if (displayType === 'table') {
+    if (!rows.length) return;
+    const hdrs = Object.keys(rows[0]);
+    const tbl = '<table class="pivot-tbl"><thead><tr>' + hdrs.map(h => `<th>${escT(h)}</th>`).join('') + '</tr></thead><tbody>'
+        + rows.map(r => '<tr>' + hdrs.map(h => `<td>${escT(String(r[h] ?? ''))}</td>`).join('') + '</tr>').join('') + '</tbody></table>';
+    document.getElementById('pivotTableWrapT').innerHTML = tbl;
+    document.getElementById('pivotTableWrapT').style.display = '';
+    document.getElementById('pivotChartWrapT').style.display = 'none';
+    document.getElementById('pivotExportBtnT').style.display = '';
+  } else {
+    document.getElementById('pivotTableWrapT').style.display = 'none';
+    document.getElementById('pivotChartWrapT').style.display = '';
+    document.getElementById('pivotExportBtnT').style.display = 'none';
+    const labels = rows.map(r => _pivotRowGrpsT.map(f => r[f]).join(' | '));
+    const vField = valueFields[0];
+    const values = rows.map(r => r[vField + '_count'] || 0);
+    if (_tPivotChart) { _tPivotChart.destroy(); _tPivotChart = null; }
+    const ctx = document.getElementById('pivotCanvasT').getContext('2d');
+    const typeMap = { bar:'bar', line:'line', horizontalBar:'bar', pie:'pie' };
+    const chartType = typeMap[displayType] || 'bar';
+    const isHoriz = displayType === 'horizontalBar';
+    _tPivotChart = new Chart(ctx, {
+      type: chartType,
+      data: { labels, datasets: [{ label: vField + ' count', data: values,
+        backgroundColor: '#4c9aff', borderColor: '#0052cc', borderWidth: 1 }] },
+      options: { indexAxis: isHoriz ? 'y' : 'x', plugins: { legend: { display: false } }, maintainAspectRatio: false }
+    });
+  }
+  document.getElementById('pivotResultInfoT').textContent = rows.length + ' groups';
+}
+
+function exportPivotCsvT() {
+  const tbl = document.querySelector('#pivotTableWrapT .pivot-tbl');
+  if (!tbl) return;
+  const hdrs = [...tbl.querySelectorAll('thead th')].map(th => th.textContent);
+  const dataRows = [...tbl.querySelectorAll('tbody tr')].map(tr =>
+    [...tr.querySelectorAll('td')].map(td => '"' + td.textContent.replace(/"/g,'""') + '"'));
+  const csv = [hdrs.map(h => '"' + h + '"').join(','), ...dataRows.map(r => r.join(','))].join('\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
+  a.download = 'pivot.csv'; a.click();
+}
+
+function escT(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function toggleResponseJsonVisibility() {
+  const hide = document.getElementById('hideResponseJson').checked;
+  document.getElementById('response-json-body').style.display = hide ? 'none' : '';
 }
 
 function showResponseJson(data) {
   document.getElementById('response-json').value = JSON.stringify(data, null, 2);
   document.getElementById('response-json-panel').style.display = '';
+  document.getElementById('resp-content-type').value = '';
+  document.getElementById('resp-formatted-panel').style.display = 'none';
+  document.getElementById('resp-json-status').textContent = '';
+}
+
+function validateResponseJson() {
+  const text = document.getElementById('response-json').value;
+  try {
+    JSON.parse(text);
+    flashStatus('resp-json-status', 'Valid JSON ✓', 'ok');
+  } catch (e) {
+    flashStatus('resp-json-status', 'Invalid JSON: ' + e.message, 'err');
+  }
+}
+
+function renderFormattedResponse() {
+  const type = document.getElementById('resp-content-type').value;
+  const panel = document.getElementById('resp-formatted-panel');
+  const content = document.getElementById('resp-formatted-content');
+  const label = document.getElementById('resp-formatted-label');
+  const raw = document.getElementById('response-json').value;
+
+  if (!type) { panel.style.display = 'none'; return; }
+
+  panel.style.display = '';
+  label.textContent = 'Formatted view — ' + type.toUpperCase();
+
+  if (type === 'text') {
+    content.style.background = '#1e2a3a';
+    content.innerHTML = '<pre style="margin:0;padding:12px;font-family:Consolas,monospace;font-size:12px;color:#e0e8f0;white-space:pre-wrap;word-break:break-all">' + esc(raw) + '</pre>';
+  } else if (type === 'html') {
+    content.style.background = '#fff';
+    const iframe = document.createElement('iframe');
+    iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts allow-forms');
+    iframe.style.cssText = 'width:100%;height:400px;border:none;display:block';
+    content.innerHTML = '';
+    content.appendChild(iframe);
+    iframe.srcdoc = raw;
+  } else if (type === 'xml') {
+    content.style.background = '#1e2a3a';
+    content.innerHTML = '<pre style="margin:0;padding:12px;font-family:Consolas,monospace;font-size:12px;color:#e0e8f0;white-space:pre-wrap">' + formatXml(raw) + '</pre>';
+  } else if (type === 'json') {
+    content.style.background = '#1e2a3a';
+    content.innerHTML = syntaxHighlightJson(raw);
+  }
+}
+
+function formatXml(xml) {
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(xml, 'application/xml');
+    if (doc.querySelector('parsererror')) return esc(xml);
+    let result = '', indent = 0;
+    const ser = new XMLSerializer().serializeToString(doc);
+    ser.replace(/>\s*</g, '>\n<').split('\n').forEach(line => {
+      line = line.trim();
+      if (!line) return;
+      if (line.startsWith('</')) indent = Math.max(0, indent - 1);
+      result += '  '.repeat(indent) + esc(line) + '\n';
+      if (!line.startsWith('</') && !line.endsWith('/>') && !line.includes('</')) indent++;
+    });
+    return result;
+  } catch (e) { return esc(xml); }
+}
+
+function syntaxHighlightJson(str) {
+  let obj;
+  try { obj = JSON.parse(str); str = JSON.stringify(obj, null, 2); } catch (e) {}
+  const escaped = str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const highlighted = escaped.replace(
+    /("(?:\\u[a-fA-F0-9]{4}|\\[^u]|[^\\"])*"(?:\s*:)?|true|false|null|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+    match => {
+      if (/^"/.test(match)) return /:$/.test(match)
+        ? '<span style="color:#7ec8e3">' + match + '</span>'
+        : '<span style="color:#98d982">' + match + '</span>';
+      if (match === 'true' || match === 'false') return '<span style="color:#f0a05a">' + match + '</span>';
+      if (match === 'null') return '<span style="color:#a08af0">' + match + '</span>';
+      return '<span style="color:#e8d87a">' + match + '</span>';
+    }
+  );
+  return '<pre style="margin:0;padding:12px;font-family:Consolas,monospace;font-size:12px;color:#e0e8f0;white-space:pre-wrap">' + highlighted + '</pre>';
 }
 
 function copyResponseJson() {
@@ -1417,6 +2625,48 @@ function copyResponseJson() {
       document.execCommand('copy');
       flashStatus('resp-json-status', 'Copied ✓', 'ok');
     });
+}
+
+// ─── Request JSON panel ───────────────────────────────────────────────────────
+function showRequestJson(req) {
+  document.getElementById('request-json').value = JSON.stringify(req, null, 2);
+  document.getElementById('request-json-panel').style.display = '';
+}
+
+function copyRequestJson() {
+  const text = document.getElementById('request-json').value;
+  navigator.clipboard.writeText(text)
+    .then(() => flashStatus('req-json-status', 'Copied ✓', 'ok'))
+    .catch(() => {
+      document.getElementById('request-json').select();
+      document.execCommand('copy');
+      flashStatus('req-json-status', 'Copied ✓', 'ok');
+    });
+}
+
+async function saveRequestAsTemplate() {
+  const text = document.getElementById('request-json').value;
+  if (!text) { flashStatus('req-json-status', 'No request to save', 'err'); return; }
+  const name = document.getElementById('template-save-name').value.trim();
+  if (!name) { flashStatus('req-json-status', 'Enter a template name', 'err'); return; }
+  try {
+    let content;
+    try { content = JSON.parse(text); } catch(e) { content = text; }
+    const res = await fetch('/batch/operationTemplate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, content })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      flashStatus('req-json-status', data?.message || 'Save failed', 'err');
+    } else {
+      flashStatus('req-json-status', `Saved as "${name}" ✓`, 'ok');
+      toggleTemplateSaveForm();
+    }
+  } catch(e) {
+    flashStatus('req-json-status', 'Save failed: ' + e.message, 'err');
+  }
 }
 
 // ─── Save ─────────────────────────────────────────────────────────────────────
@@ -1449,7 +2699,7 @@ async function doSave(quiet) {
     });
     const data = await res.json();
     if (!res.ok || data.status === 'error') {
-      const msg = data.error || data.message || 'Error ' + res.status;
+      const msg = data.error || data.message || data?.Errors?.[0]?.message || 'Error ' + res.status;
       if (!quiet) setStatus('save-status', msg, 'err');
       else setStatus('t-status', 'Save failed: ' + msg, 'err');
       return null;
@@ -1505,12 +2755,91 @@ function flashStatus(id, msg, type) {
   setTimeout(() => setStatus(id, '', ''), 2500);
 }
 
+// ─── Badge helper ────────────────────────────────────────────────────────────
+function updateBadge(badgeId, containerId, selector) {
+  const badge = document.getElementById(badgeId);
+  if (!badge) return;
+  const count = document.getElementById(containerId)?.querySelectorAll(selector).length || 0;
+  badge.textContent = count;
+  badge.classList.toggle('visible', count > 0);
+}
+
+// ─── Reset form ───────────────────────────────────────────────────────────────
+function resetForm() {
+  if (!confirm('Clear all fields and start a new operation?')) return;
+  document.getElementById('op-loader').value = '';
+  loadOperationIntoForm({});
+  set('f-name', '');
+  set('f-mandatoryAttributes', '');
+  set('save-name', '');
+  document.getElementById('save-name').dataset.autoFilled = '';
+  document.getElementById('results-wrap').style.display = 'none';
+  document.getElementById('request-json-panel').style.display = 'none';
+  document.getElementById('response-json-panel').style.display = 'none';
+  setStatus('t-status', '', '');
+  setStatus('save-status', '', '');
+  genJson();
+}
+
+// ─── Duplicate activity ───────────────────────────────────────────────────────
+function duplicateActivity(id) {
+  const snap = buildJson();
+  const srcAct = (snap.activity || []).find((_, i) => {
+    const cards = [...document.querySelectorAll('.activity-card[id^="act-"]')];
+    const srcId = cards[i]?.id.replace('act-', '');
+    return String(srcId) === String(id);
+  });
+  if (!srcAct) return;
+  const clone = JSON.parse(JSON.stringify(srcAct));
+  clone.name = (clone.name || 'activity') + '-copy';
+  addActivity(clone);
+}
+
+// ─── Export CSV (legacy alias kept for any old references) ────────────────────
+function exportCsv() { exportCsvT(); }
+
+// ─── Toggle all panels ────────────────────────────────────────────────────────
+function toggleAllPanels(expand) {
+  document.querySelectorAll('.panel').forEach(panel => {
+    const header = panel.querySelector('.panel-header');
+    const body = panel.querySelector('.panel-body');
+    if (!header || !body) return;
+    if (expand) {
+      header.classList.remove('collapsed');
+      body.classList.remove('hidden');
+    } else {
+      header.classList.add('collapsed');
+      body.classList.add('hidden');
+    }
+  });
+}
+
+// ─── Template save inline form ────────────────────────────────────────────────
+function toggleTemplateSaveForm() {
+  const form = document.getElementById('template-save-form');
+  const isVisible = form.classList.toggle('visible');
+  if (isVisible) {
+    const nameInput = document.getElementById('template-save-name');
+    nameInput.value = v('f-name').trim() || '';
+    nameInput.focus();
+  }
+}
+
+// ─── Edited-preview indicator ─────────────────────────────────────────────────
+function onPreviewEdit() {
+  previewEdited = true;
+  document.getElementById('json-preview').classList.add('edited');
+  document.getElementById('preview-edited-note').classList.add('visible');
+}
+
 // ─── Operations loader ────────────────────────────────────────────────────────
 async function populateOpLoader() {
   try {
     const res = await fetch('/batch/operations');
     const data = await res.json();
     const sel = document.getElementById('op-loader');
+    const prev = sel.value;
+    while (sel.options.length > 1) sel.remove(1);
     (data.data || []).sort((a, b) => (a.name || '').localeCompare(b.name || '')).forEach(op => {
       if (!op.name) return;
       const opt = document.createElement('option');
@@ -1518,7 +2847,23 @@ async function populateOpLoader() {
       opt.textContent = op.name;
       sel.appendChild(opt);
     });
+    if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
   } catch (e) { /* server may not be running yet */ }
+}
+
+async function reloadOps() {
+  const btn = document.getElementById('reload-ops-btn');
+  btn.disabled = true;
+  setStatus('reload-ops-status', 'Reloading…', '');
+  try {
+    await fetch('/batch/operations/reload', { method: 'POST' });
+    await populateOpLoader();
+    flashStatus('reload-ops-status', 'Reloaded ✓', 'ok');
+  } catch (e) {
+    flashStatus('reload-ops-status', 'Failed: ' + e.message, 'err');
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 async function loadSelectedOperation() {
@@ -1540,27 +2885,102 @@ async function loadSelectedOperation() {
   }
 }
 
+// ─── Input Source Template Names ─────────────────────────────────────────────
+let _istLoaded = false;
+async function loadInputSourceTemplateNames() {
+  if (_istLoaded) return;
+  try {
+    const res = await fetch('/batch/inputsourcetemplate');
+    const data = await res.json();
+    const sel = document.getElementById('f-is-templateName');
+    const cur = sel.value;
+    while (sel.options.length > 1) sel.remove(1);
+    (data.data || []).forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t.name; opt.textContent = t.name;
+      if (t.name === cur) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    _istLoaded = true;
+  } catch (e) { /* server may not be running */ }
+}
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 showAuthFields();
 showInputFields();
 showTestFields();
+syncRpSel();
 genJson();
 populateOpLoader();
 
-// Load from URL param: ?load=operationName
+// Load from URL param: ?load=operationName or ?clone=operationName
 (async () => {
   const params = new URLSearchParams(location.search);
   const loadName = params.get('load');
-  if (!loadName) return;
+  const cloneName = params.get('clone');
+  const target = loadName || cloneName;
+  if (!target) return;
   try {
-    const res = await fetch('/batch/resource?classpath=operations/' + encodeURIComponent(loadName) + '.json');
+    const res = await fetch('/batch/resource?classpath=operations/' + encodeURIComponent(target) + '.json');
     const data = await res.json();
     if (data.content) {
-      loadOperationIntoForm(JSON.parse(data.content));
-      flashStatus('import-status', `Loaded "${loadName}" ✓`, 'ok');
+      const op = JSON.parse(data.content);
+      if (cloneName) {
+        op.name = '';
+        flashStatus('import-status', `Cloned from "${cloneName}" — enter a new name ✓`, 'ok');
+      } else {
+        flashStatus('import-status', `Loaded "${loadName}" ✓`, 'ok');
+      }
+      loadOperationIntoForm(op);
     }
   } catch (e) { /* ignore */ }
 })();
+
+// ── WebSocket support ──────────────────────────────────────────────────────────
+let _wsSocket = null, _wsPending = null, _wsReconnectTimer = null;
+function _wsUrl() { return (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/batch/ws'; }
+function _setWsDot(state) { const el = document.getElementById('wsDot'); if (el) el.className = 'ws-dot ' + state; }
+function _wsConnect() {
+  if (_wsReconnectTimer) { clearTimeout(_wsReconnectTimer); _wsReconnectTimer = null; }
+  _setWsDot('connecting');
+  _wsSocket = new WebSocket(_wsUrl());
+  _wsSocket.onopen  = () => _setWsDot('connected');
+  _wsSocket.onclose = () => {
+    _setWsDot('disconnected');
+    if (_wsPending) { _wsPending.reject(new Error('WebSocket closed')); _wsPending = null; }
+    _wsReconnectTimer = setTimeout(_wsConnect, 3000);
+  };
+  _wsSocket.onerror = () => _setWsDot('disconnected');
+  _wsSocket.onmessage = e => {
+    let msg; try { msg = JSON.parse(e.data); } catch { return; }
+    if (_wsPending) {
+      const { resolve, reject } = _wsPending; _wsPending = null;
+      if (msg.Errors || msg.error) reject(new Error((msg.Errors?.[0]?.message) || msg.error || 'Error'));
+      else resolve(msg);
+    }
+  };
+}
+_wsConnect();
+function _sendViaWs(bodyJson) {
+  return new Promise((resolve, reject) => {
+    if (!_wsSocket || _wsSocket.readyState !== WebSocket.OPEN) { reject(new Error('WebSocket not connected')); return; }
+    _wsPending = { resolve, reject };
+    _wsSocket.send(bodyJson);
+  });
+}
+
+// Keyboard shortcut: Ctrl+Enter / Cmd+Enter → Run Test
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault();
+    runTest();
+  }
+  // Escape closes the template save form
+  if (e.key === 'Escape') {
+    const form = document.getElementById('template-save-form');
+    if (form.classList.contains('visible')) toggleTemplateSaveForm();
+  }
+});
 </script>
 </body>
 </html>

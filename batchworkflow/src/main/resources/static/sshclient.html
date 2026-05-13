@@ -353,17 +353,25 @@
     }
 
     (async function loadProfiles() {
+        const TEMPLATE = 'sshconfig';
+        const sel      = document.getElementById('profileSelect');
+        const row      = document.getElementById('profileRow');
+        const lbl      = row.querySelector('label');
         try {
-            const res  = await fetch('/batch/template?name=sshconfig');
-            if (!res.ok) return;
+            const res  = await fetch('/batch/operationTemplate?name=' + TEMPLATE);
+            if (!res.ok) {
+                lbl.textContent = 'Profile (template: ' + TEMPLATE + ' — not found)';
+                lbl.style.color = '#de350b';
+                row.style.display = 'flex';
+                return;
+            }
             const body = await res.json();
             const rows = body.data || [];
             if (!rows.length) return;
 
             _profiles = rows;
-            const sel = document.getElementById('profileSelect');
-            rows.forEach(row => {
-                const alias = col(row, 'alias', 'ALIAS');
+            rows.forEach(r => {
+                const alias = col(r, 'alias', 'ALIAS');
                 if (!alias) return;
                 const opt = document.createElement('option');
                 opt.value       = alias;
@@ -371,10 +379,13 @@
                 sel.appendChild(opt);
             });
             if (sel.options.length > 1) {
-                document.getElementById('profileRow').style.display = 'flex';
+                lbl.textContent = 'Profile (template: ' + TEMPLATE + ')';
+                row.style.display = 'flex';
             }
         } catch (_) {
-            // template not found or server not available — silently skip
+            lbl.textContent = 'Profile (template: ' + TEMPLATE + ' — load error)';
+            lbl.style.color = '#de350b';
+            row.style.display = 'flex';
         }
     })();
 

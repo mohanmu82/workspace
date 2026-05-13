@@ -3,7 +3,7 @@ package com.mycompany.batch.model;
 import com.fasterxml.jackson.annotation.JsonCreator;
 
 public enum InputSourceType {
-    FILE, REQUEST, HTTP, HTTPGET, HTTPPOST, HTTPCONFIG, JSON, ALIAS, HTTPLOCAL, CACHE, SPECIFIC, TEMPLATE;
+    FILE, REQUEST, HTTP, HTTPGET, HTTPPOST, HTTPCONFIG, JSON, ALIAS, HTTPLOCAL, CACHE, SPECIFIC, TEMPLATE, DB;
 
     @JsonCreator
     public static InputSourceType from(String value) {

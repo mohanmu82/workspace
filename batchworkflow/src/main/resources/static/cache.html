@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cache Viewer</title>
+<script src="https://cdn.jsdelivr.net/npm/ag-grid-community@31/dist/ag-grid-community.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f5f7; color: #172b4d; padding: 20px; }
+.nav { margin-bottom: 14px; }
+.nav a { font-size: 13px; color: #0052cc; text-decoration: none; }
+.nav a:hover { text-decoration: underline; }
+h1 { font-size: 20px; font-weight: 600; margin-bottom: 16px; }
+
+.layout { display: grid; grid-template-columns: 300px 1fr; gap: 14px; align-items: start; }
+
+.panel { background: #fff; border: 1px solid #dfe1e6; border-radius: 6px; overflow: hidden; }
+.panel-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: #f4f5f7; border-bottom: 1px solid #dfe1e6; }
+.panel-header h2 { font-size: 12px; font-weight: 700; color: #5e6c84; text-transform: uppercase; letter-spacing: 0.5px; }
+.panel-body { padding: 0; }
+
+/* Cache list */
+.cache-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px; border-bottom: 1px solid #f0f1f3;
+  cursor: pointer; transition: background 0.1s;
+}
+.cache-item:last-child { border-bottom: none; }
+.cache-item:hover { background: #f0f4ff; }
+.cache-item.active { background: #e9f0ff; border-left: 3px solid #0052cc; padding-left: 11px; }
+.cache-name { font-size: 13px; font-weight: 600; color: #172b4d; flex: 1; word-break: break-all; }
+.cache-meta { font-size: 11px; color: #5e6c84; white-space: nowrap; }
+.cache-empty { padding: 24px 14px; text-align: center; font-size: 13px; color: #a5adba; }
+
+/* Toolbar */
+button { padding: 6px 13px; font-size: 13px; font-weight: 500; border: none; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+button.primary { background: #0052cc; color: #fff; }
+button.primary:hover { background: #0065ff; }
+button.secondary { background: #fff; color: #0052cc; border: 1px solid #0052cc; }
+button.secondary:hover { background: #e9f0ff; }
+button.danger { background: #fff; color: #de350b; border: 1px solid #de350b; }
+button.danger:hover { background: #ffebe6; }
+button.sm { padding: 4px 10px; font-size: 12px; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 14px; border-bottom: 1px solid #dfe1e6; background: #fafbfc; }
+
+.status { font-size: 13px; color: #5e6c84; min-height: 18px; }
+.status.ok { color: #006644; }
+.status.err { color: #de350b; }
+
+/* Grid */
+#entry-grid { width: 100%; height: 500px; }
+.grid-wrap { padding: 14px; }
+
+.stats-row { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 14px; border-bottom: 1px solid #dfe1e6; background: #fafbfc; }
+.stat { background: #fff; border: 1px solid #dfe1e6; border-radius: 4px; padding: 4px 12px; display: flex; flex-direction: column; align-items: center; }
+.stat-lbl { font-size: 10px; color: #5e6c84; text-transform: uppercase; letter-spacing: 0.4px; }
+.stat-val { font-size: 14px; font-weight: 700; color: #172b4d; }
+
+.placeholder { padding: 40px 20px; text-align: center; color: #a5adba; font-size: 14px; }
+</style>
+</head>
+<body>
+
+<div class="nav"><a href="/">← Batch Workflow</a></div>
+<h1>Cache Viewer</h1>
+
+<div class="layout">
+
+<!-- Left: Cache list -->
+<div class="panel">
+  <div class="panel-header">
+    <h2>Caches</h2>
+    <button class="secondary sm" onclick="loadCaches()" id="refresh-btn">Refresh</button>
+  </div>
+  <div class="panel-body" id="cache-list">
+    <div class="cache-empty">Loading…</div>
+  </div>
+</div>
+
+<!-- Right: Cache entries -->
+<div>
+  <div class="panel" id="entries-panel">
+    <div class="panel-header">
+      <h2 id="entries-title">Select a cache</h2>
+      <div style="display:flex;gap:6px;align-items:center">
+        <div class="status" id="entries-status"></div>
+        <button class="secondary sm" onclick="loadEntries(selectedCache)" id="reload-btn" disabled>Reload</button>
+        <button class="danger sm" onclick="clearCache()" id="clear-btn" disabled>Clear Cache</button>
+      </div>
+    </div>
+    <div id="entries-stats" class="stats-row" style="display:none"></div>
+    <div id="entries-body">
+      <div class="placeholder">Select a cache from the left panel to view its entries.</div>
+    </div>
+  </div>
+</div>
+
+</div><!-- end layout -->
+
+<script>
+let selectedCache = null;
+let entryGrid = null;
+
+async function loadCaches() {
+  const btn = document.getElementById('refresh-btn');
+  btn.disabled = true;
+  btn.textContent = 'Loading…';
+  try {
+    const res = await fetch('/batch/cache');
+    const data = await res.json();
+    renderCacheList(data.data || []);
+  } catch (e) {
+    document.getElementById('cache-list').innerHTML =
+      `<div class="cache-empty" style="color:#de350b">Failed to load: ${esc(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Refresh';
+  }
+}
+
+function renderCacheList(caches) {
+  const list = document.getElementById('cache-list');
+  if (!caches.length) {
+    list.innerHTML = '<div class="cache-empty">No caches found.</div>';
+    return;
+  }
+  list.innerHTML = caches.map(c => `
+    <div class="cache-item ${selectedCache === c.cacheName ? 'active' : ''}"
+         onclick="selectCache('${esc(c.cacheName)}')">
+      <div style="flex:1;min-width:0">
+        <div class="cache-name">${esc(c.cacheName)}</div>
+        <div class="cache-meta">${c.cacheCount} entries · ${c.cacheSizeMb} MB</div>
+      </div>
+    </div>`).join('');
+}
+
+function selectCache(name) {
+  selectedCache = name;
+  document.getElementById('reload-btn').disabled = false;
+  document.getElementById('clear-btn').disabled = false;
+  // Highlight selected
+  document.querySelectorAll('.cache-item').forEach(el => {
+    el.classList.toggle('active', el.querySelector('.cache-name')?.textContent === name);
+  });
+  loadEntries(name);
+}
+
+async function loadEntries(name) {
+  if (!name) return;
+  document.getElementById('entries-title').textContent = name;
+  setStatus('entries-status', 'Loading…', '');
+  document.getElementById('entries-stats').style.display = 'none';
+  document.getElementById('entries-body').innerHTML = '<div class="placeholder">Loading…</div>';
+  if (entryGrid) { try { entryGrid.destroy && entryGrid.destroy(); } catch(e) {} entryGrid = null; }
+  try {
+    const res = await fetch('/batch/cache/' + encodeURIComponent(name));
+    const data = await res.json();
+    renderEntries(name, data.data || []);
+    setStatus('entries-status', '', '');
+  } catch (e) {
+    document.getElementById('entries-body').innerHTML =
+      `<div class="placeholder" style="color:#de350b">Failed to load: ${esc(e.message)}</div>`;
+    setStatus('entries-status', e.message, 'err');
+  }
+}
+
+function renderEntries(cacheName, rows) {
+  const statsEl = document.getElementById('entries-stats');
+  statsEl.style.display = 'flex';
+  statsEl.innerHTML = [
+    ['Cache', cacheName],
+    ['Entries', rows.length]
+  ].map(([l,v]) => `<div class="stat"><span class="stat-lbl">${l}</span><span class="stat-val">${esc(String(v))}</span></div>`).join('');
+
+  const body = document.getElementById('entries-body');
+  if (!rows.length) {
+    body.innerHTML = '<div class="placeholder">Cache is empty.</div>';
+    return;
+  }
+
+  // Determine columns from first row
+  const colKeys = Object.keys(rows[0]);
+  const colDefs = colKeys.map(k => ({
+    field: k,
+    headerName: k,
+    flex: k === 'key' ? 1 : 2,
+    minWidth: k === 'key' ? 120 : 180,
+    resizable: true,
+    sortable: true,
+    filter: true,
+    tooltipField: k,
+    wrapText: false
+  }));
+
+  body.innerHTML = '<div id="entry-grid"></div>';
+  entryGrid = agGrid.createGrid(document.getElementById('entry-grid'), {
+    columnDefs: colDefs,
+    rowData: rows,
+    defaultColDef: { resizable: true, sortable: true, filter: true },
+    pagination: true,
+    paginationPageSize: 100,
+    tooltipShowDelay: 300
+  });
+}
+
+async function clearCache() {
+  if (!selectedCache) return;
+  if (!confirm(`Clear all entries from cache "${selectedCache}"?`)) return;
+  setStatus('entries-status', 'Clearing…', '');
+  try {
+    const res = await fetch('/batch/cache/' + encodeURIComponent(selectedCache), { method: 'DELETE' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    flashStatus('entries-status', 'Cleared ✓', 'ok');
+    document.getElementById('entries-body').innerHTML = '<div class="placeholder">Cache cleared.</div>';
+    document.getElementById('entries-stats').style.display = 'none';
+    if (entryGrid) { try { entryGrid.destroy && entryGrid.destroy(); } catch(e) {} entryGrid = null; }
+    loadCaches(); // refresh counts
+  } catch (e) {
+    flashStatus('entries-status', 'Failed: ' + e.message, 'err');
+  }
+}
+
+function setStatus(id, msg, type) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = msg;
+  el.className = 'status' + (type ? ' ' + type : '');
+}
+function flashStatus(id, msg, type) {
+  setStatus(id, msg, type);
+  setTimeout(() => setStatus(id, '', ''), 2500);
+}
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Init
+loadCaches();
+</script>
+</body>
+</html>

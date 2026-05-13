@@ -18,8 +18,15 @@ import java.util.Map;
  */
 public class DataRow {
 
-    private final Map<String, Object> data     = new LinkedHashMap<>();
-    private final Map<String, Object> metadata = new LinkedHashMap<>();
+    private final Map<String, Object> data         = new LinkedHashMap<>();
+    private final Map<String, Object> metadata     = new LinkedHashMap<>();
+    /** Named outputs from activities: keys are "activityName.RESPONSEBODY" or "activityName.VARNAME". */
+    private final Map<String, Object> namedOutputs = new LinkedHashMap<>();
+    /**
+     * Named datasets produced by activities with {@code outputVar} set.
+     * Structure: varName → (keyValue → row). Available for lookup by subsequent DataEnricher activities.
+     */
+    private final Map<String, Map<String, Map<String, Object>>> datasets = new LinkedHashMap<>();
     private String responseBody;
     private List<Map<String, Object>> expandedRows; // non-null only for multi-row JSON extraction
     private int lastHttpStatusCode = 0; // 0 = no HTTP activity ran
@@ -30,8 +37,13 @@ public class DataRow {
         this.data.putAll(initialData);
     }
 
-    public Map<String, Object> getData()     { return data; }
-    public Map<String, Object> getMetadata() { return metadata; }
+    public Map<String, Object> getData()         { return data; }
+    public Map<String, Object> getMetadata()     { return metadata; }
+    public Map<String, Object> getNamedOutputs() { return namedOutputs; }
+    public Map<String, Map<String, Map<String, Object>>> getDatasets() { return datasets; }
+
+    public void   putNamedOutput(String key, Object value) { namedOutputs.put(key, value); }
+    public Object getNamedOutput(String key)               { return namedOutputs.get(key); }
 
     public String getResponseBody()               { return responseBody; }
     public void   setResponseBody(String body)    { this.responseBody = body; }

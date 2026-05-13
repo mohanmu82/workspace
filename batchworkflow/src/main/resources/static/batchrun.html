@@ -456,9 +456,15 @@
     <!-- Row 1: Operation + Input Source -->
     <div class="form-group">
         <label>Operation</label>
-        <select id="operation" disabled onchange="onOperationChange()">
-            <option value="">Loading operations...</option>
-        </select>
+        <div style="display:flex;gap:6px;align-items:center">
+          <select id="operation" disabled onchange="onOperationChange()" style="flex:1">
+              <option value="">Loading operations...</option>
+          </select>
+          <button id="reload-ops-btn" onclick="reloadOperations()" title="Rescan classpath and DATADIR to reload all operations"
+            style="padding:6px 10px;font-size:12px;font-weight:500;border:1px solid #0052cc;border-radius:4px;background:#fff;color:#0052cc;cursor:pointer;white-space:nowrap;flex-shrink:0">
+            ↺ Reload
+          </button>
+        </div>
     </div>
 
     <div class="form-group hidden" id="aliasGroup">
@@ -891,41 +897,66 @@
     let lastJson = null;
     let opAliases = {};            // opName -> string[]
 
+    function populateOperations(body) {
+        const select = document.getElementById('operation');
+        const prev = select.value;
+        select.innerHTML = '';
+        opAliases = {};
+        const ops = body.data || [];
+        if (ops.length === 0) {
+            select.innerHTML = '<option value="">No operations configured</option>';
+            return;
+        }
+        ops.forEach(op => {
+            const opt = document.createElement('option');
+            opt.value = op.name;
+            opt.textContent = op.name;
+            select.appendChild(opt);
+            if (op.aliases && op.aliases.length > 0) {
+                opAliases[op.name] = op.aliases;
+            }
+        });
+        select.disabled = false;
+        if (prev && [...select.options].some(o => o.value === prev)) select.value = prev;
+        // Populate responseProcessor dropdown
+        const rpNames = body.responseProcessors || [];
+        const rpSel = document.getElementById('responseProcessor');
+        rpSel.innerHTML = '<option value=""></option>';
+        rpNames.forEach(n => {
+            const opt = document.createElement('option');
+            opt.value = opt.textContent = n;
+            rpSel.appendChild(opt);
+        });
+        document.getElementById('responseProcessorGroup').style.display = rpNames.length > 0 ? '' : 'none';
+        onOperationChange();
+    }
+
     // Load operations on startup
     fetch('/batch/operations')
         .then(r => r.json())
-        .then(body => {
-            const select = document.getElementById('operation');
-            select.innerHTML = '';
-            const ops = body.data || [];
-            if (ops.length === 0) {
-                select.innerHTML = '<option value="">No operations configured</option>';
-                return;
-            }
-            ops.forEach(op => {
-                const opt = document.createElement('option');
-                opt.value = op.name;
-                opt.textContent = op.name;
-                select.appendChild(opt);
-                if (op.aliases && op.aliases.length > 0) {
-                    opAliases[op.name] = op.aliases;
-                }
-            });
-            select.disabled = false;
-            // Populate responseProcessor dropdown
-            const rpNames = body.responseProcessors || [];
-            const rpSel = document.getElementById('responseProcessor');
-            rpNames.forEach(n => {
-                const opt = document.createElement('option');
-                opt.value = opt.textContent = n;
-                rpSel.appendChild(opt);
-            });
-            if (rpNames.length > 0) document.getElementById('responseProcessorGroup').style.display = '';
-            onOperationChange();
-        })
+        .then(populateOperations)
         .catch(() => {
             document.getElementById('operation').innerHTML = '<option value="">Failed to load operations</option>';
         });
+
+    async function reloadOperations() {
+        const btn = document.getElementById('reload-ops-btn');
+        btn.disabled = true;
+        btn.textContent = '↺ Reloading…';
+        try {
+            await fetch('/batch/operations/reload', { method: 'POST' });
+            const res = await fetch('/batch/operations');
+            const body = await res.json();
+            populateOperations(body);
+            btn.textContent = '↺ Reloaded ✓';
+            setTimeout(() => { btn.textContent = '↺ Reload'; }, 2000);
+        } catch (e) {
+            btn.textContent = '↺ Failed';
+            setTimeout(() => { btn.textContent = '↺ Reload'; }, 2000);
+        } finally {
+            btn.disabled = false;
+        }
+    }
 
     function deriveOutputFilePath() {
         const inp = document.getElementById('inputFilePath').value.trim();
@@ -2457,7 +2488,7 @@
         const name = document.getElementById('tplName').value.trim();
         if (!name) { showTplMsg('Enter a template name', 'error'); return; }
         try {
-            const res = await fetch('/batch/template', {
+            const res = await fetch('/batch/operationTemplate', {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body:    JSON.stringify({ name, content: buildSaveContent() })
@@ -2474,7 +2505,7 @@
 
     async function loadTemplateList() {
         try {
-            const res  = await fetch('/batch/template');
+            const res  = await fetch('/batch/operationTemplate');
             const data = await res.json();
             const sel  = document.getElementById('tplSelect');
             const cur  = sel.value;
@@ -2492,7 +2523,7 @@
         const name = document.getElementById('tplSelect').value;
         if (!name) { showTplMsg('Select a template first', 'error'); return; }
         try {
-            const res  = await fetch('/batch/template/' + encodeURIComponent(name));
+            const res  = await fetch('/batch/operationTemplate/' + encodeURIComponent(name));
             if (!res.ok) { showTplMsg('Template not found', 'error'); return; }
             const data = await res.json();
             const c    = data.content || {};

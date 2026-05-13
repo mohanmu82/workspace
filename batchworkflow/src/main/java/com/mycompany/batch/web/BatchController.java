@@ -8,6 +8,7 @@ import com.mycompany.batch.model.ActivityType;
 import com.mycompany.batch.model.AuthMethod;
 import com.mycompany.batch.model.DataExtractionType;
 import com.mycompany.batch.model.ExecutionMode;
+import com.mycompany.batch.model.DataRow;
 import com.mycompany.batch.model.InputSourceType;
 import com.mycompany.batch.model.OutputDataType;
 import com.mycompany.batch.model.RunRequest;
@@ -117,6 +118,27 @@ public class BatchController {
     // -------------------------------------------------------------------------
     // GET /batch/operations  — flat key-value listing of all configured operations
     // -------------------------------------------------------------------------
+
+    // -------------------------------------------------------------------------
+    // POST /batch/operations/reload  — rescan classpath + DATADIR and reload all operations
+    // -------------------------------------------------------------------------
+
+    @PostMapping("/operations/reload")
+    public ResponseEntity<Map<String, Object>> reloadOperations() {
+        try {
+            batchProperties.loadFromJson();
+        } catch (Exception e) {
+            Map<String, Object> err = new LinkedHashMap<>();
+            err.put("status",  "error");
+            err.put("message", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+            return ResponseEntity.badRequest().body(err);
+        }
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("status", "reloaded");
+        response.put("count",  batchProperties.getOperations().size());
+        response.put("operations", batchProperties.getOperations().keySet());
+        return ResponseEntity.ok(response);
+    }
 
     @GetMapping("/operations")
     public ResponseEntity<Map<String, Object>> listOperations() {
@@ -347,7 +369,13 @@ public class BatchController {
     @PostMapping(value = "/run", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<?> runPostJson(
             @RequestBody Map<String, Object> body) throws Exception {
-        return executeRun(deserializeRunRequest(body));
+        RunRequest request;
+        try {
+            request = deserializeRunRequest(body);
+        } catch (Exception e) {
+            return badRequest(e.getMessage() != null ? e.getMessage() : "invalid request body");
+        }
+        return executeRun(request);
     }
 
     // -------------------------------------------------------------------------
@@ -403,10 +431,12 @@ public class BatchController {
         try {
             request = batchService.resolveAlias(request);
             result = batchService.run(request);
+        } catch (BatchService.ValidationFailureException e) {
+            return ResponseEntity.badRequest().body(e.getBody());
         } catch (IllegalArgumentException e) {
             return badRequest(e.getMessage());
         } catch (Exception e) {
-            return errorsResponse("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+            return internalServerError(e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
         }
 
         OutputDataType outputData = resolveOutputData(request);
@@ -439,9 +469,33 @@ public class BatchController {
         }
 
         saveToRuntimeCache(request, result.batchUuid(), result.timestamp());
+
+        // SINGLE mode: return the first result row as a flat JSON object so JSONata can use $.RESPONSEBODY
+        if ("SINGLE".equalsIgnoreCase(request.operationType())) {
+            List<Map<String, Object>> rows = result.results();
+            Object singleResponse = rows.isEmpty() ? new LinkedHashMap<>() : new LinkedHashMap<>(rows.get(0));
+            if (request.jsonataTransform() != null) {
+                // When source is set, evaluate it against the full response so paths like
+                // "data[0].RESPONSEBODY" resolve correctly.
+                boolean hasSource = request.jsonataTransform().source() != null
+                        && !request.jsonataTransform().source().isBlank();
+                Object transformInput = hasSource
+                        ? buildHttpResponse(request.operation(), result, request.httpThreadCount())
+                        : singleResponse;
+                singleResponse = batchService.applyJsonataTransform(transformInput, request.jsonataTransform());
+            }
+            return ResponseEntity.ok(singleResponse);
+        }
+
         Object httpResponse = buildHttpResponse(request.operation(), result, request.httpThreadCount());
         if (request.responseProcessor() != null && !request.responseProcessor().isBlank()) {
-            httpResponse = batchService.applyResponseProcessor(httpResponse, request.responseProcessor());
+            try {
+                httpResponse = batchService.applyResponseProcessor(httpResponse, request.responseProcessor(), request.operation());
+            } catch (IllegalArgumentException e) {
+                return badRequest(e.getMessage());
+            } catch (Exception e) {
+                return errorsResponse("responseProcessor", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+            }
         }
         if (request.jsonataTransform() != null) {
             httpResponse = batchService.applyJsonataTransform(httpResponse, request.jsonataTransform());
@@ -559,7 +613,8 @@ public class BatchController {
                 null,  // properties — not supported via query params
                 null,  // jsonataTransform
                 null,  // templateName
-                null   // auth
+                null,  // auth
+                null   // operationType
         );
     }
 
@@ -627,7 +682,7 @@ public class BatchController {
             "debugMode", "httpThreadCount", "httpTimeoutMs", "filterInput", "filterOutput",
             "searchKeyword", "cache", "executionMode", "alias", "responseProcessor",
             "appendOutput", "inputJsonPath", "cacheName", "properties",
-            "jsonataTransform", "templateName", "auth");
+            "jsonataTransform", "templateName", "auth", "operationType");
 
     /**
      * Converts a raw JSON body map to a {@link RunRequest}, capturing any unrecognised
@@ -739,27 +794,48 @@ public class BatchController {
         // Strip leading slashes and block path traversal
         String path = classpath.replace('\\', '/').replaceAll("(^/+|\\.\\./)", "").trim();
         if (path.isBlank()) return badRequest("classpath parameter is required");
-        try (InputStream is = getClass().getClassLoader().getResourceAsStream(path)) {
-            if (is == null) return badRequest("Resource not found: " + path);
-            String content = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-            Map<String, Object> response = new LinkedHashMap<>();
-            response.put("content", content);
-            return ResponseEntity.ok(response);
-        }
+        // Search all classpath locations (classpath* scans every JAR/directory on the path)
+        try {
+            org.springframework.core.io.support.PathMatchingResourcePatternResolver resolver =
+                    new org.springframework.core.io.support.PathMatchingResourcePatternResolver();
+            org.springframework.core.io.Resource[] resources = resolver.getResources("classpath*:" + path);
+            if (resources.length > 0) {
+                try (InputStream is = resources[0].getInputStream()) {
+                    String content = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+                    Map<String, Object> response = new LinkedHashMap<>();
+                    response.put("content", content);
+                    return ResponseEntity.ok(response);
+                }
+            }
+        } catch (Exception ignored) {}
+        // Also check DATADIR filesystem for runtime-generated resources not on the classpath
+        try {
+            String dataDir = serverPropertiesLoader.getProperties().getOrDefault("DATADIR", "");
+            if (!dataDir.isBlank()) {
+                java.nio.file.Path filePath = java.nio.file.Path.of(dataDir).resolve(path);
+                if (java.nio.file.Files.exists(filePath)) {
+                    String content = java.nio.file.Files.readString(filePath, StandardCharsets.UTF_8);
+                    Map<String, Object> response = new LinkedHashMap<>();
+                    response.put("content", content);
+                    return ResponseEntity.ok(response);
+                }
+            }
+        } catch (Exception ignored) {}
+        return badRequest("Resource not found: " + path);
     }
 
     // -------------------------------------------------------------------------
     // Template endpoints
     //
-    // GET  /batch/template                      — list saved templates
-    // GET  /batch/template?name=X&k=v           — run template X; extra params merged into top-level fields and inputHttpBody
-    // GET  /batch/template/{name}               — fetch template content as JSON
-    // GET  /batch/template/{name}/run?k=v       — run template X; extra params merged into top-level fields and inputHttpBody
-    // POST /batch/template  {"name","content"}  — save template
-    // POST /batch/template  {"name","k":"v"}    — run template with extra props
+    // GET  /batch/operationTemplate                      — list saved templates
+    // GET  /batch/operationTemplate?name=X&k=v           — run template X; extra params merged into top-level fields and inputHttpBody
+    // GET  /batch/operationTemplate/{name}               — fetch template content as JSON
+    // GET  /batch/operationTemplate/{name}/run?k=v       — run template X; extra params merged into top-level fields and inputHttpBody
+    // POST /batch/operationTemplate  {"name","content"}  — save template
+    // POST /batch/operationTemplate  {"name","k":"v"}    — run template with extra props
     // -------------------------------------------------------------------------
 
-    @GetMapping("/template")
+    @GetMapping("/operationTemplate")
     public ResponseEntity<?> getTemplates(@RequestParam Map<String, String> params) throws Exception {
         String name = params.get("name");
         if (name != null && !name.isBlank()) {
@@ -788,7 +864,7 @@ public class BatchController {
         return ResponseEntity.ok(response);
     }
 
-    @GetMapping("/template/{name}")
+    @GetMapping("/operationTemplate/{name}")
     public ResponseEntity<?> getTemplateContent(@PathVariable String name) throws Exception {
         Path file = templateDir().resolve(name + ".json");
         if (!Files.exists(file)) return badRequest("template not found: " + name);
@@ -799,14 +875,14 @@ public class BatchController {
         return ResponseEntity.ok(response);
     }
 
-    @GetMapping("/template/{name}/run")
+    @GetMapping("/operationTemplate/{name}/run")
     public ResponseEntity<?> runTemplateByName(
             @PathVariable String name,
             @RequestParam Map<String, String> params) throws Exception {
         return executeTemplateRun(name.trim(), new LinkedHashMap<>(params));
     }
 
-    @PostMapping("/template")
+    @PostMapping("/operationTemplate")
     public ResponseEntity<?> postTemplate(
             @RequestBody Map<String, Object> body) throws Exception {
         String name = body.get("name") instanceof String s ? s.trim() : "";
@@ -864,13 +940,107 @@ public class BatchController {
                 }
             }
         }
-        RunRequest request = deserializeRunRequest(mergedMap);
+        RunRequest request;
+        try {
+            request = deserializeRunRequest(mergedMap);
+        } catch (Exception e) {
+            return badRequest("failed to build request from template '" + name + "': "
+                    + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()));
+        }
         return executeRun(request);
     }
 
     private Path templateDir() {
         String templateDir = serverPropertiesLoader.getProperties().getOrDefault("TEMPLATEDIR", ".");
         return Path.of(templateDir);
+    }
+
+    // -------------------------------------------------------------------------
+    // Input Source Template endpoints
+    //
+    // GET  /batch/inputsourcetemplate          — list saved inputSource templates
+    // GET  /batch/inputsourcetemplate/{name}   — get template content
+    // POST /batch/inputsourcetemplate          — save template {"name","content"}
+    // POST /batch/inputsourcetemplate/test     — test inputSource config, return rows
+    // -------------------------------------------------------------------------
+
+    private Path inputSourceTemplateDir() {
+        String dataDir = serverPropertiesLoader.getProperties().getOrDefault("DATADIR", ".");
+        return Path.of(dataDir).resolve("inputSourceTemplate");
+    }
+
+    @GetMapping("/inputsourcetemplate")
+    public ResponseEntity<?> listInputSourceTemplates() throws Exception {
+        Path dir = inputSourceTemplateDir();
+        List<Map<String, Object>> templates = new ArrayList<>();
+        if (Files.isDirectory(dir)) {
+            try (var stream = Files.list(dir)) {
+                List<Path> files = stream.filter(p -> p.toString().endsWith(".json")).sorted().toList();
+                for (Path p : files) {
+                    String name = p.getFileName().toString().replaceAll("\\.json$", "");
+                    Object content = objectMapper.readValue(p.toFile(), Object.class);
+                    Map<String, Object> entry = new LinkedHashMap<>();
+                    entry.put("name", name);
+                    entry.put("content", content);
+                    templates.add(entry);
+                }
+            } catch (Exception ignored) {}
+        }
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("data", templates);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/inputsourcetemplate/{name}")
+    public ResponseEntity<?> getInputSourceTemplate(@PathVariable String name) throws Exception {
+        Path file = inputSourceTemplateDir().resolve(name + ".json");
+        if (!Files.exists(file)) return badRequest("inputSource template not found: " + name);
+        Object content = objectMapper.readValue(file.toFile(), Object.class);
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("name", name);
+        response.put("content", content);
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/inputsourcetemplate")
+    public ResponseEntity<?> saveInputSourceTemplate(@RequestBody Map<String, Object> body) throws Exception {
+        String name = body.get("name") instanceof String s ? s.trim() : "";
+        if (name.isBlank()) return badRequest("name is required");
+        if (!name.matches("[\\w\\-. ]+")) return badRequest("name contains invalid characters");
+        Object content = body.get("content");
+        if (content == null) return badRequest("content is required");
+        Path dir = inputSourceTemplateDir();
+        Files.createDirectories(dir);
+        Path file = dir.resolve(name + ".json");
+        objectMapper.writerWithDefaultPrettyPrinter().writeValue(file.toFile(), content);
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("status", "saved");
+        response.put("name", name);
+        response.put("path", file.toAbsolutePath().toString());
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/inputsourcetemplate/test")
+    public ResponseEntity<?> testInputSourceTemplate(@RequestBody Map<String, Object> body) throws Exception {
+        Object inputSourceRaw = body.get("inputSource");
+        if (inputSourceRaw == null) return badRequest("inputSource is required");
+        com.mycompany.batch.config.BatchProperties.InputSourceProperties inputSource;
+        try {
+            inputSource = objectMapper.convertValue(inputSourceRaw,
+                    com.mycompany.batch.config.BatchProperties.InputSourceProperties.class);
+        } catch (Exception e) {
+            return badRequest("invalid inputSource: " + e.getMessage());
+        }
+        try {
+            List<DataRow> rows = batchService.readDataRowsFromInputSource(inputSource);
+            List<Map<String, Object>> data = rows.stream().map(r -> r.getData()).toList();
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("data", data);
+            response.put("count", data.size());
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            return badRequest("inputSource test failed: " + e.getMessage());
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -936,8 +1106,104 @@ public class BatchController {
         return result;
     }
 
+    // -------------------------------------------------------------------------
+    // Page endpoints
+    //
+    // GET  /batch/page          — list saved page names (DATADIR/pages/ + classpath:pages/)
+    // GET  /batch/page/{name}   — get page JSON content
+    // POST /batch/page          — save page {"name","content"}
+    // -------------------------------------------------------------------------
+
+    private Path pageDir() {
+        String dataDir = serverPropertiesLoader.getProperties().getOrDefault("DATADIR", ".");
+        return Path.of(dataDir).resolve("pages");
+    }
+
+    @GetMapping("/page")
+    public ResponseEntity<?> listPages() {
+        List<String> names = new ArrayList<>();
+        // Scan DATADIR/pages/
+        Path dir = pageDir();
+        if (Files.isDirectory(dir)) {
+            try (var stream = Files.list(dir)) {
+                stream.filter(p -> p.toString().endsWith(".json"))
+                      .map(p -> p.getFileName().toString().replaceAll("\\.json$", ""))
+                      .sorted()
+                      .forEach(names::add);
+            } catch (Exception ignored) {}
+        }
+        // Also scan classpath:pages/
+        try {
+            Resource[] resources = new PathMatchingResourcePatternResolver().getResources("classpath*:pages/*.json");
+            for (Resource r : resources) {
+                String filename = r.getFilename();
+                if (filename != null && filename.endsWith(".json")) {
+                    String n = filename.substring(0, filename.length() - 5);
+                    if (!names.contains(n)) names.add(n);
+                }
+            }
+        } catch (Exception ignored) {}
+        names.sort(String::compareTo);
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("data", names);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/page/{name}")
+    public ResponseEntity<?> getPage(@PathVariable String name) throws Exception {
+        if (!name.matches("[\\w\\-.]+")) return badRequest("invalid page name");
+        // Try DATADIR/pages/ first
+        Path file = pageDir().resolve(name + ".json");
+        if (Files.exists(file)) {
+            Object content = objectMapper.readValue(file.toFile(), Object.class);
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("name", name);
+            response.put("content", content);
+            return ResponseEntity.ok(response);
+        }
+        // Fall back to classpath:pages/
+        String classpathResource = "pages/" + name + ".json";
+        try (InputStream is = getClass().getClassLoader().getResourceAsStream(classpathResource)) {
+            if (is != null) {
+                Object content = objectMapper.readValue(is, Object.class);
+                Map<String, Object> response = new LinkedHashMap<>();
+                response.put("name", name);
+                response.put("content", content);
+                return ResponseEntity.ok(response);
+            }
+        } catch (Exception ignored) {}
+        return badRequest("page not found: " + name);
+    }
+
+    @PostMapping("/page")
+    public ResponseEntity<?> savePage(@RequestBody Map<String, Object> body) throws Exception {
+        String name = body.get("name") instanceof String s ? s.trim() : "";
+        if (name.isBlank()) return badRequest("name is required");
+        if (!name.matches("[\\w\\-.]+")) return badRequest("name contains invalid characters (use letters, digits, _ - .)");
+        Object content = body.get("content");
+        if (content == null) return badRequest("content is required");
+        Path dir = pageDir();
+        Files.createDirectories(dir);
+        Path file = dir.resolve(name + ".json");
+        objectMapper.writerWithDefaultPrettyPrinter().writeValue(file.toFile(), content);
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("status", "saved");
+        response.put("name", name);
+        response.put("path", file.toAbsolutePath().toString());
+        return ResponseEntity.ok(response);
+    }
+
     private ResponseEntity<Map<String, Object>> badRequest(String message) {
         return errorsResponse("validation", message);
+    }
+
+    private ResponseEntity<Map<String, Object>> internalServerError(String message) {
+        Map<String, Object> err = new LinkedHashMap<>();
+        err.put("activity", "error");
+        err.put("message",  message != null ? message : "Unknown error");
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("Errors", List.of(err));
+        return ResponseEntity.internalServerError().body(body);
     }
 
     ResponseEntity<Map<String, Object>> errorsResponse(String activity, String message) {

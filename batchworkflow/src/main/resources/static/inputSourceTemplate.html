@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Input Source Templates</title>
+<script src="https://cdn.jsdelivr.net/npm/ag-grid-community@31/dist/ag-grid-community.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f5f7; color: #172b4d; padding: 20px; }
+.nav { margin-bottom: 14px; }
+.nav a { font-size: 13px; color: #0052cc; text-decoration: none; }
+.nav a:hover { text-decoration: underline; }
+h1 { font-size: 20px; font-weight: 600; margin-bottom: 16px; }
+
+.workspace { display: grid; grid-template-columns: 1fr 400px; gap: 14px; align-items: start; }
+.form-col { display: flex; flex-direction: column; gap: 10px; }
+.preview-col { position: sticky; top: 20px; display: flex; flex-direction: column; gap: 10px; }
+
+.panel { background: #fff; border: 1px solid #dfe1e6; border-radius: 6px; overflow: hidden; }
+.panel-header { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: #f4f5f7; border-bottom: 1px solid #dfe1e6; cursor: pointer; user-select: none; }
+.panel-header h2 { font-size: 12px; font-weight: 700; color: #5e6c84; text-transform: uppercase; letter-spacing: 0.5px; flex: 1; }
+.panel-header .toggle { font-size: 16px; color: #8993a4; transition: transform 0.15s; }
+.panel-header.collapsed .toggle { transform: rotate(-90deg); }
+.panel-body { padding: 14px; }
+.panel-body.hidden { display: none; }
+
+.form-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; margin-bottom: 10px; }
+.form-row:last-child { margin-bottom: 0; }
+.fg { display: flex; flex-direction: column; gap: 4px; }
+.fg.wide { grid-column: 1 / -1; }
+.fg label { font-size: 11px; font-weight: 600; color: #5e6c84; text-transform: uppercase; letter-spacing: 0.4px; }
+.fg input, .fg select, .fg textarea { padding: 6px 9px; font-size: 13px; border: 1px solid #ccc; border-radius: 4px; outline: none; background: #fff; font-family: inherit; }
+.fg input:focus, .fg select:focus, .fg textarea:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.2); }
+.fg textarea { resize: vertical; min-height: 60px; font-size: 12px; font-family: Consolas, monospace; }
+.hint { font-size: 11px; color: #a5adba; margin-top: 1px; }
+
+button { padding: 7px 14px; font-size: 13px; font-weight: 500; border: none; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+button.primary { background: #0052cc; color: #fff; }
+button.primary:hover { background: #0065ff; }
+button.primary:disabled { background: #a5adba; cursor: not-allowed; }
+button.secondary { background: #fff; color: #0052cc; border: 1px solid #0052cc; }
+button.secondary:hover { background: #e9f0ff; }
+button.success { background: #006644; color: #fff; }
+button.success:hover { background: #00875a; }
+button.success:disabled { background: #a5adba; cursor: not-allowed; }
+button.danger { background: #fff; color: #de350b; border: 1px solid #de350b; padding: 4px 10px; font-size: 12px; }
+button.danger:hover { background: #ffebe6; }
+button.sm { padding: 4px 10px; font-size: 12px; }
+
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 14px; border-top: 1px solid #dfe1e6; background: #fafbfc; }
+
+.status { font-size: 13px; color: #5e6c84; min-height: 18px; }
+.status.ok { color: #006644; }
+.status.err { color: #de350b; }
+
+/* JSON preview */
+#json-preview {
+  font-family: Consolas, "Cascadia Code", monospace; font-size: 12px;
+  background: #1e2a3a; color: #e0e8f0; border: none; border-radius: 0;
+  padding: 12px; width: 100%; resize: none; outline: none; line-height: 1.5;
+  height: 320px;
+}
+.preview-toolbar { display: flex; gap: 6px; padding: 8px 12px; background: #1e2a3a; border-top: 1px solid #2d3f52; }
+.preview-toolbar button { padding: 4px 12px; font-size: 12px; background: #2d3f52; color: #c0d0e0; border: 1px solid #3d4f62; border-radius: 3px; }
+.preview-toolbar button:hover { background: #3d5a72; }
+
+/* Response panel */
+#response-json { font-family: Consolas, "Cascadia Code", monospace; font-size: 12px; background: #1e2a3a; color: #e0e8f0; border: none; border-radius: 0; padding: 12px; width: 100%; resize: none; outline: none; line-height: 1.5; height: 320px; }
+
+/* Grid */
+#results-wrap { display: none; margin-top: 10px; }
+#grid { width: 100%; height: 280px; }
+
+.stats-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.stat { background: #fff; border: 1px solid #dfe1e6; border-radius: 4px; padding: 5px 14px; display: flex; flex-direction: column; align-items: center; }
+.stat-lbl { font-size: 10px; color: #5e6c84; text-transform: uppercase; letter-spacing: 0.4px; }
+.stat-val { font-size: 15px; font-weight: 700; color: #172b4d; }
+
+.loader-row { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+.loader-row select { font-size: 13px; padding: 5px 8px; border: 1px solid #ccc; border-radius: 4px; flex: 1; max-width: 320px; }
+</style>
+</head>
+<body>
+
+<div class="nav" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+  <a href="/">← Batch Runner</a>
+  <span style="color:#dfe1e6">|</span>
+  <label style="font-size:13px;color:#5e6c84;white-space:nowrap">Load template:</label>
+  <select id="tmpl-loader" style="font-size:13px;padding:3px 8px;border:1px solid #ccc;border-radius:4px;min-width:200px" onchange="loadSelectedTemplate()">
+    <option value="">— select —</option>
+  </select>
+  <span class="status" id="loader-status" style="font-size:12px"></span>
+  <span style="color:#dfe1e6">|</span>
+  <button class="secondary sm" onclick="resetForm()">New Template</button>
+</div>
+<h1>Input Source Templates</h1>
+
+<div class="workspace">
+<!-- ===== LEFT: FORM ===== -->
+<div class="form-col">
+
+<!-- Template Name -->
+<div class="panel" id="p-name">
+  <div class="panel-header" onclick="togglePanel('p-name')">
+    <h2>Template Info</h2><span class="toggle">▾</span>
+  </div>
+  <div class="panel-body">
+    <div class="form-row">
+      <div class="fg">
+        <label>Template Name <span style="color:#de350b">*</span></label>
+        <input id="f-name" type="text" placeholder="my-input-source" oninput="genJson()">
+        <span class="hint">Used as the file name (no spaces or special chars)</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Input Source -->
+<div class="panel" id="p-input">
+  <div class="panel-header" onclick="togglePanel('p-input')">
+    <h2>Input Source</h2><span class="toggle">▾</span>
+  </div>
+  <div class="panel-body">
+    <div class="form-row">
+      <div class="fg">
+        <label>Type</label>
+        <select id="f-type" onchange="showInputFields();genJson()">
+          <option value="HTTPCONFIG">HTTPCONFIG</option>
+          <option value="DB">DB</option>
+        </select>
+      </div>
+    </div>
+    <div id="input-httpconfig">
+      <div class="form-row">
+        <div class="fg wide">
+          <label>URL</label>
+          <input id="f-url" type="text" placeholder="http://api.example.com/input-ids" oninput="genJson()">
+        </div>
+        <div class="fg">
+          <label>Method</label>
+          <select id="f-method" onchange="genJson()">
+            <option value="GET">GET</option>
+            <option value="POST">POST</option>
+          </select>
+        </div>
+        <div class="fg wide">
+          <label>JSONata Transform</label>
+          <input id="f-jsonata" type="text" placeholder="data.items.{ 'id': id }" oninput="genJson()">
+          <span class="hint">Extract specific fields from the HTTP response</span>
+        </div>
+      </div>
+    </div>
+    <div id="input-db" style="display:none">
+      <div class="form-row">
+        <div class="fg wide">
+          <label>JDBC URL</label>
+          <input id="f-db-url" type="text" placeholder="jdbc:oracle:thin:@host:1521/service" oninput="genJson()">
+        </div>
+        <div class="fg">
+          <label>Username</label>
+          <input id="f-db-user" type="text" placeholder="${DB_USER}" oninput="genJson()">
+        </div>
+        <div class="fg">
+          <label>Password</label>
+          <input id="f-db-pass" type="password" placeholder="${DB_PASS}" oninput="genJson()">
+        </div>
+        <div class="fg wide">
+          <label>SQL</label>
+          <textarea id="f-db-sql" rows="2" placeholder="SELECT id, name FROM accounts WHERE active = 1" oninput="genJson()"></textarea>
+        </div>
+        <div class="fg">
+          <label>Timeout (ms)</label>
+          <input id="f-db-timeout" type="number" placeholder="3000" oninput="genJson()">
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Test Run -->
+<div class="panel" id="p-test">
+  <div class="panel-header" onclick="togglePanel('p-test')">
+    <h2>Test Run</h2><span class="toggle">▾</span>
+  </div>
+  <div class="panel-body">
+    <p style="font-size:12px;color:#5e6c84;margin-bottom:10px">Runs the input source and returns the first rows. Use this to verify connectivity and the data shape before using this template in an operation.</p>
+    <div class="toolbar" style="padding:0;border:none;background:none;">
+      <button class="primary" id="t-run-btn" onclick="runTest()">Run Test</button>
+      <div class="status" id="t-status"></div>
+    </div>
+    <div id="results-wrap">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;margin-top:10px">
+        <div class="stats-row" id="t-stats" style="margin-bottom:0"></div>
+        <button class="secondary sm" onclick="exportCsv()">Export CSV</button>
+      </div>
+      <div id="grid" class="ag-theme-alpine"></div>
+    </div>
+  </div>
+</div>
+
+</div><!-- end form-col -->
+
+<!-- ===== RIGHT: JSON PREVIEW + RESPONSE ===== -->
+<div class="preview-col">
+  <div class="panel" style="overflow:hidden">
+    <div class="panel-header" style="cursor:default">
+      <h2>JSON Preview</h2>
+      <div style="display:flex;gap:6px;align-items:center">
+        <div class="status" id="import-status" style="font-size:12px"></div>
+      </div>
+    </div>
+    <textarea id="json-preview" spellcheck="false" oninput="onPreviewEdit()"></textarea>
+    <div class="preview-toolbar">
+      <button onclick="copyJson()">Copy</button>
+      <button onclick="importFromPreview()" style="background:#2d4f3a;color:#90c8a0;border-color:#3a6e4a">Import into Form</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header" style="cursor:default">
+      <h2>Save Template</h2>
+    </div>
+    <div class="panel-body">
+      <div class="form-row">
+        <div class="fg wide">
+          <label>File name (without .json)</label>
+          <input id="save-name" type="text" placeholder="auto-filled from name">
+        </div>
+      </div>
+      <div class="toolbar" style="padding:0;border:none;background:none">
+        <button class="success" onclick="saveTemplate()">Save Template</button>
+        <div class="status" id="save-status"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" id="response-panel" style="display:none; overflow:hidden">
+    <div class="panel-header" style="cursor:default">
+      <h2>Response Data</h2>
+      <div style="display:flex;gap:6px;align-items:center">
+        <div class="status" id="resp-status" style="font-size:12px"></div>
+        <button onclick="copyResponseJson()" style="padding:3px 10px;font-size:12px;background:#2d3f52;color:#c0d0e0;border:1px solid #3d4f62;border-radius:3px;cursor:pointer">Copy</button>
+      </div>
+    </div>
+    <textarea id="response-json" spellcheck="false" readonly></textarea>
+  </div>
+</div><!-- end preview-col -->
+</div><!-- end workspace -->
+
+<script>
+// ─── State ───────────────────────────────────────────────────────────────────
+let previewEdited = false;
+let grid = null;
+
+// ─── Panel toggle ─────────────────────────────────────────────────────────────
+function togglePanel(id) {
+  const panel = document.getElementById(id);
+  const header = panel.querySelector('.panel-header');
+  const body = panel.querySelector('.panel-body');
+  header.classList.toggle('collapsed');
+  body.classList.toggle('hidden');
+}
+
+// ─── Conditional visibility ───────────────────────────────────────────────────
+function showInputFields() {
+  const val = document.getElementById('f-type').value;
+  document.getElementById('input-httpconfig').style.display = val === 'HTTPCONFIG' ? '' : 'none';
+  document.getElementById('input-db').style.display = val === 'DB' ? '' : 'none';
+}
+
+// ─── JSON Generation ──────────────────────────────────────────────────────────
+function buildJson() {
+  const name = v('f-name');
+  const type = v('f-type') || 'HTTPCONFIG';
+  const obj = { name: name || 'unnamed', inputSource: { type } };
+
+  if (type === 'HTTPCONFIG') {
+    const httpCfg = {};
+    const url = v('f-url'); if (url) httpCfg.url = url;
+    const method = v('f-method'); if (method) httpCfg.method = method;
+    const jt = v('f-jsonata'); if (jt) httpCfg.jsonataTransform = jt;
+    obj.inputSource.httpConfig = httpCfg;
+  } else if (type === 'DB') {
+    const dbCfg = {};
+    const url = v('f-db-url'); if (url) dbCfg.jdbcUrl = url;
+    const user = v('f-db-user'); if (user) dbCfg.userName = user;
+    const pass = v('f-db-pass'); if (pass) dbCfg.password = pass;
+    const sql = v('f-db-sql'); if (sql) dbCfg.sql = sql;
+    const timeout = vi('f-db-timeout'); if (timeout) dbCfg.timeoutMs = timeout;
+    obj.inputSource.dbConfig = dbCfg;
+  }
+  return obj;
+}
+
+function genJson() {
+  if (previewEdited) return;
+  const obj = buildJson();
+  document.getElementById('json-preview').value = JSON.stringify(obj, null, 2);
+  const saveName = document.getElementById('save-name');
+  if (!saveName.value || saveName.dataset.autoFilled === 'true') {
+    saveName.value = v('f-name');
+    saveName.dataset.autoFilled = 'true';
+  }
+}
+
+// ─── Import from preview ──────────────────────────────────────────────────────
+function importFromPreview() {
+  const raw = document.getElementById('json-preview').value.trim();
+  let obj;
+  try { obj = JSON.parse(raw); }
+  catch (e) { flashStatus('import-status', 'Invalid JSON: ' + e.message, 'err'); return; }
+  previewEdited = false;
+  document.getElementById('json-preview').classList.remove('edited');
+  loadTemplateIntoForm(obj);
+  flashStatus('import-status', 'Imported ✓', 'ok');
+}
+
+function loadTemplateIntoForm(obj) {
+  set('f-name', obj.name || '');
+  const is = obj.inputSource || {};
+  set('f-type', is.type || 'HTTPCONFIG');
+  showInputFields();
+  if (is.httpConfig) {
+    set('f-url', is.httpConfig.url || '');
+    set('f-method', is.httpConfig.method || 'GET');
+    set('f-jsonata', is.httpConfig.jsonataTransform || '');
+  }
+  if (is.dbConfig) {
+    set('f-db-url', is.dbConfig.jdbcUrl || '');
+    set('f-db-user', is.dbConfig.userName || '');
+    set('f-db-pass', is.dbConfig.password || '');
+    set('f-db-sql', is.dbConfig.sql || '');
+    if (is.dbConfig.timeoutMs) set('f-db-timeout', String(is.dbConfig.timeoutMs));
+  }
+  const saveName = document.getElementById('save-name');
+  saveName.value = obj.name || '';
+  saveName.dataset.autoFilled = 'true';
+  previewEdited = false;
+  genJson();
+}
+
+// ─── Test Run ─────────────────────────────────────────────────────────────────
+async function runTest() {
+  const obj = previewEdited ? tryParsePreview() : buildJson();
+  if (!obj) return;
+  const inputSource = obj.inputSource;
+  if (!inputSource || !inputSource.type) {
+    setStatus('t-status', 'Input source type is required.', 'err'); return;
+  }
+
+  setStatus('t-status', 'Running…', '');
+  document.getElementById('results-wrap').style.display = 'none';
+  document.getElementById('t-run-btn').disabled = true;
+  try {
+    const res = await fetch('/batch/inputsourcetemplate/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ inputSource })
+    });
+    const data = await res.json();
+    showResponseJson(data);
+    if (!res.ok) {
+      const msg = data?.Errors?.[0]?.message || data?.message || 'Error ' + res.status;
+      setStatus('t-status', msg, 'err');
+      return;
+    }
+    renderResults(data);
+    setStatus('t-status', `Done — ${data.count ?? 0} row(s) returned.`, 'ok');
+  } catch (e) {
+    setStatus('t-status', e.message, 'err');
+  } finally {
+    document.getElementById('t-run-btn').disabled = false;
+  }
+}
+
+function renderResults(data) {
+  const rows = data.data || [];
+  if (!rows.length) {
+    document.getElementById('results-wrap').style.display = 'none';
+    return;
+  }
+  document.getElementById('results-wrap').style.display = 'block';
+  const stats = document.getElementById('t-stats');
+  stats.innerHTML = `<div class="stat"><span class="stat-lbl">Rows</span><span class="stat-val">${rows.length}</span></div>`;
+
+  const colKeys = Object.keys(rows[0]);
+  const colDefs = colKeys.map(k => ({ field: k, headerName: k, flex: 1, minWidth: 80, resizable: true, sortable: true, filter: true }));
+
+  if (grid) { grid.destroy && grid.destroy(); grid = null; }
+  const el = document.getElementById('grid');
+  el.innerHTML = '';
+  grid = agGrid.createGrid(el, {
+    columnDefs: colDefs,
+    rowData: rows,
+    defaultColDef: { resizable: true, sortable: true, filter: true },
+    pagination: true,
+    paginationPageSize: 50
+  });
+}
+
+function showResponseJson(data) {
+  document.getElementById('response-json').value = JSON.stringify(data, null, 2);
+  document.getElementById('response-panel').style.display = '';
+}
+
+function copyResponseJson() {
+  const text = document.getElementById('response-json').value;
+  navigator.clipboard.writeText(text)
+    .then(() => flashStatus('resp-status', 'Copied ✓', 'ok'))
+    .catch(() => { document.getElementById('response-json').select(); document.execCommand('copy'); flashStatus('resp-status', 'Copied ✓', 'ok'); });
+}
+
+// ─── Save ─────────────────────────────────────────────────────────────────────
+async function saveTemplate() {
+  const name = v('save-name').trim() || v('f-name').trim();
+  if (!name) { setStatus('save-status', 'Enter a template name.', 'err'); return; }
+  const content = previewEdited ? tryParsePreview() : buildJson();
+  if (!content) return;
+  try {
+    const res = await fetch('/batch/inputsourcetemplate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, content })
+    });
+    const data = await res.json();
+    if (!res.ok || data.status === 'error') {
+      setStatus('save-status', data.error || data.message || 'Save failed', 'err');
+      return;
+    }
+    setStatus('save-status', `Saved "${name}" ✓`, 'ok');
+    await reloadTemplateList();
+  } catch (e) {
+    setStatus('save-status', e.message, 'err');
+  }
+}
+
+// ─── Template list ────────────────────────────────────────────────────────────
+async function reloadTemplateList() {
+  try {
+    const res = await fetch('/batch/inputsourcetemplate');
+    const data = await res.json();
+    const sel = document.getElementById('tmpl-loader');
+    const cur = sel.value;
+    while (sel.options.length > 1) sel.remove(1);
+    (data.data || []).forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t.name; opt.textContent = t.name;
+      if (t.name === cur) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  } catch (e) { /* server may not be running */ }
+}
+
+async function loadSelectedTemplate() {
+  const name = document.getElementById('tmpl-loader').value;
+  if (!name) return;
+  flashStatus('loader-status', 'Loading…', '');
+  try {
+    const res = await fetch('/batch/inputsourcetemplate/' + encodeURIComponent(name));
+    const data = await res.json();
+    if (data.content) {
+      loadTemplateIntoForm(data.content);
+      flashStatus('loader-status', 'Loaded ✓', 'ok');
+    } else {
+      flashStatus('loader-status', 'Not found', 'err');
+    }
+  } catch (e) {
+    flashStatus('loader-status', e.message, 'err');
+  }
+}
+
+// ─── Reset ────────────────────────────────────────────────────────────────────
+function resetForm() {
+  document.getElementById('tmpl-loader').value = '';
+  loadTemplateIntoForm({ name: '', inputSource: { type: 'HTTPCONFIG' } });
+  set('f-name', '');
+  set('save-name', '');
+  document.getElementById('save-name').dataset.autoFilled = '';
+  document.getElementById('results-wrap').style.display = 'none';
+  document.getElementById('response-panel').style.display = 'none';
+  setStatus('t-status', '');
+  setStatus('save-status', '');
+  previewEdited = false;
+}
+
+// ─── Preview edit ─────────────────────────────────────────────────────────────
+function onPreviewEdit() {
+  previewEdited = true;
+}
+
+// ─── Export CSV ───────────────────────────────────────────────────────────────
+function exportCsv() {
+  if (!grid) return;
+  const allRows = [];
+  grid.forEachNode(n => allRows.push(n.data));
+  if (!allRows.length) return;
+  const cols = Object.keys(allRows[0]);
+  const escape = val => { const s = String(val ?? ''); return s.includes(',') || s.includes('"') || s.includes('\n') ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const csv = [cols.map(escape).join(','), ...allRows.map(r => cols.map(c => escape(r[c])).join(','))].join('\r\n');
+  const name = v('f-name') || 'input-source';
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: name + '-test.csv' });
+  a.click(); URL.revokeObjectURL(a.href);
+}
+
+// ─── Clipboard ────────────────────────────────────────────────────────────────
+function copyJson() {
+  navigator.clipboard.writeText(document.getElementById('json-preview').value)
+    .then(() => flashStatus('import-status', 'Copied ✓', 'ok'))
+    .catch(() => { document.getElementById('json-preview').select(); document.execCommand('copy'); flashStatus('import-status', 'Copied ✓', 'ok'); });
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function v(id) { return document.getElementById(id)?.value ?? ''; }
+function vi(id) { const n = parseInt(v(id)); return isNaN(n) ? null : n; }
+function set(id, val) { const el = document.getElementById(id); if (el) el.value = val ?? ''; }
+function setStatus(id, msg, type) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = msg;
+  el.className = 'status' + (type ? ' ' + type : '');
+}
+function flashStatus(id, msg, type) {
+  setStatus(id, msg, type);
+  setTimeout(() => setStatus(id, '', ''), 2500);
+}
+function tryParsePreview() {
+  try { return JSON.parse(document.getElementById('json-preview').value); }
+  catch (e) { flashStatus('import-status', 'JSON parse error: ' + e.message, 'err'); return null; }
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+showInputFields();
+genJson();
+reloadTemplateList();
+
+// Keyboard shortcut: Ctrl+Enter → Run Test
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault();
+    runTest();
+  }
+});
+</script>
+</body>
+</html>

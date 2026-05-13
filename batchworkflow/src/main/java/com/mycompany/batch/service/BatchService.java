@@ -127,6 +127,15 @@ public class BatchService {
                         }
                     }
                 }
+                // Validate DB initialization entries
+                for (BatchProperties.InitializationProperties init : op.getInitialization()) {
+                    if ("DB".equalsIgnoreCase(init.getType())) {
+                        if (init.getDb().getJdbcUrl().isBlank()) {
+                            throw new IllegalStateException(
+                                    "DB initialization '" + init.getName() + "' in operation '" + name + "' requires db.jdbcUrl");
+                        }
+                    }
+                }
             } catch (Exception e) {
                 throw new IllegalStateException(
                         "Failed to initialise operation '" + name + "': " + e.getMessage(), e);
@@ -173,6 +182,14 @@ public class BatchService {
             case BASIC -> {
                 String u = rp(auth.getBasic().getUsername(), opProperties);
                 String p = rp(auth.getBasic().getPassword(), opProperties);
+                if (opProperties != null) {
+                    if (u.contains("${")) throw new IllegalStateException(
+                            "BASIC auth for '" + operationName + "': username contains unresolved placeholder '" + u
+                                    + "'. Make sure the required property is provided in the request.");
+                    if (p.contains("${")) throw new IllegalStateException(
+                            "BASIC auth for '" + operationName + "': password contains an unresolved placeholder."
+                                    + " Make sure the required property is provided in the request.");
+                }
                 if (u.isBlank() || p.isBlank()) {
                     throw new IllegalStateException(
                             "BASIC auth for '" + operationName + "' requires basic.username and basic.password");
@@ -183,6 +200,14 @@ public class BatchService {
                 String url = rp(auth.getJwt().getUrl(), opProperties);
                 String u   = rp(auth.getJwt().getUsername(), opProperties);
                 String p   = rp(auth.getJwt().getPassword(), opProperties);
+                if (opProperties != null) {
+                    if (u.contains("${")) throw new IllegalStateException(
+                            "JWT auth for '" + operationName + "': username contains unresolved placeholder '" + u + "'.");
+                    if (p.contains("${")) throw new IllegalStateException(
+                            "JWT auth for '" + operationName + "': password contains an unresolved placeholder.");
+                    if (url.contains("${")) throw new IllegalStateException(
+                            "JWT auth for '" + operationName + "': url contains unresolved placeholder '" + url + "'.");
+                }
                 if (url.isBlank() || u.isBlank() || p.isBlank()) {
                     throw new IllegalStateException(
                             "JWT auth for '" + operationName + "' requires jwt.url, jwt.username and jwt.password");
@@ -203,6 +228,12 @@ public class BatchService {
             case DIGEST -> {
                 String u = rp(auth.getDigest().getUsername(), opProperties);
                 String p = rp(auth.getDigest().getPassword(), opProperties);
+                if (opProperties != null) {
+                    if (u.contains("${")) throw new IllegalStateException(
+                            "DIGEST auth for '" + operationName + "': username contains unresolved placeholder '" + u + "'.");
+                    if (p.contains("${")) throw new IllegalStateException(
+                            "DIGEST auth for '" + operationName + "': password contains an unresolved placeholder.");
+                }
                 if (u.isBlank() || p.isBlank()) {
                     throw new IllegalStateException(
                             "DIGEST auth for '" + operationName + "' requires digest.username and digest.password");
@@ -214,6 +245,12 @@ public class BatchService {
             case NTLM -> {
                 String u = rp(auth.getNtlm().getUsername(), opProperties);
                 String p = rp(auth.getNtlm().getPassword(), opProperties);
+                if (opProperties != null) {
+                    if (u.contains("${")) throw new IllegalStateException(
+                            "NTLM auth for '" + operationName + "': username contains unresolved placeholder '" + u + "'.");
+                    if (p.contains("${")) throw new IllegalStateException(
+                            "NTLM auth for '" + operationName + "': password contains an unresolved placeholder.");
+                }
                 if (u.isBlank() || p.isBlank()) {
                     throw new IllegalStateException(
                             "NTLM auth for '" + operationName + "' requires ntlm.username and ntlm.password");
@@ -235,6 +272,27 @@ public class BatchService {
     private static String rp(String val, Map<String, String> props) {
         if (val == null || props == null || !val.contains("${")) return val != null ? val : "";
         try { return resolveTemplate(val, Map.of(), props); } catch (Exception e) { return val; }
+    }
+
+    /**
+     * Resolves {@code ${VAR}} placeholders in a cache maxRetentionTime string and parses it to an Integer.
+     * Returns {@code null} when the raw value is null/blank (no TTL). Throws {@link IllegalArgumentException}
+     * when a placeholder cannot be resolved or the result is not a valid integer.
+     */
+    private Integer resolveMaxRetentionTime(String raw, Map<String, Object> rowData, Map<String, String> props) {
+        if (raw == null || raw.isBlank()) return null;
+        String resolved = raw;
+        if (raw.contains("${") || raw.contains("{")) {
+            try { resolved = resolveTemplate(raw, rowData != null ? rowData : Map.of(), props); }
+            catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException("Cache maxRetentionTime placeholder not resolved: " + raw
+                        + ". " + e.getMessage());
+            }
+        }
+        try { return Integer.parseInt(resolved.trim()); }
+        catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Cache maxRetentionTime is not a valid integer: '" + resolved + "'");
+        }
     }
 
     /** Builds an {@link HttpClient}, adding an NTLM {@link java.net.Authenticator} when the operation uses NTLM auth. */
@@ -265,13 +323,42 @@ public class BatchService {
                             String batchUuid, String timestamp) {}
 
     // Pre-loaded per-activity resources (resolved once per runCore call)
+    private record ResolvedTransformStep(
+            String source,           // "$", "$VAR", "$activityName.key"
+            boolean isNone,          // true → pass source through without transformation
+            String jsonataExpression, // pre-loaded JSONATA expression (null when isNone)
+            String onError,          // "SKIP" | "$.key" | null (rethrow)
+            String output            // optional variable name to capture this step's result
+    ) {}
+
+    private static class ValidationException extends RuntimeException {
+        private final String activityName;
+        ValidationException(String activityName, String message) {
+            super(message);
+            this.activityName = activityName;
+        }
+        String getActivityName() { return activityName; }
+    }
+
+    public static class ValidationFailureException extends RuntimeException {
+        private final Map<String, Object> body;
+        public ValidationFailureException(Map<String, Object> body) {
+            super("Validation failed");
+            this.body = body;
+        }
+        public Map<String, Object> getBody() { return body; }
+    }
+
     private record ResolvedActivity(
             BatchProperties.ActivityProperties config,
             String resolvedBodyTemplate,        // for HTTP activities
             Map<String, String> xpathMap,       // XPATH extraction (null otherwise)
             String jsonataTransform,            // JSON/JSONATA extraction (null otherwise)
             List<JsonPathColumn> jsonPathColumns, // JSONPATH extraction (null otherwise)
-            String activityAuthHeader           // non-null when activity has its own auth
+            String activityAuthHeader,          // non-null when activity has its own auth
+            List<ResolvedTransformStep> transformSteps, // TRANSFORM activities (null otherwise)
+            EnricherConfig enricherConfig,      // DATAENRICHER activities (null otherwise)
+            Map<String, Map<String, Map<String, Object>>> enricherStaticDatasets // pre-loaded per batch
     ) {}
 
     // -------------------------------------------------------------------------
@@ -335,7 +422,8 @@ public class BatchService {
                 mergeMap(req.properties(),            a.properties()),
                 mergeObj(req.jsonataTransform(),      a.jsonataTransform()),
                 mergeStr(req.templateName(),          a.templateName()),
-                mergeObj(req.auth(),                  a.auth()));
+                mergeObj(req.auth(),                  a.auth()),
+                mergeStr(req.operationType(),         a.operationType()));
     }
 
     /** Returns {@code a} if non-null and non-blank, otherwise {@code b}. */
@@ -427,6 +515,17 @@ public class BatchService {
         if (debugMode == 2) return debugResult(rows);
 
         String reqAuthHeader = buildRequestAuthHeader(request.auth(), operation, opProperties);
+        // When no per-request auth override is supplied, try re-building the operation-level auth
+        // at request time so ${VAR} placeholders in credentials are resolved from opProperties.
+        if (reqAuthHeader == null && op.getAuth() != null
+                && op.getAuth().getMethod() != com.mycompany.batch.model.AuthMethod.NONE) {
+            try {
+                reqAuthHeader = buildAuthProvider(operation, op.getAuth(), null, opProperties)
+                        .getAuthorizationHeader();
+            } catch (IllegalStateException e) {
+                throw new IllegalArgumentException("Operation '" + operation + "' auth configuration error: " + e.getMessage());
+            } catch (Exception ignored) {}
+        }
         BatchResult result = runCore(rows, op, operation,
                 request.httpThreadCount(), request.httpTimeoutMs(), debugMode, opProperties,
                 request.inputHttpHeader() != null ? request.inputHttpHeader() : Map.of(), reqAuthHeader);
@@ -483,9 +582,9 @@ public class BatchService {
             // Fall back to opProperties (populated from request fields + alias defaults),
             // then operation-level config attributes, then the operation default (FILE).
             String fromProps = opProperties.get("inputSource");
-            // ALIAS is a meta-type (directs alias lookup); it leaks into opProperties from the raw
-            // request via loadOperationProperties step 4, but must never be used as a real source.
-            if ("ALIAS".equalsIgnoreCase(fromProps)) fromProps = null;
+            // ALIAS and SPECIFIC can leak into opProperties from the raw request via
+            // loadOperationProperties step 4, but must never be used as a real source here.
+            if ("ALIAS".equalsIgnoreCase(fromProps) || "SPECIFIC".equalsIgnoreCase(fromProps)) fromProps = null;
             String fromAttrs = fromProps != null && !fromProps.isBlank() ? fromProps
                     : op.getProperties().getAttributes().get("inputSource");
             inputSourceType = (fromAttrs != null && !fromAttrs.isBlank())
@@ -567,14 +666,53 @@ public class BatchService {
             case TEMPLATE -> {
                 String tmplName = request.templateName();
                 if (tmplName == null || tmplName.isBlank()) tmplName = opProperties.get("templateName");
+                if (tmplName == null || tmplName.isBlank()) tmplName = op.getInputSource().getTemplateName();
                 if (tmplName == null || tmplName.isBlank())
                     throw new IllegalArgumentException("templateName is required for TEMPLATE input source");
                 yield readDataRowsFromTemplate(tmplName);
+            }
+            case DB -> {
+                BatchProperties.DbConfigSourceProperties dbCfg = op.getInputSource().getDbConfig();
+                String dbUrl  = resolveTemplate(dbCfg.getJdbcUrl(),  Map.of(), opProperties);
+                String dbUser = resolveTemplate(dbCfg.getUserName(), Map.of(), opProperties);
+                String dbPass = resolveTemplate(dbCfg.getPassword(), Map.of(), opProperties);
+                String dbSql  = resolveTemplate(dbCfg.getSql(),      Map.of(), opProperties);
+                if (dbUrl.isBlank())
+                    throw new IllegalArgumentException("inputSource.dbConfig.jdbcUrl is required for DB input source");
+                if (dbSql.isBlank())
+                    throw new IllegalArgumentException("inputSource.dbConfig.sql is required for DB input source");
+                yield readDataRowsFromDb(dbUrl, dbUser, dbPass, dbSql, request.inputCount(), dbCfg.getTimeoutMs());
             }
             default -> throw new IllegalArgumentException("Unknown inputSource type: " + inputSourceType);
         };
 
         return rows;
+    }
+
+    public List<DataRow> readDataRowsFromDb(String jdbcUrl, String userName, String password,
+                                             String sql, Integer inputCount, int timeoutMs) throws Exception {
+        try (Connection conn = DriverManager.getConnection(jdbcUrl, userName, password);
+             Statement  stmt = conn.createStatement()) {
+            stmt.setQueryTimeout(Math.max(1, timeoutMs / 1000));
+            ResultSet rs = stmt.executeQuery(sql);
+            ResultSetMetaData meta = rs.getMetaData();
+            int colCount = meta.getColumnCount();
+            List<DataRow> rows = new ArrayList<>();
+            int seq = 1;
+            while (rs.next()) {
+                if (inputCount != null && rows.size() >= inputCount) break;
+                DataRow row = new DataRow();
+                for (int i = 1; i <= colCount; i++) {
+                    Object val = rs.getObject(i);
+                    row.getData().put(meta.getColumnLabel(i), val != null ? val : "");
+                }
+                row.getData().put("SEQUENCE_NUMBER", seq++);
+                rows.add(row);
+            }
+            return rows;
+        } catch (Exception e) {
+            throw new IllegalArgumentException("DB input source query failed: " + e.getMessage(), e);
+        }
     }
 
     /**
@@ -781,21 +919,45 @@ public class BatchService {
         return rows;
     }
 
-    /** Executes a saved template and returns its result rows as DataRows for use as input. */
+    /**
+     * Loads an inputSource template from the inputSourceTemplate directory and returns DataRows.
+     * The template file format is: {"name":"X","inputSource":{"type":"HTTPCONFIG","httpConfig":{...}}}
+     */
     private List<DataRow> readDataRowsFromTemplate(String templateName) throws Exception {
-        Path templateFile = templateDir().resolve(templateName + ".json");
+        Path templateFile = inputSourceTemplateDir().resolve(templateName + ".json");
         if (!Files.exists(templateFile))
-            throw new IllegalArgumentException("template not found: " + templateName);
-        RunRequest templateRequest = objectMapper.readValue(templateFile.toFile(), RunRequest.class);
-        BatchResult result = run(templateRequest);
-        List<DataRow> rows = new ArrayList<>(result.results().size());
-        int seq = 1;
-        for (Map<String, Object> resultRow : result.results()) {
-            DataRow row = new DataRow(new LinkedHashMap<>(resultRow));
-            row.getData().put("SEQUENCE_NUMBER", seq++);
-            rows.add(row);
-        }
-        return rows;
+            throw new IllegalArgumentException("inputSource template not found: " + templateName);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> templateMap = objectMapper.readValue(templateFile.toFile(), Map.class);
+        Object inputSourceRaw = templateMap.get("inputSource");
+        if (inputSourceRaw == null)
+            throw new IllegalArgumentException("inputSource template '" + templateName + "' has no 'inputSource' field");
+
+        BatchProperties.InputSourceProperties inputSource =
+                objectMapper.convertValue(inputSourceRaw, BatchProperties.InputSourceProperties.class);
+        return readDataRowsFromInputSource(inputSource);
+    }
+
+    /** Executes an inputSource configuration and returns the resulting DataRows. */
+    public List<DataRow> readDataRowsFromInputSource(BatchProperties.InputSourceProperties inputSource) throws Exception {
+        if (inputSource == null || inputSource.getType() == null)
+            throw new IllegalArgumentException("inputSource type is required");
+        return switch (inputSource.getType()) {
+            case HTTPCONFIG, HTTP -> readDataRowsFromHttp(inputSource.getHttpConfig(), null);
+            case DB -> {
+                BatchProperties.DbConfigSourceProperties db = inputSource.getDbConfig();
+                yield readDataRowsFromDb(db.getJdbcUrl(), db.getUserName(), db.getPassword(),
+                        db.getSql(), null, db.getTimeoutMs());
+            }
+            default -> throw new IllegalArgumentException(
+                    "inputSource type '" + inputSource.getType() + "' is not supported in standalone template test");
+        };
+    }
+
+    private Path inputSourceTemplateDir() {
+        String dataDir = serverPropertiesLoader.getProperties().getOrDefault("DATADIR", ".");
+        return Path.of(dataDir).resolve("inputSourceTemplate");
     }
 
     private Path templateDir() {
@@ -807,10 +969,26 @@ public class BatchService {
      * Applies an optional JSONata transform to a response object just before it is returned to the client.
      * Loads the expression from {@code classpath:transforms/{key}.jsonata} when {@code key} is set,
      * or uses {@code value} directly as the JSONata expression.
+     * When {@code source} is set it is evaluated as JSONata against {@code response} to extract the
+     * actual transform input; if the extracted value is a JSON string it is parsed first.
      */
     public Object applyJsonataTransform(Object response,
                                         com.mycompany.batch.model.JsonataTransform transform) throws Exception {
         if (transform == null) return response;
+
+        Object jsonataInput = response;
+        if (transform.source() != null && !transform.source().isBlank()) {
+            String responseJson = objectMapper.writeValueAsString(response);
+            Object extracted = Jsonata.jsonata(transform.source())
+                    .evaluate(objectMapper.readValue(responseJson, Object.class));
+            if (extracted instanceof String s) {
+                try { jsonataInput = objectMapper.readValue(s, Object.class); }
+                catch (Exception e) { jsonataInput = s; }
+            } else {
+                jsonataInput = extracted != null ? extracted : response;
+            }
+        }
+
         String jsonataExpr;
         if (transform.key() != null && !transform.key().isBlank()) {
             String resourcePath = "transforms/" + transform.key().trim() + ".jsonata";
@@ -822,11 +1000,12 @@ public class BatchService {
         } else if (transform.value() != null && !transform.value().isBlank()) {
             jsonataExpr = transform.value();
         } else {
-            return response;
+            return jsonataInput;
         }
-        String json = objectMapper.writeValueAsString(response);
+
+        String json = objectMapper.writeValueAsString(jsonataInput);
         Object result = Jsonata.jsonata(jsonataExpr).evaluate(objectMapper.readValue(json, Object.class));
-        return result != null ? result : response;
+        return result != null ? result : jsonataInput;
     }
 
     /**
@@ -993,7 +1172,8 @@ public class BatchService {
                 null,   // properties
                 null,   // jsonataTransform
                 null,   // templateName
-                null    // auth
+                null,   // auth
+                null    // operationType
         );
 
         BatchResult innerResult = run(innerRequest);
@@ -1185,9 +1365,15 @@ public class BatchService {
                                 Map<String, String> extraHeaders,
                                 String authHeaderOverride) throws Exception {
 
-        List<BatchProperties.ActivityProperties> activities =
+        List<BatchProperties.ActivityProperties> allActivities =
                 op.getActivity() != null ? op.getActivity() : List.of();
-        boolean useActivities = !activities.isEmpty();
+        List<BatchProperties.ActivityProperties> initActConfigs = allActivities.stream()
+                .filter(a -> a.getType() == ActivityType.INITIALIZE)
+                .collect(Collectors.toList());
+        List<BatchProperties.ActivityProperties> activities = allActivities.stream()
+                .filter(a -> a.getType() != ActivityType.INITIALIZE)
+                .collect(Collectors.toList());
+        boolean useActivities = !activities.isEmpty() || !initActConfigs.isEmpty();
         boolean useLegacy     = !useActivities
                 && op.getHttp().getUrl() != null && !op.getHttp().getUrl().isBlank();
 
@@ -1237,8 +1423,17 @@ public class BatchService {
             ExecutorService xpathPool = Executors.newFixedThreadPool(xpathThreadCount);
             HttpClient httpClient     = buildHttpClient(operation);
 
+            // Run INITIALIZE activities once before any per-row processing; errors propagate to the controller
+            if (!initActConfigs.isEmpty()) {
+                List<ResolvedActivity> resolvedInits = preloadActivities(initActConfigs, effectiveTimeoutMs, operation, opProperties);
+                executeInitializeActivities(resolvedInits, httpClient, httpPool, authHeader, opProperties);
+            }
+
             // Pre-load activity resources (classpath files, etc.) once for all rows
             List<ResolvedActivity> resolvedActivities = preloadActivities(activities, effectiveTimeoutMs, operation, opProperties);
+
+            // Validate DB initialization connections once before row processing
+            validateSharedDbConnections(op, opProperties);
 
             // Create shared SSH sessions (one per initialization reference) for SSH activities
             Map<String, Session> sshSessions = buildSharedSshSessions(activities, op, opProperties);
@@ -1266,6 +1461,17 @@ public class BatchService {
             List<Map<String, Object>> rawResults = new ArrayList<>(results);
             List<Map<String, Object>> sanitizedResults = sanitizeKeys(rawResults);
             if (debugMode < 3) sanitizedResults.forEach(r -> r.remove("operationStatus"));
+
+            List<Object> validationErrors = sanitizedResults.stream()
+                    .filter(r -> r.containsKey("Errors"))
+                    .flatMap(r -> ((List<?>) r.get("Errors")).stream())
+                    .collect(Collectors.toList());
+            if (!validationErrors.isEmpty()) {
+                Map<String, Object> errMap = new LinkedHashMap<>();
+                errMap.put("Errors", validationErrors);
+                throw new ValidationFailureException(errMap);
+            }
+
             List<ColumnDef> columns = buildColumnDefsFromResults(sanitizedResults);
             columns = applyColumnTemplate(columns, op.getColumnTemplate());
 
@@ -1380,13 +1586,19 @@ public class BatchService {
             Map<String, String> extraHeaders,
             String authHeaderOverride) throws Exception {
 
-        List<BatchProperties.ActivityProperties> activities =
+        List<BatchProperties.ActivityProperties> allActivitiesAsync =
                 op.getActivity() != null ? op.getActivity() : List.of();
+        List<BatchProperties.ActivityProperties> initActConfigsAsync = allActivitiesAsync.stream()
+                .filter(a -> a.getType() == ActivityType.INITIALIZE)
+                .collect(Collectors.toList());
+        List<BatchProperties.ActivityProperties> activities = allActivitiesAsync.stream()
+                .filter(a -> a.getType() != ActivityType.INITIALIZE)
+                .collect(Collectors.toList());
         boolean useLegacyAsync = activities.isEmpty()
                 && op.getHttp().getUrl() != null && !op.getHttp().getUrl().isBlank();
 
         // Pass-through: no activities, no HTTP — stream rows directly
-        if (activities.isEmpty() && !useLegacyAsync) {
+        if (activities.isEmpty() && !useLegacyAsync && initActConfigsAsync.isEmpty()) {
             long batchStartPT = System.currentTimeMillis();
             for (DataRow row : rows) {
                 Map<String, Object> resultMap = row.toResponseMap(false);
@@ -1445,7 +1657,17 @@ public class BatchService {
         ExecutorService xpathPool = Executors.newFixedThreadPool(xpathThreadCount);
         HttpClient httpClient     = HttpClient.newBuilder().build();
 
+        // Run INITIALIZE activities once before any per-row processing; errors propagate to the controller
+        if (!initActConfigsAsync.isEmpty()) {
+            List<ResolvedActivity> resolvedInits = preloadActivities(initActConfigsAsync, effectiveTimeoutMs, operation, opProperties);
+            executeInitializeActivities(resolvedInits, httpClient, httpPool, authHeader, opProperties);
+        }
+
         List<ResolvedActivity> resolvedActivities = preloadActivities(activities, effectiveTimeoutMs, operation, opProperties);
+
+        // Validate DB initialization connections once before row processing
+        validateSharedDbConnections(op, opProperties);
+
         Map<String, Session> sshSessionsAsync = buildSharedSshSessions(activities, op, opProperties);
 
         boolean includeMetadata = false;
@@ -1493,6 +1715,78 @@ public class BatchService {
     }
 
     // -------------------------------------------------------------------------
+    // INITIALIZE activity execution
+    // -------------------------------------------------------------------------
+
+    /**
+     * Executes each INITIALIZE activity once (sequentially) before per-row processing begins.
+     * Extracted fields from the activity response are merged into {@code opProperties} so that
+     * subsequent per-row activities can reference them via {@code ${FIELD}} placeholders.
+     * Any failure throws immediately — the exception propagates to the controller, which renders
+     * the standard error response.
+     */
+    private void executeInitializeActivities(
+            List<ResolvedActivity> resolvedInits,
+            HttpClient httpClient,
+            ExecutorService httpPool,
+            String authHeader,
+            Map<String, String> opProperties) throws Exception {
+        for (ResolvedActivity initAct : resolvedInits) {
+            boolean isDb = initAct.config().getDb() != null
+                    && !initAct.config().getDb().getJdbcUrl().isBlank();
+            DataRow initRow = new DataRow();
+            try {
+                DataRow result;
+                if (isDb) {
+                    result = executeDbInitActivity(initAct, opProperties);
+                } else {
+                    result = executeHttpActivity(
+                            initRow, initAct, httpClient, httpPool,
+                            new java.util.ArrayList<>(), new AtomicLong(),
+                            authHeader, opProperties, Map.of()
+                    ).get();
+                }
+                result.getData().forEach((k, v) -> {
+                    if (v != null) opProperties.put(k, v.toString());
+                });
+            } catch (java.util.concurrent.ExecutionException e) {
+                Throwable cause = e.getCause() != null ? e.getCause() : e;
+                String msg = cause.getMessage() != null ? cause.getMessage() : cause.getClass().getSimpleName();
+                throw new RuntimeException("INITIALIZE activity '" + initAct.config().getName() + "' failed: " + msg, cause);
+            }
+        }
+    }
+
+    private DataRow executeDbInitActivity(ResolvedActivity activity,
+                                          Map<String, String> opProperties) throws Exception {
+        BatchProperties.DbProperties dbConfig = activity.config().getDb();
+        Map<String, String> effectiveProps = new LinkedHashMap<>(opProperties);
+        if (activity.config().getProperties() != null) effectiveProps.putAll(activity.config().getProperties());
+
+        String resolvedUrl  = resolveTemplate(dbConfig.getJdbcUrl(),  Map.of(), effectiveProps);
+        String resolvedUser = resolveTemplate(dbConfig.getUserName(), Map.of(), effectiveProps);
+        String resolvedPass = resolveTemplate(dbConfig.getPassword(), Map.of(), effectiveProps);
+
+        DataRow row = new DataRow();
+        try (Connection conn = DriverManager.getConnection(resolvedUrl, resolvedUser, resolvedPass);
+             Statement  stmt = conn.createStatement()) {
+            stmt.setQueryTimeout(Math.max(1, dbConfig.getTimeoutMs() / 1000));
+            if (!dbConfig.getSql().isBlank()) {
+                String resolvedSql = resolveTemplate(dbConfig.getSql(), Map.of(), effectiveProps);
+                ResultSet         rs   = stmt.executeQuery(resolvedSql);
+                ResultSetMetaData meta = rs.getMetaData();
+                int colCount = meta.getColumnCount();
+                if (rs.next()) {
+                    for (int i = 1; i <= colCount; i++) {
+                        Object val = rs.getObject(i);
+                        row.getData().put(meta.getColumnLabel(i), val != null ? val : "");
+                    }
+                }
+            }
+        }
+        return row;
+    }
+
     // Activity pre-loading
     // -------------------------------------------------------------------------
 
@@ -1522,7 +1816,7 @@ public class BatchService {
         for (BatchProperties.ActivityProperties act : activities) {
             ActivityType type = act.getType();
             String activityAuthHeader = null;
-            if (type == ActivityType.HTTP && operationName != null) {
+            if ((type == ActivityType.HTTP || type == ActivityType.INITIALIZE) && operationName != null) {
                 BatchProperties.AuthProperties actAuth = act.getHttp() != null ? act.getHttp().getAuth() : null;
                 HttpAuthProvider actProvider = null;
                 // When opProperties are available, build a fresh per-request provider so that
@@ -1533,8 +1827,12 @@ public class BatchService {
                     try {
                         String actUrl = act.getHttp() != null ? act.getHttp().getUrl() : null;
                         actProvider = buildAuthProvider(act.getName(), actAuth, actUrl, opProperties);
+                    } catch (IllegalStateException e) {
+                        // Unresolved ${VAR} or missing credentials — surface to the caller as a parameter error
+                        throw new IllegalArgumentException(
+                                "Activity '" + act.getName() + "' auth configuration error: " + e.getMessage());
                     } catch (Exception ignored) {
-                        // placeholder resolution failed — fall through to the static startup provider
+                        // Token fetch failures, etc. — fall through to the static startup provider
                     }
                 }
                 if (actProvider == null) {
@@ -1548,13 +1846,13 @@ public class BatchService {
                     }
                 }
             }
-            if (type == ActivityType.HTTP) {
-                String rawBt = act.getHttp().getBodyTemplate();
+            if (type == ActivityType.HTTP || type == ActivityType.INITIALIZE) {
+                String rawBt = act.getHttp() != null ? act.getHttp().getBodyTemplate() : null;
                 // If the path itself has ${VAR} placeholders, keep it unloaded — resolved per-row at execute time
                 String bodyTemplate = (rawBt != null && rawBt.contains("${"))
                         ? rawBt
                         : resolveJsonataExpression(rawBt);
-                resolved.add(new ResolvedActivity(act, bodyTemplate, null, null, null, activityAuthHeader));
+                resolved.add(new ResolvedActivity(act, bodyTemplate, null, null, null, activityAuthHeader, null, null, null));
             } else if (type == ActivityType.DATAEXTRACTION) {
                 DataExtractionType extractType = act.getDataExtraction().getType();
                 if (extractType == DataExtractionType.XPATH) {
@@ -1564,7 +1862,7 @@ public class BatchService {
                                 "Activity '" + act.getName() + "': dataExtraction.config is required for XPATH extraction");
                     }
                     Map<String, String> xpathMap = loadXPathMap(config);
-                    resolved.add(new ResolvedActivity(act, null, xpathMap, null, null, null));
+                    resolved.add(new ResolvedActivity(act, null, xpathMap, null, null, null, null, null, null));
                 } else if (extractType == DataExtractionType.JSONPATH) {
                     String config = act.getDataExtraction().getConfig();
                     if (config == null || config.isBlank()) {
@@ -1572,16 +1870,30 @@ public class BatchService {
                                 "Activity '" + act.getName() + "': dataExtraction.config is required for JSONPATH extraction");
                     }
                     List<JsonPathColumn> cols = loadJsonPathColumns(config);
-                    resolved.add(new ResolvedActivity(act, null, null, null, cols, null));
+                    resolved.add(new ResolvedActivity(act, null, null, null, cols, null, null, null, null));
                 } else {
                     // JSON or JSONATA — JSONata transform
                     String transform = resolveJsonataExpression(act.getDataExtraction().getJsonataTransform());
-                    resolved.add(new ResolvedActivity(act, null, null, transform, null, null));
+                    resolved.add(new ResolvedActivity(act, null, null, transform, null, null, null, null, null));
                 }
+            } else if (type == ActivityType.TRANSFORM) {
+                List<BatchProperties.TransformStepProperties> stepConfigs = act.getTransforms();
+                List<ResolvedTransformStep> steps = new ArrayList<>(stepConfigs.size());
+                for (BatchProperties.TransformStepProperties s : stepConfigs) {
+                    boolean isNone = "NONE".equalsIgnoreCase(s.getType().trim());
+                    String expr = isNone ? null : resolveJsonataExpression(s.getJsonataTransform());
+                    steps.add(new ResolvedTransformStep(s.getSource(), isNone, expr, s.getOnError(), s.getOutput()));
+                }
+                resolved.add(new ResolvedActivity(act, null, null, null, null, null, steps, null, null));
             } else if (type == ActivityType.DB) {
-                resolved.add(new ResolvedActivity(act, null, null, null, null, null));
+                resolved.add(new ResolvedActivity(act, null, null, null, null, null, null, null, null));
+            } else if (type == ActivityType.DATAENRICHER) {
+                String file = act.getDataEnricher().getFile();
+                EnricherConfig enricherCfg = enricherService.loadConfig(file);
+                Map<String, Map<String, Map<String, Object>>> staticDatasets = enricherService.loadDatasets(enricherCfg);
+                resolved.add(new ResolvedActivity(act, null, null, null, null, null, null, enricherCfg, staticDatasets));
             } else {
-                resolved.add(new ResolvedActivity(act, null, null, null, null, null));
+                resolved.add(new ResolvedActivity(act, null, null, null, null, null, null, null, null));
             }
         }
         return resolved;
@@ -1609,22 +1921,22 @@ public class BatchService {
             Consumer<Map<String, Object>> rowCallback, // nullable — ASYNC streaming
             Map<String, Session> sharedSshSessions) { // shared SSH sessions keyed by reference name
 
-        // Chain activities as CompletableFuture stages
+        // Group activities into sequential stages; activities sharing a sequence number run in parallel
         CompletableFuture<DataRow> chain = CompletableFuture.completedFuture(inputRow);
 
-        for (ResolvedActivity activity : activities) {
-            ActivityType type = activity.config().getType();
-            if (type == ActivityType.HTTP) {
-                chain = chain.thenCompose(row -> executeHttpActivity(
-                        row, activity, httpClient, httpPool,
-                        httpDurationsMs, totalResponseBytes, authHeader, opProperties, extraHeaders));
-            } else if (type == ActivityType.DATAEXTRACTION) {
-                chain = chain.thenCompose(row -> executeExtractionActivity(row, activity, xpathPool));
-            } else if (type == ActivityType.DB) {
-                chain = chain.thenCompose(row -> executeDbActivity(row, activity, httpPool, opProperties));
-            } else if (type == ActivityType.SSH) {
-                chain = chain.thenCompose(row -> executeSshActivity(
-                        row, activity, httpPool, opProperties, op, sharedSshSessions));
+        for (List<ResolvedActivity> stage : buildStages(activities)) {
+            if (stage.size() == 1) {
+                ResolvedActivity activity = stage.get(0);
+                chain = chain.thenCompose(row -> executeOneActivity(
+                        activity, row, httpClient, httpPool, xpathPool,
+                        httpDurationsMs, totalResponseBytes, authHeader, opProperties, extraHeaders,
+                        op, sharedSshSessions));
+            } else {
+                List<ResolvedActivity> parallelStage = stage;
+                chain = chain.thenCompose(row -> executeParallelStage(
+                        row, parallelStage, httpClient, httpPool, xpathPool,
+                        httpDurationsMs, totalResponseBytes, authHeader, opProperties, extraHeaders,
+                        op, sharedSshSessions));
             }
         }
 
@@ -1665,12 +1977,20 @@ public class BatchService {
             }
         }).exceptionally(ex -> {
             failed.incrementAndGet();
-            Throwable cause   = ex.getCause() != null ? ex.getCause() : ex;
-            String    message = cause.getMessage() != null ? cause.getMessage() : cause.getClass().getSimpleName();
-            // Use input row data only (no metadata) for FAILED rows
-            Map<String, Object> resultMap = new LinkedHashMap<>(inputRow.getData());
-            resultMap.put("operationStatus", "FAILED");
-            resultMap.put("errorMessage", message);
+            Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
+            Map<String, Object> resultMap;
+            if (cause instanceof ValidationException ve) {
+                Map<String, Object> errorEntry = new LinkedHashMap<>();
+                errorEntry.put("activity", ve.getActivityName());
+                errorEntry.put("message",  ve.getMessage());
+                resultMap = new LinkedHashMap<>();
+                resultMap.put("Errors", List.of(errorEntry));
+            } else {
+                String message = cause.getMessage() != null ? cause.getMessage() : cause.getClass().getSimpleName();
+                resultMap = new LinkedHashMap<>(inputRow.getData());
+                resultMap.put("operationStatus", "FAILED");
+                resultMap.put("errorMessage", message);
+            }
             results.add(resultMap);
             if (rowCallback != null) {
                 rowCallback.accept(sanitizeRow(resultMap)); // stream FAILED rows too
@@ -1686,6 +2006,139 @@ public class BatchService {
             if (!"SEQUENCE_NUMBER".equals(k)) sanitized.put(k.replace('.', '_'), v);
         });
         return sanitized;
+    }
+
+    // -------------------------------------------------------------------------
+    // Stage grouping + per-activity dispatch helpers
+    // -------------------------------------------------------------------------
+
+    /**
+     * Groups resolved activities into ordered execution stages.
+     * Consecutive activities that share the same non-null {@code sequence} number form a parallel stage.
+     * Activities with a null sequence (or a unique sequence number) each form their own sequential stage.
+     */
+    private static List<List<ResolvedActivity>> buildStages(List<ResolvedActivity> activities) {
+        List<List<ResolvedActivity>> stages = new ArrayList<>();
+        List<ResolvedActivity> current = new ArrayList<>();
+        Integer currentSeq = null;
+        for (ResolvedActivity act : activities) {
+            Integer seq = act.config().getSequence();
+            if (seq != null && seq.equals(currentSeq)) {
+                current.add(act);
+            } else {
+                if (!current.isEmpty()) stages.add(new ArrayList<>(current));
+                current.clear();
+                current.add(act);
+                currentSeq = seq;
+            }
+        }
+        if (!current.isEmpty()) stages.add(current);
+        return stages;
+    }
+
+    /** Dispatches a single activity, then applies outputVar post-processing if configured. */
+    private CompletableFuture<DataRow> executeOneActivity(
+            ResolvedActivity activity, DataRow row,
+            HttpClient httpClient, ExecutorService httpPool, ExecutorService xpathPool,
+            List<Long> httpDurationsMs, AtomicLong totalResponseBytes,
+            String authHeader, Map<String, String> opProperties, Map<String, String> extraHeaders,
+            BatchProperties.OperationProperties op, Map<String, Session> sharedSshSessions) {
+
+        ActivityType type = activity.config().getType();
+        CompletableFuture<DataRow> future;
+        if (type == ActivityType.HTTP) {
+            future = executeHttpActivity(row, activity, httpClient, httpPool,
+                    httpDurationsMs, totalResponseBytes, authHeader, opProperties, extraHeaders);
+        } else if (type == ActivityType.DATAEXTRACTION) {
+            future = executeExtractionActivity(row, activity, xpathPool);
+        } else if (type == ActivityType.DB) {
+            future = executeDbActivity(row, activity, httpPool, opProperties, op);
+        } else if (type == ActivityType.SSH) {
+            future = executeSshActivity(row, activity, httpPool, opProperties, op, sharedSshSessions);
+        } else if (type == ActivityType.TRANSFORM) {
+            future = executeTransformActivity(row, activity);
+        } else if (type == ActivityType.VALIDATION) {
+            future = executeValidationActivity(row, activity);
+        } else if (type == ActivityType.DATAENRICHER) {
+            future = executeDataEnricherActivity(row, activity);
+        } else {
+            future = CompletableFuture.completedFuture(row);
+        }
+
+        String outputVar = activity.config().getOutputVar();
+        if (outputVar != null && !outputVar.isBlank()) {
+            String outputKey = activity.config().getOutputKey();
+            return future.thenApply(r -> storeOutputVar(r, outputVar, outputKey));
+        }
+        return future;
+    }
+
+    /**
+     * Runs all activities in a parallel stage concurrently against the same DataRow.
+     * Parallel activities should use distinct {@code outputVar} names to avoid write conflicts.
+     */
+    private CompletableFuture<DataRow> executeParallelStage(
+            DataRow row, List<ResolvedActivity> activities,
+            HttpClient httpClient, ExecutorService httpPool, ExecutorService xpathPool,
+            List<Long> httpDurationsMs, AtomicLong totalResponseBytes,
+            String authHeader, Map<String, String> opProperties, Map<String, String> extraHeaders,
+            BatchProperties.OperationProperties op, Map<String, Session> sharedSshSessions) {
+
+        List<CompletableFuture<DataRow>> futures = activities.stream()
+                .map(act -> executeOneActivity(act, row, httpClient, httpPool, xpathPool,
+                        httpDurationsMs, totalResponseBytes, authHeader, opProperties, extraHeaders,
+                        op, sharedSshSessions))
+                .collect(Collectors.toList());
+
+        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                .thenApply(v -> row);
+    }
+
+    /**
+     * If an activity produced {@code expandedRows}, indexes them by {@code outputKey} and stores the
+     * resulting dataset in {@code row.datasets} under {@code outputVar}. Clears {@code expandedRows}
+     * so the outer pipeline does not expand them into separate result rows.
+     */
+    private static DataRow storeOutputVar(DataRow row, String outputVar, String outputKey) {
+        List<Map<String, Object>> expandedRows = row.getExpandedRows();
+        if (expandedRows != null && !expandedRows.isEmpty()) {
+            Map<String, Map<String, Object>> indexed = new LinkedHashMap<>();
+            for (Map<String, Object> r : expandedRows) {
+                String keyVal = (outputKey != null && !outputKey.isBlank() && r.containsKey(outputKey))
+                        ? String.valueOf(r.get(outputKey))
+                        : String.valueOf(indexed.size());
+                indexed.put(keyVal, r);
+            }
+            row.getDatasets().put(outputVar, indexed);
+            row.setExpandedRows(null);
+        }
+        return row;
+    }
+
+    /** Enriches the current DataRow using the pre-loaded enricher config and merged datasets. */
+    private CompletableFuture<DataRow> executeDataEnricherActivity(
+            DataRow row, ResolvedActivity activity) {
+        try {
+            EnricherConfig cfg = activity.enricherConfig();
+            if (cfg == null) {
+                CompletableFuture<DataRow> f = new CompletableFuture<>();
+                f.completeExceptionally(new IllegalStateException(
+                        "DataEnricher activity '" + activity.config().getName() + "': enricher config was not pre-loaded"));
+                return f;
+            }
+            // Merge static (pre-loaded) datasets with per-row datasets from previous outputVar activities
+            Map<String, Map<String, Map<String, Object>>> allDatasets = new LinkedHashMap<>();
+            if (activity.enricherStaticDatasets() != null) allDatasets.putAll(activity.enricherStaticDatasets());
+            allDatasets.putAll(row.getDatasets());
+
+            enricherService.enrichRow(row.getData(), cfg.getData(), allDatasets);
+            return CompletableFuture.completedFuture(row);
+        } catch (Exception e) {
+            CompletableFuture<DataRow> f = new CompletableFuture<>();
+            f.completeExceptionally(new RuntimeException(
+                    "DataEnricher activity '" + activity.config().getName() + "' failed: " + e.getMessage(), e));
+            return f;
+        }
     }
 
     /** Makes the HTTP call for one DataRow, captures timing + URL in metadata, stores response body. */
@@ -1774,10 +2227,11 @@ public class BatchService {
                 cacheName        = cacheConfig.getName();
                 resolvedCacheKey = resolveTemplate(cacheConfig.getKey(), row.getData(), effectiveProps);
                 String cached = cacheFactory.get(cacheName, resolvedCacheKey,
-                                                 cacheConfig.getMaxRetentionTime());
+                                                 resolveMaxRetentionTime(cacheConfig.getMaxRetentionTime(), row.getData(), effectiveProps));
                 if (cached != null) {
                     totalResponseBytes.addAndGet(cached.length());
                     row.setResponseBody(cached);
+                    row.putNamedOutput(activityName + ".RESPONSEBODY", cached);
                     applyHttpExtract(httpConfig.getExtract().getFields(), null, resolvedBody, null, cached, resolvedUrl, 0L, row);
                     httpDurationsMs.add(0L);
                     row.getMetadata().put(activityName + ".timetakenmillis", 0L);
@@ -1834,6 +2288,7 @@ public class BatchService {
                 String body = response.body();
                 row.setLastHttpStatusCode(response.statusCode());
                 row.setResponseBody(body);
+                row.putNamedOutput(activityName + ".RESPONSEBODY", body);
                 BatchProperties.HttpExtractProperties extract = httpConfig.getExtract();
                 applyHttpExtract(extract.getFields(), request, finalResolvedBody, response, body, finalResolvedUrl, responseTimeMs, row);
                 if (response.statusCode() < 200 || response.statusCode() >= 300) {
@@ -1871,11 +2326,31 @@ public class BatchService {
             DataRow row,
             ResolvedActivity activity,
             ExecutorService pool,
-            Map<String, String> opProperties) {
+            Map<String, String> opProperties,
+            BatchProperties.OperationProperties op) {
 
         BatchProperties.DbProperties dbConfig = activity.config().getDb();
         Map<String, String> effectiveProps = new LinkedHashMap<>(opProperties);
         if (activity.config().getProperties() != null) effectiveProps.putAll(activity.config().getProperties());
+
+        // If the activity references a named DB initialization entry, use its credentials
+        String rawJdbcUrl  = dbConfig.getJdbcUrl();
+        String rawUserName = dbConfig.getUserName();
+        String rawPassword = dbConfig.getPassword();
+        String ref = dbConfig.getReference();
+        if (ref != null && !ref.isBlank() && op != null && op.getInitialization() != null) {
+            BatchProperties.InitializationProperties initEntry = op.getInitialization().stream()
+                    .filter(i -> ref.equalsIgnoreCase(i.getName()) && "DB".equalsIgnoreCase(i.getType()))
+                    .findFirst().orElse(null);
+            if (initEntry != null) {
+                if (rawJdbcUrl.isBlank())  rawJdbcUrl  = initEntry.getDb().getJdbcUrl();
+                if (rawUserName.isBlank()) rawUserName = initEntry.getDb().getUserName();
+                if (rawPassword.isBlank()) rawPassword = initEntry.getDb().getPassword();
+            }
+        }
+        final String effectiveJdbcUrl  = rawJdbcUrl;
+        final String effectiveUserName = rawUserName;
+        final String effectivePassword = rawPassword;
 
         String resolvedSql;
         String resolvedUrl;
@@ -1884,7 +2359,7 @@ public class BatchService {
                     ? dbConfig.getSql()
                     : effectiveProps.getOrDefault("sql", "");
             resolvedSql = resolveTemplate(sqlTemplate, row.getData(), effectiveProps);
-            resolvedUrl = resolveTemplate(dbConfig.getJdbcUrl(), row.getData(), effectiveProps);
+            resolvedUrl = resolveTemplate(effectiveJdbcUrl, row.getData(), effectiveProps);
         } catch (IllegalArgumentException e) {
             CompletableFuture<DataRow> f = new CompletableFuture<>();
             f.completeExceptionally(e);
@@ -1906,7 +2381,8 @@ public class BatchService {
             try {
                 cacheName        = cacheConfig.getName();
                 resolvedCacheKey = resolveTemplate(cacheConfig.getKey(), row.getData(), effectiveProps);
-                String cached = cacheFactory.get(cacheName, resolvedCacheKey, cacheConfig.getMaxRetentionTime());
+                String cached = cacheFactory.get(cacheName, resolvedCacheKey,
+                        resolveMaxRetentionTime(cacheConfig.getMaxRetentionTime(), row.getData(), effectiveProps));
                 if (cached != null) {
                     row.setResponseBody(cached);
                     row.getMetadata().put(activityName + ".timetakenmillis", 0L);
@@ -1927,9 +2403,21 @@ public class BatchService {
 
         BatchProperties.DbExtractProperties extractConfig = dbConfig.getExtract();
 
+        String preResolvedUser;
+        String preResolvedPass;
+        try {
+            preResolvedUser = resolveTemplate(effectiveUserName, row.getData(), effectiveProps);
+            preResolvedPass = resolveTemplate(effectivePassword, row.getData(), effectiveProps);
+        } catch (IllegalArgumentException e) {
+            preResolvedUser = effectiveUserName;
+            preResolvedPass = effectivePassword;
+        }
+        final String finalResolvedUser = preResolvedUser;
+        final String finalResolvedPass = preResolvedPass;
+
         return CompletableFuture.supplyAsync(() -> {
             long start = System.currentTimeMillis();
-            try (Connection conn = DriverManager.getConnection(finalResolvedUrl, dbConfig.getUserName(), dbConfig.getPassword());
+            try (Connection conn = DriverManager.getConnection(finalResolvedUrl, finalResolvedUser, finalResolvedPass);
                  Statement  stmt = conn.createStatement()) {
                 stmt.setQueryTimeout(Math.max(1, dbConfig.getTimeoutMs() / 1000));
                 ResultSet         rs       = stmt.executeQuery(finalResolvedSql);
@@ -1950,6 +2438,7 @@ public class BatchService {
                     cacheFactory.save(finalCacheName, finalResolvedCacheKey, body, finalResolvedSql);
                 }
                 row.setResponseBody(body);
+                row.putNamedOutput(activityName + ".RESPONSEBODY", body);
                 if (!queryRows.isEmpty()) {
                     row.setExpandedRows(queryRows);
                 }
@@ -2210,6 +2699,31 @@ public class BatchService {
     }
 
     /**
+     * Opens and immediately closes one JDBC connection per DB initialization entry to verify
+     * connectivity before row processing begins. Throws on the first unreachable database.
+     */
+    private void validateSharedDbConnections(
+            BatchProperties.OperationProperties op,
+            Map<String, String> opProperties) throws Exception {
+        if (op.getInitialization() == null) return;
+        for (BatchProperties.InitializationProperties init : op.getInitialization()) {
+            if (!"DB".equalsIgnoreCase(init.getType())) continue;
+            BatchProperties.DbConnectionProperties dbConn = init.getDb();
+            String url  = resolveTemplate(dbConn.getJdbcUrl(),  Map.of(), opProperties);
+            String user = resolveTemplate(dbConn.getUserName(), Map.of(), opProperties);
+            String pass = resolveTemplate(dbConn.getPassword(), Map.of(), opProperties);
+            if (url.isBlank()) throw new IllegalStateException(
+                    "DB initialization '" + init.getName() + "': jdbcUrl is required");
+            try (Connection conn = DriverManager.getConnection(url, user, pass)) {
+                // connection established successfully — close it immediately
+            } catch (Exception e) {
+                throw new RuntimeException(
+                        "DB initialization '" + init.getName() + "' failed: " + e.getMessage(), e);
+            }
+        }
+    }
+
+    /**
      * Applies the http.extract map to the DataRow.
      * Special paths: $.statusCode, $.body/$.responseBody, $.requestBody, $.url,
      *                $.requestHeaders, $.responseHeaders, $.headers (alias for $.responseHeaders).
@@ -2280,15 +2794,102 @@ public class BatchService {
                     params.get("inputJsonPath"),
                     params.get("cacheName"),
                     null, null, null,
-                    null    // auth
+                    null,   // auth
+                    null    // operationType
             );
             BatchResult result = run(inner);
             Map<String, Object> resp = new LinkedHashMap<>();
             resp.put("data", result.results());
             return objectMapper.writeValueAsString(resp);
         }
+        // Template endpoints: /batch/operationTemplate, /batch/operationTemplate/{name}, /batch/operationTemplate/{name}/run
+        int templateIdx = path.indexOf("/operationTemplate");
+        if (templateIdx >= 0) {
+            String afterTemplate = path.substring(templateIdx + "/operationTemplate".length());
+            if (afterTemplate.isEmpty() || afterTemplate.equals("/")) {
+                String name = params.get("name");
+                if (name != null && !name.isBlank()) {
+                    Map<String, String> extraProps = new LinkedHashMap<>(params);
+                    extraProps.remove("name");
+                    return runLocalTemplate(name.trim(), extraProps);
+                }
+                return listLocalTemplates();
+            } else if (afterTemplate.endsWith("/run")) {
+                String name = afterTemplate.substring(1, afterTemplate.length() - 4);
+                return runLocalTemplate(name, new LinkedHashMap<>(params));
+            } else {
+                String name = afterTemplate.substring(1);
+                return getLocalTemplateContent(name);
+            }
+        }
+
         throw new IllegalArgumentException(
-                "Unsupported local URL path '" + path + "' — only /batch/run?operation=... is supported");
+                "Unsupported local URL path '" + path + "' — supported: /batch/run?operation=..., /batch/operationTemplate, /batch/operationTemplate/{name}, /batch/operationTemplate/{name}/run");
+    }
+
+    private Path localTemplateDir() {
+        String dataDir = serverPropertiesLoader.getProperties().getOrDefault("DATADIR", "");
+        String templateDir = serverPropertiesLoader.getProperties().getOrDefault("TEMPLATEDIR",
+                dataDir.isBlank() ? "." : Path.of(dataDir).resolve("operationTemplate").toString());
+        return Path.of(templateDir);
+    }
+
+    private String listLocalTemplates() throws Exception {
+        Path dir = localTemplateDir();
+        List<Map<String, Object>> templates = new ArrayList<>();
+        if (Files.isDirectory(dir)) {
+            try (var stream = Files.list(dir)) {
+                List<Path> files = stream.filter(p -> p.toString().endsWith(".json")).sorted().toList();
+                for (Path p : files) {
+                    String templateName = p.getFileName().toString().replaceAll("\\.json$", "");
+                    Object templateBody = objectMapper.readValue(p.toFile(), Object.class);
+                    Map<String, Object> entry = new LinkedHashMap<>();
+                    entry.put("templateName", templateName);
+                    entry.put("templateBody", templateBody);
+                    templates.add(entry);
+                }
+            }
+        }
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("data", templates);
+        return objectMapper.writeValueAsString(response);
+    }
+
+    private String getLocalTemplateContent(String name) throws Exception {
+        if (!name.matches("[\\w\\-.]+")) throw new IllegalArgumentException("invalid template name: " + name);
+        Path file = localTemplateDir().resolve(name + ".json");
+        if (!Files.exists(file)) throw new IllegalArgumentException("template not found: " + name);
+        Object content = objectMapper.readValue(file.toFile(), Object.class);
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("name", name);
+        response.put("content", content);
+        return objectMapper.writeValueAsString(response);
+    }
+
+    private String runLocalTemplate(String name, Map<String, String> extraProps) throws Exception {
+        if (!name.matches("[\\w\\-.]+")) throw new IllegalArgumentException("invalid template name: " + name);
+        Path file = localTemplateDir().resolve(name + ".json");
+        if (!Files.exists(file)) throw new IllegalArgumentException("template not found: " + name);
+        Map<String, Object> templateMap = objectMapper.readValue(file.toFile(),
+                new TypeReference<Map<String, Object>>() {});
+        extraProps.forEach(templateMap::put);
+        if (!extraProps.isEmpty()) {
+            Object rawBody = templateMap.get("inputHttpBody");
+            if (rawBody != null) {
+                String bodyStr = rawBody instanceof String s ? s : objectMapper.writeValueAsString(rawBody);
+                try {
+                    Map<String, Object> bodyMap = objectMapper.readValue(bodyStr,
+                            new TypeReference<Map<String, Object>>() {});
+                    extraProps.forEach(bodyMap::put);
+                    templateMap.put("inputHttpBody", objectMapper.writeValueAsString(bodyMap));
+                } catch (Exception ignored) {}
+            }
+        }
+        RunRequest request = resolveAlias(objectMapper.convertValue(templateMap, RunRequest.class));
+        BatchResult result = run(request);
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("data", result.results());
+        return objectMapper.writeValueAsString(resp);
     }
 
     private void applyHttpExtract(Map<String, String> extractMap,
@@ -2380,6 +2981,140 @@ public class BatchService {
         f.completeExceptionally(new IllegalArgumentException(
                 "Unknown extraction type: " + extractionType));
         return f;
+    }
+
+    /** Executes a TRANSFORM activity: runs a chain of steps, each optionally capturing its result as a named variable. */
+    private CompletableFuture<DataRow> executeTransformActivity(DataRow row, ResolvedActivity activity) {
+        String activityName = activity.config().getName();
+        List<ResolvedTransformStep> steps = activity.transformSteps();
+        if (steps == null || steps.isEmpty()) {
+            return CompletableFuture.completedFuture(row);
+        }
+        try {
+            Object current = null;
+            Map<String, Object> localVars = new LinkedHashMap<>();
+
+            for (ResolvedTransformStep step : steps) {
+                Object sourceValue = resolveTransformSource(step.source(), current, localVars, row);
+
+                Object result;
+                if (step.isNone() || step.jsonataExpression() == null) {
+                    result = sourceValue;
+                } else {
+                    result = applyTransformStep(sourceValue, step.jsonataExpression(), step.onError(), sourceValue);
+                }
+
+                current = result;
+
+                if (step.output() != null && !step.output().isBlank()) {
+                    localVars.put(step.output(), result);
+                    row.putNamedOutput(activityName + "." + step.output(), result);
+                }
+            }
+
+            // Store the final result as responseBody so a following DATAEXTRACTION activity can consume it
+            if (current != null) {
+                String finalBody = current instanceof String s ? s : objectMapper.writeValueAsString(current);
+                row.setResponseBody(finalBody);
+                row.putNamedOutput(activityName + ".RESPONSEBODY", finalBody);
+            }
+
+            return CompletableFuture.completedFuture(row);
+        } catch (Exception e) {
+            CompletableFuture<DataRow> f = new CompletableFuture<>();
+            f.completeExceptionally(new RuntimeException(
+                    "TRANSFORM activity '" + activityName + "' failed: " + e.getMessage(), e));
+            return f;
+        }
+    }
+
+    private CompletableFuture<DataRow> executeValidationActivity(DataRow row, ResolvedActivity activity) {
+        BatchProperties.ValidationProperties validation = activity.config().getValidation();
+        if (validation == null) return CompletableFuture.completedFuture(row);
+        BatchProperties.ConditionGroupProperties group = validation.getConditions();
+        if (group == null || group.getCondition() == null || group.getCondition().isEmpty()) {
+            return CompletableFuture.completedFuture(row);
+        }
+        boolean matched = evaluateConditionGroup(group, row);
+        if (matched) {
+            CompletableFuture<DataRow> f = new CompletableFuture<>();
+            f.completeExceptionally(new ValidationException(
+                    activity.config().getName(), validation.getErrorMessage()));
+            return f;
+        }
+        return CompletableFuture.completedFuture(row);
+    }
+
+    private boolean evaluateConditionGroup(BatchProperties.ConditionGroupProperties group, DataRow row) {
+        String groupType = group.getType() != null ? group.getType().toUpperCase() : "AND";
+        for (BatchProperties.ConditionProperties cond : group.getCondition()) {
+            boolean result = evaluateSingleCondition(cond, row);
+            if ("OR".equals(groupType) && result) return true;
+            if ("AND".equals(groupType) && !result) return false;
+        }
+        return "AND".equals(groupType);
+    }
+
+    private boolean evaluateSingleCondition(BatchProperties.ConditionProperties cond, DataRow row) {
+        if (cond.getColumn() == null) return false;
+        String columnRef = cond.getColumn();
+        if (columnRef.startsWith("$fe.")) columnRef = columnRef.substring(4);
+        Object found = row.getData().get(columnRef);
+        if (found == null) {
+            for (Map.Entry<String, Object> e : row.getData().entrySet()) {
+                if (e.getKey().equalsIgnoreCase(columnRef)) { found = e.getValue(); break; }
+            }
+        }
+        if (found == null) return false;
+        String rowValue  = Objects.toString(found, "");
+        String condValue = cond.getValue() != null ? cond.getValue() : "";
+        String op        = cond.getOp() != null ? cond.getOp().toLowerCase() : "eq";
+        return switch (op) {
+            case "like"      -> rowValue.matches(condValue);
+            case "neq", "ne" -> !rowValue.equals(condValue);
+            default          -> rowValue.equals(condValue);
+        };
+    }
+
+    /**
+     * Resolves the {@code source} reference for a transform step.
+     * <ul>
+     *   <li>{@code null} or {@code "$"} — result of the previous step.</li>
+     *   <li>{@code "$varName"} (no dot) — variable captured by a previous step's {@code output} in this transform.</li>
+     *   <li>{@code "$activityName.key"} — named output stored by another activity (response body or output variable).</li>
+     * </ul>
+     */
+    private Object resolveTransformSource(String source, Object previousResult,
+                                          Map<String, Object> localVars, DataRow row) {
+        if (source == null || source.equals("$")) return previousResult;
+        if (!source.startsWith("$")) return source;
+        String ref = source.substring(1); // strip leading $
+        int dot = ref.indexOf('.');
+        if (dot >= 0) {
+            // $activityName.key  →  look up "activityName.key" in DataRow named outputs
+            return row.getNamedOutput(ref);
+        }
+        // $varName  →  local transform variable, then DataRow named outputs
+        Object local = localVars.get(ref);
+        return local != null ? local : row.getNamedOutput(ref);
+    }
+
+    /** Applies a pre-loaded JSONATA expression to {@code sourceValue}, honouring {@code onError}. */
+    private Object applyTransformStep(Object sourceValue, String jsonataExpr,
+                                      String onError, Object fallback) throws Exception {
+        try {
+            String json = objectMapper.writeValueAsString(sourceValue);
+            Object result = Jsonata.jsonata(jsonataExpr).evaluate(objectMapper.readValue(json, Object.class));
+            return result != null ? result : sourceValue;
+        } catch (Exception e) {
+            if (onError == null) throw e;
+            if ("SKIP".equalsIgnoreCase(onError.trim())) return fallback;
+            // "$.key" — write the error message into a map under that key
+            String key = onError.trim().startsWith("$.") ? onError.trim().substring(2) : onError.trim();
+            Map<String, Object> errMap = new LinkedHashMap<>();
+            errMap.put(key, e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+            return errMap;
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -2672,8 +3407,15 @@ public class BatchService {
         if (http.getMethod() == HttpMethod.GET) {
             builder.GET();
         } else {
-            builder.header("Content-Type", http.getContentType())
-                   .POST(HttpRequest.BodyPublishers.ofString(resolvedBody != null ? resolvedBody : ""));
+            boolean ctInHeaders = (resolvedConfigHeaders != null && resolvedConfigHeaders.keySet().stream()
+                        .anyMatch(k -> k.equalsIgnoreCase("content-type")))
+                    || (extraHeaders != null && extraHeaders.keySet().stream()
+                        .anyMatch(k -> k.equalsIgnoreCase("content-type")));
+            String ct = http.getContentType();
+            if (ct != null && !ctInHeaders) {
+                builder.header("Content-Type", ct);
+            }
+            builder.POST(HttpRequest.BodyPublishers.ofString(resolvedBody != null ? resolvedBody : ""));
         }
         if (resolvedConfigHeaders != null) resolvedConfigHeaders.forEach(builder::header);
         // extraHeaders override activity-level headers
@@ -2712,9 +3454,23 @@ public class BatchService {
         return new ArrayList<>(responseProcessorRegistry.keySet());
     }
 
-    private List<BatchProperties.ResponseProcessorProperties> resolveResponseProcessor(String name) {
+    private List<BatchProperties.ResponseProcessorProperties> resolveResponseProcessor(String name, String operationName) {
         if (name == null || name.isBlank()) return null;
-        return responseProcessorRegistry.get(name.trim());
+        // Global registry takes priority
+        List<BatchProperties.ResponseProcessorProperties> procs = responseProcessorRegistry.get(name.trim());
+        if (procs != null) return procs;
+        // Fall back to operation-level processor definitions
+        if (operationName != null && !operationName.isBlank()) {
+            try {
+                BatchProperties.OperationProperties op = batchProperties.getOperation(operationName);
+                return op.getResponseProcessor().stream()
+                        .filter(rp -> name.trim().equalsIgnoreCase(rp.getName()))
+                        .findFirst()
+                        .map(BatchProperties.ResponseProcessorEntryProperties::getResponseProcessor)
+                        .orElse(null);
+            } catch (Exception ignored) {}
+        }
+        return null;
     }
 
     /**
@@ -2722,18 +3478,24 @@ public class BatchService {
      * Returns whatever the final step produces — may be a Map, List, String, etc.
      * Called by the controller/WebSocket handler after the complete response object is assembled.
      */
-    public Object applyResponseProcessor(Object response, String name) throws Exception {
+    public Object applyResponseProcessor(Object response, String name, String operationName) throws Exception {
         if (name == null || name.isBlank()) return response;
-        List<BatchProperties.ResponseProcessorProperties> procs = resolveResponseProcessor(name);
-        if (procs == null)
+        List<BatchProperties.ResponseProcessorProperties> procs = resolveResponseProcessor(name, operationName);
+        if (procs == null) {
+            List<String> available = new ArrayList<>(responseProcessorRegistry.keySet());
             throw new IllegalArgumentException("Response processor not found: '" + name.trim()
-                    + "'. Available: " + new ArrayList<>(responseProcessorRegistry.keySet()));
+                    + "'. Available: " + available);
+        }
         if (procs.isEmpty()) return response;
         Object current = response;
         for (BatchProperties.ResponseProcessorProperties proc : procs) {
             current = applySingleResponseProcessor(current, proc);
         }
         return current;
+    }
+
+    public Object applyResponseProcessor(Object response, String name) throws Exception {
+        return applyResponseProcessor(response, name, null);
     }
 
     @SuppressWarnings("unchecked")
@@ -2749,6 +3511,8 @@ public class BatchService {
             String onError = proc.getOnError();
             if (onError == null) throw e;
             if ("SKIP".equalsIgnoreCase(onError.trim())) return response;
+            if ("THROW".equalsIgnoreCase(onError.trim()))
+                throw new IllegalArgumentException(e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName(), e);
             // $.key — write error message into response map at that key
             String key = onError.trim().startsWith("$.") ? onError.trim().substring(2) : onError.trim();
             if (response instanceof Map<?, ?> m) {
@@ -2918,43 +3682,51 @@ public class BatchService {
         if (cfg != null) {
             if (cfg.getAttributes() != null) result.putAll(cfg.getAttributes());
 
-            BatchProperties.FilePropertiesSource fileSrc = cfg.getFile();
-            if (fileSrc != null && !fileSrc.getPath().isBlank()) {
-                java.util.Properties props = new java.util.Properties();
-                try (FileInputStream fis = new FileInputStream(fileSrc.getPath())) {
-                    props.load(fis);
+            List<BatchProperties.FilePropertiesSource> fileSrcs = cfg.getFile();
+            if (fileSrcs != null) {
+                for (BatchProperties.FilePropertiesSource fileSrc : fileSrcs) {
+                    if (fileSrc != null && !fileSrc.getPath().isBlank()) {
+                        java.util.Properties props = new java.util.Properties();
+                        try (FileInputStream fis = new FileInputStream(fileSrc.getPath())) {
+                            props.load(fis);
+                        }
+                        props.forEach((k, v) -> result.put(k.toString(), v.toString()));
+                    }
                 }
-                props.forEach((k, v) -> result.put(k.toString(), v.toString()));
             }
 
-            BatchProperties.HttpPropertiesSource httpSrc = cfg.getHttp();
-            if (httpSrc != null && !httpSrc.getUrl().isBlank()) {
+            List<BatchProperties.HttpPropertiesSource> httpSrcs = cfg.getHttp();
+            if (httpSrcs != null && !httpSrcs.isEmpty()) {
                 HttpClient client = HttpClient.newBuilder().build();
-                int timeout = httpSrc.getTimeoutMs() > 0 ? httpSrc.getTimeoutMs() : 5000;
-                HttpRequest.Builder rb = HttpRequest.newBuilder()
-                        .uri(URI.create(httpSrc.getUrl()))
-                        .timeout(Duration.ofMillis(timeout));
-                if (httpSrc.getMethod() == HttpMethod.POST) {
-                    String formBody = result.entrySet().stream()
-                            .map(e -> java.net.URLEncoder.encode(e.getKey(), java.nio.charset.StandardCharsets.UTF_8)
-                                    + "=" + java.net.URLEncoder.encode(
-                                            e.getValue() != null ? e.getValue() : "",
-                                            java.nio.charset.StandardCharsets.UTF_8))
-                            .collect(Collectors.joining("&"));
-                    rb.header("Content-Type", "application/x-www-form-urlencoded")
-                      .POST(HttpRequest.BodyPublishers.ofString(formBody));
-                } else {
-                    rb.GET();
-                }
-                HttpResponse<String> resp = client.send(rb.build(), HttpResponse.BodyHandlers.ofString());
-                if (resp.statusCode() >= 200 && resp.statusCode() < 300) {
-                    Map<String, Object> parsed = objectMapper.readValue(resp.body(), new TypeReference<>() {});
-                    parsed.forEach((k, v) -> {
-                        String val = v != null ? v.toString() : "";
-                        try { val = java.net.URLDecoder.decode(val, java.nio.charset.StandardCharsets.UTF_8); }
-                        catch (Exception ignored) {}
-                        result.put(k, val);
-                    });
+                for (BatchProperties.HttpPropertiesSource httpSrc : httpSrcs) {
+                    if (httpSrc != null && !httpSrc.getUrl().isBlank()) {
+                        int timeout = httpSrc.getTimeoutMs() > 0 ? httpSrc.getTimeoutMs() : 5000;
+                        HttpRequest.Builder rb = HttpRequest.newBuilder()
+                                .uri(URI.create(httpSrc.getUrl()))
+                                .timeout(Duration.ofMillis(timeout));
+                        if (httpSrc.getMethod() == HttpMethod.POST) {
+                            String formBody = result.entrySet().stream()
+                                    .map(e -> java.net.URLEncoder.encode(e.getKey(), java.nio.charset.StandardCharsets.UTF_8)
+                                            + "=" + java.net.URLEncoder.encode(
+                                                    e.getValue() != null ? e.getValue() : "",
+                                                    java.nio.charset.StandardCharsets.UTF_8))
+                                    .collect(Collectors.joining("&"));
+                            rb.header("Content-Type", "application/x-www-form-urlencoded")
+                              .POST(HttpRequest.BodyPublishers.ofString(formBody));
+                        } else {
+                            rb.GET();
+                        }
+                        HttpResponse<String> resp = client.send(rb.build(), HttpResponse.BodyHandlers.ofString());
+                        if (resp.statusCode() >= 200 && resp.statusCode() < 300) {
+                            Map<String, Object> parsed = objectMapper.readValue(resp.body(), new TypeReference<>() {});
+                            parsed.forEach((k, v) -> {
+                                String val = v != null ? v.toString() : "";
+                                try { val = java.net.URLDecoder.decode(val, java.nio.charset.StandardCharsets.UTF_8); }
+                                catch (Exception ignored) {}
+                                result.put(k, val);
+                            });
+                        }
+                    }
                 }
             }
         }

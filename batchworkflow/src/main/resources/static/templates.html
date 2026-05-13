@@ -492,7 +492,7 @@
         while (sel.options.length > 1) sel.remove(1);
         Object.keys(templateBodyCache).forEach(k => delete templateBodyCache[k]);
         try {
-            const res = await fetch('/batch/template');
+            const res = await fetch('/batch/operationTemplate');
             const data = await res.json();
             const items = data.data || [];
             items.forEach(item => {
@@ -580,7 +580,7 @@
         setStatus('Running…');
         const start = Date.now();
         try {
-            const res  = await fetch('/batch/template', {
+            const res  = await fetch('/batch/operationTemplate', {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body:    reqText

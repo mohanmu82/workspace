@@ -9,6 +9,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+
 import java.io.InputStream;
 import java.net.URL;
 import java.nio.file.Files;
@@ -84,7 +85,7 @@ public class JoinDatasetController {
             try {
                 Map<String, Object> httpResponse = batchController.buildHttpResponse(
                         req.operation(), result, req.httpThreadCount());
-                Object processed = batchService.applyResponseProcessor(httpResponse, req.responseProcessor());
+                Object processed = batchService.applyResponseProcessor(httpResponse, req.responseProcessor(), req.operation());
                 rows = extractRowList(processed);
             } catch (Exception e) {
                 return badRequest("responseProcessor failed: " + e.getMessage());

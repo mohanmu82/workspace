@@ -635,7 +635,7 @@
 
         const content = { dataset1: ds1, dataset2: ds2, key1, key2 };
         try {
-            const res = await fetch('/batch/template', {
+            const res = await fetch('/batch/operationTemplate', {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body:    JSON.stringify({ name, content })
@@ -652,7 +652,7 @@
 
     async function loadTemplateList() {
         try {
-            const res  = await fetch('/batch/template');
+            const res  = await fetch('/batch/operationTemplate');
             const data = await res.json();
             const sel  = document.getElementById('tplSelect');
             const cur  = sel.value;
@@ -670,7 +670,7 @@
         const name = document.getElementById('tplSelect').value;
         if (!name) { showTplMsg('Select a template first', 'error'); return; }
         try {
-            const res = await fetch('/batch/template/' + encodeURIComponent(name));
+            const res = await fetch('/batch/operationTemplate/' + encodeURIComponent(name));
             if (!res.ok) { showTplMsg('Template not found', 'error'); return; }
             const data = await res.json();
             const c    = data.content || {};

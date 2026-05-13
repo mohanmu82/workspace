@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Page Creator</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f5f7; color: #172b4d; padding: 20px; }
+
+.nav { margin-bottom: 14px; }
+.nav a { font-size: 13px; color: #0052cc; text-decoration: none; }
+.nav a:hover { text-decoration: underline; }
+h1 { font-size: 20px; font-weight: 600; margin-bottom: 16px; }
+
+/* Layout */
+.workspace { display: grid; grid-template-columns: 1fr 400px; gap: 14px; align-items: start; }
+.editor-col { display: flex; flex-direction: column; gap: 0; }
+.preview-col { position: sticky; top: 20px; display: flex; flex-direction: column; gap: 10px; }
+
+/* Panel */
+.panel { background: #fff; border: 1px solid #dfe1e6; border-radius: 6px; overflow: hidden; }
+.panel-header { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: #f4f5f7; border-bottom: 1px solid #dfe1e6; }
+.panel-header h2 { font-size: 12px; font-weight: 700; color: #5e6c84; text-transform: uppercase; letter-spacing: 0.5px; flex: 1; }
+.panel-body { padding: 14px; }
+
+/* Tabs */
+.tabs { display: flex; background: #f4f5f7; border-bottom: 2px solid #dfe1e6; border-radius: 6px 6px 0 0; overflow: hidden; }
+.tab-btn { padding: 11px 18px; font-size: 13px; font-weight: 500; color: #5e6c84; background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; cursor: pointer; white-space: nowrap; }
+.tab-btn:hover { color: #172b4d; background: #ebecf0; }
+.tab-btn.active { color: #0052cc; border-bottom-color: #0052cc; background: #fff; }
+.tab-content { display: none; padding: 16px; background: #fff; border: 1px solid #dfe1e6; border-top: none; border-radius: 0 0 6px 6px; }
+.tab-content.active { display: block; }
+
+/* Form elements */
+.form-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.form-row:last-child { margin-bottom: 0; }
+.fg { display: flex; flex-direction: column; gap: 4px; }
+.fg.wide { grid-column: 1 / -1; }
+.fg label { font-size: 11px; font-weight: 600; color: #5e6c84; text-transform: uppercase; letter-spacing: 0.4px; }
+.fg input, .fg select, .fg textarea { padding: 6px 9px; font-size: 13px; border: 1px solid #ccc; border-radius: 4px; outline: none; background: #fff; font-family: inherit; }
+.fg input:focus, .fg select:focus, .fg textarea:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.2); }
+.fg textarea { resize: vertical; font-family: Consolas, "Cascadia Code", monospace; font-size: 12px; line-height: 1.5; }
+.hint { font-size: 11px; color: #a5adba; margin-top: 2px; }
+
+/* Buttons */
+button { padding: 7px 14px; font-size: 13px; font-weight: 500; border: none; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+button.primary  { background: #0052cc; color: #fff; }
+button.primary:hover  { background: #0065ff; }
+button.primary:disabled { background: #a5adba; cursor: not-allowed; }
+button.secondary { background: #fff; color: #0052cc; border: 1px solid #0052cc; }
+button.secondary:hover { background: #e9f0ff; }
+button.success  { background: #006644; color: #fff; }
+button.success:hover  { background: #00875a; }
+button.danger   { background: #fff; color: #de350b; border: 1px solid #de350b; }
+button.danger:hover   { background: #ffebe6; }
+button.sm  { padding: 5px 12px; font-size: 12px; }
+button.xs  { padding: 2px 8px; font-size: 11px; }
+
+/* Item cards */
+.item-list { display: flex; flex-direction: column; gap: 10px; }
+.item-card { border: 1px solid #dfe1e6; border-radius: 4px; overflow: hidden; }
+.item-card-header { display: flex; align-items: center; gap: 8px; padding: 7px 12px; background: #f4f5f7; border-bottom: 1px solid #dfe1e6; }
+.item-card-header .card-title { flex: 1; font-size: 12px; font-weight: 600; color: #172b4d; }
+.item-card-body { padding: 12px; }
+
+.add-row { margin-top: 12px; display: flex; gap: 8px; }
+
+/* Column table */
+.col-table { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
+.col-table th { font-size: 11px; font-weight: 600; color: #5e6c84; text-transform: uppercase; letter-spacing: 0.4px; padding: 4px 6px; border-bottom: 1px solid #dfe1e6; text-align: left; }
+.col-table td { padding: 3px 4px; }
+.col-table td input { width: 100%; padding: 4px 7px; font-size: 12px; border: 1px solid #ccc; border-radius: 3px; outline: none; }
+.col-table td input:focus { border-color: #4c9aff; }
+
+/* Status */
+.status { font-size: 13px; color: #5e6c84; min-height: 18px; padding: 4px 0; }
+.status.ok  { color: #006644; }
+.status.err { color: #de350b; }
+
+/* JSON preview */
+#json-preview { font-family: Consolas, "Cascadia Code", monospace; font-size: 11px; background: #1e2a3a; color: #e0e8f0; border: none; border-radius: 0; padding: 12px; width: 100%; resize: none; outline: none; line-height: 1.5; height: 520px; }
+.preview-toolbar { display: flex; gap: 6px; padding: 8px 12px; background: #152030; border-top: 1px solid #2d3f52; border-radius: 0 0 6px 6px; }
+.preview-toolbar button { padding: 4px 12px; font-size: 12px; background: #2d3f52; color: #c0d0e0; border: 1px solid #3d4f62; border-radius: 3px; cursor: pointer; }
+.preview-toolbar button:hover { background: #3d5a72; }
+
+/* Action chips */
+.action-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.action-chip { padding: 3px 9px; font-size: 11px; background: #e9f0ff; color: #0052cc; border: 1px solid #4c9aff; border-radius: 12px; cursor: pointer; user-select: none; }
+.action-chip:hover { background: #d0e4ff; }
+
+/* Control type extra fields */
+.ctrl-type-fields { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #dfe1e6; }
+
+/* Empty state */
+.empty-hint { font-size: 13px; color: #a5adba; font-style: italic; padding: 8px 0; }
+</style>
+</head>
+<body>
+
+<div class="nav"><a href="/">&larr; Home</a></div>
+<h1>Page Creator</h1>
+
+<div class="workspace">
+
+  <!-- ===================== EDITOR COLUMN ===================== -->
+  <div class="editor-col">
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab-btn active" onclick="showTab('page',this)">Page</button>
+      <button class="tab-btn" onclick="showTab('grids',this)">Grids</button>
+      <button class="tab-btn" onclick="showTab('state',this)">State</button>
+      <button class="tab-btn" onclick="showTab('controls',this)">Controls</button>
+      <button class="tab-btn" onclick="showTab('datagrids',this)">Data Grids</button>
+    </div>
+
+    <!-- PAGE TAB -->
+    <div id="tab-page" class="tab-content active">
+      <div class="form-row">
+        <div class="fg">
+          <label>Page ID</label>
+          <input type="text" id="page-id" placeholder="customer-search-page" oninput="updateJson()">
+        </div>
+        <div class="fg">
+          <label>Title</label>
+          <input type="text" id="page-title" placeholder="Customer Search" oninput="updateJson()">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="fg">
+          <label>Layout Type</label>
+          <select id="page-layout-type" onchange="updateJson()">
+            <option value="grid">grid</option>
+            <option value="flex">flex</option>
+          </select>
+        </div>
+        <div class="fg">
+          <label>Columns</label>
+          <input type="number" id="page-layout-cols" value="12" min="1" max="24" oninput="updateJson()">
+        </div>
+      </div>
+    </div>
+
+    <!-- GRIDS TAB -->
+    <div id="tab-grids" class="tab-content">
+      <p class="hint" style="margin-bottom:12px">Define grid panels that controls and data grids are placed into.</p>
+      <div id="grids-list" class="item-list"></div>
+      <div class="add-row">
+        <button class="secondary sm" onclick="addGrid()">+ Add Grid</button>
+      </div>
+    </div>
+
+    <!-- STATE TAB -->
+    <div id="tab-state" class="tab-content">
+      <p class="hint" style="margin-bottom:12px">Define initial page state variables. Use <code>null</code> or leave blank for null default.</p>
+      <div id="state-list" class="item-list"></div>
+      <div class="add-row">
+        <button class="secondary sm" onclick="addStateVar()">+ Add Variable</button>
+      </div>
+    </div>
+
+    <!-- CONTROLS TAB -->
+    <div id="tab-controls" class="tab-content">
+      <p class="hint" style="margin-bottom:12px">Define form controls: text inputs, select dropdowns, and action buttons.</p>
+      <div id="controls-list" class="item-list"></div>
+      <div class="add-row">
+        <button class="secondary sm" onclick="addControl()">+ Add Control</button>
+      </div>
+    </div>
+
+    <!-- DATA GRIDS TAB -->
+    <div id="tab-datagrids" class="tab-content">
+      <p class="hint" style="margin-bottom:12px">Define data grid tables with columns and optional row-level actions.</p>
+      <div id="datagrids-list" class="item-list"></div>
+      <div class="add-row">
+        <button class="secondary sm" onclick="addDataGrid()">+ Add Data Grid</button>
+      </div>
+    </div>
+
+  </div><!-- /editor-col -->
+
+  <!-- ===================== PREVIEW COLUMN ===================== -->
+  <div class="preview-col">
+
+    <!-- Load panel -->
+    <div class="panel">
+      <div class="panel-header"><h2>Load Existing Page</h2></div>
+      <div class="panel-body" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+        <div class="fg" style="flex:1;min-width:130px">
+          <label>Saved Pages</label>
+          <select id="page-select"><option value="">— select —</option></select>
+        </div>
+        <button class="secondary sm" onclick="loadSelectedPage()">Load</button>
+        <button class="secondary sm" title="Refresh list" onclick="loadPageList()">&#8635;</button>
+      </div>
+    </div>
+
+    <!-- Save panel -->
+    <div class="panel">
+      <div class="panel-header"><h2>Save Page</h2></div>
+      <div class="panel-body">
+        <div class="fg" style="margin-bottom:10px">
+          <label>File Name</label>
+          <input type="text" id="save-name" placeholder="customer-search-page">
+          <span class="hint">Saved as pages/{name}.json on the server</span>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <button class="success" onclick="savePage()">Save Page</button>
+          <button class="secondary sm" onclick="previewPage()">&#128064; Preview</button>
+          <button class="secondary sm" onclick="newPage()">New</button>
+          <button class="secondary sm" onclick="copyJson()">Copy JSON</button>
+          <button class="secondary sm" onclick="importJson()">Import</button>
+        </div>
+        <div id="save-status" class="status" style="margin-top:8px"></div>
+      </div>
+    </div>
+
+    <!-- JSON Preview -->
+    <div class="panel">
+      <div class="panel-header"><h2>JSON Preview</h2></div>
+      <textarea id="json-preview" readonly spellcheck="false"></textarea>
+      <div class="preview-toolbar">
+        <button onclick="copyJson()">Copy</button>
+        <button onclick="importJson()">Import JSON</button>
+      </div>
+    </div>
+
+  </div><!-- /preview-col -->
+
+</div><!-- /workspace -->
+
+<script>
+'use strict';
+
+// ============================================================
+// State
+// ============================================================
+
+let grids     = [];   // { _id, id, title, row, col, span, type }
+let stateVars = [];   // { _id, key, value }
+let controls  = [];   // { _id, id, grid, type, label, binding, defaultValue, dataSource, onClick }
+let dataGrids = [];   // { _id, id, columns:[{field,header}], rowActions }
+
+let _uid = 1;
+function uid() { return _uid++; }
+
+// ============================================================
+// Tabs
+// ============================================================
+
+function showTab(name, btn) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  btn.classList.add('active');
+}
+
+// ============================================================
+// Build JSON
+// ============================================================
+
+function buildJson() {
+  const pageId    = v('page-id');
+  const pageTitle = v('page-title');
+  const layoutType = document.getElementById('page-layout-type').value;
+  const layoutCols = parseInt(document.getElementById('page-layout-cols').value) || 12;
+
+  const stateObj = {};
+  stateVars.forEach(sv => {
+    const val = sv.value === '' || sv.value === 'null' ? null : sv.value;
+    stateObj[sv.key] = val;
+  });
+
+  const obj = {
+    page: { id: pageId, title: pageTitle, layout: { type: layoutType, columns: layoutCols } },
+    grids: grids.map(g => {
+      const o = { id: g.id, title: g.title, position: { row: g.row, col: g.col, span: g.span } };
+      if (g.type) o.type = g.type;
+      return o;
+    }),
+    state: stateObj,
+    controls: controls.map(buildControlJson),
+    dataGrids: dataGrids.map(buildDataGridJson)
+  };
+  return JSON.stringify(obj, null, 2);
+}
+
+function buildControlJson(c) {
+  const o = { id: c.id, grid: c.grid, type: c.type, label: c.label };
+  if (c.type === 'text') {
+    if (c.binding) o.binding = c.binding;
+    o.defaultValue = c.defaultValue;
+  } else if (c.type === 'select') {
+    try { o.dataSource = JSON.parse(c.dataSource); } catch(e) { o.dataSource = c.dataSource || {}; }
+  } else if (c.type === 'button') {
+    try { o.onClick = JSON.parse(c.onClick); } catch(e) { o.onClick = c.onClick || []; }
+  }
+  return o;
+}
+
+function buildDataGridJson(dg) {
+  const o = { id: dg.id, columns: dg.columns.map(col => ({ field: col.field, header: col.header })) };
+  if (dg.rowActions && dg.rowActions.trim() && dg.rowActions.trim() !== '[]') {
+    try { const ra = JSON.parse(dg.rowActions); if (Array.isArray(ra) && ra.length > 0) o.rowActions = ra; } catch(e) {}
+  }
+  return o;
+}
+
+function updateJson() {
+  document.getElementById('json-preview').value = buildJson();
+  // Auto-fill save name from page-id
+  const saveName = document.getElementById('save-name');
+  if (!saveName.value) saveName.value = v('page-id');
+}
+
+// ============================================================
+// Grids
+// ============================================================
+
+function addGrid() {
+  grids.push({ _id: uid(), id: '', title: '', row: 1, col: 1, span: 12, type: '' });
+  renderGrids();
+}
+
+function removeGrid(_id) {
+  grids = grids.filter(g => g._id !== _id);
+  renderGrids();
+}
+
+function getGridIds() { return grids.map(g => g.id).filter(Boolean); }
+
+function renderGrids() {
+  const list = document.getElementById('grids-list');
+  list.innerHTML = '';
+  if (!grids.length) { list.innerHTML = '<p class="empty-hint">No grids yet — click "+ Add Grid" to begin.</p>'; }
+  grids.forEach((g, i) => {
+    const card = el('div', 'item-card');
+    card.innerHTML = `
+      <div class="item-card-header">
+        <span class="card-title">Grid ${i+1}${g.id?' — '+hq(g.id):''}</span>
+        <button class="danger xs" data-gid="${g._id}">Remove</button>
+      </div>
+      <div class="item-card-body">
+        <div class="form-row">
+          <div class="fg"><label>ID</label><input data-bind="id" type="text" value="${hq(g.id)}" placeholder="searchPanel"></div>
+          <div class="fg"><label>Title</label><input data-bind="title" type="text" value="${hq(g.title)}" placeholder="Search Filters"></div>
+        </div>
+        <div class="form-row">
+          <div class="fg"><label>Row</label><input data-bind="row" type="number" value="${g.row}" min="1"></div>
+          <div class="fg"><label>Col</label><input data-bind="col" type="number" value="${g.col}" min="1"></div>
+          <div class="fg"><label>Span</label><input data-bind="span" type="number" value="${g.span}" min="1" max="24"></div>
+          <div class="fg"><label>Type (optional)</label><input data-bind="type" type="text" value="${hq(g.type)}" placeholder="error-panel"></div>
+        </div>
+      </div>`;
+    card.querySelector('[data-gid]').addEventListener('click', () => removeGrid(g._id));
+    card.querySelectorAll('[data-bind]').forEach(inp => {
+      inp.addEventListener('input', () => {
+        const key = inp.dataset.bind;
+        grids[i][key] = (key==='row'||key==='col'||key==='span') ? (+inp.value||1) : inp.value;
+        if (key === 'id') renderGrids(); else updateJson();
+      });
+    });
+    list.appendChild(card);
+  });
+  updateJson();
+  // Refresh any grid selects in controls/datagrids
+  syncGridSelects();
+}
+
+function syncGridSelects() {
+  const ids = getGridIds();
+  // Rebuild control grid selects
+  document.querySelectorAll('[data-ctrl-grid-sel]').forEach(sel => {
+    const cur = sel.value;
+    while (sel.options.length > 1) sel.remove(1);
+    ids.forEach(id => { const o = new Option(id, id); sel.appendChild(o); });
+    sel.value = cur;
+  });
+  // Rebuild dataGrid id selects
+  document.querySelectorAll('[data-dg-id-sel]').forEach(sel => {
+    const cur = sel.value;
+    while (sel.options.length > 1) sel.remove(1);
+    ids.forEach(id => { const o = new Option(id, id); sel.appendChild(o); });
+    sel.value = cur;
+  });
+}
+
+// ============================================================
+// State
+// ============================================================
+
+function addStateVar() {
+  stateVars.push({ _id: uid(), key: '', value: '' });
+  renderStateVars();
+}
+
+function removeStateVar(_id) {
+  stateVars = stateVars.filter(s => s._id !== _id);
+  renderStateVars();
+}
+
+function renderStateVars() {
+  const list = document.getElementById('state-list');
+  list.innerHTML = '';
+  if (!stateVars.length) { list.innerHTML = '<p class="empty-hint">No state variables yet.</p>'; }
+  stateVars.forEach((sv, i) => {
+    const card = el('div', 'item-card');
+    card.innerHTML = `
+      <div class="item-card-body" style="display:flex;gap:8px;align-items:flex-end">
+        <div class="fg" style="flex:1"><label>Key</label><input data-bind="key" type="text" value="${hq(sv.key)}" placeholder="selectedCustomerId"></div>
+        <div class="fg" style="flex:1"><label>Default Value</label><input data-bind="value" type="text" value="${hq(sv.value)}" placeholder="null or value"></div>
+        <button class="danger xs" data-sid="${sv._id}" style="margin-bottom:1px">Remove</button>
+      </div>`;
+    card.querySelector('[data-sid]').addEventListener('click', () => removeStateVar(sv._id));
+    card.querySelectorAll('[data-bind]').forEach(inp => {
+      inp.addEventListener('input', () => { stateVars[i][inp.dataset.bind] = inp.value; updateJson(); });
+    });
+    list.appendChild(card);
+  });
+  updateJson();
+}
+
+// ============================================================
+// Controls
+// ============================================================
+
+const ONCLICK_TEMPLATE = JSON.stringify([
+  { "action": "clearGrid", "targetGrid": "errorGrid" },
+  {
+    "action": "httpRequest",
+    "name": "searchRequest",
+    "method": "POST",
+    "url": "/api/endpoint",
+    "body": {
+      "field1": "{{controls.field1.value}}",
+      "field2": "{{controls.field2.value}}"
+    },
+    "onSuccess": [
+      { "action": "bindGridData", "targetGrid": "resultGrid", "data": "{{response.data}}" },
+      { "action": "showNotification", "message": "Data loaded" }
+    ],
+    "onError": [
+      {
+        "action": "bindGridData",
+        "targetGrid": "errorGrid",
+        "data": { "source": "Search", "message": "{{error.message}}", "status": "{{error.status}}" }
+      }
+    ]
+  }
+], null, 2);
+
+const DATASOURCE_TEMPLATE = JSON.stringify({
+  "type": "http",
+  "method": "GET",
+  "url": "/api/options",
+  "valueField": "code",
+  "labelField": "name"
+}, null, 2);
+
+const ACTION_SNIPPETS = {
+  clearGrid:        { action: 'clearGrid', targetGrid: 'errorGrid' },
+  httpRequest:      { action: 'httpRequest', name: 'request', method: 'GET', url: '/api/endpoint',
+                      onSuccess: [{ action: 'bindGridData', targetGrid: 'resultGrid', data: '{{response.data}}' }],
+                      onError:   [{ action: 'bindGridData', targetGrid: 'errorGrid', data: { source: 'Request', message: '{{error.message}}', status: '{{error.status}}' } }] },
+  bindGridData:     { action: 'bindGridData', targetGrid: '', data: '{{response.data}}' },
+  setState:         { action: 'setState', target: 'stateKey', value: '{{row.field}}' },
+  showNotification: { action: 'showNotification', message: 'Done' },
+  appendGridRow:    { action: 'appendGridRow', targetGrid: 'errorGrid', data: { source: '', message: '{{error.message}}' } }
+};
+
+function addControl() {
+  controls.push({ _id: uid(), id: '', grid: '', type: 'text', label: '', binding: '', defaultValue: '', dataSource: DATASOURCE_TEMPLATE, onClick: ONCLICK_TEMPLATE });
+  renderControls();
+}
+
+function removeControl(_id) {
+  controls = controls.filter(c => c._id !== _id);
+  renderControls();
+}
+
+function renderControls() {
+  const list = document.getElementById('controls-list');
+  list.innerHTML = '';
+  if (!controls.length) { list.innerHTML = '<p class="empty-hint">No controls yet — click "+ Add Control" to begin.</p>'; }
+  const gids = getGridIds();
+  controls.forEach((c, i) => {
+    const card = el('div', 'item-card');
+
+    let typeSection = '';
+    if (c.type === 'text') {
+      typeSection = `
+        <div class="ctrl-type-fields">
+          <div class="form-row">
+            <div class="fg"><label>Binding</label><input data-bind="binding" type="text" value="${hq(c.binding)}" placeholder="filters.customerName"></div>
+            <div class="fg"><label>Default Value</label><input data-bind="defaultValue" type="text" value="${hq(c.defaultValue)}" placeholder=""></div>
+          </div>
+        </div>`;
+    } else if (c.type === 'select') {
+      typeSection = `
+        <div class="ctrl-type-fields">
+          <div class="fg wide">
+            <label>Data Source (JSON)</label>
+            <textarea data-bind="dataSource" rows="6">${hq(c.dataSource)}</textarea>
+          </div>
+        </div>`;
+    } else if (c.type === 'button') {
+      typeSection = `
+        <div class="ctrl-type-fields">
+          <div class="fg wide">
+            <label>onClick Actions (JSON)</label>
+            <div class="action-chips">
+              <span class="action-chip" data-action="clearGrid">+ clearGrid</span>
+              <span class="action-chip" data-action="httpRequest">+ httpRequest</span>
+              <span class="action-chip" data-action="bindGridData">+ bindGridData</span>
+              <span class="action-chip" data-action="setState">+ setState</span>
+              <span class="action-chip" data-action="showNotification">+ showNotification</span>
+              <span class="action-chip" data-action="appendGridRow">+ appendGridRow</span>
+            </div>
+            <textarea data-bind="onClick" rows="14">${hq(c.onClick)}</textarea>
+          </div>
+        </div>`;
+    }
+
+    const gridOpts = gids.map(gid => `<option value="${hq(gid)}"${c.grid===gid?' selected':''}>${hq(gid)}</option>`).join('');
+
+    card.innerHTML = `
+      <div class="item-card-header">
+        <span class="card-title">Control ${i+1}${c.id?' — '+hq(c.id):''} <span style="font-weight:400;color:#5e6c84">(${c.type})</span></span>
+        <button class="danger xs" data-cid="${c._id}">Remove</button>
+      </div>
+      <div class="item-card-body">
+        <div class="form-row">
+          <div class="fg"><label>ID</label><input data-bind="id" type="text" value="${hq(c.id)}" placeholder="searchButton"></div>
+          <div class="fg">
+            <label>Grid</label>
+            <select data-ctrl-grid-sel data-bind="grid">
+              <option value="">— select grid —</option>
+              ${gridOpts}
+            </select>
+          </div>
+          <div class="fg">
+            <label>Type</label>
+            <select data-bind="type">
+              <option value="text"${c.type==='text'?' selected':''}>text</option>
+              <option value="select"${c.type==='select'?' selected':''}>select</option>
+              <option value="button"${c.type==='button'?' selected':''}>button</option>
+            </select>
+          </div>
+          <div class="fg"><label>Label</label><input data-bind="label" type="text" value="${hq(c.label)}" placeholder="Search"></div>
+        </div>
+        ${typeSection}
+      </div>`;
+
+    // Remove button
+    card.querySelector('[data-cid]').addEventListener('click', () => removeControl(c._id));
+
+    // Bound inputs / selects / textareas
+    card.querySelectorAll('[data-bind]').forEach(inp => {
+      inp.addEventListener('input', () => {
+        controls[i][inp.dataset.bind] = inp.value;
+        if (inp.dataset.bind === 'type') renderControls(); else updateJson();
+      });
+      inp.addEventListener('change', () => {
+        controls[i][inp.dataset.bind] = inp.value;
+        if (inp.dataset.bind === 'type') renderControls(); else updateJson();
+      });
+    });
+
+    // Action chip insertions for button onClick
+    if (c.type === 'button') {
+      const ta = card.querySelector('[data-bind="onClick"]');
+      card.querySelectorAll('.action-chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+          let arr = [];
+          try { arr = JSON.parse(controls[i].onClick); } catch(e) { arr = []; }
+          arr.push(ACTION_SNIPPETS[chip.dataset.action]);
+          controls[i].onClick = JSON.stringify(arr, null, 2);
+          ta.value = controls[i].onClick;
+          updateJson();
+        });
+      });
+    }
+
+    list.appendChild(card);
+  });
+  updateJson();
+}
+
+// ============================================================
+// DataGrids
+// ============================================================
+
+const ROWACTION_TEMPLATES = {
+  setState: [{ label: 'Load Detail', onClick: [
+    { action: 'setState', target: 'selectedId', value: '{{row.id}}' },
+    { action: 'httpRequest', method: 'GET', url: '/api/items/{{row.id}}',
+      onSuccess: [{ action: 'bindGridData', targetGrid: 'detailGrid', data: '{{response.data}}' }],
+      onError:   [{ action: 'appendGridRow', targetGrid: 'errorGrid', data: { source: 'Load Detail', message: '{{error.message}}' } }] }
+  ]}],
+  httpRequest: [{ label: 'Action', onClick: [
+    { action: 'httpRequest', method: 'POST', url: '/api/action/{{row.id}}',
+      onSuccess: [{ action: 'showNotification', message: 'Done' }],
+      onError:   [{ action: 'appendGridRow', targetGrid: 'errorGrid', data: { source: 'Action', message: '{{error.message}}' } }] }
+  ]}]
+};
+
+function addDataGrid() {
+  dataGrids.push({ _id: uid(), id: '', columns: [{ field: '', header: '' }], rowActions: '[]' });
+  renderDataGrids();
+}
+
+function removeDataGrid(_id) {
+  dataGrids = dataGrids.filter(dg => dg._id !== _id);
+  renderDataGrids();
+}
+
+function addColumn(dgIdx) {
+  dataGrids[dgIdx].columns.push({ field: '', header: '' });
+  renderDataGrids();
+}
+
+function removeColumn(dgIdx, colIdx) {
+  dataGrids[dgIdx].columns.splice(colIdx, 1);
+  renderDataGrids();
+}
+
+function renderDataGrids() {
+  const list = document.getElementById('datagrids-list');
+  list.innerHTML = '';
+  if (!dataGrids.length) { list.innerHTML = '<p class="empty-hint">No data grids yet — click "+ Add Data Grid" to begin.</p>'; }
+  const gids = getGridIds();
+
+  dataGrids.forEach((dg, i) => {
+    const card = el('div', 'item-card');
+
+    const colRows = dg.columns.map((col, ci) => `
+      <tr>
+        <td><input type="text" value="${hq(col.field)}" placeholder="fieldName" data-dg="${i}" data-ci="${ci}" data-col-bind="field"></td>
+        <td><input type="text" value="${hq(col.header)}" placeholder="Column Header" data-dg="${i}" data-ci="${ci}" data-col-bind="header"></td>
+        <td style="width:50px;text-align:center"><button class="danger xs" data-dg="${i}" data-ci="${ci}" data-rm-col>&#10005;</button></td>
+      </tr>`).join('');
+
+    const gOpts = gids.map(gid => `<option value="${hq(gid)}"${dg.id===gid?' selected':''}>${hq(gid)}</option>`).join('');
+
+    card.innerHTML = `
+      <div class="item-card-header">
+        <span class="card-title">DataGrid ${i+1}${dg.id?' — '+hq(dg.id):''}</span>
+        <button class="danger xs" data-dgid="${dg._id}">Remove</button>
+      </div>
+      <div class="item-card-body">
+        <div class="form-row" style="margin-bottom:12px">
+          <div class="fg">
+            <label>Grid ID (references grids section)</label>
+            <select data-dg-id-sel data-bind-dg-id="${i}">
+              <option value="">— select grid —</option>
+              ${gOpts}
+            </select>
+          </div>
+        </div>
+        <div class="fg wide" style="margin-bottom:12px">
+          <label>Columns</label>
+          <table class="col-table">
+            <thead><tr><th>Field</th><th>Header</th><th></th></tr></thead>
+            <tbody>${colRows}</tbody>
+          </table>
+          <button class="secondary xs" data-add-col="${i}" style="margin-top:4px">+ Add Column</button>
+        </div>
+        <div class="fg wide">
+          <label>Row Actions (JSON)</label>
+          <div class="action-chips">
+            <span class="action-chip" data-ra="setState">+ setState + httpRequest</span>
+            <span class="action-chip" data-ra="httpRequest">+ httpRequest</span>
+          </div>
+          <textarea data-bind-ra="${i}" rows="10">${hq(dg.rowActions)}</textarea>
+        </div>
+      </div>`;
+
+    // Remove card
+    card.querySelector('[data-dgid]').addEventListener('click', () => removeDataGrid(dg._id));
+
+    // Grid ID select
+    card.querySelector('[data-bind-dg-id]').addEventListener('change', function() {
+      dataGrids[i].id = this.value; updateJson(); renderDataGrids();
+    });
+
+    // Column inputs
+    card.querySelectorAll('[data-col-bind]').forEach(inp => {
+      inp.addEventListener('input', () => {
+        const di = +inp.dataset.dg, ci = +inp.dataset.ci, key = inp.dataset.colBind;
+        dataGrids[di].columns[ci][key] = inp.value; updateJson();
+      });
+    });
+
+    // Remove column
+    card.querySelectorAll('[data-rm-col]').forEach(btn => {
+      btn.addEventListener('click', () => removeColumn(+btn.dataset.dg, +btn.dataset.ci));
+    });
+
+    // Add column
+    card.querySelector('[data-add-col]').addEventListener('click', () => addColumn(i));
+
+    // Row action chips
+    const raTa = card.querySelector('[data-bind-ra]');
+    card.querySelectorAll('[data-ra]').forEach(chip => {
+      chip.addEventListener('click', () => {
+        let arr = [];
+        try { arr = JSON.parse(dataGrids[i].rowActions); } catch(e) { arr = []; }
+        ROWACTION_TEMPLATES[chip.dataset.ra].forEach(t => arr.push(t));
+        dataGrids[i].rowActions = JSON.stringify(arr, null, 2);
+        raTa.value = dataGrids[i].rowActions;
+        updateJson();
+      });
+    });
+
+    // Row action textarea
+    raTa.addEventListener('input', () => { dataGrids[i].rowActions = raTa.value; updateJson(); });
+
+    list.appendChild(card);
+  });
+  updateJson();
+}
+
+// ============================================================
+// Save / Load
+// ============================================================
+
+async function savePage() {
+  const name = v('save-name');
+  if (!name) { setStatus('File name is required.', 'err'); return; }
+  let content;
+  try { content = JSON.parse(buildJson()); } catch(e) { setStatus('Invalid JSON: ' + e.message, 'err'); return; }
+
+  setStatus('Saving…');
+  try {
+    const res  = await fetch('/batch/page', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, content }) });
+    const data = await res.json();
+    if (res.ok) {
+      setStatus('Saved: ' + (data.path || 'pages/' + name + '.json'), 'ok');
+      await loadPageList();
+      document.getElementById('page-select').value = name;
+    } else {
+      setStatus('Error: ' + (data.Errors?.[0]?.message ?? JSON.stringify(data)), 'err');
+    }
+  } catch(e) { setStatus('Request failed: ' + e.message, 'err'); }
+}
+
+async function loadPageList() {
+  try {
+    const res  = await fetch('/batch/page');
+    const data = await res.json();
+    const sel  = document.getElementById('page-select');
+    const prev = sel.value;
+    while (sel.options.length > 1) sel.remove(1);
+    (data.data || []).forEach(name => { sel.appendChild(new Option(name, name)); });
+    if (prev) sel.value = prev;
+  } catch(e) { /* ignore */ }
+}
+
+async function loadSelectedPage() {
+  const name = document.getElementById('page-select').value;
+  if (!name) return;
+  setStatus('Loading…');
+  try {
+    const res  = await fetch('/batch/page/' + encodeURIComponent(name));
+    const data = await res.json();
+    if (!res.ok) { setStatus('Failed to load: ' + (data.Errors?.[0]?.message ?? JSON.stringify(data)), 'err'); return; }
+    importPageData(data.content, name);
+  } catch(e) { setStatus('Load failed: ' + e.message, 'err'); }
+}
+
+function importPageData(pg, name) {
+  _uid = 1;
+  grids = []; stateVars = []; controls = []; dataGrids = [];
+
+  if (name) document.getElementById('save-name').value = name;
+
+  if (pg.page) {
+    document.getElementById('page-id').value    = pg.page.id    || '';
+    document.getElementById('page-title').value = pg.page.title || '';
+    if (pg.page.layout) {
+      document.getElementById('page-layout-type').value = pg.page.layout.type    || 'grid';
+      document.getElementById('page-layout-cols').value = pg.page.layout.columns || 12;
+    }
+  }
+
+  (pg.grids || []).forEach(g => {
+    grids.push({ _id: uid(), id: g.id||'', title: g.title||'', row: (g.position||{}).row||1, col: (g.position||{}).col||1, span: (g.position||{}).span||12, type: g.type||'' });
+  });
+
+  Object.entries(pg.state || {}).forEach(([k, val]) => {
+    stateVars.push({ _id: uid(), key: k, value: val === null || val === undefined ? '' : String(val) });
+  });
+
+  (pg.controls || []).forEach(c => {
+    let dataSource = DATASOURCE_TEMPLATE, onClick = ONCLICK_TEMPLATE;
+    if (c.dataSource) try { dataSource = JSON.stringify(c.dataSource, null, 2); } catch(e) {}
+    if (c.onClick)    try { onClick    = JSON.stringify(c.onClick,    null, 2); } catch(e) {}
+    controls.push({ _id: uid(), id: c.id||'', grid: c.grid||'', type: c.type||'text', label: c.label||'', binding: c.binding||'', defaultValue: c.defaultValue !== undefined ? String(c.defaultValue) : '', dataSource, onClick });
+  });
+
+  (pg.dataGrids || []).forEach(dg => {
+    let rowActions = '[]';
+    if (dg.rowActions && dg.rowActions.length) try { rowActions = JSON.stringify(dg.rowActions, null, 2); } catch(e) {}
+    dataGrids.push({ _id: uid(), id: dg.id||'', columns: (dg.columns||[]).map(col => ({ field: col.field||'', header: col.header||'' })), rowActions });
+  });
+
+  renderGrids();
+  renderStateVars();
+  renderControls();
+  renderDataGrids();
+  updateJson();
+  setStatus('Loaded: ' + (pg.page?.id || name), 'ok');
+}
+
+function newPage() {
+  _uid = 1;
+  grids = []; stateVars = []; controls = []; dataGrids = [];
+  document.getElementById('page-id').value         = '';
+  document.getElementById('page-title').value      = '';
+  document.getElementById('page-layout-type').value = 'grid';
+  document.getElementById('page-layout-cols').value  = '12';
+  document.getElementById('save-name').value        = '';
+  renderGrids(); renderStateVars(); renderControls(); renderDataGrids();
+  updateJson();
+  setStatus('');
+}
+
+async function previewPage() {
+  const name = v('save-name');
+  if (!name) { setStatus('Enter a file name first to preview.', 'err'); return; }
+  await savePage();
+  window.open('/page/' + encodeURIComponent(name), '_blank');
+}
+
+function copyJson() {
+  const text = buildJson();
+  navigator.clipboard.writeText(text)
+    .then(() => setStatus('Copied to clipboard.', 'ok'))
+    .catch(() => {
+      const ta = document.getElementById('json-preview');
+      ta.select(); document.execCommand('copy');
+      setStatus('Copied!', 'ok');
+    });
+}
+
+function importJson() {
+  const text = prompt('Paste page JSON to import:');
+  if (!text) return;
+  try {
+    importPageData(JSON.parse(text), '');
+  } catch(e) { setStatus('Invalid JSON: ' + e.message, 'err'); }
+}
+
+// ============================================================
+// Helpers
+// ============================================================
+
+function v(id) { return document.getElementById(id)?.value?.trim() ?? ''; }
+
+function el(tag, className) { const e = document.createElement(tag); if (className) e.className = className; return e; }
+
+function hq(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function setStatus(msg, type) {
+  const bar = document.getElementById('save-status');
+  bar.textContent = msg;
+  bar.className   = 'status' + (type ? ' ' + type : '');
+}
+
+// ============================================================
+// Boot
+// ============================================================
+
+updateJson();
+loadPageList();
+</script>
+</body>
+</html>

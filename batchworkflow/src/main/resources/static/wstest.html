@@ -384,19 +384,27 @@
   let wsGroups = [];
 
   async function loadWsGroups() {
+    const TEMPLATE = 'wsgroups';
+    const lbl = document.querySelector('label[for="groupSelect"]');
     try {
-      const r = await fetch('/batch/template?name=wsgroups');
-      if (!r.ok) return;
+      const r = await fetch('/batch/operationTemplate?name=' + TEMPLATE);
+      if (!r.ok) {
+        if (lbl) { lbl.textContent = 'URL Group (template: ' + TEMPLATE + ' — not found)'; lbl.style.color = '#de350b'; }
+        return;
+      }
       const d = await r.json();
       wsGroups = Array.isArray(d.data) ? d.data : [];
       const sel = document.getElementById('groupSelect');
+      if (lbl) lbl.textContent = 'URL Group (template: ' + TEMPLATE + ')';
       wsGroups.forEach(g => {
         const opt = document.createElement('option');
         opt.value = g.ALIAS;
         opt.textContent = g.ALIAS;
         sel.appendChild(opt);
       });
-    } catch (_) {}
+    } catch (_) {
+      if (lbl) { lbl.textContent = 'URL Group (template: ' + TEMPLATE + ' — load error)'; lbl.style.color = '#de350b'; }
+    }
   }
 
   function onGroupSelect() {

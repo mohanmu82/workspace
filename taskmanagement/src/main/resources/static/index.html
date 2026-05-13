@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Task Manager</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"/>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"/>
+  <style>
+    body { background: #f4f6f9; font-size: 0.875rem; }
+    .sidebar { min-height: calc(100vh - 56px); background: #fff; border-right: 1px solid #dee2e6; padding: 1rem; }
+    .sidebar label { font-weight: 600; font-size: 0.75rem; text-transform: uppercase; color: #6c757d; margin-top: 0.75rem; margin-bottom: 0.25rem; display: block; }
+    .sidebar .form-control, .sidebar .form-select { font-size: 0.8rem; }
+    .stat-card { border-radius: 8px; padding: 0.75rem 1rem; color: #fff; }
+    .badge-status-TODO       { background: #6c757d; }
+    .badge-status-IN_PROGRESS{ background: #0d6efd; }
+    .badge-status-REVIEW     { background: #fd7e14; }
+    .badge-status-DONE       { background: #198754; }
+    .badge-status-BLOCKED    { background: #dc3545; }
+    .badge-status-CANCELLED  { background: #adb5bd; color: #000; }
+    .badge-priority-LOW      { background: #adb5bd; color: #000; }
+    .badge-priority-MEDIUM   { background: #ffc107; color: #000; }
+    .badge-priority-HIGH     { background: #fd7e14; }
+    .badge-priority-CRITICAL { background: #dc3545; }
+    .kanban-board { display: flex; gap: 0.75rem; overflow-x: auto; padding-bottom: 1rem; }
+    .kanban-col   { min-width: 220px; background: #fff; border-radius: 8px; border: 1px solid #dee2e6; }
+    .kanban-col-header { padding: 0.5rem 0.75rem; font-weight: 700; border-radius: 8px 8px 0 0; font-size: 0.8rem; }
+    .kanban-cards { padding: 0.5rem; min-height: 100px; }
+    .kanban-card  { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; padding: 0.5rem; margin-bottom: 0.5rem; cursor: pointer; }
+    .kanban-card:hover { background: #e9ecef; }
+    .group-header { background: #e9ecef; padding: 0.4rem 0.75rem; font-weight: 700; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .task-row:hover { cursor: pointer; background: #f0f4ff !important; }
+    .overdue { color: #dc3545 !important; font-weight: 600; }
+    .tag-badge { background: #e9ecef; color: #495057; padding: 1px 6px; border-radius: 10px; font-size: 0.7rem; }
+    .filter-active { border-color: #0d6efd !important; background: #e7f1ff !important; }
+    #noResults { display:none; }
+    .col-sidebar { width: 220px; flex-shrink: 0; }
+    .col-main { flex: 1; min-width: 0; }
+    .main-wrap { display: flex; gap: 0; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark bg-dark px-3">
+  <span class="navbar-brand fw-bold"><i class="bi bi-check2-square me-2"></i>Task Manager</span>
+  <div class="d-flex gap-2 align-items-center">
+    <input id="globalSearch" class="form-control form-control-sm" placeholder="&#128269; Search tasks..." style="width:250px" oninput="debounceSearch()"/>
+    <a href="task-form.html" class="btn btn-success btn-sm"><i class="bi bi-plus-lg me-1"></i>New Task</a>
+  </div>
+</nav>
+
+<div class="container-fluid px-0">
+  <div class="main-wrap">
+
+    <!-- Sidebar -->
+    <div class="col-sidebar sidebar">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <strong style="font-size:0.85rem">Filters</strong>
+        <button class="btn btn-link btn-sm p-0" onclick="clearFilters()">Clear all</button>
+      </div>
+
+      <label>Status</label>
+      <div id="statusFilters">
+        <div class="form-check form-check-sm" style="font-size:0.8rem" title="To-Do"><input class="form-check-input filter-status" type="checkbox" value="TODO" id="s1" onchange="loadTasks()"><label class="form-check-label" for="s1"><span class="badge badge-status-TODO">TODO</span></label></div>
+        <div class="form-check form-check-sm" style="font-size:0.8rem"><input class="form-check-input filter-status" type="checkbox" value="IN_PROGRESS" id="s2" onchange="loadTasks()"><label class="form-check-label" for="s2"><span class="badge badge-status-IN_PROGRESS">IN PROGRESS</span></label></div>
+        <div class="form-check form-check-sm" style="font-size:0.8rem"><input class="form-check-input filter-status" type="checkbox" value="REVIEW" id="s3" onchange="loadTasks()"><label class="form-check-label" for="s3"><span class="badge badge-status-REVIEW">REVIEW</span></label></div>
+        <div class="form-check form-check-sm" style="font-size:0.8rem"><input class="form-check-input filter-status" type="checkbox" value="DONE" id="s4" onchange="loadTasks()"><label class="form-check-label" for="s4"><span class="badge badge-status-DONE">DONE</span></label></div>
+        <div class="form-check form-check-sm" style="font-size:0.8rem"><input class="form-check-input filter-status" type="checkbox" value="BLOCKED" id="s5" onchange="loadTasks()"><label class="form-check-label" for="s5"><span class="badge badge-status-BLOCKED">BLOCKED</span></label></div>
+        <div class="form-check form-check-sm" style="font-size:0.8rem"><input class="form-check-input filter-status" type="checkbox" value="CANCELLED" id="s6" onchange="loadTasks()"><label class="form-check-label" for="s6"><span class="badge badge-status-CANCELLED">CANCELLED</span></label></div>
+      </div>
+
+      <label>Priority</label>
+      <div>
+        <div class="form-check form-check-sm" style="font-size:0.8rem"><input class="form-check-input filter-priority" type="checkbox" value="CRITICAL" id="p1" onchange="loadTasks()"><label class="form-check-label" for="p1"><span class="badge badge-priority-CRITICAL">CRITICAL</span></label></div>
+        <div class="form-check form-check-sm" style="font-size:0.8rem"><input class="form-check-input filter-priority" type="checkbox" value="HIGH" id="p2" onchange="loadTasks()"><label class="form-check-label" for="p2"><span class="badge badge-priority-HIGH">HIGH</span></label></div>
+        <div class="form-check form-check-sm" style="font-size:0.8rem"><input class="form-check-input filter-priority" type="checkbox" value="MEDIUM" id="p3" onchange="loadTasks()"><label class="form-check-label" for="p3"><span class="badge badge-priority-MEDIUM">MEDIUM</span></label></div>
+        <div class="form-check form-check-sm" style="font-size:0.8rem"><input class="form-check-input filter-priority" type="checkbox" value="LOW" id="p4" onchange="loadTasks()"><label class="form-check-label" for="p4"><span class="badge badge-priority-LOW">LOW</span></label></div>
+      </div>
+
+      <label>Assignee</label>
+      <select id="filterAssignee" class="form-select form-select-sm" onchange="loadTasks()">
+        <option value="">All</option>
+      </select>
+
+      <label>Due Date From</label>
+      <input type="date" id="filterDueFrom" class="form-control form-control-sm" onchange="loadTasks()"/>
+      <label>Due Date To</label>
+      <input type="date" id="filterDueTo" class="form-control form-control-sm" onchange="loadTasks()"/>
+
+      <label>Category</label>
+      <select id="filterCategory" class="form-select form-select-sm" onchange="loadTasks()">
+        <option value="">All</option>
+      </select>
+
+      <label>Programme</label>
+      <select id="filterProgramme" class="form-select form-select-sm" onchange="loadTasks()">
+        <option value="">All</option>
+      </select>
+
+      <label>Project</label>
+      <select id="filterProject" class="form-select form-select-sm" onchange="loadTasks()">
+        <option value="">All</option>
+      </select>
+
+      <label>Working Group</label>
+      <select id="filterWorkingGroup" class="form-select form-select-sm" onchange="loadTasks()">
+        <option value="">All</option>
+      </select>
+
+      <label>Asset Class</label>
+      <select id="filterAssetClass" class="form-select form-select-sm" onchange="loadTasks()">
+        <option value="">All</option>
+      </select>
+
+      <label>Tags</label>
+      <input type="text" id="filterTags" class="form-control form-control-sm" placeholder="tag1,tag2" onchange="loadTasks()"/>
+
+      <label>Jira</label>
+      <input type="text" id="filterJira" class="form-control form-control-sm" placeholder="PROJ-123" onchange="loadTasks()"/>
+    </div>
+
+    <!-- Main content -->
+    <div class="col-main p-3">
+
+      <!-- Stats -->
+      <div class="row g-2 mb-3" id="statsRow">
+        <div class="col-auto"><div class="stat-card bg-secondary">Total <span id="statTotal" class="fw-bold">0</span></div></div>
+        <div class="col-auto"><div class="stat-card bg-primary">In Progress <span id="statInProgress" class="fw-bold">0</span></div></div>
+        <div class="col-auto"><div class="stat-card bg-danger">Blocked <span id="statBlocked" class="fw-bold">0</span></div></div>
+        <div class="col-auto"><div class="stat-card bg-warning text-dark">Overdue <span id="statOverdue" class="fw-bold">0</span></div></div>
+        <div class="col-auto"><div class="stat-card bg-success">Done <span id="statDone" class="fw-bold">0</span></div></div>
+      </div>
+
+      <!-- Toolbar -->
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <div class="btn-group btn-group-sm">
+          <button class="btn btn-outline-primary active" id="btnTable" onclick="setView('table')"><i class="bi bi-table"></i> Table</button>
+          <button class="btn btn-outline-primary" id="btnKanban" onclick="setView('kanban')"><i class="bi bi-kanban"></i> Kanban</button>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          <label class="mb-0 small fw-semibold">Group by:</label>
+          <select id="groupBySelect" class="form-select form-select-sm" style="width:140px" onchange="renderTasks()">
+            <option value="">None</option>
+            <option value="status">Status</option>
+            <option value="priority">Priority</option>
+            <option value="assignee">Assignee</option>
+            <option value="category">Category</option>
+            <option value="programme">Programme</option>
+            <option value="project">Project</option>
+            <option value="assetClass">Asset Class</option>
+            <option value="workingGroup">Working Group</option>
+            <option value="dueDate">Due Date</option>
+          </select>
+          <label class="mb-0 small fw-semibold">Sort:</label>
+          <select id="sortBySelect" class="form-select form-select-sm" style="width:130px" onchange="loadTasks()">
+            <option value="createdAt">Created</option>
+            <option value="dueDate">Due Date</option>
+            <option value="priority">Priority</option>
+            <option value="status">Status</option>
+            <option value="title">Title</option>
+            <option value="updatedAt">Updated</option>
+          </select>
+          <select id="sortDirSelect" class="form-select form-select-sm" style="width:80px" onchange="loadTasks()">
+            <option value="desc">DESC</option>
+            <option value="asc">ASC</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="loadingIndicator" class="text-center py-4 text-muted" style="display:none"><div class="spinner-border spinner-border-sm"></div> Loading...</div>
+      <div id="noResults" class="text-center py-5 text-muted"><i class="bi bi-inbox fs-1 d-block mb-2"></i>No tasks found</div>
+
+      <!-- Table view -->
+      <div id="tableView">
+        <div class="table-responsive">
+          <table class="table table-sm table-hover table-bordered bg-white mb-0" style="font-size:0.82rem">
+            <thead class="table-light sticky-top">
+              <tr>
+                <th style="width:50px">#</th>
+                <th>Title</th>
+                <th style="width:110px">Status</th>
+                <th style="width:90px">Priority</th>
+                <th style="width:110px">Assignee</th>
+                <th style="width:100px">Due Date</th>
+                <th style="width:100px">Category</th>
+                <th style="width:100px">Programme</th>
+                <th style="width:100px">Project</th>
+                <th style="width:120px">Tags</th>
+                <th style="width:80px">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="taskTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Kanban view -->
+      <div id="kanbanView" style="display:none">
+        <div class="kanban-board" id="kanbanBoard"></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Delete confirm modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header"><h6 class="modal-title">Delete Task</h6><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">Are you sure you want to delete this task?</div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-danger btn-sm" id="confirmDeleteBtn">Delete</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+  let allTasks = [];
+  let currentView = 'table';
+  let deleteTaskId = null;
+  let searchTimer = null;
+  const today = new Date();
+
+  const STATUSES = ['TODO','IN_PROGRESS','REVIEW','DONE','BLOCKED','CANCELLED'];
+  const STATUS_COLORS = {TODO:'#6c757d',IN_PROGRESS:'#0d6efd',REVIEW:'#fd7e14',DONE:'#198754',BLOCKED:'#dc3545',CANCELLED:'#adb5bd'};
+
+  async function init() {
+    await loadFilterOptions();
+    await loadTasks();
+  }
+
+  async function loadFilterOptions() {
+    try {
+      const opts = await fetch('/api/tasks/filter-options').then(r => r.json());
+      populateSelect('filterAssignee', opts.assignees || []);
+      populateSelect('filterCategory', opts.categories || []);
+      populateSelect('filterProgramme', opts.programmes || []);
+      populateSelect('filterProject', opts.projects || []);
+      populateSelect('filterWorkingGroup', opts.workingGroups || []);
+      populateSelect('filterAssetClass', opts.assetClasses || []);
+    } catch(e) { console.error(e); }
+  }
+
+  function populateSelect(id, values) {
+    const sel = document.getElementById(id);
+    values.forEach(v => {
+      const o = document.createElement('option');
+      o.value = v; o.textContent = v;
+      sel.appendChild(o);
+    });
+  }
+
+  function buildParams() {
+    const p = new URLSearchParams();
+    const q = document.getElementById('globalSearch').value.trim();
+    if (q) p.append('q', q);
+
+    document.querySelectorAll('.filter-status:checked').forEach(cb => p.append('status', cb.value));
+    document.querySelectorAll('.filter-priority:checked').forEach(cb => p.append('priority', cb.value));
+
+    const assignee = document.getElementById('filterAssignee').value;
+    if (assignee) p.append('assignee', assignee);
+
+    const dueFrom = document.getElementById('filterDueFrom').value;
+    if (dueFrom) p.append('dueFrom', dueFrom);
+    const dueTo = document.getElementById('filterDueTo').value;
+    if (dueTo) p.append('dueTo', dueTo);
+
+    const cat = document.getElementById('filterCategory').value;
+    if (cat) p.append('category', cat);
+    const prog = document.getElementById('filterProgramme').value;
+    if (prog) p.append('programme', prog);
+    const proj = document.getElementById('filterProject').value;
+    if (proj) p.append('project', proj);
+    const wg = document.getElementById('filterWorkingGroup').value;
+    if (wg) p.append('workingGroup', wg);
+    const ac = document.getElementById('filterAssetClass').value;
+    if (ac) p.append('assetClass', ac);
+    const tags = document.getElementById('filterTags').value.trim();
+    if (tags) tags.split(',').forEach(t => { if(t.trim()) p.append('tags', t.trim()); });
+    const jira = document.getElementById('filterJira').value.trim();
+    if (jira) p.append('jira', jira);
+
+    p.append('sortBy', document.getElementById('sortBySelect').value);
+    p.append('sortDir', document.getElementById('sortDirSelect').value);
+    p.append('size', '500');
+    return p;
+  }
+
+  async function loadTasks() {
+    document.getElementById('loadingIndicator').style.display = 'block';
+    try {
+      const res = await fetch('/api/tasks?' + buildParams());
+      const data = await res.json();
+      allTasks = data.tasks || [];
+      updateStats();
+      renderTasks();
+    } catch(e) {
+      console.error(e);
+    } finally {
+      document.getElementById('loadingIndicator').style.display = 'none';
+    }
+  }
+
+  function updateStats() {
+    document.getElementById('statTotal').textContent = allTasks.length;
+    document.getElementById('statInProgress').textContent = allTasks.filter(t => t.status === 'IN_PROGRESS').length;
+    document.getElementById('statBlocked').textContent = allTasks.filter(t => t.status === 'BLOCKED').length;
+    document.getElementById('statDone').textContent = allTasks.filter(t => t.status === 'DONE').length;
+    const now = new Date();
+    document.getElementById('statOverdue').textContent = allTasks.filter(t =>
+      t.dueDate && new Date(t.dueDate) < now && t.status !== 'DONE' && t.status !== 'CANCELLED'
+    ).length;
+  }
+
+  function renderTasks() {
+    if (currentView === 'table') renderTable();
+    else renderKanban();
+    document.getElementById('noResults').style.display = allTasks.length === 0 ? 'block' : 'none';
+  }
+
+  function renderTable() {
+    const groupBy = document.getElementById('groupBySelect').value;
+    const tbody = document.getElementById('taskTableBody');
+    tbody.innerHTML = '';
+
+    if (!groupBy) {
+      allTasks.forEach(t => tbody.innerHTML += taskRow(t));
+    } else {
+      const groups = groupTasks(allTasks, groupBy);
+      Object.entries(groups).forEach(([key, tasks]) => {
+        const headerRow = `<tr><td colspan="11" class="group-header">${key || '(none)'} <span class="badge bg-secondary ms-1">${tasks.length}</span></td></tr>`;
+        tbody.innerHTML += headerRow;
+        tasks.forEach(t => tbody.innerHTML += taskRow(t));
+      });
+    }
+  }
+
+  function taskRow(t) {
+    const due = t.dueDate ? new Date(t.dueDate) : null;
+    const isOverdue = due && due < today && t.status !== 'DONE' && t.status !== 'CANCELLED';
+    const dueStr = due ? due.toLocaleDateString() : '';
+    const tags = (t.tags || []).map(tag => `<span class="tag-badge">${esc(tag)}</span>`).join(' ');
+    return `<tr class="task-row" onclick="location.href='task-form.html?id=${t.id}'">
+      <td class="text-muted">${t.id}</td>
+      <td><strong>${esc(t.title)}</strong>${t.parentTaskId ? `<span class="ms-1 text-muted small">↳${t.parentTaskId}</span>` : ''}</td>
+      <td><span class="badge badge-status-${t.status}">${t.status}</span></td>
+      <td><span class="badge badge-priority-${t.priority}">${t.priority}</span></td>
+      <td>${esc(t.assignee||'')}</td>
+      <td class="${isOverdue?'overdue':''}">${dueStr}${isOverdue?' ⚠':''}</td>
+      <td>${esc(t.category||'')}</td>
+      <td>${esc(t.programme||'')}</td>
+      <td>${esc(t.project||'')}</td>
+      <td>${tags}</td>
+      <td onclick="event.stopPropagation()">
+        <a href="task-form.html?id=${t.id}" class="btn btn-xs btn-outline-primary" style="padding:1px 6px;font-size:0.75rem"><i class="bi bi-pencil"></i></a>
+        <button class="btn btn-xs btn-outline-danger ms-1" style="padding:1px 6px;font-size:0.75rem" onclick="confirmDelete(${t.id})"><i class="bi bi-trash"></i></button>
+      </td>
+    </tr>`;
+  }
+
+  function renderKanban() {
+    const board = document.getElementById('kanbanBoard');
+    board.innerHTML = '';
+    const grouped = {};
+    STATUSES.forEach(s => grouped[s] = []);
+    allTasks.forEach(t => {
+      const s = t.status || 'TODO';
+      if (!grouped[s]) grouped[s] = [];
+      grouped[s].push(t);
+    });
+    STATUSES.forEach(status => {
+      const col = document.createElement('div');
+      col.className = 'kanban-col';
+      const cards = (grouped[status]||[]).map(t => {
+        const due = t.dueDate ? new Date(t.dueDate) : null;
+        const isOverdue = due && due < today && status !== 'DONE' && status !== 'CANCELLED';
+        return `<div class="kanban-card" onclick="location.href='task-form.html?id=${t.id}'">
+          <div class="fw-semibold">${esc(t.title)}</div>
+          <div class="text-muted small">${esc(t.assignee||'')} ${due ? `· <span class="${isOverdue?'text-danger':''}">📅 ${due.toLocaleDateString()}</span>` : ''}</div>
+          <div class="mt-1"><span class="badge badge-priority-${t.priority}" style="font-size:0.65rem">${t.priority}</span></div>
+        </div>`;
+      }).join('');
+      col.innerHTML = `<div class="kanban-col-header" style="background:${STATUS_COLORS[status]};color:#fff">${status.replace('_',' ')} <span class="badge bg-white text-dark ms-1">${(grouped[status]||[]).length}</span></div><div class="kanban-cards">${cards || '<p class="text-muted small p-2">Empty</p>'}</div>`;
+      board.appendChild(col);
+    });
+  }
+
+  function groupTasks(tasks, field) {
+    const groups = {};
+    tasks.forEach(t => {
+      let key = t[field];
+      if (field === 'dueDate' && key) key = new Date(key).toLocaleDateString();
+      key = key || '(none)';
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(t);
+    });
+    return Object.fromEntries(Object.entries(groups).sort((a,b) => a[0].localeCompare(b[0])));
+  }
+
+  function setView(view) {
+    currentView = view;
+    document.getElementById('tableView').style.display = view === 'table' ? '' : 'none';
+    document.getElementById('kanbanView').style.display = view === 'kanban' ? '' : 'none';
+    document.getElementById('btnTable').classList.toggle('active', view === 'table');
+    document.getElementById('btnKanban').classList.toggle('active', view === 'kanban');
+    document.getElementById('groupBySelect').disabled = view === 'kanban';
+    renderTasks();
+  }
+
+  function clearFilters() {
+    document.getElementById('globalSearch').value = '';
+    document.querySelectorAll('.filter-status, .filter-priority').forEach(cb => cb.checked = false);
+    ['filterAssignee','filterCategory','filterProgramme','filterProject','filterWorkingGroup','filterAssetClass'].forEach(id => document.getElementById(id).value = '');
+    ['filterDueFrom','filterDueTo','filterTags','filterJira'].forEach(id => document.getElementById(id).value = '');
+    loadTasks();
+  }
+
+  function debounceSearch() {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(loadTasks, 350);
+  }
+
+  function confirmDelete(id) {
+    deleteTaskId = id;
+    new bootstrap.Modal(document.getElementById('deleteModal')).show();
+  }
+
+  document.getElementById('confirmDeleteBtn').addEventListener('click', async () => {
+    if (!deleteTaskId) return;
+    await fetch(`/api/tasks/${deleteTaskId}`, { method: 'DELETE' });
+    bootstrap.Modal.getInstance(document.getElementById('deleteModal')).hide();
+    deleteTaskId = null;
+    await loadTasks();
+    await loadFilterOptions();
+  });
+
+  function esc(s) {
+    if (!s) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  init();
+</script>
+</body>
+</html>

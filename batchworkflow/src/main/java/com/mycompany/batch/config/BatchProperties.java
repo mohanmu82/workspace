@@ -110,6 +110,8 @@ public class BatchProperties {
         private List<AliasProperties>    alias       = new ArrayList<>();
         /** Optional enricher — adds derived attributes before or after the activity chain. */
         private EnricherProperties       enricher;
+        /** Named response-processor chains defined inline in the operation — selected at runtime by name. */
+        private List<ResponseProcessorEntryProperties> responseProcessor = new ArrayList<>();
 
         public String getName()           { return name; }
         public void   setName(String name){ this.name = name; }
@@ -161,6 +163,9 @@ public class BatchProperties {
 
         public EnricherProperties getEnricher()                              { return enricher; }
         public void setEnricher(EnricherProperties e)                        { this.enricher = e; }
+
+        public List<ResponseProcessorEntryProperties> getResponseProcessor()                                         { return responseProcessor; }
+        public void setResponseProcessor(List<ResponseProcessorEntryProperties> rp)                                  { this.responseProcessor = rp != null ? rp : new ArrayList<>(); }
 
         public List<String> getMandatoryAttributeList() {
             if (mandatoryAttributes == null || mandatoryAttributes.isBlank()) return List.of();
@@ -222,9 +227,21 @@ public class BatchProperties {
                                 "Activity '" + act.getName() + "' dataExtraction.type is required");
                     }
                 } else if (type == ActivityType.DB) {
-                    if (act.getDb().getJdbcUrl() == null || act.getDb().getJdbcUrl().isBlank()) {
+                    boolean hasUrl = act.getDb().getJdbcUrl() != null && !act.getDb().getJdbcUrl().isBlank();
+                    boolean hasRef = act.getDb().getReference() != null && !act.getDb().getReference().isBlank();
+                    if (!hasUrl && !hasRef) {
                         throw new IllegalStateException(
-                                "Activity '" + act.getName() + "' in operation '" + operationName + "' requires db.jdbcUrl");
+                                "Activity '" + act.getName() + "' in operation '" + operationName + "' requires db.jdbcUrl or db.reference");
+                    }
+                } else if (type == ActivityType.TRANSFORM) {
+                    if (act.getTransforms() == null || act.getTransforms().isEmpty()) {
+                        throw new IllegalStateException(
+                                "Activity '" + act.getName() + "' type=TRANSFORM requires at least one entry in 'transforms'");
+                    }
+                } else if (type == ActivityType.DATAENRICHER) {
+                    if (act.getDataEnricher() == null || act.getDataEnricher().getFile().isBlank()) {
+                        throw new IllegalStateException(
+                                "Activity '" + act.getName() + "' type=DATAENRICHER requires 'dataEnricher.file'");
                     }
                 }
             }
@@ -259,10 +276,19 @@ public class BatchProperties {
 
         private String                       name                = "";
         private ActivityType                 type                = null;
+        /** Optional execution sequence. Activities sharing the same sequence number run in parallel. */
+        private Integer                      sequence            = null;
+        /** When set, activity results are stored as a named dataset in the DataRow instead of the current row. */
+        private String                       outputVar           = null;
+        /** Key field within each result row used to index the outputVar dataset. */
+        private String                       outputKey           = null;
         private HttpProperties               http                = new HttpProperties();
         private DataExtractionProperties     dataExtraction      = new DataExtractionProperties();
         private DbProperties                 db                  = new DbProperties();
         private SshProperties                ssh                 = new SshProperties();
+        private List<TransformStepProperties> transforms         = new ArrayList<>();
+        private ValidationProperties         validation          = null;
+        private DataEnricherProperties       dataEnricher        = new DataEnricherProperties();
         /** Operation-level property overrides visible inside this activity. */
         private Map<String, String>          properties          = new LinkedHashMap<>();
         /** Property definitions that must be non-blank before this activity runs. */
@@ -273,6 +299,15 @@ public class BatchProperties {
 
         public ActivityType getType()                    { return type; }
         public void         setType(ActivityType type)   { this.type = type; }
+
+        public Integer      getSequence()                { return sequence; }
+        public void         setSequence(Integer s)       { this.sequence = s; }
+
+        public String       getOutputVar()               { return outputVar; }
+        public void         setOutputVar(String v)       { this.outputVar = v; }
+
+        public String       getOutputKey()               { return outputKey; }
+        public void         setOutputKey(String k)       { this.outputKey = k; }
 
         public HttpProperties getHttp()            { return http; }
         public void setHttp(HttpProperties http)   { this.http = http; }
@@ -285,6 +320,15 @@ public class BatchProperties {
 
         public SshProperties getSsh()               { return ssh; }
         public void          setSsh(SshProperties s){ this.ssh = s != null ? s : new SshProperties(); }
+
+        public List<TransformStepProperties> getTransforms()                              { return transforms; }
+        public void setTransforms(List<TransformStepProperties> t)                        { this.transforms = t != null ? t : new ArrayList<>(); }
+
+        public ValidationProperties getValidation()                          { return validation; }
+        public void setValidation(ValidationProperties v)                    { this.validation = v; }
+
+        public DataEnricherProperties getDataEnricher()                              { return dataEnricher; }
+        public void setDataEnricher(DataEnricherProperties de)                       { this.dataEnricher = de != null ? de : new DataEnricherProperties(); }
 
         public Map<String, String> getProperties()                   { return properties; }
         public void setProperties(Map<String, String> p) {
@@ -303,20 +347,113 @@ public class BatchProperties {
     }
 
     // -------------------------------------------------------------------------
+    // Transform step (used inside TRANSFORM activities)
+    // -------------------------------------------------------------------------
+
+    public static class TransformStepProperties {
+        /**
+         * Source of data for this step.
+         * {@code "$"} — result of the previous step.
+         * {@code "$varName"} — a variable captured by a previous step's {@code output} in this transform.
+         * {@code "$activityName.RESPONSEBODY"} or {@code "$activityName.varName"} — named output from another activity.
+         */
+        private String source          = "$";
+        /** {@code "NONE"} — pass source through unchanged. {@code "JSONATA"} — apply a JSONata expression. */
+        private String type            = "NONE";
+        /** JSONata expression: inline, {@code classpath:} reference, or filesystem path. */
+        private String jsonataTransform = "";
+        /**
+         * Error handling: {@code "SKIP"} — pass source through unchanged on error;
+         * {@code "$.key"} — write the error message into the result map at {@code key}.
+         * Absent / null — rethrow the exception.
+         */
+        private String onError;
+        /**
+         * Optional name for the result of this step. Stored as {@code activityName.output} in the
+         * DataRow's named outputs so subsequent activities can reference it via {@code $activityName.output}.
+         */
+        private String output;
+
+        public String getSource()                          { return source; }
+        public void   setSource(String source)             { this.source = source != null ? source : "$"; }
+
+        public String getType()                            { return type; }
+        public void   setType(String type)                 { this.type = type != null ? type : "NONE"; }
+
+        public String getJsonataTransform()                { return jsonataTransform; }
+        public void   setJsonataTransform(String jt)       { this.jsonataTransform = jt != null ? jt : ""; }
+
+        public String getOnError()                         { return onError; }
+        public void   setOnError(String onError)           { this.onError = onError; }
+
+        public String getOutput()                          { return output; }
+        public void   setOutput(String output)             { this.output = output; }
+    }
+
+    // -------------------------------------------------------------------------
+    // Validation activity
+    // -------------------------------------------------------------------------
+
+    public static class ValidationProperties {
+        private ConditionGroupProperties conditions;
+        private String errorMessage = "";
+
+        public ConditionGroupProperties getConditions()                          { return conditions; }
+        public void setConditions(ConditionGroupProperties c)                    { this.conditions = c; }
+        public String getErrorMessage()                                          { return errorMessage; }
+        public void setErrorMessage(String msg)                                  { this.errorMessage = msg != null ? msg : ""; }
+    }
+
+    public static class ConditionGroupProperties {
+        private String type = "AND";
+        private List<ConditionProperties> condition = new ArrayList<>();
+
+        public String getType()                                  { return type; }
+        public void setType(String type)                         { this.type = type != null ? type : "AND"; }
+        public List<ConditionProperties> getCondition()          { return condition; }
+        public void setCondition(List<ConditionProperties> c)    { this.condition = c != null ? c : new ArrayList<>(); }
+    }
+
+    public static class ConditionProperties {
+        private String column;
+        private String op = "eq";
+        private String value;
+
+        public String getColumn()                    { return column; }
+        public void   setColumn(String column)       { this.column = column; }
+        public String getOp()                        { return op; }
+        public void   setOp(String op)               { this.op = op != null ? op : "eq"; }
+        public String getValue()                     { return value; }
+        public void   setValue(String value)         { this.value = value; }
+    }
+
+    // -------------------------------------------------------------------------
+    // DataEnricher activity config
+    // -------------------------------------------------------------------------
+
+    public static class DataEnricherProperties {
+        /** Classpath or filesystem path to the enricher JSON config file. */
+        private String file = "";
+
+        public String getFile()               { return file; }
+        public void   setFile(String file)    { this.file = file != null ? file : ""; }
+    }
+
+    // -------------------------------------------------------------------------
     // Response processor (operation-level list — selected at runtime by name)
     // -------------------------------------------------------------------------
 
     public static class OperationPropertiesConfig {
-        private Map<String, String>  attributes = new LinkedHashMap<>();
-        private HttpPropertiesSource http;
-        private FilePropertiesSource file;
+        private Map<String, String>        attributes = new LinkedHashMap<>();
+        private List<HttpPropertiesSource> http       = new ArrayList<>();
+        private List<FilePropertiesSource> file       = new ArrayList<>();
 
-        public Map<String, String>  getAttributes()                        { return attributes; }
-        public void setAttributes(Map<String, String> a)                   { this.attributes = a != null ? a : new LinkedHashMap<>(); }
-        public HttpPropertiesSource getHttp()                              { return http; }
-        public void setHttp(HttpPropertiesSource h)                        { this.http = h; }
-        public FilePropertiesSource getFile()                              { return file; }
-        public void setFile(FilePropertiesSource f)                        { this.file = f; }
+        public Map<String, String>        getAttributes()                              { return attributes; }
+        public void setAttributes(Map<String, String> a)                              { this.attributes = a != null ? a : new LinkedHashMap<>(); }
+        public List<HttpPropertiesSource> getHttp()                                   { return http; }
+        public void setHttp(List<HttpPropertiesSource> h)                             { this.http = h != null ? h : new ArrayList<>(); }
+        public List<FilePropertiesSource> getFile()                                   { return file; }
+        public void setFile(List<FilePropertiesSource> f)                             { this.file = f != null ? f : new ArrayList<>(); }
     }
 
     public static class HttpPropertiesSource {
@@ -358,9 +495,10 @@ public class BatchProperties {
         private String        jsonataTransform = "";
         /**
          * Controls what happens when this processor step throws.
-         * {@code "SKIP"} — pass the response through unchanged.
+         * {@code "SKIP"}  — pass the response through unchanged.
+         * {@code "THROW"} — rethrow as an {@link IllegalArgumentException} so the controller returns an error response.
          * {@code "$.key"} — write the error message into {@code response["key"]} and continue.
-         * Absent / null — rethrow the exception.
+         * Absent / null   — rethrow the raw exception.
          */
         private String onError;
 
@@ -505,7 +643,7 @@ public class BatchProperties {
 
         private String url;
         private HttpMethod method      = HttpMethod.GET;
-        private String contentType  = "text/plain";
+        private String contentType  = null;
         private String bodyTemplate = null;
         private int    threadCount  = 5;
         private int    timeoutMs    = 3000;
@@ -556,20 +694,23 @@ public class BatchProperties {
 
     public static class CacheProperties {
         /** Name of the cache store (shared across operations that use the same name). */
-        private String  name = "";
+        private String name = "";
         /** Template string for the cache key — supports ${placeholder} substitution from DataRow / properties. */
-        private String  key  = "";
-        /** Maximum age in minutes before a cached entry is considered stale; {@code null} means unlimited. */
-        private Integer maxRetentionTime;
+        private String key  = "";
+        /**
+         * Maximum age in minutes before a cached entry is considered stale; {@code null} means unlimited.
+         * Supports {@code ${VAR}} substitution from operation properties so the TTL can be set at runtime.
+         */
+        private String maxRetentionTime;
 
-        public String  getName()                      { return name; }
-        public void    setName(String name)           { this.name = name; }
+        public String getName()                      { return name; }
+        public void   setName(String name)           { this.name = name; }
 
-        public String  getKey()                       { return key; }
-        public void    setKey(String key)             { this.key = key; }
+        public String getKey()                       { return key; }
+        public void   setKey(String key)             { this.key = key; }
 
-        public Integer getMaxRetentionTime()          { return maxRetentionTime; }
-        public void    setMaxRetentionTime(Integer m) { this.maxRetentionTime = m; }
+        public String getMaxRetentionTime()          { return maxRetentionTime; }
+        public void   setMaxRetentionTime(String m)  { this.maxRetentionTime = m; }
     }
 
     // -------------------------------------------------------------------------
@@ -584,6 +725,12 @@ public class BatchProperties {
         private int             timeoutMs = 3000;
         private String          sql       = "";
         private CacheProperties cache;
+
+        /** Optional: references a named initialization entry whose jdbcUrl/userName/password are used. */
+        private String reference = "";
+
+        public String getReference()              { return reference; }
+        public void   setReference(String r)      { this.reference = r != null ? r : ""; }
 
         public String getJdbcUrl()                    { return jdbcUrl; }
         public void   setJdbcUrl(String jdbcUrl)      { this.jdbcUrl = jdbcUrl != null ? jdbcUrl : ""; }
@@ -666,14 +813,22 @@ public class BatchProperties {
 
     public static class InputSourceProperties {
 
-        private InputSourceType            type       = InputSourceType.FILE;
-        private HttpConfigSourceProperties httpConfig = new HttpConfigSourceProperties();
+        private InputSourceType            type         = InputSourceType.FILE;
+        private HttpConfigSourceProperties httpConfig   = new HttpConfigSourceProperties();
+        private DbConfigSourceProperties   dbConfig     = new DbConfigSourceProperties();
+        private String                     templateName = "";
 
         public InputSourceType getType()                    { return type; }
         public void            setType(InputSourceType t)   { this.type = t != null ? t : InputSourceType.FILE; }
 
-        public HttpConfigSourceProperties getHttpConfig()                      { return httpConfig; }
-        public void setHttpConfig(HttpConfigSourceProperties httpConfig)       { this.httpConfig = httpConfig; }
+        public HttpConfigSourceProperties getHttpConfig()                         { return httpConfig; }
+        public void setHttpConfig(HttpConfigSourceProperties httpConfig)          { this.httpConfig = httpConfig; }
+
+        public DbConfigSourceProperties   getDbConfig()                           { return dbConfig; }
+        public void                       setDbConfig(DbConfigSourceProperties c) { this.dbConfig = c != null ? c : new DbConfigSourceProperties(); }
+
+        public String getTemplateName()                      { return templateName; }
+        public void   setTemplateName(String templateName)   { this.templateName = templateName != null ? templateName : ""; }
     }
 
     public static class HttpConfigSourceProperties {
@@ -690,6 +845,25 @@ public class BatchProperties {
 
         public String getJsonataTransform()              { return jsonataTransform; }
         public void   setJsonataTransform(String jt)     { this.jsonataTransform = jt; }
+    }
+
+    public static class DbConfigSourceProperties {
+        private String jdbcUrl   = "";
+        private String userName  = "";
+        private String password  = "";
+        private String sql       = "";
+        private int    timeoutMs = 3000;
+
+        public String getJdbcUrl()               { return jdbcUrl; }
+        public void   setJdbcUrl(String v)       { this.jdbcUrl   = v != null ? v : ""; }
+        public String getUserName()              { return userName; }
+        public void   setUserName(String v)      { this.userName  = v != null ? v : ""; }
+        public String getPassword()              { return password; }
+        public void   setPassword(String v)      { this.password  = v != null ? v : ""; }
+        public String getSql()                   { return sql; }
+        public void   setSql(String v)           { this.sql       = v != null ? v : ""; }
+        public int    getTimeoutMs()             { return timeoutMs; }
+        public void   setTimeoutMs(int ms)       { this.timeoutMs = ms; }
     }
 
     // -------------------------------------------------------------------------
@@ -832,6 +1006,7 @@ public class BatchProperties {
         private String                  name = "";
         private String                  type = "";
         private SshConnectionProperties ssh  = new SshConnectionProperties();
+        private DbConnectionProperties  db   = new DbConnectionProperties();
 
         public String                  getName()                         { return name; }
         public void                    setName(String n)                 { this.name = n != null ? n : ""; }
@@ -839,6 +1014,21 @@ public class BatchProperties {
         public void                    setType(String t)                 { this.type = t != null ? t : ""; }
         public SshConnectionProperties getSsh()                          { return ssh; }
         public void                    setSsh(SshConnectionProperties s) { this.ssh = s != null ? s : new SshConnectionProperties(); }
+        public DbConnectionProperties  getDb()                           { return db; }
+        public void                    setDb(DbConnectionProperties d)   { this.db = d != null ? d : new DbConnectionProperties(); }
+    }
+
+    public static class DbConnectionProperties {
+        private String jdbcUrl  = "";
+        private String userName = "";
+        private String password = "";
+
+        public String getJdbcUrl()              { return jdbcUrl; }
+        public void   setJdbcUrl(String v)      { this.jdbcUrl  = v != null ? v : ""; }
+        public String getUserName()             { return userName; }
+        public void   setUserName(String v)     { this.userName = v != null ? v : ""; }
+        public String getPassword()             { return password; }
+        public void   setPassword(String v)     { this.password = v != null ? v : ""; }
     }
 
     public static class SshConnectionProperties {

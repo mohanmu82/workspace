@@ -148,7 +148,7 @@ public class BatchWebSocketHandler extends TextWebSocketHandler {
         } else {
             response = batchController.buildHttpResponse(request.operation(), result, request.httpThreadCount());
             if (request.responseProcessor() != null && !request.responseProcessor().isBlank()) {
-                response = batchService.applyResponseProcessor(response, request.responseProcessor());
+                response = batchService.applyResponseProcessor(response, request.responseProcessor(), request.operation());
             }
         }
 

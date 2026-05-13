@@ -122,7 +122,7 @@ public class CompareController {
             return result.results();
         }
         Object response = batchController.buildHttpResponse(req.operation(), result, req.httpThreadCount());
-        response = batchService.applyResponseProcessor(response, req.responseProcessor());
+        response = batchService.applyResponseProcessor(response, req.responseProcessor(), req.operation());
         if (response instanceof Map<?, ?> m && m.get("data") instanceof List<?> list) {
             return (List<Map<String, Object>>) list;
         }

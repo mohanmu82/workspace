@@ -116,5 +116,14 @@ public record RunRequest(
          * Optional per-request auth override. When set, overrides the operation-level auth
          * configured in {@code operations.json} for this run only.
          */
-        BatchProperties.AuthProperties auth) {
+        BatchProperties.AuthProperties auth,
+        /**
+         * Controls the shape of the HTTP response.
+         * <ul>
+         *   <li>{@code ARRAY} (default) — standard response: {@code { data: [{...}], columns: [...] }}.</li>
+         *   <li>{@code SINGLE} — returns the first result row as a flat JSON object, enabling
+         *       {@code $.RESPONSEBODY} in JSONata instead of {@code data[0].RESPONSEBODY}.</li>
+         * </ul>
+         */
+        String operationType) {
 }

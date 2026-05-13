@@ -862,7 +862,7 @@
 
     async function loadSelectOptions(sel, ds, dt, gen) {
         try {
-            let url = '/batch/template?name=' + encodeURIComponent(ds.inputSource);
+            let url = '/batch/operationTemplate?name=' + encodeURIComponent(ds.inputSource);
             if (ds.inputFilePath) url += '&inputFilePath=' + encodeURIComponent(ds.inputFilePath);
             const res  = await fetch(url);
             if (!res.ok || gen !== _renderGen) return;   // stale — operation changed while fetching

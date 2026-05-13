@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Task Form</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"/>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"/>
+  <style>
+    body { background: #f4f6f9; font-size: 0.875rem; }
+    .section-card { background:#fff; border-radius:8px; border:1px solid #dee2e6; padding:1.25rem; margin-bottom:1rem; }
+    .section-title { font-weight:700; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.05em; color:#6c757d; margin-bottom:1rem; padding-bottom:0.5rem; border-bottom:1px solid #f0f0f0; }
+    .form-label { font-size:0.78rem; font-weight:600; color:#495057; margin-bottom:3px; }
+    .form-control, .form-select { font-size:0.82rem; }
+    .badge-status-TODO       { background:#6c757d; color:#fff; }
+    .badge-status-IN_PROGRESS{ background:#0d6efd; color:#fff; }
+    .badge-status-REVIEW     { background:#fd7e14; color:#fff; }
+    .badge-status-DONE       { background:#198754; color:#fff; }
+    .badge-status-BLOCKED    { background:#dc3545; color:#fff; }
+    .badge-status-CANCELLED  { background:#adb5bd; color:#000; }
+    .comment-item { border-left:3px solid #0d6efd; padding:0.5rem 0.75rem; margin-bottom:0.5rem; background:#f8f9fa; border-radius:0 4px 4px 0; }
+    .history-item { border-left:3px solid #dee2e6; padding:0.4rem 0.75rem; margin-bottom:0.4rem; background:#fff; border-radius:0 4px 4px 0; font-size:0.8rem; }
+    .history-item .field { font-weight:600; color:#495057; }
+    .history-item .change { color:#6c757d; }
+    .nav-tabs .nav-link { font-size:0.82rem; }
+    #saveSpinner { display:none; }
+    .required-star { color:#dc3545; }
+    .toast-container { position:fixed; bottom:1rem; right:1rem; z-index:9999; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark bg-dark px-3">
+  <a class="navbar-brand fw-bold" href="index.html"><i class="bi bi-check2-square me-2"></i>Task Manager</a>
+  <span class="text-light" id="navTitle">New Task</span>
+</nav>
+
+<div class="container-fluid" style="max-width:1100px; padding:1.5rem 1rem;">
+
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <nav aria-label="breadcrumb">
+      <ol class="breadcrumb mb-0">
+        <li class="breadcrumb-item"><a href="index.html">Tasks</a></li>
+        <li class="breadcrumb-item active" id="breadcrumbCurrent">New Task</li>
+      </ol>
+    </nav>
+    <div class="d-flex gap-2">
+      <button class="btn btn-primary btn-sm" onclick="saveTask()">
+        <span id="saveSpinner" class="spinner-border spinner-border-sm me-1"></span>
+        <i class="bi bi-save me-1"></i>Save
+      </button>
+      <a href="index.html" class="btn btn-outline-secondary btn-sm"><i class="bi bi-x me-1"></i>Cancel</a>
+      <button id="deleteBtn" class="btn btn-outline-danger btn-sm" style="display:none" onclick="confirmDelete()"><i class="bi bi-trash me-1"></i>Delete</button>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <ul class="nav nav-tabs mb-3" id="formTabs">
+    <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tabBasic">Basic Info</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabAssignment">Assignment</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabClassification">Classification</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabExternal">External</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabCustom">Custom Fields</button></li>
+    <li class="nav-item" id="tabCommentsNav" style="display:none"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabComments">Comments <span id="commentCount" class="badge bg-primary ms-1">0</span></button></li>
+    <li class="nav-item" id="tabHistoryNav" style="display:none"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabHistory">History <span id="historyCount" class="badge bg-secondary ms-1">0</span></button></li>
+  </ul>
+
+  <div class="tab-content">
+
+    <!-- Basic Info -->
+    <div class="tab-pane fade show active" id="tabBasic">
+      <div class="section-card">
+        <div class="section-title">Basic Information</div>
+        <div class="row g-3">
+          <div class="col-md-8">
+            <label class="form-label">Title <span class="required-star">*</span></label>
+            <input type="text" id="title" class="form-control" placeholder="Task title" required/>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label">Status</label>
+            <select id="status" class="form-select">
+              <option value="TODO">TODO</option>
+              <option value="IN_PROGRESS">IN PROGRESS</option>
+              <option value="REVIEW">REVIEW</option>
+              <option value="DONE">DONE</option>
+              <option value="BLOCKED">BLOCKED</option>
+              <option value="CANCELLED">CANCELLED</option>
+            </select>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label">Priority</label>
+            <select id="priority" class="form-select">
+              <option value="LOW">LOW</option>
+              <option value="MEDIUM" selected>MEDIUM</option>
+              <option value="HIGH">HIGH</option>
+              <option value="CRITICAL">CRITICAL</option>
+            </select>
+          </div>
+          <div class="col-12">
+            <label class="form-label">Description</label>
+            <textarea id="description" class="form-control" rows="6" placeholder="Detailed description..."></textarea>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Due Date</label>
+            <input type="datetime-local" id="dueDate" class="form-control"/>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Tags <span class="text-muted">(comma-separated)</span></label>
+            <input type="text" id="tags" class="form-control" placeholder="alpha, beta, urgent"/>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Parent Task ID</label>
+            <input type="number" id="parentTaskId" class="form-control" placeholder="Task ID"/>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Assignment -->
+    <div class="tab-pane fade" id="tabAssignment">
+      <div class="section-card">
+        <div class="section-title">Assignment &amp; Effort</div>
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label">Assignee</label>
+            <input type="text" id="assignee" class="form-control" placeholder="Person responsible"/>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Created By</label>
+            <input type="text" id="createdBy" class="form-control" placeholder="Task creator"/>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Stakeholder</label>
+            <input type="text" id="stakeholder" class="form-control" placeholder="Key stakeholder"/>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Estimated Hours</label>
+            <input type="number" id="estimatedHours" class="form-control" step="0.5" min="0" placeholder="0.0"/>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Actual Hours</label>
+            <input type="number" id="actualHours" class="form-control" step="0.5" min="0" placeholder="0.0"/>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Classification -->
+    <div class="tab-pane fade" id="tabClassification">
+      <div class="section-card">
+        <div class="section-title">Classification</div>
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label">Category</label>
+            <input type="text" id="category" class="form-control" placeholder="e.g. Development"/>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Programme</label>
+            <input type="text" id="programme" class="form-control" placeholder="Programme name"/>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Project</label>
+            <input type="text" id="project" class="form-control" placeholder="Project name"/>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Asset Class</label>
+            <input type="text" id="assetClass" class="form-control" placeholder="e.g. Equities"/>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Working Group</label>
+            <input type="text" id="workingGroup" class="form-control" placeholder="Working group name"/>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- External -->
+    <div class="tab-pane fade" id="tabExternal">
+      <div class="section-card">
+        <div class="section-title">External References</div>
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label">Jira Ticket</label>
+            <input type="text" id="jira" class="form-control" placeholder="PROJ-1234"/>
+          </div>
+          <div class="col-md-8">
+            <label class="form-label">Links / URLs</label>
+            <input type="text" id="links" class="form-control" placeholder="https://..."/>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Custom Fields -->
+    <div class="tab-pane fade" id="tabCustom">
+      <div class="section-card">
+        <div class="section-title">Custom Fields</div>
+        <div class="row g-3">
+          <div class="col-md-6"><label class="form-label">Custom Field 1</label><input type="text" id="customField1" class="form-control"/></div>
+          <div class="col-md-6"><label class="form-label">Custom Field 2</label><input type="text" id="customField2" class="form-control"/></div>
+          <div class="col-md-6"><label class="form-label">Custom Field 3</label><input type="text" id="customField3" class="form-control"/></div>
+          <div class="col-md-6"><label class="form-label">Custom Field 4</label><input type="text" id="customField4" class="form-control"/></div>
+          <div class="col-md-6"><label class="form-label">Custom Field 5</label><input type="text" id="customField5" class="form-control"/></div>
+          <div class="col-md-6"><label class="form-label">Custom Field 6</label><input type="text" id="customField6" class="form-control"/></div>
+          <div class="col-md-6"><label class="form-label">Custom Field 7</label><input type="text" id="customField7" class="form-control"/></div>
+          <div class="col-md-6"><label class="form-label">Custom Field 8</label><input type="text" id="customField8" class="form-control"/></div>
+          <div class="col-md-6"><label class="form-label">Custom Field 9</label><input type="text" id="customField9" class="form-control"/></div>
+          <div class="col-md-6"><label class="form-label">Custom Field 10</label><input type="text" id="customField10" class="form-control"/></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Comments -->
+    <div class="tab-pane fade" id="tabComments">
+      <div class="section-card">
+        <div class="section-title">Comments</div>
+        <div id="commentsList" class="mb-3"></div>
+        <div class="border rounded p-3 bg-light">
+          <label class="form-label">Add Comment</label>
+          <textarea id="newCommentText" class="form-control mb-2" rows="3" placeholder="Write a comment..."></textarea>
+          <div class="d-flex gap-2 align-items-center">
+            <input type="text" id="commentAuthor" class="form-control form-control-sm" style="width:180px" placeholder="Your name"/>
+            <button class="btn btn-primary btn-sm" onclick="addComment()"><i class="bi bi-chat-left-text me-1"></i>Post Comment</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- History -->
+    <div class="tab-pane fade" id="tabHistory">
+      <div class="section-card">
+        <div class="section-title">Change History</div>
+        <div id="historyList"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Delete confirm modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header"><h6 class="modal-title">Delete Task</h6><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">This will permanently delete the task and all its comments and history.</div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteTask()">Delete</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast-container">
+  <div id="toastEl" class="toast align-items-center text-bg-success border-0" role="alert">
+    <div class="d-flex">
+      <div class="toast-body" id="toastMsg">Saved!</div>
+      <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+  const params = new URLSearchParams(location.search);
+  const taskId = params.get('id');
+  let toast = null;
+
+  async function init() {
+    toast = new bootstrap.Toast(document.getElementById('toastEl'), { delay: 2500 });
+    if (taskId) {
+      document.getElementById('navTitle').textContent = `Task #${taskId}`;
+      document.getElementById('breadcrumbCurrent').textContent = `Task #${taskId}`;
+      document.getElementById('deleteBtn').style.display = '';
+      document.getElementById('tabCommentsNav').style.display = '';
+      document.getElementById('tabHistoryNav').style.display = '';
+      await loadTask();
+      await loadComments();
+      await loadHistory();
+    }
+  }
+
+  async function loadTask() {
+    const task = await fetch(`/api/tasks/${taskId}`).then(r => r.json());
+    setField('title', task.title);
+    setField('description', task.description);
+    setSelect('status', task.status);
+    setSelect('priority', task.priority);
+    setField('assignee', task.assignee);
+    setField('createdBy', task.createdBy);
+    if (task.dueDate) {
+      const d = new Date(task.dueDate);
+      document.getElementById('dueDate').value = d.toISOString().slice(0,16);
+    }
+    setField('category', task.category);
+    setField('programme', task.programme);
+    setField('project', task.project);
+    setField('assetClass', task.assetClass);
+    setField('workingGroup', task.workingGroup);
+    setField('stakeholder', task.stakeholder);
+    setField('jira', task.jira);
+    setField('links', task.links);
+    setField('tags', (task.tags || []).join(', '));
+    setField('estimatedHours', task.estimatedHours);
+    setField('actualHours', task.actualHours);
+    setField('parentTaskId', task.parentTaskId);
+    for (let i = 1; i <= 10; i++) {
+      setField(`customField${i}`, task[`customField${i}`]);
+    }
+  }
+
+  function setField(id, val) {
+    const el = document.getElementById(id);
+    if (el && val != null) el.value = val;
+  }
+  function setSelect(id, val) {
+    const el = document.getElementById(id);
+    if (el && val) el.value = val;
+  }
+  function getField(id) {
+    const el = document.getElementById(id);
+    return el ? (el.value.trim() || null) : null;
+  }
+
+  function buildPayload() {
+    const tagsRaw = getField('tags');
+    const tags = tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : [];
+    return {
+      title: getField('title'),
+      description: getField('description'),
+      status: document.getElementById('status').value,
+      priority: document.getElementById('priority').value,
+      assignee: getField('assignee'),
+      createdBy: getField('createdBy'),
+      dueDate: document.getElementById('dueDate').value || null,
+      category: getField('category'),
+      programme: getField('programme'),
+      project: getField('project'),
+      assetClass: getField('assetClass'),
+      workingGroup: getField('workingGroup'),
+      stakeholder: getField('stakeholder'),
+      jira: getField('jira'),
+      links: getField('links'),
+      tags,
+      estimatedHours: getField('estimatedHours') ? parseFloat(getField('estimatedHours')) : null,
+      actualHours: getField('actualHours') ? parseFloat(getField('actualHours')) : null,
+      parentTaskId: getField('parentTaskId') ? parseInt(getField('parentTaskId')) : null,
+      customField1: getField('customField1'),
+      customField2: getField('customField2'),
+      customField3: getField('customField3'),
+      customField4: getField('customField4'),
+      customField5: getField('customField5'),
+      customField6: getField('customField6'),
+      customField7: getField('customField7'),
+      customField8: getField('customField8'),
+      customField9: getField('customField9'),
+      customField10: getField('customField10'),
+    };
+  }
+
+  async function saveTask() {
+    const title = getField('title');
+    if (!title) { alert('Title is required'); return; }
+
+    document.getElementById('saveSpinner').style.display = 'inline-block';
+    const payload = buildPayload();
+    const changedBy = getField('assignee') || 'system';
+
+    try {
+      let res;
+      if (taskId) {
+        res = await fetch(`/api/tasks/${taskId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'X-Changed-By': changedBy },
+          body: JSON.stringify(payload)
+        });
+      } else {
+        res = await fetch('/api/tasks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      }
+      if (!res.ok) throw new Error(await res.text());
+      const saved = await res.json();
+      showToast('Task saved successfully!', 'success');
+      if (!taskId) {
+        setTimeout(() => location.href = `task-form.html?id=${saved.id}`, 800);
+      } else {
+        await loadHistory();
+      }
+    } catch(e) {
+      showToast('Error: ' + e.message, 'danger');
+    } finally {
+      document.getElementById('saveSpinner').style.display = 'none';
+    }
+  }
+
+  async function loadComments() {
+    const comments = await fetch(`/api/tasks/${taskId}/comments`).then(r => r.json());
+    document.getElementById('commentCount').textContent = comments.length;
+    const list = document.getElementById('commentsList');
+    if (comments.length === 0) {
+      list.innerHTML = '<p class="text-muted">No comments yet.</p>';
+      return;
+    }
+    list.innerHTML = comments.map(c => `
+      <div class="comment-item">
+        <div class="d-flex justify-content-between">
+          <strong>${esc(c.author || 'Anonymous')}</strong>
+          <span class="text-muted small">${new Date(c.createdAt).toLocaleString()}</span>
+        </div>
+        <div class="mt-1">${esc(c.content)}</div>
+      </div>`).join('');
+  }
+
+  async function addComment() {
+    const content = document.getElementById('newCommentText').value.trim();
+    const author = document.getElementById('commentAuthor').value.trim() || 'Anonymous';
+    if (!content) return;
+    await fetch(`/api/tasks/${taskId}/comments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content, author })
+    });
+    document.getElementById('newCommentText').value = '';
+    await loadComments();
+    showToast('Comment added', 'success');
+  }
+
+  async function loadHistory() {
+    const history = await fetch(`/api/tasks/${taskId}/history`).then(r => r.json());
+    document.getElementById('historyCount').textContent = history.length;
+    const list = document.getElementById('historyList');
+    if (history.length === 0) {
+      list.innerHTML = '<p class="text-muted">No changes recorded yet.</p>';
+      return;
+    }
+    list.innerHTML = history.map(h => `
+      <div class="history-item">
+        <div class="d-flex justify-content-between align-items-start">
+          <div>
+            <span class="field">${esc(h.fieldName)}</span>
+            <span class="change ms-2">
+              ${h.oldValue ? `<span class="text-danger text-decoration-line-through">${esc(h.oldValue)}</span> → ` : ''}
+              <span class="text-success">${esc(h.newValue || '')}</span>
+            </span>
+          </div>
+          <div class="text-muted small ms-3 text-nowrap">
+            ${esc(h.changedBy || '')} · ${new Date(h.changedAt).toLocaleString()}
+          </div>
+        </div>
+      </div>`).join('');
+  }
+
+  function confirmDelete() {
+    new bootstrap.Modal(document.getElementById('deleteModal')).show();
+  }
+
+  async function deleteTask() {
+    await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' });
+    location.href = 'index.html';
+  }
+
+  function showToast(msg, type) {
+    const el = document.getElementById('toastEl');
+    el.className = `toast align-items-center text-bg-${type} border-0`;
+    document.getElementById('toastMsg').textContent = msg;
+    toast.show();
+  }
+
+  function esc(s) {
+    if (!s) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  init();
+</script>
+</body>
+</html>

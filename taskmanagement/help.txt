@@ -1,0 +1,33 @@
+Task Management App — Complete
+Stack: Spring Boot 3.3.5 + Java 21 + PostgreSQL + Flyway + Bootstrap 5.3
+
+Quick Start (Linux)
+
+# 1. Start PostgreSQL via Docker
+cd taskmanagement
+docker compose up -d
+
+# 2. Build and run
+./mvnw spring-boot:run
+
+# 3. Open browser
+http://localhost:8080
+Or install PostgreSQL directly: sudo apt install postgresql then create the DB user matching application.properties.
+
+Project structure
+File	Purpose
+pom.xml	Maven deps: web, JPA, PostgreSQL, Flyway, Lombok
+V1__init.sql	Creates tasks, task_comments, task_history tables + indexes
+Task.java	Full entity with all 30+ fields, tags as comma-separated string
+TaskService.java	CRUD + field-by-field history tracking on every update
+TaskSpecification.java	Dynamic JPA search across all filterable fields
+TaskApiController.java	REST API: tasks, comments, history, filter-options
+index.html	List/visualize page: filter sidebar, group-by pivot, table + kanban views, stats
+task-form.html	Add/edit page: tabbed form, comments section, change history timeline
+Key features
+Filter sidebar — status, priority, assignee, due date range, category, programme, project, working group, asset class, tags, jira
+Group by / pivot — group table by any attribute (status, priority, assignee, project, etc.)
+Kanban view — toggle between table and kanban board by status
+History tracking — every field change is recorded with old/new value, who changed it, and when
+Comments — threaded comments per task with author and timestamp
+Overdue highlighting — red indicators for past-due open tasks
