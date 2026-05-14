@@ -1,4 +1,4 @@
-﻿package com.mycompany.batch.web;
+package com.mycompany.batch.web;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mycompany.batch.cache.CacheFactory;

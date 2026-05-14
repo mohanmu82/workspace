@@ -1020,6 +1020,7 @@ public class BatchService {
         if (obj == null || obj instanceof String || obj instanceof Number || obj instanceof Boolean) return obj;
         return objectMapper.convertValue(obj, new com.fasterxml.jackson.core.type.TypeReference<Object>() {});
     }
+    
 
     /**
      * Converts a list of plain string IDs into DataRows.
@@ -2657,17 +2658,24 @@ public class BatchService {
                 channel.disconnect();
 
                 String body = sb.toString().trim();
-                row.setResponseBody(body);
+                // Isolate the JSON object from any leading SSH diagnostic output on stdout
+                int jsonStart = body.indexOf('{');
+                int jsonEnd   = body.lastIndexOf('}');
+                String jsonBody = (jsonStart >= 0 && jsonEnd > jsonStart)
+                        ? body.substring(jsonStart, jsonEnd + 1) : body;
+                row.setResponseBody(jsonBody);
 
                 Map<String, String> extractFields = sshConfig.getExtract().getFields();
                 for (Map.Entry<String, String> entry : extractFields.entrySet()) {
                     String key  = entry.getKey();
                     String path = entry.getValue();
-                    if (path == null) continue;
+                    if (path == null) { row.getData().putIfAbsent(key, ""); continue; }
                     try {
-                        Object val = com.jayway.jsonpath.JsonPath.read(body, path);
+                        Object val = com.jayway.jsonpath.JsonPath.read(jsonBody, path);
                         row.getData().put(key, val);
-                    } catch (Exception ignored) {}
+                    } catch (Exception ignored) {
+                        row.getData().putIfAbsent(key, "");
+                    }
                 }
 
                 return row;

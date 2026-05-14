@@ -54,6 +54,9 @@ public class BatchController {
     @org.springframework.beans.factory.annotation.Value("${server.port:8080}")
     private int serverPort;
 
+    @org.springframework.beans.factory.annotation.Value("${app.version:unknown}")
+    private String appVersion;
+
     @Autowired
     public BatchController(BatchService batchService, BatchProperties batchProperties,
                            CacheFactory cacheFactory, ObjectMapper objectMapper,
@@ -1052,6 +1055,8 @@ public class BatchController {
     @GetMapping("/admin")
     public ResponseEntity<?> getAdminInfo() throws Exception {
         Map<String, Object> response = new LinkedHashMap<>();
+
+        response.put("appVersion", appVersion);
 
         // 1. Static server.json properties
         response.put("serverProperties", new LinkedHashMap<>(serverPropertiesLoader.getProperties()));

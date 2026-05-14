@@ -5,6 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin</title>
     <style>
+        .version-badge {
+            font-size: 11px; font-weight: 600; color: #0052cc;
+            background: #deebff; border: 1px solid #b3d4ff;
+            padding: 2px 9px; border-radius: 10px; vertical-align: middle; margin-left: 10px;
+        }
+    </style>
+    <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
 
         body {
@@ -106,7 +113,7 @@
 <div class="nav">
     <a href="/">&larr; Home</a>
 </div>
-<h1>Admin</h1>
+<h1>Admin <span id="appVersion" class="version-badge" style="display:none"></span></h1>
 
 <div class="toolbar" style="padding:0;margin-bottom:16px">
     <button class="primary" onclick="load()">&#8635; Refresh</button>
@@ -259,6 +266,14 @@ async function load() {
         const res  = await fetch('/batch/admin');
         if (!res.ok) { setStatus('Error: ' + res.statusText, 'error'); return; }
         const data = await res.json();
+
+        // App version
+        if (data.appVersion) {
+            const badge = document.getElementById('appVersion');
+            badge.textContent = 'v' + data.appVersion;
+            badge.style.display = '';
+            document.title = 'Admin v' + data.appVersion;
+        }
 
         // Server properties
         const serverProps = data.serverProperties || {};
