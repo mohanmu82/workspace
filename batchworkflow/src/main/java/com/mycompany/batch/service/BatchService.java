@@ -545,8 +545,9 @@ public class BatchService {
         // Rebuild columns after post-enrichment so enriched attributes appear in the grid
         List<ColumnDef> enrichedColumns = buildColumnDefsFromResults(result.results());
         enrichedColumns = applyColumnTemplate(enrichedColumns, op.getColumnTemplate());
+        List<Map<String, Object>> projectedResults = projectRowsByColumns(result.results(), enrichedColumns, op.getColumnTemplate());
         result = new BatchResult(result.processed(), result.succeeded(), result.failed(),
-                result.httpStats(), enrichedColumns, result.results(),
+                result.httpStats(), enrichedColumns, projectedResults,
                 result.batchUuid(), result.timestamp(), result.timeTakenMs(), result.responseSizeKb(), null);
 
         // Mode 4: return after post-enrichment. Mode 0: full pipeline — apply output filter
@@ -3504,6 +3505,25 @@ public class BatchService {
                 .filter(defMap::containsKey) // only include columns that actually exist in results
                 .map(defMap::get)
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * Projects each row to only the keys present in {@code columns}.
+     * Returns the original list unchanged when no column template is configured.
+     */
+    private List<Map<String, Object>> projectRowsByColumns(List<Map<String, Object>> rows,
+                                                           List<ColumnDef> columns,
+                                                           BatchProperties.ColumnTemplateProperties template) {
+        if (template == null || template.getSource() == null || template.getSource().isBlank()) {
+            return rows;
+        }
+        if (rows.isEmpty() || columns.isEmpty()) return rows;
+        List<String> orderedKeys = columns.stream().map(ColumnDef::columnName).toList();
+        return rows.stream().map(row -> {
+            Map<String, Object> projected = new LinkedHashMap<>();
+            orderedKeys.forEach(k -> { if (row.containsKey(k)) projected.put(k, row.get(k)); });
+            return projected;
+        }).collect(Collectors.toList());
     }
 
     /**

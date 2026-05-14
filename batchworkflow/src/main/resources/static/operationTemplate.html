@@ -256,6 +256,16 @@
         .col-chip-idx:hover { background:#ebecf0; }
         .col-chip-idx input[type=checkbox] { cursor:pointer; margin:0; }
         .col-chip-idx span { font-weight:500; }
+        .col-chip-idx.dragging { opacity:0.3; }
+        .col-chip-idx.drag-over { border-color:#0052cc; background:#e9f0ff; }
+        .col-chip-drag { cursor:grab; color:#b3bac5; font-size:11px; margin-right:1px; flex-shrink:0; }
+        .col-chip-drag:active { cursor:grabbing; }
+
+        /* Stats */
+        .stats-row { display:flex; flex-wrap:wrap; gap:8px; padding:10px 14px 0; }
+        .stat { background:#fff; border:1px solid #dfe1e6; border-radius:4px; padding:5px 14px; display:flex; flex-direction:column; align-items:center; }
+        .stat-lbl { font-size:10px; color:#5e6c84; text-transform:uppercase; letter-spacing:0.4px; }
+        .stat-val { font-size:15px; font-weight:700; color:#172b4d; }
 
         .pie-btn { padding:0 4px; font-size:11px; border:1px solid #ccc; border-radius:3px;
                    cursor:pointer; background:#fff; color:#0052cc; line-height:1.5;
@@ -413,6 +423,7 @@
 
 <!-- Data grid (shown when response contains a data array) -->
 <div id="gridSection" class="panel">
+    <div id="tpl-stats" class="stats-row" style="display:none"></div>
     <div class="grid-toolbar">
         <button onclick="tplGrid.autoSizeAllColumns()">Expand Cols</button>
         <button onclick="tplGrid.sizeColumnsToFit()">Fit Cols</button>
@@ -903,8 +914,20 @@
         if (Array.isArray(data.data) && data.data.length > 0) {
             const rows = typeof data.data[0] === 'object' ? data.data : data.data.map(v => ({ value: v }));
             loadGridData(rows, data.columns);
+            const meta = data.metadata || {};
+            const s = meta.summary || {};
+            const statsEl = document.getElementById('tpl-stats');
+            statsEl.innerHTML = [
+                ['Processed', s.processed ?? rows.length],
+                ['Succeeded', s.succeeded ?? '?'],
+                ['Failed', s.failed ?? '?'],
+                ['Time (ms)', meta.timeTakenMs ?? elapsedMs],
+                ['Size (KB)', meta.responseSizeKb ?? '?']
+            ].map(([l,v]) => `<div class="stat"><span class="stat-lbl">${l}</span><span class="stat-val">${v}</span></div>`).join('');
+            statsEl.style.display = 'flex';
         } else {
             clearGrid();
+            document.getElementById('tpl-stats').style.display = 'none';
         }
     }
 
@@ -1017,6 +1040,7 @@
         tplGrid.setGridOption('columnDefs', []);
         document.getElementById('gridSection').style.display = 'none';
         document.getElementById('rowCountBar').textContent = '';
+        document.getElementById('tpl-stats').style.display = 'none';
     }
 
     function exportCsv() { tplGrid.exportDataAsCsv({ fileName: 'template-data.csv' }); }
@@ -1029,7 +1053,10 @@
     // -------------------------------------------------------------------------
     // Column chooser
     // -------------------------------------------------------------------------
+    let _skipColChooserRebuild = false;
+
     function rebuildColChooser() {
+        if (_skipColChooserRebuild) return;
         const bar  = document.getElementById('colChooserBar');
         while (bar.children.length > 1) bar.removeChild(bar.lastChild);
         const cols = tplGrid.getAllGridColumns ? tplGrid.getAllGridColumns() : [];
@@ -1052,13 +1079,60 @@
         sep.style.cssText = 'width:1px;height:16px;background:#dfe1e6;flex-shrink:0;align-self:center';
         bar.appendChild(sep);
 
+        let dragSrc = null;
+
+        function applyColOrder() {
+            const order = [...bar.querySelectorAll('.col-chip-idx[data-col-id]')].map(el => el.dataset.colId);
+            _skipColChooserRebuild = true;
+            tplGrid.applyColumnState({ state: order.map(colId => ({ colId })), applyOrder: true });
+            setTimeout(() => { _skipColChooserRebuild = false; }, 50);
+        }
+
         cols.forEach(col => {
             const id = col.getColId(), name = col.getColDef().headerName || id;
-            const chip = document.createElement('label'); chip.className = 'col-chip-idx'; chip.title = id;
+            const chip = document.createElement('label');
+            chip.className = 'col-chip-idx'; chip.title = id;
+            chip.draggable = true; chip.dataset.colId = id;
+
+            const handle = document.createElement('span');
+            handle.className = 'col-chip-drag'; handle.textContent = '⠿'; handle.title = 'Drag to reorder';
+
             const chk = document.createElement('input'); chk.type = 'checkbox'; chk.checked = col.isVisible();
             chk.addEventListener('change', () => { tplGrid.setColumnVisible(id, chk.checked); syncSelectAll(); });
+
             const lbl = document.createElement('span'); lbl.textContent = name;
-            chip.appendChild(chk); chip.appendChild(lbl); bar.appendChild(chip);
+
+            const pieBtn = document.createElement('button');
+            pieBtn.className = 'pie-btn'; pieBtn.title = `Chart: ${name}`; pieBtn.textContent = '◑';
+            pieBtn.style.display = chartsVisible ? '' : 'none';
+            pieBtn.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); showPieChart(id, name); });
+
+            chip.addEventListener('dragstart', e => {
+                dragSrc = chip;
+                e.dataTransfer.effectAllowed = 'move';
+                setTimeout(() => chip.classList.add('dragging'), 0);
+            });
+            chip.addEventListener('dragend', () => {
+                chip.classList.remove('dragging');
+                bar.querySelectorAll('.col-chip-idx[data-col-id]').forEach(el => el.classList.remove('drag-over'));
+                dragSrc = null;
+            });
+            chip.addEventListener('dragover', e => {
+                e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+                if (dragSrc && dragSrc !== chip) chip.classList.add('drag-over');
+            });
+            chip.addEventListener('dragleave', () => chip.classList.remove('drag-over'));
+            chip.addEventListener('drop', e => {
+                e.preventDefault(); chip.classList.remove('drag-over');
+                if (!dragSrc || dragSrc === chip) return;
+                const chips = [...bar.querySelectorAll('.col-chip-idx[data-col-id]')];
+                if (chips.indexOf(dragSrc) < chips.indexOf(chip)) chip.after(dragSrc);
+                else chip.before(dragSrc);
+                applyColOrder();
+            });
+
+            chip.appendChild(handle); chip.appendChild(chk); chip.appendChild(lbl); chip.appendChild(pieBtn);
+            bar.appendChild(chip);
         });
         syncSelectAll();
     }
@@ -1083,6 +1157,7 @@
     function toggleCharts() {
         chartsVisible = !chartsVisible;
         PieHeaderComp._instances.forEach(h => h.setPieVisible(chartsVisible));
+        document.querySelectorAll('#colChooserBar .pie-btn').forEach(b => b.style.display = chartsVisible ? '' : 'none');
         const btn = document.getElementById('toggleChartsBtn');
         btn.style.fontWeight = chartsVisible ? 'bold' : '';
         btn.style.color      = chartsVisible ? '#0052cc' : '';

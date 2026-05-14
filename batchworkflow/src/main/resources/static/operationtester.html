@@ -256,24 +256,47 @@ button.sm { padding: 4px 10px; font-size: 12px; }
 
 /* Columns config panel rows */
 .col-row {
-  display: flex; align-items: center; gap: 8px;
-  padding: 5px 8px; border-radius: 4px; margin-bottom: 3px;
-  background: #f4f5f7; border: 1px solid #dfe1e6;
+  border: 1px solid #dfe1e6; background: #fafbfc;
+  border-radius: 4px; margin-bottom: 4px; padding: 5px 8px;
   user-select: none;
 }
 .col-row:last-child { margin-bottom: 0; }
 .col-row.dragging { opacity: 0.35; border-style: dashed; }
 .col-row.drag-over { border-color: #0052cc; background: #e9f0ff; }
+.col-row-top { display: flex; align-items: center; gap: 7px; }
+.col-row-extra { display: flex; gap: 5px; margin-top: 4px; padding-left: 46px; flex-wrap: wrap; }
 .col-drag { cursor: grab; color: #b3bac5; font-size: 13px; flex-shrink: 0; line-height: 1; }
 .col-drag:active { cursor: grabbing; }
 .col-drag:hover { color: #5e6c84; }
-.col-name { flex: 1; font-size: 12px; font-family: Consolas, monospace; color: #172b4d; }
+.col-name { flex: 1; font-size: 12px; font-family: Consolas, monospace; color: #172b4d; min-width: 60px; }
 .col-row.col-hidden .col-name { color: #a5adba; text-decoration: line-through; }
+.col-avail-select { padding: 2px 4px; font-size: 11px; border: 1px solid #ccc; border-radius: 3px;
+  background: #fff; color: #5e6c84; cursor: pointer; flex-shrink: 0; }
+.col-disp-input { flex: 1; min-width: 80px; padding: 2px 6px; font-size: 11px;
+  border: 1px solid #dfe1e6; border-radius: 3px; outline: none; font-family: inherit; }
+.col-link-input { flex: 2; min-width: 120px; padding: 2px 6px; font-size: 11px;
+  border: 1px solid #dfe1e6; border-radius: 3px; outline: none; font-family: Consolas, monospace; }
+.col-disp-input:focus, .col-link-input:focus { border-color: #4c9aff; }
 .col-remove { background: none; border: none; padding: 0 3px; font-size: 15px; color: #de350b;
   cursor: pointer; border-radius: 3px; line-height: 1; flex-shrink: 0; }
 .col-remove:hover { background: #ffebe6; }
-.col-paste-row { display: flex; gap: 6px; margin-bottom: 8px; }
+.col-paste-row { display: flex; gap: 6px; margin-bottom: 6px; }
 .col-paste-row input { flex: 1; font-family: Consolas, monospace; font-size: 12px; }
+/* Add-column form */
+.col-add-form { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; padding: 7px 8px;
+  background: #f4f5f7; border: 1px solid #dfe1e6; border-radius: 4px; align-items: center; }
+.col-add-form input { flex: 1; min-width: 80px; padding: 5px 7px; font-size: 12px;
+  border: 1px solid #ccc; border-radius: 3px; outline: none; font-family: inherit; }
+.col-add-form input:focus { border-color: #4c9aff; }
+.col-add-form select { padding: 5px 6px; font-size: 12px; border: 1px solid #ccc;
+  border-radius: 3px; background: #fff; outline: none; }
+/* Column color picker */
+.col-color-wrap { display: flex; align-items: center; gap: 3px; flex-shrink: 0; }
+.col-color-input { width: 28px; height: 20px; padding: 1px; border: 1px solid #ccc;
+  border-radius: 3px; cursor: pointer; flex-shrink: 0; }
+.col-color-input:disabled { opacity: 0.3; cursor: default; }
+.col-add-color-lbl { display: flex; align-items: center; gap: 3px; cursor: pointer; flex-shrink: 0;
+  font-size: 11px; color: #5e6c84; title: 'Cell background color'; }
 </style>
 </head>
 <body>
@@ -596,14 +619,30 @@ button.sm { padding: 4px 10px; font-size: 12px; }
     <h2>Columns</h2><span class="panel-badge" id="badge-columns"></span><span class="toggle">▾</span>
   </div>
   <div class="panel-body hidden">
+    <div class="col-add-form">
+      <input id="col-add-name" type="text" placeholder="Column name *"
+        onkeydown="if(event.key==='Enter'){addColFromForm();event.preventDefault();}">
+      <input id="col-add-display" type="text" placeholder="Display name (optional)">
+      <select id="col-add-avail" title="Availability: REQUIRED = always shown, IFAVAILABLE = only if present in response, ERRORCOLUMN = non-blank value turns row red">
+        <option value="REQUIRED">REQUIRED</option>
+        <option value="IFAVAILABLE">IFAVAILABLE</option>
+        <option value="ERRORCOLUMN">ERRORCOLUMN</option>
+      </select>
+      <input id="col-add-link" type="text" placeholder="Link template, e.g. /detail/$ID (optional)" style="flex:2;min-width:140px">
+      <label class="col-add-color-lbl" title="Cell background color">
+        <input type="checkbox" id="col-add-color-cb" onchange="document.getElementById('col-add-color').disabled=!this.checked">
+        <input type="color" id="col-add-color" value="#ffeb9c" disabled title="Cell background color">
+      </label>
+      <button class="secondary sm" onclick="addColFromForm()">+ Add</button>
+    </div>
     <div class="col-paste-row">
       <input id="col-paste-input" type="text"
-        placeholder='["SERVERNAME","OSTYPE","TYPE","MEMORY_GB","CPU_COUNT","DATACENTER","STATUS","errorMessage"]'
+        placeholder='["COL1","COL2"] — paste JSON array to bulk-add columns'
         onkeydown="if(event.key==='Enter'){parseColPaste();event.preventDefault();}">
       <button class="secondary sm" onclick="parseColPaste()">Apply</button>
       <button class="secondary sm" onclick="clearColumns()">Clear All</button>
     </div>
-    <div class="hint" style="margin-bottom:8px">Paste a JSON string array to set columns. Drag to reorder. Uncheck to hide. Saved with the operation — overrides server response columns.</div>
+    <div class="hint" style="margin-bottom:8px">Drag to reorder · Uncheck to hide · REQUIRED = always shown · IFAVAILABLE = only if present in response · ERRORCOLUMN = non-blank value turns row red · Link: $FIELD replaced from data row · Color: cell background.</div>
     <div id="col-list"></div>
   </div>
 </div>
@@ -1823,12 +1862,20 @@ function getRpValue() {
 // ─── Columns config ───────────────────────────────────────────────────────────
 let _colDragSrc = null;
 
-function addColRow(fieldName, hidden) {
+function addColRow(colConfig) {
+  const cfg = typeof colConfig === 'string' ? { columnName: colConfig } : (colConfig || {});
+  const { columnName, displayName = '', availability = 'REQUIRED', link = '', color = '', hidden = false } = cfg;
+  if (!columnName) return;
+
   const list = document.getElementById('col-list');
   const row = document.createElement('div');
   row.className = 'col-row' + (hidden ? ' col-hidden' : '');
   row.draggable = true;
-  row.dataset.field = fieldName;
+  row.dataset.field = columnName;
+
+  // ── Top line ──────────────────────────────────────────────────
+  const topLine = document.createElement('div');
+  topLine.className = 'col-row-top';
 
   const drag = document.createElement('span');
   drag.className = 'col-drag'; drag.textContent = '⠿'; drag.title = 'Drag to reorder';
@@ -1840,13 +1887,61 @@ function addColRow(fieldName, hidden) {
     updateColBadge(); genJson();
   });
 
-  const name = document.createElement('span');
-  name.className = 'col-name'; name.textContent = fieldName;
+  const nameSpan = document.createElement('span');
+  nameSpan.className = 'col-name'; nameSpan.textContent = columnName;
+
+  const availSel = document.createElement('select');
+  availSel.className = 'col-avail-select';
+  availSel.title = 'REQUIRED = always shown · IFAVAILABLE = only if present in response · ERRORCOLUMN = non-blank value turns row red';
+  ['REQUIRED', 'IFAVAILABLE', 'ERRORCOLUMN'].forEach(opt => {
+    const o = document.createElement('option');
+    o.value = opt; o.textContent = opt;
+    if (opt === availability) o.selected = true;
+    availSel.appendChild(o);
+  });
+  availSel.addEventListener('change', genJson);
 
   const rm = document.createElement('button');
   rm.type = 'button'; rm.className = 'col-remove'; rm.textContent = '×'; rm.title = 'Remove';
   rm.addEventListener('click', () => { row.remove(); updateColBadge(); genJson(); });
 
+  topLine.append(drag, cb, nameSpan, availSel, rm);
+
+  // ── Extra line (display name + link template) ─────────────────
+  const extraLine = document.createElement('div');
+  extraLine.className = 'col-row-extra';
+
+  const dispInput = document.createElement('input');
+  dispInput.className = 'col-disp-input'; dispInput.type = 'text';
+  dispInput.placeholder = 'Display name (optional)'; dispInput.value = displayName;
+  dispInput.addEventListener('input', genJson);
+  dispInput.addEventListener('mousedown', e => e.stopPropagation());
+
+  const linkInput = document.createElement('input');
+  linkInput.className = 'col-link-input'; linkInput.type = 'text';
+  linkInput.placeholder = 'Link template, e.g. /detail/$ID (optional)'; linkInput.value = link;
+  linkInput.addEventListener('input', genJson);
+  linkInput.addEventListener('mousedown', e => e.stopPropagation());
+
+  const colorWrap = document.createElement('span');
+  colorWrap.className = 'col-color-wrap'; colorWrap.title = 'Cell background color';
+
+  const colorCb = document.createElement('input');
+  colorCb.type = 'checkbox'; colorCb.checked = !!color;
+
+  const colorInput = document.createElement('input');
+  colorInput.type = 'color'; colorInput.className = 'col-color-input';
+  colorInput.value = color || '#ffeb9c'; colorInput.disabled = !color;
+  colorInput.addEventListener('input', genJson);
+  colorInput.addEventListener('mousedown', e => e.stopPropagation());
+
+  colorCb.addEventListener('change', () => { colorInput.disabled = !colorCb.checked; genJson(); });
+
+  colorWrap.append(colorCb, colorInput);
+  extraLine.append(dispInput, linkInput, colorWrap);
+  row.append(topLine, extraLine);
+
+  // ── Drag & drop ───────────────────────────────────────────────
   row.addEventListener('dragstart', e => {
     _colDragSrc = row;
     e.dataTransfer.effectAllowed = 'move';
@@ -1871,8 +1966,36 @@ function addColRow(fieldName, hidden) {
     genJson();
   });
 
-  row.append(drag, cb, name, rm);
   list.appendChild(row);
+}
+
+function addColFromForm() {
+  const nameEl = document.getElementById('col-add-name');
+  const name = nameEl.value.trim();
+  if (!name) { nameEl.focus(); nameEl.style.borderColor = '#de350b'; return; }
+  nameEl.style.borderColor = '';
+  const existing = new Set([...document.querySelectorAll('#col-list .col-row')].map(r => r.dataset.field));
+  const colorCb = document.getElementById('col-add-color-cb');
+  const colorEl = document.getElementById('col-add-color');
+  if (!existing.has(name)) {
+    addColRow({
+      columnName: name,
+      displayName: document.getElementById('col-add-display').value.trim(),
+      availability: document.getElementById('col-add-avail').value,
+      link: document.getElementById('col-add-link').value.trim(),
+      color: colorCb.checked ? colorEl.value : ''
+    });
+    updateColBadge(); genJson();
+  }
+  nameEl.value = '';
+  document.getElementById('col-add-display').value = '';
+  document.getElementById('col-add-avail').value = 'REQUIRED';
+  document.getElementById('col-add-link').value = '';
+  colorCb.checked = false; colorEl.disabled = true;
+  nameEl.focus();
+  const panel = document.getElementById('p-columns');
+  panel.querySelector('.panel-header').classList.remove('collapsed');
+  panel.querySelector('.panel-body').classList.remove('hidden');
 }
 
 function parseColPaste() {
@@ -1888,7 +2011,7 @@ function parseColPaste() {
   const existing = new Set([...document.querySelectorAll('#col-list .col-row')].map(r => r.dataset.field));
   arr.forEach(c => {
     const name = typeof c === 'string' ? c : (c.columnName || String(c));
-    if (name && !existing.has(name)) { addColRow(name, false); existing.add(name); }
+    if (name && !existing.has(name)) { addColRow({ columnName: name }); existing.add(name); }
   });
   input.value = '';
   updateColBadge(); genJson();
@@ -1906,6 +2029,15 @@ function getColumnsConfig() {
   return [...document.querySelectorAll('#col-list .col-row')].map(r => {
     const obj = { columnName: r.dataset.field };
     if (r.classList.contains('col-hidden')) obj.hidden = true;
+    const disp = r.querySelector('.col-disp-input')?.value.trim();
+    if (disp) obj.displayName = disp;
+    const avail = r.querySelector('.col-avail-select')?.value;
+    if (avail && avail !== 'REQUIRED') obj.availability = avail;
+    const link = r.querySelector('.col-link-input')?.value.trim();
+    if (link) obj.link = link;
+    const colorCb = r.querySelector('.col-color-wrap input[type=checkbox]');
+    const colorInput = r.querySelector('.col-color-input');
+    if (colorCb?.checked && colorInput?.value) obj.color = colorInput.value;
     return obj;
   });
 }
@@ -1913,9 +2045,8 @@ function getColumnsConfig() {
 function setColumnsConfig(cols) {
   document.getElementById('col-list').innerHTML = '';
   (cols || []).forEach(c => {
-    const name = typeof c === 'string' ? c : c.columnName;
-    const hidden = typeof c === 'object' ? !!c.hidden : false;
-    if (name) addColRow(name, hidden);
+    if (typeof c === 'string') addColRow({ columnName: c });
+    else if (c && c.columnName) addColRow(c);
   });
   updateColBadge();
 }
@@ -2509,25 +2640,53 @@ function renderResults(data) {
   let cols = data.columns || (rows.length ? Object.keys(rows[0]).map(k => ({ columnName: k })) : []);
 
   // Apply operation columns config: filter to enabled columns in configured order
-  const opColsCfg = getColumnsConfig().filter(c => !c.hidden);
+  const allColsCfg = getColumnsConfig();
+  const opColsCfg = allColsCfg.filter(c => !c.hidden);
+  const errorCols = allColsCfg
+    .filter(c => c.availability === 'ERRORCOLUMN')
+    .map(c => c.columnName);
+
   if (opColsCfg.length) {
     const colMap = new Map(cols.map(c => [c.columnName || c, c]));
-    cols = opColsCfg.map(cfg => colMap.get(cfg.columnName) || { columnName: cfg.columnName });
+    const dataKeys = rows.length ? new Set(Object.keys(rows[0])) : new Set();
+    cols = opColsCfg
+      .filter(cfg => cfg.availability !== 'IFAVAILABLE' || dataKeys.has(cfg.columnName))
+      .map(cfg => {
+        const base = colMap.get(cfg.columnName) || { columnName: cfg.columnName };
+        const merged = { ...base };
+        if (cfg.displayName) merged.displayName = cfg.displayName;
+        if (cfg.link) merged.link = cfg.link;
+        if (cfg.color) merged.color = cfg.color;
+        return merged;
+      });
   }
 
   _tGridData = rows;
   _tGridCols = cols.map(c => c.columnName || c);
 
-  const colDefs = cols.map(c => ({
-    field: c.columnName || c,
-    headerName: c.displayName || c.columnName || c,
-    flex: 1,
-    minWidth: 100,
-    resizable: true,
-    sortable: true,
-    filter: true,
-    cellStyle: params => params.data?._failed ? { color: '#bf2600' } : null
-  }));
+  const colDefs = cols.map(c => {
+    const fieldName = c.columnName || c;
+    const linkTpl = c.link;
+    const cellColor = c.color;
+    const def = {
+      field: fieldName,
+      headerName: c.displayName || fieldName,
+      flex: 1,
+      minWidth: 100,
+      resizable: true,
+      sortable: true,
+      filter: true,
+      cellStyle: params => {
+        if (params.data?._failed) return { color: '#bf2600' };
+        const style = {};
+        if (cellColor) style.backgroundColor = cellColor;
+        if (linkTpl) { style.color = '#0052cc'; style.cursor = 'pointer'; }
+        return Object.keys(style).length ? style : null;
+      }
+    };
+    if (linkTpl) def.linkTemplate = linkTpl;
+    return def;
+  });
 
   showResponseJson(data);
 
@@ -2540,7 +2699,14 @@ function renderResults(data) {
     defaultColDef: { resizable: true, sortable: true, filter: true },
     pagination: true,
     paginationPageSize: 50,
-    getRowStyle: p => p.data?._failed ? { background: '#ffebe6' } : null,
+    getRowStyle: p => {
+      if (p.data?._failed) return { background: '#ffebe6' };
+      if (errorCols.length && errorCols.some(col => {
+        const v = p.data?.[col];
+        return v != null && String(v).trim() !== '';
+      })) return { background: '#ffd7d5', color: '#bf2600' };
+      return null;
+    },
     onCellClicked: handleCellClicked,
     onGridReady: () => {
       document.getElementById('rowCountBar').textContent = rows.length + ' row' + (rows.length !== 1 ? 's' : '');
@@ -3041,6 +3207,11 @@ document.addEventListener('click', () => { if (_menuJustOpened) return; const m 
 function handleCellClicked(params) {
     if (params.value == null) return;
     const text = String(params.value);
+    if (params.colDef.linkTemplate) {
+        const url = params.colDef.linkTemplate.replace(/\$(\w+)/g, (_, k) => params.data?.[k] ?? '');
+        _showCellMenu(url, params.event);
+        return;
+    }
     if (/^https?:\/\//i.test(text)) { _showCellMenu(text, params.event); return; }
     const copy = () => { const ta = document.createElement('textarea'); ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px;top:0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); showCopyToast(); };
     navigator.clipboard.writeText(text).then(showCopyToast).catch(copy);
