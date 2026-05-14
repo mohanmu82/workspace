@@ -253,6 +253,27 @@ button.sm { padding: 4px 10px; font-size: 12px; }
 .chip-drag-handle:hover { color: #5e6c84; }
 .col-chip-t.dragging { opacity: 0.35; border-style: dashed; }
 .col-chip-t.drag-over { border-color: #0052cc; background: #e9f0ff; }
+
+/* Columns config panel rows */
+.col-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 8px; border-radius: 4px; margin-bottom: 3px;
+  background: #f4f5f7; border: 1px solid #dfe1e6;
+  user-select: none;
+}
+.col-row:last-child { margin-bottom: 0; }
+.col-row.dragging { opacity: 0.35; border-style: dashed; }
+.col-row.drag-over { border-color: #0052cc; background: #e9f0ff; }
+.col-drag { cursor: grab; color: #b3bac5; font-size: 13px; flex-shrink: 0; line-height: 1; }
+.col-drag:active { cursor: grabbing; }
+.col-drag:hover { color: #5e6c84; }
+.col-name { flex: 1; font-size: 12px; font-family: Consolas, monospace; color: #172b4d; }
+.col-row.col-hidden .col-name { color: #a5adba; text-decoration: line-through; }
+.col-remove { background: none; border: none; padding: 0 3px; font-size: 15px; color: #de350b;
+  cursor: pointer; border-radius: 3px; line-height: 1; flex-shrink: 0; }
+.col-remove:hover { background: #ffebe6; }
+.col-paste-row { display: flex; gap: 6px; margin-bottom: 8px; }
+.col-paste-row input { flex: 1; font-family: Consolas, monospace; font-size: 12px; }
 </style>
 </head>
 <body>
@@ -566,6 +587,24 @@ button.sm { padding: 4px 10px; font-size: 12px; }
   <div class="panel-body hidden">
     <div id="rp-list"></div>
     <button class="secondary sm" onclick="addResponseProcessor()">+ Add Processor</button>
+  </div>
+</div>
+
+<!-- Columns -->
+<div class="panel" id="p-columns">
+  <div class="panel-header collapsed" onclick="togglePanel('p-columns')">
+    <h2>Columns</h2><span class="panel-badge" id="badge-columns"></span><span class="toggle">▾</span>
+  </div>
+  <div class="panel-body hidden">
+    <div class="col-paste-row">
+      <input id="col-paste-input" type="text"
+        placeholder='["SERVERNAME","OSTYPE","TYPE","MEMORY_GB","CPU_COUNT","DATACENTER","STATUS","errorMessage"]'
+        onkeydown="if(event.key==='Enter'){parseColPaste();event.preventDefault();}">
+      <button class="secondary sm" onclick="parseColPaste()">Apply</button>
+      <button class="secondary sm" onclick="clearColumns()">Clear All</button>
+    </div>
+    <div class="hint" style="margin-bottom:8px">Paste a JSON string array to set columns. Drag to reorder. Uncheck to hide. Saved with the operation — overrides server response columns.</div>
+    <div id="col-list"></div>
   </div>
 </div>
 
@@ -1781,6 +1820,113 @@ function getRpValue() {
   return sel.style.display !== 'none' ? sel.value : txt.value.trim();
 }
 
+// ─── Columns config ───────────────────────────────────────────────────────────
+let _colDragSrc = null;
+
+function addColRow(fieldName, hidden) {
+  const list = document.getElementById('col-list');
+  const row = document.createElement('div');
+  row.className = 'col-row' + (hidden ? ' col-hidden' : '');
+  row.draggable = true;
+  row.dataset.field = fieldName;
+
+  const drag = document.createElement('span');
+  drag.className = 'col-drag'; drag.textContent = '⠿'; drag.title = 'Drag to reorder';
+
+  const cb = document.createElement('input');
+  cb.type = 'checkbox'; cb.checked = !hidden;
+  cb.addEventListener('change', () => {
+    row.classList.toggle('col-hidden', !cb.checked);
+    updateColBadge(); genJson();
+  });
+
+  const name = document.createElement('span');
+  name.className = 'col-name'; name.textContent = fieldName;
+
+  const rm = document.createElement('button');
+  rm.type = 'button'; rm.className = 'col-remove'; rm.textContent = '×'; rm.title = 'Remove';
+  rm.addEventListener('click', () => { row.remove(); updateColBadge(); genJson(); });
+
+  row.addEventListener('dragstart', e => {
+    _colDragSrc = row;
+    e.dataTransfer.effectAllowed = 'move';
+    setTimeout(() => row.classList.add('dragging'), 0);
+  });
+  row.addEventListener('dragend', () => {
+    row.classList.remove('dragging');
+    list.querySelectorAll('.col-row').forEach(r => r.classList.remove('drag-over'));
+    _colDragSrc = null;
+  });
+  row.addEventListener('dragover', e => {
+    e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+    if (_colDragSrc && _colDragSrc !== row) row.classList.add('drag-over');
+  });
+  row.addEventListener('dragleave', () => row.classList.remove('drag-over'));
+  row.addEventListener('drop', e => {
+    e.preventDefault(); row.classList.remove('drag-over');
+    if (!_colDragSrc || _colDragSrc === row) return;
+    const rows = [...list.querySelectorAll('.col-row')];
+    if (rows.indexOf(_colDragSrc) < rows.indexOf(row)) row.after(_colDragSrc);
+    else row.before(_colDragSrc);
+    genJson();
+  });
+
+  row.append(drag, cb, name, rm);
+  list.appendChild(row);
+}
+
+function parseColPaste() {
+  const input = document.getElementById('col-paste-input');
+  const raw = input.value.trim();
+  if (!raw) return;
+  let arr;
+  try { arr = JSON.parse(raw); }
+  catch(e) {
+    arr = raw.split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+  }
+  if (!Array.isArray(arr)) return;
+  const existing = new Set([...document.querySelectorAll('#col-list .col-row')].map(r => r.dataset.field));
+  arr.forEach(c => {
+    const name = typeof c === 'string' ? c : (c.columnName || String(c));
+    if (name && !existing.has(name)) { addColRow(name, false); existing.add(name); }
+  });
+  input.value = '';
+  updateColBadge(); genJson();
+  const panel = document.getElementById('p-columns');
+  panel.querySelector('.panel-header').classList.remove('collapsed');
+  panel.querySelector('.panel-body').classList.remove('hidden');
+}
+
+function clearColumns() {
+  document.getElementById('col-list').innerHTML = '';
+  updateColBadge(); genJson();
+}
+
+function getColumnsConfig() {
+  return [...document.querySelectorAll('#col-list .col-row')].map(r => {
+    const obj = { columnName: r.dataset.field };
+    if (r.classList.contains('col-hidden')) obj.hidden = true;
+    return obj;
+  });
+}
+
+function setColumnsConfig(cols) {
+  document.getElementById('col-list').innerHTML = '';
+  (cols || []).forEach(c => {
+    const name = typeof c === 'string' ? c : c.columnName;
+    const hidden = typeof c === 'object' ? !!c.hidden : false;
+    if (name) addColRow(name, hidden);
+  });
+  updateColBadge();
+}
+
+function updateColBadge() {
+  const badge = document.getElementById('badge-columns');
+  if (!badge) return;
+  const count = document.querySelectorAll('#col-list .col-row').length;
+  badge.textContent = count; badge.classList.toggle('visible', count > 0);
+}
+
 // ─── JSON Generation ──────────────────────────────────────────────────────────
 function buildJson() {
   const op = {};
@@ -2079,6 +2225,10 @@ function buildJson() {
   });
   if (rps.length) op.responseProcessor = rps;
 
+  // Columns
+  const colsCfg = getColumnsConfig();
+  if (colsCfg.length) op.columns = colsCfg;
+
   // Enricher
   const enricherItems = [];
   ['pre', 'post'].forEach(type => {
@@ -2234,6 +2384,14 @@ function loadOperationIntoForm(op) {
   (op.responseProcessor || []).forEach(r => addResponseProcessor(r));
   syncRpSel();
 
+  // Columns
+  setColumnsConfig(op.columns || []);
+  if ((op.columns || []).length) {
+    const cp = document.getElementById('p-columns');
+    cp.querySelector('.panel-header').classList.remove('collapsed');
+    cp.querySelector('.panel-body').classList.remove('hidden');
+  }
+
   // Save name
   const saveName = document.getElementById('save-name');
   saveName.value = op.name || op.operation || '';
@@ -2348,7 +2506,15 @@ function renderResults(data) {
   ].map(([l,v]) => `<div class="stat"><span class="stat-lbl">${l}</span><span class="stat-val">${v}</span></div>`).join('');
 
   const rows = data.data || [];
-  const cols = data.columns || (rows.length ? Object.keys(rows[0]).map(k => ({ columnName: k })) : []);
+  let cols = data.columns || (rows.length ? Object.keys(rows[0]).map(k => ({ columnName: k })) : []);
+
+  // Apply operation columns config: filter to enabled columns in configured order
+  const opColsCfg = getColumnsConfig().filter(c => !c.hidden);
+  if (opColsCfg.length) {
+    const colMap = new Map(cols.map(c => [c.columnName || c, c]));
+    cols = opColsCfg.map(cfg => colMap.get(cfg.columnName) || { columnName: cfg.columnName });
+  }
+
   _tGridData = rows;
   _tGridCols = cols.map(c => c.columnName || c);
 
@@ -2919,6 +3085,7 @@ function updateBadge(badgeId, containerId, selector) {
 function resetForm() {
   if (!confirm('Clear all fields and start a new operation?')) return;
   document.getElementById('op-loader').value = '';
+  setColumnsConfig([]);
   loadOperationIntoForm({});
   set('f-name', '');
   set('f-mandatoryAttributes', '');
