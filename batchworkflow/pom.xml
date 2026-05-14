@@ -13,7 +13,7 @@
 
     <groupId>com.mycompany</groupId>
     <artifactId>batchworkflow</artifactId>
-    <version>1.0.19</version>
+    <version>1.0.21</version>
     <name>batchworkflow</name>
     <description>Batch HTTP fetch and XPath extraction service</description>
 

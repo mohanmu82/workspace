@@ -1016,10 +1016,8 @@ public class BatchService {
      * writeValueAsString + readValue roundtrip for large response objects. Custom types are
      * converted via Jackson's in-memory TokenBuffer (no String allocation).
      */
-    @SuppressWarnings("unchecked")
     private Object toJsonataSafe(Object obj) {
         if (obj == null || obj instanceof String || obj instanceof Number || obj instanceof Boolean) return obj;
-        if (obj instanceof Map || obj instanceof List) return obj;
         return objectMapper.convertValue(obj, new com.fasterxml.jackson.core.type.TypeReference<Object>() {});
     }
 
