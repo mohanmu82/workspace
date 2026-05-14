@@ -246,6 +246,13 @@ button.sm { padding: 4px 10px; font-size: 12px; }
 .template-save-form input { flex: 1; padding: 4px 8px; font-size: 12px; border: 1px solid #3d4f62; border-radius: 3px; background: #2d3f52; color: #c0d0e0; outline: none; font-family: Consolas, monospace; }
 .template-save-form input:focus { border-color: #4c9aff; }
 .ag-cell { cursor: pointer !important; }
+
+/* Column chooser — drag-to-reorder */
+.chip-drag-handle { cursor: grab; font-size: 11px; color: #b3bac5; line-height: 1; flex-shrink: 0; }
+.chip-drag-handle:active { cursor: grabbing; }
+.chip-drag-handle:hover { color: #5e6c84; }
+.col-chip-t.dragging { opacity: 0.35; border-style: dashed; }
+.col-chip-t.drag-over { border-color: #0052cc; background: #e9f0ff; }
 </style>
 </head>
 <body>
@@ -657,6 +664,7 @@ button.sm { padding: 4px 10px; font-size: 12px; }
         <button onclick="exportCsvT()">Export CSV</button>
         <button id="toggleChartsBtn" onclick="toggleChartsT()">&#9685; Charts</button>
         <button onclick="openPivotT()">&#8644; Pivot</button>
+        <button onclick="copyColumnsAsJson(tGrid)">Copy Cols JSON</button>
         <button onclick="clearGridT()">Clear</button>
       </div>
       <div id="colChooserBar"><span class="chooser-lbl">Columns:</span></div>
@@ -2367,17 +2375,7 @@ function renderResults(data) {
     pagination: true,
     paginationPageSize: 50,
     getRowStyle: p => p.data?._failed ? { background: '#ffebe6' } : null,
-    onCellClicked: params => {
-      if (params.value == null) return;
-      const text = String(params.value);
-      const copy = () => {
-        const ta = document.createElement('textarea');
-        ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px;top:0';
-        document.body.appendChild(ta); ta.select(); document.execCommand('copy');
-        document.body.removeChild(ta); showCopyToast();
-      };
-      navigator.clipboard.writeText(text).then(showCopyToast).catch(copy);
-    },
+    onCellClicked: handleCellClicked,
     onGridReady: () => {
       document.getElementById('rowCountBar').textContent = rows.length + ' row' + (rows.length !== 1 ? 's' : '');
       buildColChooserT(cols);
@@ -2390,25 +2388,75 @@ function buildColChooserT(cols) {
   bar.innerHTML = '<span class="chooser-lbl">Columns:</span>';
   if (!cols || !cols.length) { bar.style.display = 'none'; return; }
   bar.style.display = 'flex';
+
+  let dragSrc = null;
+
+  function applyGridColOrder() {
+    if (!tGrid) return;
+    const order = [...bar.querySelectorAll('.col-chip-t')].map(el => el.dataset.field);
+    tGrid.applyColumnState({ state: order.map(colId => ({ colId })), applyOrder: true });
+  }
+
   cols.forEach(c => {
     const field = c.columnName || c;
     const label = c.displayName || field;
+
     const chip = document.createElement('label');
     chip.className = 'col-chip-t';
+    chip.draggable = true;
+    chip.dataset.field = field;
+
+    const handle = document.createElement('span');
+    handle.className = 'chip-drag-handle';
+    handle.textContent = '⠿';
+    handle.title = 'Drag to reorder';
+
     const cb = document.createElement('input');
     cb.type = 'checkbox'; cb.checked = true;
     cb.addEventListener('change', () => {
       if (!tGrid) return;
       tGrid.setColumnVisible(field, cb.checked);
     });
+
     const span = document.createElement('span');
     span.textContent = label;
-    // pie chart button
+
     const pie = document.createElement('button');
     pie.className = 'pie-btn-t'; pie.textContent = '&#9685;'; pie.title = 'Chart: ' + label;
     pie.type = 'button';
     pie.addEventListener('click', e => { e.preventDefault(); openChartT(field, label); });
-    chip.appendChild(cb); chip.appendChild(span); chip.appendChild(pie);
+
+    chip.addEventListener('dragstart', e => {
+      dragSrc = chip;
+      e.dataTransfer.effectAllowed = 'move';
+      setTimeout(() => chip.classList.add('dragging'), 0);
+    });
+    chip.addEventListener('dragend', () => {
+      chip.classList.remove('dragging');
+      bar.querySelectorAll('.col-chip-t').forEach(el => el.classList.remove('drag-over'));
+      dragSrc = null;
+    });
+    chip.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (dragSrc && dragSrc !== chip) chip.classList.add('drag-over');
+    });
+    chip.addEventListener('dragleave', () => chip.classList.remove('drag-over'));
+    chip.addEventListener('drop', e => {
+      e.preventDefault();
+      chip.classList.remove('drag-over');
+      if (!dragSrc || dragSrc === chip) return;
+      const chips = [...bar.querySelectorAll('.col-chip-t')];
+      const from = chips.indexOf(dragSrc);
+      const to   = chips.indexOf(chip);
+      if (from < to) chip.after(dragSrc); else chip.before(dragSrc);
+      applyGridColOrder();
+    });
+
+    chip.appendChild(handle);
+    chip.appendChild(cb);
+    chip.appendChild(span);
+    chip.appendChild(pie);
     bar.appendChild(chip);
   });
 }
@@ -2801,6 +2849,47 @@ function showCopyToast() {
   _copyToastTimer = setTimeout(() => { t.style.opacity = '0'; }, 1200);
 }
 
+// ── Cell link menu ─────────────────────────────────────────────────────────
+let _cellLinkMenuVal = '', _menuJustOpened = false;
+function _showCellMenu(text, ev) {
+    _cellLinkMenuVal = text;
+    const m = document.getElementById('cellLinkMenu');
+    m.style.left = Math.min(ev.clientX, window.innerWidth - 160) + 'px';
+    m.style.top  = Math.min(ev.clientY + 6, window.innerHeight - 80) + 'px';
+    m.style.display = 'block';
+    _menuJustOpened = true;
+    setTimeout(() => { _menuJustOpened = false; }, 10);
+}
+function _doCellCopy() {
+    document.getElementById('cellLinkMenu').style.display = 'none';
+    const text = _cellLinkMenuVal;
+    const copy = () => { const ta = document.createElement('textarea'); ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px;top:0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); showCopyToast(); };
+    navigator.clipboard.writeText(text).then(showCopyToast).catch(copy);
+}
+function _doCellOpen() {
+    document.getElementById('cellLinkMenu').style.display = 'none';
+    window.open(_cellLinkMenuVal, '_blank', 'noopener,noreferrer');
+}
+document.addEventListener('click', () => { if (_menuJustOpened) return; const m = document.getElementById('cellLinkMenu'); if (m) m.style.display = 'none'; });
+
+function handleCellClicked(params) {
+    if (params.value == null) return;
+    const text = String(params.value);
+    if (/^https?:\/\//i.test(text)) { _showCellMenu(text, params.event); return; }
+    const copy = () => { const ta = document.createElement('textarea'); ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px;top:0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); showCopyToast(); };
+    navigator.clipboard.writeText(text).then(showCopyToast).catch(copy);
+}
+
+function copyColumnsAsJson(gridApi) {
+    if (!gridApi) return;
+    const cols = (gridApi.getAllGridColumns ? gridApi.getAllGridColumns() : []).filter(c => c.isVisible());
+    if (!cols.length) return;
+    const fields = cols.map(c => c.getColDef().field || c.getColId());
+    const json = JSON.stringify(fields);
+    const copy = () => { const ta = document.createElement('textarea'); ta.value = json; ta.style.cssText = 'position:fixed;left:-9999px;top:0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); showCopyToast(); };
+    navigator.clipboard.writeText(json).then(showCopyToast).catch(copy);
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function v(id) { return document.getElementById(id)?.value ?? ''; }
 function vi(id) { const n = parseInt(v(id)); return isNaN(n) ? null : n; }
@@ -3059,6 +3148,10 @@ document.addEventListener('keydown', e => {
   }
 });
 </script>
+<div id="cellLinkMenu" style="display:none;position:fixed;z-index:9999;background:#fff;border:1px solid #dfe1e6;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:4px 0;min-width:140px">
+    <div onclick="_doCellCopy()" onmouseenter="this.style.background='#f4f5f7'" onmouseleave="this.style.background=''" style="padding:7px 14px;cursor:pointer;font-size:13px">&#128203; Copy</div>
+    <div onclick="_doCellOpen()" onmouseenter="this.style.background='#f4f5f7'" onmouseleave="this.style.background=''" style="padding:7px 14px;cursor:pointer;font-size:13px">&#128279; Open Link</div>
+</div>
 <div id="copyToast" style="position:fixed;bottom:24px;right:24px;z-index:9999;background:#172b4d;color:#fff;padding:8px 18px;border-radius:6px;font-size:13px;font-weight:500;opacity:0;pointer-events:none;transition:opacity 0.15s ease">Copied!</div>
 </body>
 </html>

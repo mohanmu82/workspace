@@ -210,6 +210,7 @@
 <div id="gridSection" class="panel">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
         <div class="panel-title" style="margin-bottom:0">Data Grid</div>
+        <button class="tool-btn" onclick="copyColumnsAsJson(utilGrid)">Copy Cols JSON</button>
         <button class="tool-btn" onclick="viewAsHtml()">&#128203; View as HTML</button>
         <span id="gridRowCount" style="font-size:12px;color:#5e6c84;margin-left:auto"></span>
     </div>
@@ -224,6 +225,47 @@
         t.classList.add('show');
         clearTimeout(_toastTimer);
         _toastTimer = setTimeout(() => t.classList.remove('show'), 1200);
+    }
+
+    // ── Cell link menu ─────────────────────────────────────────────────────
+    let _cellLinkMenuVal = '', _menuJustOpened = false;
+    function _showCellMenu(text, ev) {
+        _cellLinkMenuVal = text;
+        const m = document.getElementById('cellLinkMenu');
+        m.style.left = Math.min(ev.clientX, window.innerWidth - 160) + 'px';
+        m.style.top  = Math.min(ev.clientY + 6, window.innerHeight - 80) + 'px';
+        m.style.display = 'block';
+        _menuJustOpened = true;
+        setTimeout(() => { _menuJustOpened = false; }, 10);
+    }
+    function _doCellCopy() {
+        document.getElementById('cellLinkMenu').style.display = 'none';
+        const text = _cellLinkMenuVal;
+        const copy = () => { const ta = document.createElement('textarea'); ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px;top:0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); showCopyToast(); };
+        navigator.clipboard.writeText(text).then(showCopyToast).catch(copy);
+    }
+    function _doCellOpen() {
+        document.getElementById('cellLinkMenu').style.display = 'none';
+        window.open(_cellLinkMenuVal, '_blank', 'noopener,noreferrer');
+    }
+    document.addEventListener('click', () => { if (_menuJustOpened) return; const m = document.getElementById('cellLinkMenu'); if (m) m.style.display = 'none'; });
+
+    function handleCellClicked(params) {
+        if (params.value == null) return;
+        const text = String(params.value);
+        if (/^https?:\/\//i.test(text)) { _showCellMenu(text, params.event); return; }
+        const copy = () => { const ta = document.createElement('textarea'); ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px;top:0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); showCopyToast(); };
+        navigator.clipboard.writeText(text).then(showCopyToast).catch(copy);
+    }
+
+    function copyColumnsAsJson(gridApi) {
+        if (!gridApi) return;
+        const cols = (gridApi.getAllGridColumns ? gridApi.getAllGridColumns() : []).filter(c => c.isVisible());
+        if (!cols.length) return;
+        const fields = cols.map(c => c.getColDef().field || c.getColId());
+        const json = JSON.stringify(fields);
+        const copy = () => { const ta = document.createElement('textarea'); ta.value = json; ta.style.cssText = 'position:fixed;left:-9999px;top:0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); showCopyToast(); };
+        navigator.clipboard.writeText(json).then(showCopyToast).catch(copy);
     }
 
     // ---- HTTP ----

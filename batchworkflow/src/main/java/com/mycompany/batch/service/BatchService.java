@@ -92,6 +92,8 @@ public class BatchService {
     private final Map<String, HttpAuthProvider> authProviders = new LinkedHashMap<>();
     /** Loaded once at startup from responseprocessors.json — name → ordered list of processor steps. */
     private final Map<String, List<BatchProperties.ResponseProcessorProperties>> responseProcessorRegistry = new LinkedHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<String, com.dashjoin.jsonata.Jsonata> jsonataCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<String, String> jsonataResourceCache = new java.util.concurrent.ConcurrentHashMap<>();
 
     @org.springframework.beans.factory.annotation.Value("${server.port:8080}")
     private int serverPort;
@@ -983,7 +985,10 @@ public class BatchService {
 
         Object jsonataInput = response;
         if (transform.source() != null && !transform.source().isBlank()) {
-            Object extracted = Jsonata.jsonata(transform.source()).evaluate(toJsonataSafe(response));
+            Object fastPath = trySimplePathExtract(response, transform.source());
+            Object extracted = fastPath != null ? fastPath
+                    : jsonataCache.computeIfAbsent(transform.source(), Jsonata::jsonata)
+                            .evaluate(toJsonataSafe(response));
             if (extracted instanceof String s) {
                 try { jsonataInput = objectMapper.readValue(s, Object.class); }
                 catch (Exception e) { jsonataInput = s; }
@@ -995,18 +1000,23 @@ public class BatchService {
         String jsonataExpr;
         if (transform.key() != null && !transform.key().isBlank()) {
             String resourcePath = "transforms/" + transform.key().trim() + ".jsonata";
-            try (InputStream is = getClass().getClassLoader().getResourceAsStream(resourcePath)) {
-                if (is == null)
-                    throw new IllegalArgumentException("jsonata transform not found: classpath:" + resourcePath);
-                jsonataExpr = new String(is.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).trim();
-            }
+            jsonataExpr = jsonataResourceCache.computeIfAbsent(resourcePath, rp -> {
+                try (InputStream is = getClass().getClassLoader().getResourceAsStream(rp)) {
+                    if (is == null)
+                        throw new IllegalArgumentException("jsonata transform not found: classpath:" + rp);
+                    return new String(is.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).trim();
+                } catch (java.io.IOException e) {
+                    throw new java.io.UncheckedIOException(e);
+                }
+            });
         } else if (transform.value() != null && !transform.value().isBlank()) {
             jsonataExpr = transform.value();
         } else {
             return jsonataInput;
         }
 
-        Object result = Jsonata.jsonata(jsonataExpr).evaluate(toJsonataSafe(jsonataInput));
+        Object result = jsonataCache.computeIfAbsent(jsonataExpr, Jsonata::jsonata)
+                .evaluate(toJsonataSafe(jsonataInput));
         return result != null ? result : jsonataInput;
     }
 
@@ -1017,10 +1027,47 @@ public class BatchService {
      * converted via Jackson's in-memory TokenBuffer (no String allocation).
      */
     private Object toJsonataSafe(Object obj) {
-        if (obj == null || obj instanceof String || obj instanceof Number || obj instanceof Boolean) return obj;
+        if (obj == null || obj instanceof String || obj instanceof Number
+                || obj instanceof Boolean || obj instanceof Map || obj instanceof List) return obj;
         return objectMapper.convertValue(obj, new com.fasterxml.jackson.core.type.TypeReference<Object>() {});
     }
-    
+
+    /**
+     * Attempts to resolve a simple dot/index path (e.g. {@code data[0].RESPONSEBODY}) directly
+     * against a Map/List without invoking JSONata or Jackson conversion. Returns {@code null} if
+     * the path uses syntax this fast-path doesn't understand, so the caller can fall back to full
+     * JSONata evaluation.
+     */
+    @SuppressWarnings("unchecked")
+    private Object trySimplePathExtract(Object root, String path) {
+        Object current = root;
+        // Split on '.' but keep array-index segments (e.g. "data[0]" stays together)
+        String[] segments = path.split("\\.");
+        for (String seg : segments) {
+            if (current == null) return null;
+            int bracketOpen = seg.indexOf('[');
+            if (bracketOpen >= 0) {
+                int bracketClose = seg.indexOf(']', bracketOpen);
+                if (bracketClose < 0) return null; // malformed — bail out
+                String key = seg.substring(0, bracketOpen);
+                String idxStr = seg.substring(bracketOpen + 1, bracketClose);
+                int idx;
+                try { idx = Integer.parseInt(idxStr); } catch (NumberFormatException e) { return null; }
+                if (!key.isEmpty()) {
+                    if (!(current instanceof Map)) return null;
+                    current = ((Map<String, Object>) current).get(key);
+                }
+                if (!(current instanceof List)) return null;
+                List<?> list = (List<?>) current;
+                if (idx < 0 || idx >= list.size()) return null;
+                current = list.get(idx);
+            } else {
+                if (!(current instanceof Map)) return null;
+                current = ((Map<String, Object>) current).get(seg);
+            }
+        }
+        return current;
+    }
 
     /**
      * Converts a list of plain string IDs into DataRows.
@@ -3394,7 +3441,7 @@ public class BatchService {
                                                   String jsonataTransform) throws Exception {
         Object parsed = objectMapper.readValue(responseBody, Object.class);
         if (jsonataTransform != null && !jsonataTransform.isBlank()) {
-            parsed = Jsonata.jsonata(jsonataTransform).evaluate(parsed);
+            parsed = jsonataCache.computeIfAbsent(jsonataTransform, Jsonata::jsonata).evaluate(parsed);
         }
         if (parsed instanceof List<?> list) {
             List<Map<String, Object>> result = new ArrayList<>();

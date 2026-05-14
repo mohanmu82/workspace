@@ -146,6 +146,7 @@
                 click a row to see how to execute it
             </span>
         </div>
+        <button class="tool-btn" onclick="copyColumnsAsJson(grid)">Copy Cols JSON</button>
         <button class="tool-btn" onclick="viewGridAsHtml()" style="margin-left:auto">&#128203; View as HTML</button>
     </div>
     <div id="mbeanGrid" class="ag-theme-alpine"></div>
@@ -178,6 +179,47 @@
         t.classList.add('show');
         clearTimeout(_toastTimer);
         _toastTimer = setTimeout(() => t.classList.remove('show'), 1200);
+    }
+
+    // ── Cell link menu ─────────────────────────────────────────────────────
+    let _cellLinkMenuVal = '', _menuJustOpened = false;
+    function _showCellMenu(text, ev) {
+        _cellLinkMenuVal = text;
+        const m = document.getElementById('cellLinkMenu');
+        m.style.left = Math.min(ev.clientX, window.innerWidth - 160) + 'px';
+        m.style.top  = Math.min(ev.clientY + 6, window.innerHeight - 80) + 'px';
+        m.style.display = 'block';
+        _menuJustOpened = true;
+        setTimeout(() => { _menuJustOpened = false; }, 10);
+    }
+    function _doCellCopy() {
+        document.getElementById('cellLinkMenu').style.display = 'none';
+        const text = _cellLinkMenuVal;
+        const copy = () => { const ta = document.createElement('textarea'); ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px;top:0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); showCopyToast(); };
+        navigator.clipboard.writeText(text).then(showCopyToast).catch(copy);
+    }
+    function _doCellOpen() {
+        document.getElementById('cellLinkMenu').style.display = 'none';
+        window.open(_cellLinkMenuVal, '_blank', 'noopener,noreferrer');
+    }
+    document.addEventListener('click', () => { if (_menuJustOpened) return; const m = document.getElementById('cellLinkMenu'); if (m) m.style.display = 'none'; });
+
+    function handleCellClicked(params) {
+        if (params.value == null) return;
+        const text = String(params.value);
+        if (/^https?:\/\//i.test(text)) { _showCellMenu(text, params.event); return; }
+        const copy = () => { const ta = document.createElement('textarea'); ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px;top:0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); showCopyToast(); };
+        navigator.clipboard.writeText(text).then(showCopyToast).catch(copy);
+    }
+
+    function copyColumnsAsJson(gridApi) {
+        if (!gridApi) return;
+        const cols = (gridApi.getAllGridColumns ? gridApi.getAllGridColumns() : []).filter(c => c.isVisible());
+        if (!cols.length) return;
+        const fields = cols.map(c => c.getColDef().field || c.getColId());
+        const json = JSON.stringify(fields);
+        const copy = () => { const ta = document.createElement('textarea'); ta.value = json; ta.style.cssText = 'position:fixed;left:-9999px;top:0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); showCopyToast(); };
+        navigator.clipboard.writeText(json).then(showCopyToast).catch(copy);
     }
 
     // -------------------------------------------------------------------------
@@ -275,18 +317,7 @@
                 rowSelection  : 'single',
                 onRowClicked  : e => showExecPanel(e.data),
                 tooltipShowDelay: 300,
-                onCellClicked: params => {
-                    if (params.value == null) return;
-                    const text = String(params.value);
-                    const copy = () => {
-                        const ta = document.createElement('textarea');
-                        ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px;top:0';
-                        document.body.appendChild(ta); ta.select(); document.execCommand('copy');
-                        document.body.removeChild(ta);
-                        showCopyToast();
-                    };
-                    navigator.clipboard.writeText(text).then(showCopyToast).catch(copy);
-                },
+                onCellClicked: handleCellClicked,
             });
         }
         document.getElementById('countLabel').textContent = rows.length.toLocaleString() + ' entries';
@@ -650,6 +681,10 @@
             });
     }
 </script>
+<div id="cellLinkMenu" style="display:none;position:fixed;z-index:9999;background:#fff;border:1px solid #dfe1e6;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:4px 0;min-width:140px">
+    <div onclick="_doCellCopy()" onmouseenter="this.style.background='#f4f5f7'" onmouseleave="this.style.background=''" style="padding:7px 14px;cursor:pointer;font-size:13px">&#128203; Copy</div>
+    <div onclick="_doCellOpen()" onmouseenter="this.style.background='#f4f5f7'" onmouseleave="this.style.background=''" style="padding:7px 14px;cursor:pointer;font-size:13px">&#128279; Open Link</div>
+</div>
 <div id="copyToast">Copied!</div>
 </body>
 </html>
