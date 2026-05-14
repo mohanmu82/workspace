@@ -723,6 +723,14 @@
 
         const btn = document.getElementById('runBtn');
         btn.disabled = true;
+        clearGrid();
+        document.getElementById('responseSection').style.display = 'none';
+        document.getElementById('responseBody').textContent = '';
+        document.getElementById('responseBody').classList.remove('open');
+        document.getElementById('chevron').classList.remove('open');
+        document.getElementById('responseBadge').textContent = '';
+        document.getElementById('responseTime').textContent = '';
+        document.getElementById('responseLabel').textContent = 'Response';
         setStatus('Running…');
         const start = Date.now();
         try {
@@ -777,19 +785,29 @@
                 columnDefs: cols,
                 rowData: [],
                 defaultColDef: { minWidth: 60 },
-                animateRows: true
+                animateRows: true,
+                onCellClicked: params => {
+                    if (params.value == null) return;
+                    const text = String(params.value);
+                    const copy = () => {
+                        const ta = document.createElement('textarea');
+                        ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+                        document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+                        document.body.removeChild(ta); showCopyToast();
+                    };
+                    navigator.clipboard.writeText(text).then(showCopyToast).catch(copy);
+                }
             });
         }
 
-        const rows = [];
+        const CONCURRENCY = 5;
+        const rows = new Array(names.length);
         let completed = 0;
+        let taskIdx = 0;
 
-        for (const name of names) {
-            if (_runAllStop) break;
-
+        async function runOne(name, idx) {
             const body = JSON.stringify({ name });
             const start = Date.now();
-            let row;
             try {
                 const res = await fetch('/batch/operationTemplate', {
                     method: 'POST',
@@ -798,27 +816,33 @@
                 });
                 const elapsed = Date.now() - start;
                 const data = await res.json();
-                const isOk = res.ok;
-                row = {
+                rows[idx] = {
                     template: name,
-                    status:   isOk ? 'PASS' : 'FAIL',
+                    status:   res.ok ? 'PASS' : 'FAIL',
                     httpCode: res.status,
                     timeMs:   elapsed,
-                    error:    isOk ? '' : (data?.Errors?.[0]?.message ?? data?.message ?? res.statusText)
+                    error:    res.ok ? '' : (data?.Errors?.[0]?.message ?? data?.message ?? res.statusText)
                 };
             } catch (e) {
-                row = { template: name, status: 'FAIL', httpCode: '', timeMs: Date.now() - start, error: e.message };
+                rows[idx] = { template: name, status: 'FAIL', httpCode: '', timeMs: Date.now() - start, error: e.message };
             }
-
-            rows.push(row);
-            _runAllGrid.setGridOption('rowData', [...rows]);
             completed++;
+            _runAllGrid.setGridOption('rowData', rows.filter(Boolean));
             document.getElementById('runAllProgress').textContent = completed + ' / ' + names.length;
         }
 
+        async function worker() {
+            while (taskIdx < names.length && !_runAllStop) {
+                const idx = taskIdx++;
+                await runOne(names[idx], idx);
+            }
+        }
+
+        await Promise.all(Array.from({ length: Math.min(CONCURRENCY, names.length) }, worker));
+
         document.getElementById('runAllStopBtn').style.display = 'none';
         document.getElementById('runAllBtn').disabled = false;
-        const passed = rows.filter(r => r.status === 'PASS').length;
+        const passed = rows.filter(r => r?.status === 'PASS').length;
         document.getElementById('runAllProgress').textContent =
             completed + ' run — ' + passed + ' passed, ' + (completed - passed) + ' failed' +
             (_runAllStop ? ' (stopped)' : '');

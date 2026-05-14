@@ -1193,6 +1193,68 @@ public class BatchController {
         return ResponseEntity.ok(response);
     }
 
+    // -------------------------------------------------------------------------
+    // JSON Schema endpoints
+    //
+    // GET  /batch/jsonschema          — list saved schema names (DATADIR/jsonschemas/)
+    // GET  /batch/jsonschema/{name}   — get schema JSON content
+    // POST /batch/jsonschema          — save schema {"name","content"}
+    // -------------------------------------------------------------------------
+
+    private Path jsonSchemaDir() {
+        String dataDir = serverPropertiesLoader.getProperties().getOrDefault("DATADIR", ".");
+        return Path.of(dataDir).resolve("jsonschemas");
+    }
+
+    @GetMapping("/jsonschema")
+    public ResponseEntity<?> listJsonSchemas() {
+        List<String> names = new ArrayList<>();
+        Path dir = jsonSchemaDir();
+        if (Files.isDirectory(dir)) {
+            try (var stream = Files.list(dir)) {
+                stream.filter(p -> p.toString().endsWith(".json"))
+                      .map(p -> p.getFileName().toString().replaceAll("\\.json$", ""))
+                      .sorted()
+                      .forEach(names::add);
+            } catch (Exception ignored) {}
+        }
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("names", names);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/jsonschema/{name}")
+    public ResponseEntity<?> getJsonSchema(@PathVariable String name) throws Exception {
+        if (!name.matches("[\\w\\-.]+")) return badRequest("invalid schema name");
+        Path file = jsonSchemaDir().resolve(name + ".json");
+        if (Files.exists(file)) {
+            Object content = objectMapper.readValue(file.toFile(), Object.class);
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("name", name);
+            response.put("content", content);
+            return ResponseEntity.ok(response);
+        }
+        return badRequest("schema not found: " + name);
+    }
+
+    @PostMapping("/jsonschema")
+    public ResponseEntity<?> saveJsonSchema(@RequestBody Map<String, Object> body) throws Exception {
+        String name = body.get("name") instanceof String s ? s.trim() : "";
+        if (name.isBlank()) return badRequest("name is required");
+        if (!name.matches("[\\w\\-.]+")) return badRequest("name contains invalid characters (use letters, digits, _ - .)");
+        Object content = body.get("content");
+        if (content == null) return badRequest("content is required");
+        Path dir = jsonSchemaDir();
+        Files.createDirectories(dir);
+        Path file = dir.resolve(name + ".json");
+        objectMapper.writerWithDefaultPrettyPrinter().writeValue(file.toFile(), content);
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("status", "saved");
+        response.put("name", name);
+        response.put("path", file.toAbsolutePath().toString());
+        return ResponseEntity.ok(response);
+    }
+
     private ResponseEntity<Map<String, Object>> badRequest(String message) {
         return errorsResponse("validation", message);
     }

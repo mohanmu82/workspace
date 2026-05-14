@@ -28,7 +28,12 @@ import com.mycompany.batch.xpath.XPathColumn;
 import com.mycompany.batch.xpath.XPathExtractor;
 import com.dashjoin.jsonata.Jsonata;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.networknt.schema.JsonSchema;
+import com.networknt.schema.JsonSchemaFactory;
+import com.networknt.schema.SpecVersionDetector;
+import com.networknt.schema.ValidationMessage;
 import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Service;
 
@@ -978,9 +983,7 @@ public class BatchService {
 
         Object jsonataInput = response;
         if (transform.source() != null && !transform.source().isBlank()) {
-            String responseJson = objectMapper.writeValueAsString(response);
-            Object extracted = Jsonata.jsonata(transform.source())
-                    .evaluate(objectMapper.readValue(responseJson, Object.class));
+            Object extracted = Jsonata.jsonata(transform.source()).evaluate(toJsonataSafe(response));
             if (extracted instanceof String s) {
                 try { jsonataInput = objectMapper.readValue(s, Object.class); }
                 catch (Exception e) { jsonataInput = s; }
@@ -1003,9 +1006,21 @@ public class BatchService {
             return jsonataInput;
         }
 
-        String json = objectMapper.writeValueAsString(jsonataInput);
-        Object result = Jsonata.jsonata(jsonataExpr).evaluate(objectMapper.readValue(json, Object.class));
+        Object result = Jsonata.jsonata(jsonataExpr).evaluate(toJsonataSafe(jsonataInput));
         return result != null ? result : jsonataInput;
+    }
+
+    /**
+     * Returns the object in a form safe for the dashjoin JSONata library (Map, List, String, Number,
+     * Boolean, or null). Plain Java types are passed through directly to avoid the expensive
+     * writeValueAsString + readValue roundtrip for large response objects. Custom types are
+     * converted via Jackson's in-memory TokenBuffer (no String allocation).
+     */
+    @SuppressWarnings("unchecked")
+    private Object toJsonataSafe(Object obj) {
+        if (obj == null || obj instanceof String || obj instanceof Number || obj instanceof Boolean) return obj;
+        if (obj instanceof Map || obj instanceof List) return obj;
+        return objectMapper.convertValue(obj, new com.fasterxml.jackson.core.type.TypeReference<Object>() {});
     }
 
     /**
@@ -1988,6 +2003,7 @@ public class BatchService {
             } else {
                 String message = cause.getMessage() != null ? cause.getMessage() : cause.getClass().getSimpleName();
                 resultMap = new LinkedHashMap<>(inputRow.getData());
+                collectExtractColumns(activities).forEach(col -> resultMap.putIfAbsent(col, ""));
                 resultMap.put("operationStatus", "FAILED");
                 resultMap.put("errorMessage", message);
             }
@@ -1997,6 +2013,29 @@ public class BatchService {
             }
             return null;
         });
+    }
+
+    /**
+     * Collects all column names explicitly declared in activity extract maps so that failed rows
+     * can be pre-populated with blank values, keeping the result schema consistent across rows.
+     * Covers HTTP, SSH, and JSONVALIDATION extract fields.
+     */
+    private static java.util.Set<String> collectExtractColumns(List<ResolvedActivity> activities) {
+        java.util.Set<String> cols = new LinkedHashSet<>();
+        for (ResolvedActivity act : activities) {
+            BatchProperties.ActivityProperties cfg = act.config();
+            if (cfg == null) continue;
+            if (cfg.getHttp() != null && cfg.getHttp().getExtract() != null) {
+                cols.addAll(cfg.getHttp().getExtract().getFields().keySet());
+            }
+            if (cfg.getSsh() != null && cfg.getSsh().getExtract() != null) {
+                cols.addAll(cfg.getSsh().getExtract().getFields().keySet());
+            }
+            if (cfg.getJsonValidation() != null && cfg.getJsonValidation().getExtract() != null) {
+                cols.addAll(cfg.getJsonValidation().getExtract().keySet());
+            }
+        }
+        return cols;
     }
 
     /** Returns a copy of {@code row} with every key's {@code '.'} replaced by {@code '_'}. */
@@ -2061,6 +2100,8 @@ public class BatchService {
             future = executeValidationActivity(row, activity);
         } else if (type == ActivityType.DATAENRICHER) {
             future = executeDataEnricherActivity(row, activity);
+        } else if (type == ActivityType.JSONVALIDATION) {
+            future = executeJsonValidationActivity(row, activity, httpPool, opProperties);
         } else {
             future = CompletableFuture.completedFuture(row);
         }
@@ -3043,6 +3084,91 @@ public class BatchService {
             return f;
         }
         return CompletableFuture.completedFuture(row);
+    }
+
+    private CompletableFuture<DataRow> executeJsonValidationActivity(
+            DataRow row, ResolvedActivity activity,
+            ExecutorService pool, Map<String, String> opProperties) {
+
+        return CompletableFuture.supplyAsync(() -> {
+            BatchProperties.JsonValidationProperties cfg = activity.config().getJsonValidation();
+            if (cfg == null) return row;
+
+            String resolvedJson   = resolveTemplate(cfg.getJsonString(),   row.getData(), opProperties);
+            String resolvedSchema = resolveTemplate(cfg.getSchemaLocation(), row.getData(), opProperties);
+
+            String schemaContent;
+            try {
+                if (resolvedSchema.startsWith("classpath:")) {
+                    String resource = resolvedSchema.substring("classpath:".length());
+                    try (InputStream is = getClass().getClassLoader().getResourceAsStream(resource)) {
+                        if (is == null) throw new FileNotFoundException(
+                                "JSON schema not found on classpath: " + resource);
+                        schemaContent = new String(is.readAllBytes());
+                    }
+                } else {
+                    schemaContent = Files.readString(Path.of(resolvedSchema));
+                }
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to load JSON schema from '" + resolvedSchema + "': " + e.getMessage(), e);
+            }
+
+            int    statusCode;
+            String errorMessage;
+            boolean valid;
+            List<String> errors;
+            try {
+                JsonNode schemaNode = objectMapper.readTree(schemaContent);
+                JsonSchemaFactory factory = JsonSchemaFactory.getInstance(SpecVersionDetector.detect(schemaNode));
+                JsonSchema schema = factory.getSchema(schemaNode);
+                JsonNode dataNode = objectMapper.readTree(resolvedJson);
+                java.util.Set<ValidationMessage> validationMessages = schema.validate(dataNode);
+                valid = validationMessages.isEmpty();
+                errors = validationMessages.stream()
+                        .map(ValidationMessage::getMessage)
+                        .collect(Collectors.toList());
+                errorMessage = errors.isEmpty() ? "" : errors.get(0);
+                statusCode   = valid ? 200 : 400;
+            } catch (Exception e) {
+                valid        = false;
+                errorMessage = "Validation error: " + e.getMessage();
+                errors       = List.of(errorMessage);
+                statusCode   = 400;
+            }
+
+            Map<String, String> extractMap = cfg.getExtract();
+            if (extractMap != null && !extractMap.isEmpty()) {
+                Map<String, Object> resultObj = new LinkedHashMap<>();
+                resultObj.put("statusCode",   statusCode);
+                resultObj.put("errorMessage", errorMessage);
+                resultObj.put("valid",        valid);
+                resultObj.put("errors",       errors);
+                String resultJson;
+                try { resultJson = objectMapper.writeValueAsString(resultObj); } catch (Exception e) { resultJson = "{}"; }
+                for (Map.Entry<String, String> entry : extractMap.entrySet()) {
+                    String col  = entry.getKey();
+                    String path = entry.getValue();
+                    if (path == null) continue;
+                    switch (path) {
+                        case "$.statusCode"    -> row.getData().put(col, statusCode);
+                        case "$.errorMessage"  -> row.getData().put(col, errorMessage);
+                        case "$.valid"         -> row.getData().put(col, valid);
+                        case "$.errors"        -> row.getData().put(col, errors);
+                        default -> {
+                            try {
+                                Object val = com.jayway.jsonpath.JsonPath.read(resultJson, path);
+                                row.getData().put(col, val);
+                            } catch (Exception ignored) {}
+                        }
+                    }
+                }
+            } else {
+                row.getData().put("STATUSCODE",   statusCode);
+                row.getData().put("ERRORMESSAGE", errorMessage);
+                row.getData().put("VALID",        valid);
+            }
+            return row;
+        }, pool);
     }
 
     private boolean evaluateConditionGroup(BatchProperties.ConditionGroupProperties group, DataRow row) {

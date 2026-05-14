@@ -243,6 +243,11 @@ public class BatchProperties {
                         throw new IllegalStateException(
                                 "Activity '" + act.getName() + "' type=DATAENRICHER requires 'dataEnricher.file'");
                     }
+                } else if (type == ActivityType.JSONVALIDATION) {
+                    if (act.getJsonValidation() == null || act.getJsonValidation().getSchemaLocation().isBlank()) {
+                        throw new IllegalStateException(
+                                "Activity '" + act.getName() + "' type=JSONVALIDATION requires 'jsonValidation.schemaLocation'");
+                    }
                 }
             }
         }
@@ -289,6 +294,7 @@ public class BatchProperties {
         private List<TransformStepProperties> transforms         = new ArrayList<>();
         private ValidationProperties         validation          = null;
         private DataEnricherProperties       dataEnricher        = new DataEnricherProperties();
+        private JsonValidationProperties     jsonValidation      = new JsonValidationProperties();
         /** Operation-level property overrides visible inside this activity. */
         private Map<String, String>          properties          = new LinkedHashMap<>();
         /** Property definitions that must be non-blank before this activity runs. */
@@ -329,6 +335,9 @@ public class BatchProperties {
 
         public DataEnricherProperties getDataEnricher()                              { return dataEnricher; }
         public void setDataEnricher(DataEnricherProperties de)                       { this.dataEnricher = de != null ? de : new DataEnricherProperties(); }
+
+        public JsonValidationProperties getJsonValidation()                              { return jsonValidation; }
+        public void setJsonValidation(JsonValidationProperties jv)                       { this.jsonValidation = jv != null ? jv : new JsonValidationProperties(); }
 
         public Map<String, String> getProperties()                   { return properties; }
         public void setProperties(Map<String, String> p) {
@@ -437,6 +446,31 @@ public class BatchProperties {
 
         public String getFile()               { return file; }
         public void   setFile(String file)    { this.file = file != null ? file : ""; }
+    }
+
+    // -------------------------------------------------------------------------
+    // JsonValidation activity config
+    // -------------------------------------------------------------------------
+
+    public static class JsonValidationProperties {
+        /** JSON string to validate — supports ${VAR} placeholders resolved from row data and properties. */
+        private String jsonString = "";
+        /** Classpath or filesystem path to the JSON Schema file — supports ${VAR} placeholders. */
+        private String schemaLocation = "";
+        /**
+         * Extract map: column name → path.
+         * Special paths: $.statusCode (200=valid, 400=invalid), $.errorMessage (first error or ""),
+         * $.valid (true/false), $.errors (list of error strings).
+         * Any other value is treated as a JSONPath expression against the validation result object.
+         */
+        private Map<String, String> extract = new LinkedHashMap<>();
+
+        public String              getJsonString()                    { return jsonString; }
+        public void                setJsonString(String s)            { this.jsonString = s != null ? s : ""; }
+        public String              getSchemaLocation()                { return schemaLocation; }
+        public void                setSchemaLocation(String s)        { this.schemaLocation = s != null ? s : ""; }
+        public Map<String, String> getExtract()                       { return extract; }
+        public void                setExtract(Map<String, String> m)  { this.extract = m != null ? m : new LinkedHashMap<>(); }
     }
 
     // -------------------------------------------------------------------------

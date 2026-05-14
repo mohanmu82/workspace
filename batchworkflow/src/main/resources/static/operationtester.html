@@ -245,6 +245,7 @@ button.sm { padding: 4px 10px; font-size: 12px; }
 .template-save-form.visible { display: flex; }
 .template-save-form input { flex: 1; padding: 4px 8px; font-size: 12px; border: 1px solid #3d4f62; border-radius: 3px; background: #2d3f52; color: #c0d0e0; outline: none; font-family: Consolas, monospace; }
 .template-save-form input:focus { border-color: #4c9aff; }
+.ag-cell { cursor: pointer !important; }
 </style>
 </head>
 <body>
@@ -1068,7 +1069,10 @@ function addActivity(data) {
         <option value="DATAENRICHER" ${type==='DATAENRICHER'?'selected':''}>Data Enricher</option>
         <option value="DB" ${type==='DB'?'selected':''}>DB</option>
         <option value="INITIALIZE" ${type==='INITIALIZE'?'selected':''}>Initialize</option>
+        <option value="JSONVALIDATION" ${type==='JSONVALIDATION'?'selected':''}>JSON Validation</option>
       </select>
+      <button class="secondary sm" onclick="moveActivityUp(${id})" title="Move up" style="padding:3px 7px;font-size:11px">↑</button>
+      <button class="secondary sm" onclick="moveActivityDown(${id})" title="Move down" style="padding:3px 7px;font-size:11px">↓</button>
       <button class="secondary sm" onclick="duplicateActivity(${id})" title="Duplicate this activity">⧉</button>
       <button class="danger sm" onclick="removeActivity(${id})">✕</button>
     </div>
@@ -1297,6 +1301,34 @@ function renderActivity(id, data) {
       </div>
       ${outputVarHtml(id, data)}`;
     if (data?.http?.header) setKvMap(`act-init-hdr-wrap-${id}`, `act-init-hdr-${id}`, data.http.header);
+  } else if (type === 'JSONVALIDATION') {
+    const jv = data?.jsonValidation || {};
+    body.innerHTML = `
+      <div class="form-row">
+        <div class="fg"><label>Activity Name</label>
+          <input id="act-name-${id}" type="text" placeholder="validate-payload" value="${esc(data?.name||'')}" oninput="genJson()"></div>
+        <div class="fg wide"><label>JSON String</label>
+          <textarea id="act-jv-json-${id}" rows="3" placeholder="\${RESPONSEBODY}" oninput="genJson()">${esc(jv.jsonString||'')}</textarea>
+          <span class="hint">JSON to validate — use \${VAR} or \${activityName.ATTRIBUTE} to reference prior activity outputs</span></div>
+        <div class="fg wide"><label>Schema Location</label>
+          <input id="act-jv-schema-${id}" type="text" placeholder="classpath:schemas/my-schema.json" value="${esc(jv.schemaLocation||'')}" oninput="genJson()">
+          <span class="hint">Classpath resource (classpath:schemas/x.json), filesystem path, or \${VAR} variable. Must be a saved JSON Schema file.</span></div>
+      </div>
+      <div class="act-section">Extract — column name maps to a result path</div>
+      <div style="font-size:11px;color:#5e6c84;margin-bottom:6px">
+        Available paths: <code>$.statusCode</code> (200=valid, 400=invalid) &nbsp;|&nbsp;
+        <code>$.errorMessage</code> (first error or empty) &nbsp;|&nbsp;
+        <code>$.valid</code> (true/false) &nbsp;|&nbsp;
+        <code>$.errors</code> (all error messages)
+      </div>
+      <div class="kv-wrap" id="act-jv-ext-wrap-${id}">
+        <div class="kv-row kv-head"><span>Column Name</span><span>Path</span><span></span></div>
+      </div>
+      <span class="add-row-btn" onclick="addKvRow('act-jv-ext-wrap-${id}','act-jv-ext-${id}',genJson)">+ Add extraction</span>
+      ${outputVarHtml(id, data)}
+      ${mandPropSection(id)}`;
+    if (jv.extract) setKvMap(`act-jv-ext-wrap-${id}`, `act-jv-ext-${id}`, jv.extract);
+    if (data?.mandatoryProperties) setMandProps(id, data.mandatoryProperties);
   } else {
     const de = data?.dataExtraction || {};
     const deType = de.type || 'JSON';
@@ -1534,7 +1566,7 @@ function addMandPropRow(actId, data, callback) {
       <option value="boolean" ${dt==='boolean'?'selected':''}>boolean</option>
     </select>
     <input type="text" id="${prefix}-dv-${idx}" placeholder="default value" value="${esc(String(data?.defaultValue??''))}" oninput="genJson()">
-    <span class="kv-del" onclick="delMandPropRow(${actId},${idx})" title="Remove">×</span>`;
+    <span class="kv-del" onclick="delMandPropRow('${actId}',${idx})" title="Remove">×</span>`;
   wrap.appendChild(row);
   if (callback) callback();
 }
@@ -1542,6 +1574,7 @@ function addMandPropRow(actId, data, callback) {
 function delMandPropRow(actId, idx) {
   const prefix = `act-mp-${actId}`;
   document.getElementById(`${prefix}-row-${idx}`)?.remove();
+  if (actId === 'op') updateBadge('badge-mandprops', 'act-mp-wrap-op', '.kv-row:not(.kv-head)');
   genJson();
 }
 
@@ -1926,6 +1959,13 @@ function buildJson() {
     } else if (type === 'DATAENRICHER') {
       const file = v(`act-den-file-${id}`);
       act.dataEnricher = { file: file || '' };
+    } else if (type === 'JSONVALIDATION') {
+      const jv = {};
+      const jsonStr = v(`act-jv-json-${id}`); if (jsonStr) jv.jsonString = jsonStr;
+      const schema  = v(`act-jv-schema-${id}`); if (schema) jv.schemaLocation = schema;
+      const extract = getKvMap(`act-jv-ext-${id}`);
+      if (Object.keys(extract).length) jv.extract = extract;
+      act.jsonValidation = jv;
     } else if (type === 'DB') {
       const db = {};
       const ref = v(`act-db-ref-${id}`); if (ref) db.reference = ref;
@@ -2254,8 +2294,9 @@ async function runTest() {
   });
 
   showRequestJson(req);
-  setStatus('t-status', '', '');
-  document.getElementById('results-wrap').style.display = 'none';
+  clearGridT();
+  document.getElementById('response-json-panel').style.display = 'none';
+  document.getElementById('response-json').value = '';
   setStatus('t-status', 'Running…', '');
   document.getElementById('t-run-btn').disabled = true;
   const requestMode = document.getElementById('t-requestMode').value;
@@ -2326,6 +2367,17 @@ function renderResults(data) {
     pagination: true,
     paginationPageSize: 50,
     getRowStyle: p => p.data?._failed ? { background: '#ffebe6' } : null,
+    onCellClicked: params => {
+      if (params.value == null) return;
+      const text = String(params.value);
+      const copy = () => {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+        document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+        document.body.removeChild(ta); showCopyToast();
+      };
+      navigator.clipboard.writeText(text).then(showCopyToast).catch(copy);
+    },
     onGridReady: () => {
       document.getElementById('rowCountBar').textContent = rows.length + ' row' + (rows.length !== 1 ? 's' : '');
       buildColChooserT(cols);
@@ -2739,6 +2791,16 @@ function downloadJson() {
   a.click(); URL.revokeObjectURL(a.href);
 }
 
+// ─── Copy toast ───────────────────────────────────────────────────────────────
+let _copyToastTimer;
+function showCopyToast() {
+  const t = document.getElementById('copyToast');
+  if (!t) return;
+  t.style.opacity = '1';
+  clearTimeout(_copyToastTimer);
+  _copyToastTimer = setTimeout(() => { t.style.opacity = '0'; }, 1200);
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function v(id) { return document.getElementById(id)?.value ?? ''; }
 function vi(id) { const n = parseInt(v(id)); return isNaN(n) ? null : n; }
@@ -2779,6 +2841,21 @@ function resetForm() {
   setStatus('t-status', '', '');
   setStatus('save-status', '', '');
   genJson();
+}
+
+// ─── Move activities ──────────────────────────────────────────────────────────
+function moveActivityUp(id) {
+  const card = document.getElementById(`act-${id}`);
+  if (!card) return;
+  const prev = card.previousElementSibling;
+  if (prev) { card.parentNode.insertBefore(card, prev); genJson(); }
+}
+
+function moveActivityDown(id) {
+  const card = document.getElementById(`act-${id}`);
+  if (!card) return;
+  const next = card.nextElementSibling;
+  if (next) { card.parentNode.insertBefore(next, card); genJson(); }
 }
 
 // ─── Duplicate activity ───────────────────────────────────────────────────────
@@ -2982,5 +3059,6 @@ document.addEventListener('keydown', e => {
   }
 });
 </script>
+<div id="copyToast" style="position:fixed;bottom:24px;right:24px;z-index:9999;background:#172b4d;color:#fff;padding:8px 18px;border-radius:6px;font-size:13px;font-weight:500;opacity:0;pointer-events:none;transition:opacity 0.15s ease">Copied!</div>
 </body>
 </html>

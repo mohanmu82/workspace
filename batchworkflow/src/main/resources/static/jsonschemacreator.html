@@ -1,0 +1,939 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JSON Schema Creator</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ajv/6.12.6/ajv.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           background: #f4f5f7; color: #172b4d; padding: 24px; }
+    .nav { margin-bottom: 18px; }
+    .nav a { font-size: 13px; color: #0052cc; text-decoration: none; }
+    .nav a:hover { text-decoration: underline; }
+    h1 { font-size: 20px; font-weight: 600; margin-bottom: 20px; }
+
+    .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+    @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+
+    .panel { background: #fff; border: 1px solid #dfe1e6; border-radius: 6px; padding: 16px; }
+    .panel-title { font-size: 12px; font-weight: 700; text-transform: uppercase;
+                   letter-spacing: .5px; margin-bottom: 14px; color: #5e6c84; }
+    .panel-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+    .panel-header .panel-title { margin-bottom: 0; }
+
+    .form-group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+    .form-group label { font-size: 11px; font-weight: 600; color: #5e6c84;
+                        text-transform: uppercase; letter-spacing: .4px; }
+    .form-group input {
+      padding: 7px 10px; font-size: 13px; border: 1px solid #ccc; border-radius: 4px;
+      outline: none; background: #fff; font-family: inherit; width: 100%; }
+    .form-group input:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.25); }
+
+    textarea {
+      padding: 7px 10px; font-size: 12px; border: 1px solid #ccc; border-radius: 4px;
+      outline: none; background: #fff; resize: vertical;
+      font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+      width: 100%; line-height: 1.5; }
+    textarea:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.25); }
+    textarea[readonly] { background: #f4f5f7; }
+
+    .field-label { font-size: 11px; font-weight: 600; color: #5e6c84; text-transform: uppercase;
+                   letter-spacing: .4px; margin-bottom: 4px; display: block; }
+
+    .toolbar { display: flex; align-items: center; gap: 8px; margin: 8px 0; flex-wrap: wrap; }
+    button { padding: 7px 16px; font-size: 13px; font-weight: 500; border: none;
+             border-radius: 4px; cursor: pointer; white-space: nowrap; transition: background 0.1s; }
+    button.primary   { background: #0052cc; color: #fff; }
+    button.primary:hover   { background: #0065ff; }
+    button.secondary { background: #fff; color: #0052cc; border: 1px solid #0052cc; }
+    button.secondary:hover { background: #e9f0ff; }
+    button.tool-btn  { background: #f4f5f7; color: #172b4d; border: 1px solid #dfe1e6;
+                       padding: 6px 12px; font-size: 12px; }
+    button.tool-btn:hover { background: #ebecf0; }
+
+    .save-row { display: flex; gap: 8px; align-items: flex-end; margin-top: 12px; }
+    .save-row .form-group { flex: 1; margin-bottom: 0; }
+
+    select { padding: 7px 10px; font-size: 13px; border: 1px solid #ccc; border-radius: 4px;
+             outline: none; background: #fff; font-family: inherit; }
+    select:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.25); }
+
+    .schema-select-row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+    .divider { border: none; border-top: 1px solid #dfe1e6; margin: 14px 0; }
+
+    .status { font-size: 13px; min-height: 20px; margin-top: 8px; }
+    .status.ok    { color: #006644; }
+    .status.error { color: #de350b; }
+
+    .result-box {
+      margin-top: 10px; padding: 12px; border-radius: 4px; font-size: 13px;
+      line-height: 1.6; border: 1px solid #dfe1e6; background: #f4f5f7; min-height: 52px; }
+    .result-box.valid   { background: #e3fcef; border-color: #00875a; color: #006644; }
+    .result-box.invalid { background: #ffebe6; border-color: #ff8f73; color: #bf2600; }
+    .result-box ul { padding-left: 18px; margin-top: 6px; }
+    .result-box li { margin-bottom: 4px; }
+    .result-box code { background: rgba(0,0,0,.07); border-radius: 3px; padding: 1px 4px;
+                       font-family: "Cascadia Code", Consolas, monospace; font-size: 11px; }
+
+    /* ── Schema Editor ─────────────────────────────────────────────────────── */
+    #editorPanel { display: none; margin-top: 16px; }
+
+    /* Schema-level options bar */
+    .schema-opts {
+      background: #f8f9fa; border: 1px solid #e8eaed; border-radius: 4px;
+      padding: 10px 14px; margin-bottom: 14px; font-size: 13px; }
+    .opts-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+    .opts-label { font-size: 11px; font-weight: 700; text-transform: uppercase;
+                  letter-spacing: .4px; color: #5e6c84; white-space: nowrap; }
+    .opts-radio { display: flex; align-items: center; gap: 4px; font-size: 13px; cursor: pointer; }
+    .opts-radio input { cursor: pointer; }
+    .opts-sep { color: #dfe1e6; }
+
+    /* Dependent required rows */
+    .dep-header { display: flex; align-items: center; gap: 10px; margin-top: 8px; padding-top: 8px;
+                  border-top: 1px solid #e8eaed; }
+    #depReqList { margin-top: 6px; display: flex; flex-direction: column; gap: 5px; }
+    .dep-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .dep-kw { font-size: 11px; color: #5e6c84; font-weight: 600; text-transform: uppercase;
+              letter-spacing: .3px; white-space: nowrap; }
+    .dep-row input[type="text"] {
+      padding: 4px 8px; font-size: 13px; border: 1px solid #dfe1e6; border-radius: 3px;
+      outline: none; background: #fff; font-family: inherit; }
+    .dep-row input[type="text"]:focus { border-color: #4c9aff; }
+    .dep-field    { width: 140px; }
+    .dep-requires { width: 280px; }
+
+    /* Editor table */
+    .editor-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .editor-table th {
+      background: #f4f5f7; border-bottom: 2px solid #dfe1e6; padding: 7px 10px;
+      text-align: left; font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .4px; color: #5e6c84; white-space: nowrap; }
+    .editor-table th.center { text-align: center; }
+    .editor-table td { border-bottom: 1px solid #f0f1f3; padding: 4px 6px; vertical-align: middle; }
+    .editor-table tbody tr:not(.constraint-row):hover td { background: #fafbfc; }
+    .editor-table tr.add-row td { border-bottom: none; background: transparent !important;
+                                   padding-top: 2px; padding-bottom: 6px; }
+
+    .name-cell { display: flex; align-items: center; gap: 3px; }
+    .expand-btn { background: none; border: none; cursor: pointer; padding: 0 2px;
+                  font-size: 10px; color: #5e6c84; min-width: 18px; flex-shrink: 0; }
+    .expand-placeholder { display: inline-block; min-width: 18px; flex-shrink: 0; }
+
+    .editor-table input[type="text"] {
+      padding: 4px 7px; font-size: 13px; border: 1px solid #dfe1e6; border-radius: 3px;
+      outline: none; background: #fff; font-family: inherit; width: 100%; }
+    .editor-table input[type="text"]:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.2); }
+    .editor-table select {
+      padding: 4px 6px; font-size: 12px; border: 1px solid #dfe1e6; border-radius: 3px;
+      outline: none; background: #fff; }
+    .editor-table input[type="checkbox"] { width: 15px; height: 15px; cursor: pointer; }
+
+    .type-cell { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+    .item-type-label { font-size: 11px; color: #5e6c84; white-space: nowrap; }
+
+    .col-name { width: 220px; }
+    .col-type { width: 200px; }
+    .col-req  { width: 66px; }
+    .col-act  { width: 76px; white-space: nowrap; }
+
+    /* Action buttons in rows */
+    .del-btn { padding: 3px 7px; font-size: 12px; background: #fff; color: #de350b;
+               border: 1px solid #dfe1e6; border-radius: 3px; cursor: pointer; }
+    .del-btn:hover { background: #ffebe6; border-color: #ff8f73; }
+    .constr-btn { padding: 3px 7px; font-size: 12px; background: #fff; color: #5e6c84;
+                  border: 1px solid #dfe1e6; border-radius: 3px; cursor: pointer; }
+    .constr-btn:hover { background: #f4f5f7; }
+    .constr-btn.active { background: #e9f0ff; border-color: #4c9aff; color: #0052cc; }
+    .add-btn { font-size: 12px; padding: 4px 10px; }
+
+    /* Constraint sub-rows */
+    .constraint-row td { background: #f0f4ff; border-bottom: 1px solid #d8e0f0; padding: 6px 10px 8px; }
+    .constraint-inner { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .c-group { display: flex; align-items: center; gap: 5px; }
+    .c-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px;
+               color: #5e6c84; white-space: nowrap; }
+    .c-input-sm { width: 72px; padding: 3px 6px; font-size: 12px; border: 1px solid #c5cee0;
+                  border-radius: 3px; outline: none; }
+    .c-input-sm:focus { border-color: #4c9aff; }
+    .c-input-lg { width: 260px; padding: 3px 6px; font-size: 12px; border: 1px solid #c5cee0;
+                  border-radius: 3px; outline: none; }
+    .c-input-lg:focus { border-color: #4c9aff; }
+    .c-sep { color: #c5cee0; font-size: 16px; margin: 0 2px; }
+    .c-check { display: flex; align-items: center; gap: 4px; font-size: 12px;
+               color: #172b4d; cursor: pointer; }
+    .c-check input { cursor: pointer; width: 13px; height: 13px; }
+    .c-radio { display: flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer; }
+    .c-radio input { cursor: pointer; }
+
+    /* Footer */
+    .editor-footer { display: flex; justify-content: space-between; align-items: center;
+                     margin-top: 12px; padding-top: 12px; border-top: 1px solid #dfe1e6; }
+    .editor-footer .foot-right { display: flex; gap: 8px; }
+  </style>
+</head>
+<body>
+
+<div class="nav"><a href="index.html">&#8592; Back</a></div>
+<h1>JSON Schema Creator</h1>
+
+<div class="layout">
+
+  <!-- LEFT: Schema Creator -->
+  <div class="panel">
+    <div class="panel-title">Schema Creator</div>
+
+    <span class="field-label">Sample JSON</span>
+    <div class="form-group" style="margin-bottom:8px;">
+      <textarea id="jsonInput" rows="10" placeholder='Paste a sample JSON object or array here...'></textarea>
+    </div>
+    <div class="toolbar">
+      <button class="primary" onclick="generateSchema()">Generate Schema</button>
+      <button class="tool-btn" onclick="prettyInput()">Pretty Print</button>
+      <button class="tool-btn" onclick="clearCreator()">Clear</button>
+    </div>
+
+    <hr class="divider">
+
+    <span class="field-label">Generated Schema <span style="font-size:10px;text-transform:none;letter-spacing:0;font-weight:400;">(editable)</span></span>
+    <div class="form-group" style="margin-bottom:8px;">
+      <textarea id="schemaOutput" rows="14" placeholder="Schema will appear here after clicking Generate Schema..."></textarea>
+    </div>
+    <div class="toolbar">
+      <button class="secondary" onclick="loadIntoForm()">&#9998; Load into Form</button>
+    </div>
+
+    <div class="save-row">
+      <div class="form-group">
+        <label>Schema Name</label>
+        <input type="text" id="schemaName" placeholder="e.g. person_schema" />
+      </div>
+      <button class="primary" onclick="saveSchema()">Save Schema</button>
+    </div>
+    <div id="saveStatus" class="status"></div>
+  </div>
+
+  <!-- RIGHT: Schema Validator -->
+  <div class="panel">
+    <div class="panel-title">Schema Validator</div>
+
+    <span class="field-label">Select Schema</span>
+    <div class="schema-select-row">
+      <select id="schemaSelect" style="flex:1;">
+        <option value="">— select saved schema —</option>
+      </select>
+      <button class="tool-btn" onclick="loadSchemas()" title="Refresh list">&#8635;</button>
+      <button class="tool-btn" onclick="useGenerated()">Use Generated</button>
+    </div>
+
+    <div id="schemaPreviewWrap" style="display:none; margin-bottom:10px;">
+      <span class="field-label">Schema Preview</span>
+      <textarea id="schemaPreview" rows="10" readonly></textarea>
+    </div>
+
+    <hr class="divider">
+
+    <span class="field-label">JSON to Validate</span>
+    <div class="form-group" style="margin-bottom:8px;">
+      <textarea id="validateInput" rows="14" placeholder='Paste JSON to validate against the selected schema...'></textarea>
+    </div>
+    <div class="toolbar">
+      <button class="primary" onclick="validateJson()">Validate</button>
+      <button class="tool-btn" onclick="prettyValidate()">Pretty Print</button>
+      <button class="tool-btn" onclick="clearValidator()">Clear</button>
+    </div>
+
+    <div id="validationResult" class="result-box" style="display:none;"></div>
+  </div>
+
+</div>
+
+<!-- Schema Editor (full-width, below two-column layout) -->
+<div id="editorPanel" class="panel">
+  <div class="panel-header">
+    <span class="panel-title">Schema Editor</span>
+    <div style="display:flex;gap:8px;">
+      <button class="primary" onclick="applyForm()">Apply to Schema</button>
+      <button class="tool-btn" onclick="closeEditor()">&#10005; Close</button>
+    </div>
+  </div>
+
+  <!-- Schema-level options -->
+  <div class="schema-opts">
+    <div class="opts-row">
+      <span class="opts-label">Additional Properties:</span>
+      <label class="opts-radio"><input type="radio" id="addlPropsAllow" name="rootAddlProps" value="true"  onchange="rootMeta.additionalProperties=true">  Allow</label>
+      <label class="opts-radio"><input type="radio" id="addlPropsDeny"  name="rootAddlProps" value="false" onchange="rootMeta.additionalProperties=false"> Deny</label>
+    </div>
+    <div class="dep-header">
+      <span class="opts-label">Dependent Required</span>
+      <button class="tool-btn add-btn" onclick="addDepReq()">+ Add</button>
+      <span style="font-size:11px;color:#5e6c84;">If a field is present, require other fields.</span>
+    </div>
+    <div id="depReqList"></div>
+  </div>
+
+  <table class="editor-table">
+    <thead>
+      <tr>
+        <th class="col-name">Field Name</th>
+        <th class="col-type">Type</th>
+        <th>Description</th>
+        <th class="col-req center">Required</th>
+        <th class="col-act center">Actions</th>
+      </tr>
+    </thead>
+    <tbody id="editorTbody"></tbody>
+  </table>
+
+  <div class="editor-footer">
+    <div>
+      <button class="tool-btn add-btn" onclick="addField(null)">+ Add Field</button>
+    </div>
+    <div class="foot-right">
+      <button class="primary" onclick="applyForm()">Apply to Schema</button>
+      <button class="tool-btn" onclick="closeEditor()">&#10005; Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ── Schema Generation ────────────────────────────────────────────────────────
+
+  function inferSchema(value) {
+    if (value === null) return { type: 'null' };
+    if (typeof value === 'boolean') return { type: 'boolean' };
+    if (typeof value === 'number') {
+      return Number.isInteger(value) ? { type: 'integer' } : { type: 'number' };
+    }
+    if (typeof value === 'string') return { type: 'string' };
+    if (Array.isArray(value)) {
+      const schema = { type: 'array' };
+      if (value.length > 0) {
+        const subs = value.map(inferSchema);
+        schema.items = subs.length === 1 ? subs[0] : mergeSchemas(subs);
+      }
+      return schema;
+    }
+    if (typeof value === 'object') {
+      const schema = { type: 'object', properties: {}, required: [] };
+      for (const [k, v] of Object.entries(value)) {
+        schema.properties[k] = inferSchema(v);
+        schema.required.push(k);
+      }
+      if (!schema.required.length) delete schema.required;
+      if (!Object.keys(schema.properties).length) delete schema.properties;
+      schema.additionalProperties = true;
+      return schema;
+    }
+    return {};
+  }
+
+  function mergeSchemas(schemas) {
+    const types = [...new Set(schemas.map(s => s.type).filter(Boolean))];
+    if (types.length === 1 && types[0] === 'object') {
+      const merged = { type: 'object', properties: {}, additionalProperties: true };
+      const allKeys = new Set(schemas.flatMap(s => Object.keys(s.properties || {})));
+      const reqAll = [...allKeys].filter(k => schemas.every(s => s.required?.includes(k)));
+      for (const key of allKeys) {
+        const ps = schemas.filter(s => s.properties?.[key]).map(s => s.properties[key]);
+        merged.properties[key] = ps.length === 1 ? ps[0] : mergeSchemas(ps);
+      }
+      if (reqAll.length) merged.required = reqAll;
+      return merged;
+    }
+    if (types.length === 1) return schemas[0];
+    return { oneOf: [...new Map(schemas.map(s => [JSON.stringify(s), s])).values()] };
+  }
+
+  function generateSchema() {
+    const raw = document.getElementById('jsonInput').value.trim();
+    if (!raw) { alert('Please enter sample JSON first.'); return; }
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch (e) { alert('Invalid JSON: ' + e.message); return; }
+    const schema = { $schema: 'http://json-schema.org/draft-07/schema#', ...inferSchema(parsed) };
+    document.getElementById('schemaOutput').value = JSON.stringify(schema, null, 2);
+  }
+
+  function prettyInput() {
+    const ta = document.getElementById('jsonInput');
+    try { ta.value = JSON.stringify(JSON.parse(ta.value), null, 2); } catch (e) { alert('Invalid JSON: ' + e.message); }
+  }
+
+  function clearCreator() {
+    document.getElementById('jsonInput').value = '';
+    document.getElementById('schemaOutput').value = '';
+    document.getElementById('schemaName').value = '';
+    setStatus('saveStatus', '', '');
+    closeEditor();
+  }
+
+  // ── Save Schema ──────────────────────────────────────────────────────────────
+
+  async function saveSchema() {
+    const name = document.getElementById('schemaName').value.trim();
+    const schemaText = document.getElementById('schemaOutput').value.trim();
+    if (!name)       { setStatus('saveStatus', 'Schema name is required.', 'error'); return; }
+    if (!schemaText) { setStatus('saveStatus', 'Generate or write a schema first.', 'error'); return; }
+    let content;
+    try { content = JSON.parse(schemaText); } catch (e) {
+      setStatus('saveStatus', 'Schema is not valid JSON: ' + e.message, 'error'); return;
+    }
+    try {
+      const res = await fetch('/batch/jsonschema', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, content })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setStatus('saveStatus', 'Error: ' + (data?.Errors?.[0]?.message || JSON.stringify(data)), 'error');
+      } else {
+        setStatus('saveStatus', 'Saved ✔ ' + (data.path || name + '.json'), 'ok');
+        loadSchemas();
+      }
+    } catch (e) { setStatus('saveStatus', 'Save failed: ' + e.message, 'error'); }
+  }
+
+  // ── Schema Selector ──────────────────────────────────────────────────────────
+
+  async function loadSchemas() {
+    try {
+      const res  = await fetch('/batch/jsonschema');
+      const data = await res.json();
+      const sel  = document.getElementById('schemaSelect');
+      const cur  = sel.value;
+      while (sel.options.length > 1) sel.remove(1);
+      (data.names || []).forEach(n => {
+        const opt = document.createElement('option');
+        opt.value = n; opt.textContent = n; sel.appendChild(opt);
+      });
+      if (cur && [...sel.options].some(o => o.value === cur)) sel.value = cur;
+    } catch (e) { /* server may not be running */ }
+  }
+
+  document.getElementById('schemaSelect').addEventListener('change', async function () {
+    const name = this.value;
+    if (!name) { document.getElementById('schemaPreviewWrap').style.display = 'none'; return; }
+    try {
+      const res  = await fetch('/batch/jsonschema/' + encodeURIComponent(name));
+      const data = await res.json();
+      document.getElementById('schemaPreview').value = JSON.stringify(data.content, null, 2);
+      document.getElementById('schemaPreviewWrap').style.display = 'block';
+    } catch (e) { /* ignore */ }
+  });
+
+  function useGenerated() {
+    const schema = document.getElementById('schemaOutput').value.trim();
+    if (!schema) { alert('Generate a schema first using the left panel.'); return; }
+    document.getElementById('schemaPreview').value = schema;
+    document.getElementById('schemaPreviewWrap').style.display = 'block';
+    document.getElementById('schemaSelect').value = '';
+  }
+
+  // ── Validation ───────────────────────────────────────────────────────────────
+
+  function validateJson() {
+    const schemaText = document.getElementById('schemaPreview').value.trim()
+                    || document.getElementById('schemaOutput').value.trim();
+    const jsonText   = document.getElementById('validateInput').value.trim();
+    const resultEl   = document.getElementById('validationResult');
+    resultEl.style.display = 'block';
+    if (!schemaText) {
+      resultEl.className = 'result-box invalid';
+      resultEl.innerHTML = '<strong>No schema selected.</strong> Select a saved schema or click "Use Generated".';
+      return;
+    }
+    if (!jsonText) {
+      resultEl.className = 'result-box invalid';
+      resultEl.innerHTML = '<strong>No JSON provided.</strong> Paste JSON in the input field.';
+      return;
+    }
+    let schema, data;
+    try { schema = JSON.parse(schemaText); } catch (e) {
+      resultEl.className = 'result-box invalid'; resultEl.innerHTML = '<strong>Schema parse error:</strong> ' + esc(e.message); return;
+    }
+    try { data = JSON.parse(jsonText); } catch (e) {
+      resultEl.className = 'result-box invalid'; resultEl.innerHTML = '<strong>JSON parse error:</strong> ' + esc(e.message); return;
+    }
+    const ajv      = new Ajv({ allErrors: true });
+    const validate = ajv.compile(schema);
+    const valid    = validate(data);
+    if (valid) {
+      resultEl.className = 'result-box valid';
+      resultEl.innerHTML = '<strong>&#10003; Valid</strong> &mdash; JSON conforms to the schema.';
+    } else {
+      const errs = validate.errors.map(e =>
+        `<li><code>${esc(e.dataPath || '(root)')}</code>: ${esc(e.message)}</li>`).join('');
+      resultEl.className = 'result-box invalid';
+      resultEl.innerHTML = `<strong>&#10005; Invalid</strong> &mdash; ${validate.errors.length} error(s):<ul>${errs}</ul>`;
+    }
+  }
+
+  function prettyValidate() {
+    const ta = document.getElementById('validateInput');
+    try { ta.value = JSON.stringify(JSON.parse(ta.value), null, 2); } catch (e) { alert('Invalid JSON: ' + e.message); }
+  }
+
+  function clearValidator() {
+    document.getElementById('validateInput').value = '';
+    document.getElementById('validationResult').style.display = 'none';
+    document.getElementById('schemaSelect').value = '';
+    document.getElementById('schemaPreviewWrap').style.display = 'none';
+  }
+
+  // ── Schema Editor — state ────────────────────────────────────────────────────
+
+  let nodes = [];
+  let nid   = 0;
+  const genId = () => 'n' + (++nid);
+
+  // Root-level schema metadata & options
+  let rootMeta = {
+    $schema: '',
+    type: 'object',
+    additionalProperties: true,
+    dependentRequired: []   // [{ id, field, requires }]
+  };
+
+  // ── Load into form ───────────────────────────────────────────────────────────
+
+  function loadIntoForm() {
+    const txt = document.getElementById('schemaOutput').value.trim();
+    if (!txt) { alert('No schema to load. Generate or write a schema first.'); return; }
+    let schema;
+    try { schema = JSON.parse(txt); } catch (e) { alert('Invalid JSON schema: ' + e.message); return; }
+
+    rootMeta = {
+      $schema: schema.$schema || '',
+      type:    schema.type || 'object',
+      additionalProperties: schema.additionalProperties !== false,
+      dependentRequired: []
+    };
+
+    // Parse dependentRequired
+    if (schema.dependentRequired && typeof schema.dependentRequired === 'object') {
+      for (const [field, req] of Object.entries(schema.dependentRequired)) {
+        rootMeta.dependentRequired.push({
+          id: genId(), field,
+          requires: Array.isArray(req) ? req.join(', ') : String(req)
+        });
+      }
+    }
+
+    nodes = [];
+    if (schema.type === 'object' && schema.properties) {
+      const req = schema.required || [];
+      for (const [k, ps] of Object.entries(schema.properties)) addParsedNode(k, ps, null, req.includes(k));
+    } else if (schema.type === 'array' && schema.items?.type === 'object' && schema.items.properties) {
+      const req = schema.items.required || [];
+      for (const [k, ps] of Object.entries(schema.items.properties)) addParsedNode(k, ps, null, req.includes(k));
+    }
+
+    renderEditor();
+    syncSchemaOptions();
+
+    const panel = document.getElementById('editorPanel');
+    panel.style.display = 'block';
+    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function addParsedNode(key, schema, parentId, required) {
+    const id       = genId();
+    const itemType = (schema.type === 'array' && schema.items) ? (schema.items.type || 'string') : 'string';
+    const enumVals = Array.isArray(schema.enum)
+      ? schema.enum.map(v => (typeof v === 'string' ? v : JSON.stringify(v))).join(', ')
+      : '';
+    const hasConstraints = !!(enumVals || schema.minLength != null || schema.maxLength != null
+                            || schema.minItems != null || schema.uniqueItems
+                            || schema.additionalProperties === false);
+
+    nodes.push({
+      id, parentId, key,
+      type:        schema.type || 'string',
+      description: schema.description || '',
+      required:    !!required,
+      collapsed:   false,
+      itemType,
+      // string
+      minLength: schema.minLength ?? null,
+      maxLength: schema.maxLength ?? null,
+      // array
+      minItems:    schema.minItems ?? null,
+      uniqueItems: !!schema.uniqueItems,
+      // enum
+      enumValues: enumVals,
+      // object
+      additionalProperties: schema.additionalProperties !== false,
+      // ui
+      showConstraints: hasConstraints
+    });
+
+    if (schema.type === 'object' && schema.properties) {
+      const req = schema.required || [];
+      for (const [k, s] of Object.entries(schema.properties)) addParsedNode(k, s, id, req.includes(k));
+    }
+    if (schema.type === 'array' && schema.items?.type === 'object' && schema.items.properties) {
+      const req = schema.items.required || [];
+      for (const [k, s] of Object.entries(schema.items.properties)) addParsedNode(k, s, id, req.includes(k));
+    }
+  }
+
+  // ── Render editor table ──────────────────────────────────────────────────────
+
+  function renderEditor() {
+    const tbody = document.getElementById('editorTbody');
+    tbody.innerHTML = '';
+    renderLevel(null, 0, tbody);
+  }
+
+  function renderLevel(parentId, depth, tbody) {
+    for (const node of nodes.filter(n => n.parentId === parentId)) {
+      appendRow(node, depth, tbody);
+      if (node.showConstraints) appendConstraintRow(node, depth, tbody);
+
+      const expandable = node.type === 'object' || node.type === 'array';
+      if (expandable && !node.collapsed) {
+        renderLevel(node.id, depth + 1, tbody);
+        const tr = document.createElement('tr');
+        tr.className = 'add-row';
+        tr.innerHTML = `<td colspan="5" style="padding-left:${(depth + 1) * 22 + 4}px">` +
+          `<button class="tool-btn add-btn" onclick="addField('${node.id}')">` +
+          `+ Add ${node.type === 'array' ? 'item field' : 'child field'}</button></td>`;
+        tbody.appendChild(tr);
+      }
+    }
+  }
+
+  function appendRow(node, depth, tbody) {
+    const expandable = node.type === 'object' || node.type === 'array';
+    const expandBtn  = expandable
+      ? `<button class="expand-btn" onclick="toggleCollapse('${node.id}')">${node.collapsed ? '&#9654;' : '&#9660;'}</button>`
+      : `<span class="expand-placeholder"></span>`;
+
+    const typeOpts = ['string','number','integer','boolean','object','array','null']
+      .map(t => `<option value="${t}"${node.type === t ? ' selected' : ''}>${t}</option>`).join('');
+
+    const itemSel = node.type === 'array'
+      ? `<span class="item-type-label">of</span>` +
+        `<select onchange="updateAndRender('${node.id}','itemType',this.value)">` +
+        ['string','number','integer','boolean','object','null']
+          .map(t => `<option value="${t}"${(node.itemType||'string')===t?' selected':''}>${t}</option>`).join('') +
+        `</select>`
+      : '';
+
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      `<td style="padding-left:${depth * 22}px"><div class="name-cell">${expandBtn}` +
+        `<input type="text" value="${esc(node.key)}" placeholder="field name"` +
+        ` oninput="updateSilent('${node.id}','key',this.value)"></div></td>` +
+      `<td><div class="type-cell">` +
+        `<select onchange="updateAndRender('${node.id}','type',this.value)">${typeOpts}</select>${itemSel}` +
+      `</div></td>` +
+      `<td><input type="text" value="${esc(node.description)}" placeholder="description&hellip;"` +
+        ` oninput="updateSilent('${node.id}','description',this.value)"></td>` +
+      `<td style="text-align:center">` +
+        `<input type="checkbox" ${node.required ? 'checked' : ''}` +
+        ` onchange="updateSilent('${node.id}','required',this.checked)"></td>` +
+      `<td style="text-align:right;white-space:nowrap">` +
+        `<button class="constr-btn${node.showConstraints ? ' active' : ''}"` +
+        ` onclick="toggleConstraints('${node.id}')" title="Toggle constraints">&#9881;</button> ` +
+        `<button class="del-btn" onclick="deleteField('${node.id}')">&#10005;</button></td>`;
+    tbody.appendChild(tr);
+  }
+
+  function appendConstraintRow(node, depth, tbody) {
+    let parts = [];
+
+    // ── Enum (all types except null) ──
+    if (node.type !== 'null') {
+      parts.push(
+        `<div class="c-group">` +
+          `<span class="c-label">Enum:</span>` +
+          `<input class="c-input-lg" type="text" value="${esc(node.enumValues)}"` +
+          ` placeholder="val1, val2, &hellip;"` +
+          ` oninput="updateSilent('${node.id}','enumValues',this.value)">` +
+        `</div>`
+      );
+    }
+
+    // ── String: minLength / maxLength ──
+    if (node.type === 'string') {
+      parts.push(
+        `<span class="c-sep">|</span>` +
+        `<div class="c-group"><span class="c-label">Min Length:</span>` +
+          `<input class="c-input-sm" type="number" min="0" value="${node.minLength ?? ''}" placeholder="&mdash;"` +
+          ` oninput="updateSilent('${node.id}','minLength',this.value===''?null:+this.value)"></div>` +
+        `<div class="c-group"><span class="c-label">Max Length:</span>` +
+          `<input class="c-input-sm" type="number" min="0" value="${node.maxLength ?? ''}" placeholder="&mdash;"` +
+          ` oninput="updateSilent('${node.id}','maxLength',this.value===''?null:+this.value)"></div>`
+      );
+    }
+
+    // ── Array: minItems / uniqueItems ──
+    if (node.type === 'array') {
+      parts.push(
+        `<span class="c-sep">|</span>` +
+        `<div class="c-group"><span class="c-label">Min Items:</span>` +
+          `<input class="c-input-sm" type="number" min="0" value="${node.minItems ?? ''}" placeholder="&mdash;"` +
+          ` oninput="updateSilent('${node.id}','minItems',this.value===''?null:+this.value)"></div>` +
+        `<label class="c-check">` +
+          `<input type="checkbox" ${node.uniqueItems ? 'checked' : ''}` +
+          ` onchange="updateSilent('${node.id}','uniqueItems',this.checked)">` +
+          `Unique Items</label>`
+      );
+    }
+
+    // ── Object: additionalProperties ──
+    if (node.type === 'object') {
+      const allow = node.additionalProperties !== false;
+      parts.push(
+        `<span class="c-sep">|</span>` +
+        `<span class="c-label">Additional Props:</span>` +
+        `<label class="c-radio"><input type="radio" name="ap_${node.id}" value="true"  ${allow ? 'checked' : ''}` +
+          ` onchange="updateSilent('${node.id}','additionalProperties',true)"> Allow</label>` +
+        `<label class="c-radio"><input type="radio" name="ap_${node.id}" value="false" ${!allow ? 'checked' : ''}` +
+          ` onchange="updateSilent('${node.id}','additionalProperties',false)"> Deny</label>`
+      );
+    }
+
+    const tr = document.createElement('tr');
+    tr.className = 'constraint-row';
+    tr.innerHTML = `<td colspan="5" style="padding-left:${depth * 22 + 14}px">` +
+      `<div class="constraint-inner">${parts.join('')}</div></td>`;
+    tbody.appendChild(tr);
+  }
+
+  // ── Schema options sync ──────────────────────────────────────────────────────
+
+  function syncSchemaOptions() {
+    document.getElementById('addlPropsAllow').checked = rootMeta.additionalProperties !== false;
+    document.getElementById('addlPropsDeny').checked  = rootMeta.additionalProperties === false;
+    renderDepReqList();
+  }
+
+  // ── Dependent Required ───────────────────────────────────────────────────────
+
+  function renderDepReqList() {
+    const el = document.getElementById('depReqList');
+    if (!rootMeta.dependentRequired.length) { el.innerHTML = ''; return; }
+    el.innerHTML = rootMeta.dependentRequired.map(e =>
+      `<div class="dep-row" id="dr-${e.id}">` +
+        `<span class="dep-kw">If</span>` +
+        `<input class="dep-field" type="text" value="${esc(e.field)}" placeholder="field"` +
+        ` oninput="updateDepReqSilent('${e.id}','field',this.value)">` +
+        `<span class="dep-kw">is present, also require:</span>` +
+        `<input class="dep-requires" type="text" value="${esc(e.requires)}" placeholder="field1, field2, &hellip;"` +
+        ` oninput="updateDepReqSilent('${e.id}','requires',this.value)">` +
+        `<button class="del-btn" onclick="removeDepReq('${e.id}')">&#10005;</button>` +
+      `</div>`
+    ).join('');
+  }
+
+  function addDepReq() {
+    rootMeta.dependentRequired.push({ id: genId(), field: '', requires: '' });
+    renderDepReqList();
+    const inputs = document.querySelectorAll('#depReqList .dep-field');
+    if (inputs.length) inputs[inputs.length - 1].focus();
+  }
+
+  function removeDepReq(id) {
+    rootMeta.dependentRequired = rootMeta.dependentRequired.filter(e => e.id !== id);
+    renderDepReqList();
+  }
+
+  function updateDepReqSilent(id, field, value) {
+    const e = rootMeta.dependentRequired.find(x => x.id === id);
+    if (e) e[field] = value;
+  }
+
+  // ── Node mutations ───────────────────────────────────────────────────────────
+
+  function updateSilent(id, field, value) {
+    const n = nodes.find(x => x.id === id);
+    if (n) n[field] = value;
+  }
+
+  function updateAndRender(id, field, value) {
+    const n = nodes.find(x => x.id === id);
+    if (!n) return;
+    const prevType = n.type;
+    n[field] = value;
+    if (field === 'type' && prevType !== value) {
+      const wasExpandable = prevType === 'object' || prevType === 'array';
+      const desc = getAllDescendants(id);
+      if (wasExpandable && desc.length) {
+        if (!confirm(`Changing type from "${prevType}" to "${value}" removes ${desc.length} nested field(s). Continue?`)) {
+          n.type = prevType; renderEditor(); return;
+        }
+        const rm = new Set(desc);
+        nodes = nodes.filter(x => !rm.has(x.id));
+      }
+    }
+    renderEditor();
+  }
+
+  function toggleCollapse(id) {
+    const n = nodes.find(x => x.id === id);
+    if (n) { n.collapsed = !n.collapsed; renderEditor(); }
+  }
+
+  function toggleConstraints(id) {
+    const n = nodes.find(x => x.id === id);
+    if (n) { n.showConstraints = !n.showConstraints; renderEditor(); }
+  }
+
+  function addField(parentId) {
+    if (parentId) {
+      const p = nodes.find(x => x.id === parentId);
+      if (p) p.collapsed = false;
+    }
+    nodes.push({
+      id: genId(), parentId, key: '', type: 'string', description: '',
+      required: false, collapsed: false, itemType: 'string',
+      minLength: null, maxLength: null, minItems: null, uniqueItems: false,
+      enumValues: '', additionalProperties: true, showConstraints: false
+    });
+    renderEditor();
+    const rows = document.querySelectorAll('#editorTbody tr:not(.add-row):not(.constraint-row)');
+    if (rows.length) rows[rows.length - 1].querySelector('input[type="text"]')?.focus();
+  }
+
+  function deleteField(id) {
+    const desc = getAllDescendants(id);
+    const msg  = desc.length ? `Delete this field and its ${desc.length} nested field(s)?` : 'Delete this field?';
+    if (!confirm(msg)) return;
+    const rm = new Set([id, ...desc]);
+    nodes = nodes.filter(x => !rm.has(x.id));
+    renderEditor();
+  }
+
+  function getAllDescendants(id) {
+    const result = [], stack = [id];
+    while (stack.length) {
+      const pid = stack.pop();
+      nodes.filter(n => n.parentId === pid).forEach(c => { result.push(c.id); stack.push(c.id); });
+    }
+    return result;
+  }
+
+  // ── Build schema from editor state ──────────────────────────────────────────
+
+  function applyForm() {
+    document.getElementById('schemaOutput').value = JSON.stringify(buildSchema(), null, 2);
+    setStatus('saveStatus', 'Form applied to schema ✔', 'ok');
+  }
+
+  function buildSchema() {
+    const base = { $schema: rootMeta.$schema || 'http://json-schema.org/draft-07/schema#' };
+    const addlProps = rootMeta.additionalProperties !== false;
+    const rootChildren = nodes.filter(n => n.parentId === null && n.key);
+
+    let schema;
+    if (rootMeta.type === 'array') {
+      let items;
+      if (rootChildren.length) {
+        items = { type: 'object', additionalProperties: addlProps, properties: {} };
+        const req = [];
+        for (const n of rootChildren) { items.properties[n.key] = buildNodeSchema(n); if (n.required) req.push(n.key); }
+        if (req.length) items.required = req;
+      } else {
+        items = { type: 'string' };
+      }
+      schema = { ...base, type: 'array', items };
+    } else {
+      schema = { ...base, type: 'object', additionalProperties: addlProps };
+      if (rootChildren.length) {
+        schema.properties = {};
+        const req = [];
+        for (const n of rootChildren) { schema.properties[n.key] = buildNodeSchema(n); if (n.required) req.push(n.key); }
+        if (req.length) schema.required = req;
+      }
+    }
+
+    // dependentRequired
+    const depReq = {};
+    for (const e of rootMeta.dependentRequired) {
+      if (e.field && e.requires) {
+        const deps = e.requires.split(',').map(v => v.trim()).filter(Boolean);
+        if (deps.length) depReq[e.field] = deps;
+      }
+    }
+    if (Object.keys(depReq).length) schema.dependentRequired = depReq;
+
+    return schema;
+  }
+
+  function buildNodeSchema(node) {
+    const s = { type: node.type };
+    if (node.description) s.description = node.description;
+
+    // Enum
+    if (node.type !== 'null' && node.enumValues && node.enumValues.trim()) {
+      const vals = node.enumValues.split(',').map(v => v.trim()).filter(Boolean);
+      if (vals.length) {
+        s.enum = vals.map(v => {
+          if (node.type === 'number' || node.type === 'integer') { const n = +v; return isNaN(n) ? v : n; }
+          if (node.type === 'boolean') return v === 'true';
+          return v;
+        });
+      }
+    }
+
+    // String constraints
+    if (node.type === 'string') {
+      if (node.minLength !== null && node.minLength !== '') s.minLength = +node.minLength;
+      if (node.maxLength !== null && node.maxLength !== '') s.maxLength = +node.maxLength;
+    }
+
+    const children = nodes.filter(n => n.parentId === node.id && n.key);
+
+    // Array constraints + item schema
+    if (node.type === 'array') {
+      if (node.minItems !== null && node.minItems !== '') s.minItems = +node.minItems;
+      if (node.uniqueItems) s.uniqueItems = true;
+      if (children.length) {
+        const items = { type: 'object', additionalProperties: true, properties: {} };
+        const req = [];
+        for (const c of children) { items.properties[c.key] = buildNodeSchema(c); if (c.required) req.push(c.key); }
+        if (req.length) items.required = req;
+        s.items = items;
+      } else {
+        s.items = { type: node.itemType || 'string' };
+      }
+    }
+
+    // Object constraints + properties
+    if (node.type === 'object') {
+      s.additionalProperties = node.additionalProperties !== false;
+      if (children.length) {
+        s.properties = {};
+        const req = [];
+        for (const c of children) { s.properties[c.key] = buildNodeSchema(c); if (c.required) req.push(c.key); }
+        if (req.length) s.required = req;
+      }
+    }
+
+    return s;
+  }
+
+  function closeEditor() {
+    document.getElementById('editorPanel').style.display = 'none';
+  }
+
+  // ── Utilities ────────────────────────────────────────────────────────────────
+
+  function setStatus(id, msg, cls) {
+    const el = document.getElementById(id);
+    el.textContent = msg; el.className = 'status ' + cls;
+  }
+
+  function esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  loadSchemas();
+</script>
+</body>
+</html>
