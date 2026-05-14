@@ -104,6 +104,8 @@ public class BatchProperties {
         private String                        mandatoryAttributes  = "";
         private List<MandatoryPropertyDef>   mandatoryProperties  = new ArrayList<>();
         private ColumnTemplateProperties columnTemplate;     // null → derive from results
+        /** Structured per-column config (link templates, colours, availability). Supersedes {@code columnTemplate} when non-empty. */
+        private List<ColumnConfig> columns = new ArrayList<>();
         /** Operation-level properties — merged from static attributes, file, and HTTP source. */
         private OperationPropertiesConfig properties = new OperationPropertiesConfig();
         /** Named request presets — selected at runtime via {@code "alias":"NAME"} in the request. */
@@ -154,6 +156,9 @@ public class BatchProperties {
 
         public ColumnTemplateProperties getColumnTemplate()                          { return columnTemplate; }
         public void                     setColumnTemplate(ColumnTemplateProperties t) { this.columnTemplate = t; }
+
+        public List<ColumnConfig> getColumns()                           { return columns; }
+        public void               setColumns(List<ColumnConfig> list)    { this.columns = list != null ? list : new ArrayList<>(); }
 
         public OperationPropertiesConfig getProperties()                                   { return properties; }
         public void setProperties(OperationPropertiesConfig p)                            { this.properties = p != null ? p : new OperationPropertiesConfig(); }
@@ -654,6 +659,35 @@ public class BatchProperties {
 
         public String getEnhancer()           { return enhancer; }
         public void   setEnhancer(String e)   { this.enhancer = e; }
+    }
+
+    // -------------------------------------------------------------------------
+    // Column config — per-column settings stored as "columns" array in operation JSON
+    // -------------------------------------------------------------------------
+
+    public static class ColumnConfig {
+        private String  columnName;
+        private String  displayName;
+        /** REQUIRED (default) | IFAVAILABLE | ERRORCOLUMN */
+        private String  availability = "REQUIRED";
+        /** Link template, e.g. {@code https://pubmed.ncbi.nlm.nih.gov/$PMID}. $FIELD tokens replaced from row data. */
+        private String  link;
+        /** Cell background colour (CSS hex, e.g. {@code #ffeb9c}). */
+        private String  color;
+        private Boolean hidden;
+
+        public String  getColumnName()           { return columnName; }
+        public void    setColumnName(String s)   { this.columnName = s; }
+        public String  getDisplayName()          { return displayName; }
+        public void    setDisplayName(String s)  { this.displayName = s; }
+        public String  getAvailability()         { return availability != null ? availability : "REQUIRED"; }
+        public void    setAvailability(String s) { this.availability = s; }
+        public String  getLink()                 { return link; }
+        public void    setLink(String s)         { this.link = s; }
+        public String  getColor()                { return color; }
+        public void    setColor(String s)        { this.color = s; }
+        public Boolean getHidden()               { return hidden; }
+        public void    setHidden(Boolean h)      { this.hidden = h; }
     }
 
     // -------------------------------------------------------------------------

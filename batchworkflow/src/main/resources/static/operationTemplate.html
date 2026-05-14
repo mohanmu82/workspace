@@ -1026,7 +1026,11 @@
 
     function loadGridData(rows, columns) {
         if (columns && columns.length > 0) {
-            tplGrid.setGridOption('columnDefs', columns.map(c => ({ field: c.columnName, headerName: c.displayName })));
+            tplGrid.setGridOption('columnDefs', columns.map(c => {
+                const colDef = { field: c.columnName, headerName: c.displayName };
+                if (c.color) colDef.cellStyle = { color: c.color };
+                return colDef;
+            }));
         } else {
             tplGrid.setGridOption('columnDefs', Object.keys(rows[0]).map(k => ({ field: k, headerName: k })));
         }

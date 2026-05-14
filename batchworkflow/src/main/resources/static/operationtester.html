@@ -332,7 +332,7 @@ button.sm { padding: 4px 10px; font-size: 12px; }
     <div class="form-row">
       <div class="fg">
         <label>Operation Name <span style="color:#de350b">*</span></label>
-        <input id="f-name" type="text" placeholder="my-operation" oninput="syncAliasSel();genJson()">
+        <input id="f-name" type="text" placeholder="my-operation" oninput="syncAliasSel();genJson();_scheduleTemplateLoad()">
       </div>
       <div class="fg">
         <label>Mandatory Attributes</label>
@@ -653,11 +653,20 @@ button.sm { padding: 4px 10px; font-size: 12px; }
     <h2>Test Run</h2><span class="toggle">▾</span>
   </div>
   <div class="panel-body">
+    <div id="t-optemplate-row" style="display:none;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid #dfe1e6">
+      <div class="fg wide" style="max-width:480px">
+        <label>Operation Template <span style="font-weight:400;text-transform:none;font-size:10px;color:#a5adba">— select to run with template settings</span></label>
+        <select id="t-op-template" onchange="applyOperationTemplate()">
+          <option value="">— select template —</option>
+        </select>
+      </div>
+    </div>
     <div class="form-row">
       <div class="fg">
         <label>Input Source</label>
         <select id="t-inputSource" onchange="showTestFields()">
           <option value="SPECIFIC">SPECIFIC (no input)</option>
+          <option value="ALIAS">ALIAS</option>
           <option value="REQUEST">REQUEST (IDs)</option>
           <option value="FILE">FILE</option>
           <option value="HTTPCONFIG">HTTPCONFIG</option>
@@ -665,8 +674,9 @@ button.sm { padding: 4px 10px; font-size: 12px; }
         </select>
       </div>
       <div class="fg" id="t-alias-fg">
-        <label>Alias</label>
-        <select id="t-alias"><option value="">— none —</option></select>
+        <label>Template</label>
+        <select id="t-alias" onchange="applyAliasTemplate()"><option value="">— none —</option></select>
+        <span class="hint">Select to pre-fill fields below</span>
       </div>
       <div class="fg">
         <label>Debug Mode</label>
@@ -916,6 +926,9 @@ let _tGridCols = [];
 let _tChartInstances = [];
 let _tChartsVisible = false;
 let _tPivotChart = null;
+let _loadedAliases = {};
+let _operationTemplates = [];
+let _templateLoadTimer = null;
 
 // ─── Panel toggle ─────────────────────────────────────────────────────────────
 function togglePanel(id) {
@@ -1055,7 +1068,7 @@ function showTestFields() {
   document.getElementById('t-ids-fg').style.display = val === 'REQUEST' ? '' : 'none';
   document.getElementById('t-file-fg').style.display = val === 'FILE' ? '' : 'none';
   document.getElementById('t-http-fg').style.display = val === 'HTTPCONFIG' ? '' : 'none';
-  document.getElementById('t-count-fg').style.display = val === 'SPECIFIC' ? 'none' : '';
+  document.getElementById('t-count-fg').style.display = (val === 'SPECIFIC' || val === 'ALIAS') ? 'none' : '';
 }
 
 // ─── Initialization ───────────────────────────────────────────────────────────
@@ -1758,6 +1771,116 @@ function syncAliasSel() {
       sel.appendChild(opt);
     }
   });
+}
+
+function applyAliasTemplate() {
+  const name = v('t-alias');
+  if (!name) {
+    if (document.getElementById('t-inputSource').value === 'ALIAS') {
+      set('t-inputSource', 'SPECIFIC');
+      showTestFields();
+    }
+    return;
+  }
+  if (!_loadedAliases[name]) return;
+  const alias = _loadedAliases[name];
+  const seen = new Set();
+  const lines = [];
+
+  // Non-readOnly mandatory property defaults from the alias
+  (alias.mandatoryProperties || []).forEach(p => {
+    if (!p.property || p.readOnly || p.defaultValue === undefined || p.defaultValue === null) return;
+    seen.add(p.property);
+    const val = typeof p.defaultValue === 'object' ? JSON.stringify(p.defaultValue) : String(p.defaultValue);
+    lines.push(`${p.property}=${val}`);
+  });
+
+  // Request-level fields from the alias
+  Object.entries(alias.request || {}).forEach(([k, val]) => {
+    if (seen.has(k)) return;
+    seen.add(k);
+    lines.push(`${k}=${typeof val === 'object' ? JSON.stringify(val) : String(val)}`);
+  });
+
+  document.getElementById('t-extraProps').value = lines.join('\n');
+
+  // Also fill the HTTP URL field directly when present
+  const urlProp = (alias.mandatoryProperties || []).find(p => p.property === 'inputHttpUrl' && !p.readOnly);
+  const urlVal = urlProp?.defaultValue || (alias.request || {}).inputHttpUrl || '';
+  if (urlVal) document.getElementById('t-inputHttpUrl').value = String(urlVal);
+
+  set('t-inputSource', 'ALIAS');
+  showTestFields();
+}
+
+// ─── Operation Templates (server-side saved RunRequest files) ─────────────────
+function _scheduleTemplateLoad() {
+  clearTimeout(_templateLoadTimer);
+  _templateLoadTimer = setTimeout(() => loadOperationTemplates(v('f-name').trim()), 400);
+}
+
+async function loadOperationTemplates(opName) {
+  const row = document.getElementById('t-optemplate-row');
+  const sel = document.getElementById('t-op-template');
+  if (!opName) {
+    _operationTemplates = [];
+    sel.innerHTML = '<option value="">— select template —</option>';
+    row.style.display = 'none';
+    return;
+  }
+  try {
+    const res = await fetch('/batch/operationTemplate');
+    if (!res.ok) { row.style.display = 'none'; return; }
+    const data = await res.json();
+    _operationTemplates = (data.data || []).filter(t => t.templateBody?.operation === opName);
+    sel.innerHTML = '<option value="">— select template —</option>';
+    _operationTemplates.forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t.templateName;
+      opt.textContent = t.templateName;
+      sel.appendChild(opt);
+    });
+    row.style.display = _operationTemplates.length ? '' : 'none';
+  } catch (e) {
+    row.style.display = 'none';
+  }
+}
+
+function applyOperationTemplate() {
+  const name = document.getElementById('t-op-template').value;
+  if (!name) return;
+  const entry = _operationTemplates.find(t => t.templateName === name);
+  if (!entry) return;
+  const body = entry.templateBody || {};
+
+  // Fill direct TEST RUN fields from the template body
+  const src = body.inputSource || '';
+  if (src) { set('t-inputSource', src); showTestFields(); }
+  if (body.alias) set('t-alias', body.alias);
+  if (body.debugMode !== undefined && body.debugMode !== null) set('t-debugMode', String(body.debugMode));
+  if (body.operationType) set('t-operationType', body.operationType);
+  if (body.httpThreadCount) set('t-threadCount', String(body.httpThreadCount));
+  if (body.httpTimeoutMs) set('t-timeoutMs', String(body.httpTimeoutMs));
+  if (body.inputCount) set('t-inputCount', String(body.inputCount));
+  if (body.inputFilePath) document.getElementById('t-inputFilePath').value = body.inputFilePath;
+  if (body.inputHttpUrl) document.getElementById('t-inputHttpUrl').value = body.inputHttpUrl;
+  if (Array.isArray(body.ids) && body.ids.length)
+    document.getElementById('t-ids').value = body.ids.join('\n');
+  if (body.responseProcessor)
+    document.getElementById('t-responseProcessor-text').value = body.responseProcessor;
+
+  // Remaining fields → Extra Properties textarea
+  const knownDirect = new Set(['operation','inputSource','alias','debugMode','operationType',
+    'httpThreadCount','httpTimeoutMs','inputCount','inputFilePath','inputHttpUrl',
+    'ids','raw','responseProcessor','executionMode']);
+  const lines = [];
+  Object.entries(body).forEach(([k, val]) => {
+    if (knownDirect.has(k) || val === null || val === undefined) return;
+    lines.push(`${k}=${typeof val === 'object' ? JSON.stringify(val) : String(val)}`);
+  });
+  document.getElementById('t-extraProps').value = lines.join('\n');
+
+  runTest();
 }
 
 // ─── Response Processors ──────────────────────────────────────────────────────
@@ -2528,6 +2651,13 @@ function loadOperationIntoForm(op) {
   saveName.value = op.name || op.operation || '';
   saveName.dataset.autoFilled = 'true';
 
+  // Store alias data for template dropdown
+  _loadedAliases = {};
+  (op.alias || []).forEach(a => { if (a.name) _loadedAliases[a.name] = a; });
+
+  // Load server-side operation templates for this operation
+  loadOperationTemplates(op.name || op.operation || '');
+
   syncAliasSel();
   genJson();
 
@@ -2754,7 +2884,7 @@ function buildColChooserT(cols) {
     span.textContent = label;
 
     const pie = document.createElement('button');
-    pie.className = 'pie-btn-t'; pie.textContent = '&#9685;'; pie.title = 'Chart: ' + label;
+    pie.className = 'pie-btn-t'; pie.textContent = '◕'; pie.title = 'Chart: ' + label;
     pie.type = 'button';
     pie.addEventListener('click', e => { e.preventDefault(); openChartT(field, label); });
 

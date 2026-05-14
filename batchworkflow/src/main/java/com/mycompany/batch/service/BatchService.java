@@ -67,6 +67,7 @@ import java.util.List;
 import java.util.LongSummaryStatistics;
 import java.util.Map;
 import java.util.SequencedSet;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -316,7 +317,7 @@ public class BatchService {
     // -------------------------------------------------------------------------
 
     public record HttpStats(long minMs, long maxMs, double avgMs) {}
-    public record ColumnDef(String columnName, String type, String displayName) {}
+    public record ColumnDef(String columnName, String type, String displayName, String link, String color) {}
     public record BatchResult(int processed, int succeeded, int failed,
                               HttpStats httpStats,
                               List<ColumnDef> columns,
@@ -544,8 +545,11 @@ public class BatchService {
 
         // Rebuild columns after post-enrichment so enriched attributes appear in the grid
         List<ColumnDef> enrichedColumns = buildColumnDefsFromResults(result.results());
-        enrichedColumns = applyColumnTemplate(enrichedColumns, op.getColumnTemplate());
-        List<Map<String, Object>> projectedResults = projectRowsByColumns(result.results(), enrichedColumns, op.getColumnTemplate());
+        Set<String> enrichedKeys = result.results().isEmpty() ? Set.of() : result.results().get(0).keySet();
+        enrichedColumns = resolveColumns(op, enrichedColumns, enrichedKeys);
+        List<Map<String, Object>> projectedResults = shouldProject(op)
+                ? projectRowsByColumns(result.results(), enrichedColumns)
+                : result.results();
         result = new BatchResult(result.processed(), result.succeeded(), result.failed(),
                 result.httpStats(), enrichedColumns, projectedResults,
                 result.batchUuid(), result.timestamp(), result.timeTakenMs(), result.responseSizeKb(), null);
@@ -986,10 +990,21 @@ public class BatchService {
 
         Object jsonataInput = response;
         if (transform.source() != null && !transform.source().isBlank()) {
-            Object fastPath = trySimplePathExtract(response, transform.source());
-            Object extracted = fastPath != null ? fastPath
-                    : jsonataCache.computeIfAbsent(transform.source(), Jsonata::jsonata)
-                            .evaluate(toJsonataSafe(response));
+            Object extracted;
+            if ("data[0].RESPONSEBODY".equals(transform.source())) {
+                extracted = null;
+                if (response instanceof Map<?,?> m) {
+                    Object data = m.get("data");
+                    if (data instanceof List<?> list && !list.isEmpty() && list.get(0) instanceof Map<?,?> first) {
+                        extracted = ((Map<?,?>) first).get("RESPONSEBODY");
+                    }
+                }
+            } else {
+                Object fastPath = trySimplePathExtract(response, transform.source());
+                extracted = fastPath != null ? fastPath
+                        : jsonataCache.computeIfAbsent(transform.source(), Jsonata::jsonata)
+                                .evaluate(toJsonataSafe(response));
+            }
             if (extracted instanceof String s) {
                 try { jsonataInput = objectMapper.readValue(s, Object.class); }
                 catch (Exception e) { jsonataInput = s; }
@@ -1535,14 +1550,17 @@ public class BatchService {
             }
 
             List<ColumnDef> columns = buildColumnDefsFromResults(sanitizedResults);
-            columns = applyColumnTemplate(columns, op.getColumnTemplate());
+            Set<String> keys1 = sanitizedResults.isEmpty() ? Set.of() : sanitizedResults.get(0).keySet();
+            columns = resolveColumns(op, columns, keys1);
+            List<Map<String, Object>> projected1 = shouldProject(op)
+                    ? projectRowsByColumns(sanitizedResults, columns) : sanitizedResults;
 
             String batchUuid = UUID.randomUUID().toString();
             String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
             double responseSizeKb = totalResponseBytes.get() / 1024.0;
 
             return new BatchResult(rows.size(), succeeded.get(), failed.get(),
-                    httpStats, columns, sanitizedResults, batchUuid, timestamp, timeTakenMs, responseSizeKb, opProperties);
+                    httpStats, columns, projected1, batchUuid, timestamp, timeTakenMs, responseSizeKb, opProperties);
 
         } else if (!useLegacy) {
             // --- Pass-through: no activities, no HTTP — return input rows as results ---
@@ -1557,11 +1575,14 @@ public class BatchService {
             List<Map<String, Object>> sanitizedResults = sanitizeKeys(rawResults);
             if (debugMode < 3) sanitizedResults.forEach(r -> r.remove("operationStatus"));
             List<ColumnDef> columns = buildColumnDefsFromResults(sanitizedResults);
-            columns = applyColumnTemplate(columns, op.getColumnTemplate());
+            Set<String> keys2 = sanitizedResults.isEmpty() ? Set.of() : sanitizedResults.get(0).keySet();
+            columns = resolveColumns(op, columns, keys2);
+            List<Map<String, Object>> projected2 = shouldProject(op)
+                    ? projectRowsByColumns(sanitizedResults, columns) : sanitizedResults;
             String batchUuid = UUID.randomUUID().toString();
             String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
             return new BatchResult(rows.size(), succeeded.get(), 0,
-                    new HttpStats(0, 0, 0), columns, sanitizedResults,
+                    new HttpStats(0, 0, 0), columns, projected2,
                     batchUuid, timestamp, timeTakenMs, 0, opProperties);
 
         } else {
@@ -1615,14 +1636,17 @@ public class BatchService {
             List<Map<String, Object>> sanitizedResults = sanitizeKeys(new ArrayList<>(results));
             if (debugMode < 3) sanitizedResults.forEach(r -> r.remove("operationStatus"));
             List<ColumnDef> columns = buildColumnDefsFromResults(sanitizedResults);
-            columns = applyColumnTemplate(columns, op.getColumnTemplate());
+            Set<String> keys3 = sanitizedResults.isEmpty() ? Set.of() : sanitizedResults.get(0).keySet();
+            columns = resolveColumns(op, columns, keys3);
+            List<Map<String, Object>> projected3 = shouldProject(op)
+                    ? projectRowsByColumns(sanitizedResults, columns) : sanitizedResults;
 
             String batchUuid = UUID.randomUUID().toString();
             String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
             double responseSizeKb = totalResponseBytes.get() / 1024.0;
 
             return new BatchResult(rows.size(), succeeded.get(), failed.get(),
-                    httpStats, columns, sanitizedResults, batchUuid, timestamp, timeTakenMs, responseSizeKb, opProperties);
+                    httpStats, columns, projected3, batchUuid, timestamp, timeTakenMs, responseSizeKb, opProperties);
         }
     }
 
@@ -1669,9 +1693,11 @@ public class BatchService {
             }
             long timeTakenMs = System.currentTimeMillis() - batchStartPT;
             List<ColumnDef> columns;
-            try { columns = applyColumnTemplate(buildColumnDefsFromResults(
-                    rows.stream().map(r -> r.toResponseMap(false)).collect(Collectors.toList())),
-                    op.getColumnTemplate()); } catch (Exception e) { columns = List.of(); }
+            try {
+                List<Map<String, Object>> sampleRows = rows.stream().map(r -> r.toResponseMap(false)).collect(Collectors.toList());
+                Set<String> ptKeys = sampleRows.isEmpty() ? Set.of() : sampleRows.get(0).keySet();
+                columns = resolveColumns(op, buildColumnDefsFromResults(sampleRows), ptKeys);
+            } catch (Exception e) { columns = List.of(); }
             return CompletableFuture.completedFuture(new BatchResult(
                     rows.size(), rows.size(), 0, new HttpStats(0, 0, 0),
                     columns, List.of(), UUID.randomUUID().toString(),
@@ -1764,7 +1790,8 @@ public class BatchService {
                     try { applyPostEnricher(sanitizedForCols, op.getEnricher()); } catch (Exception ignored) {}
 
                     List<ColumnDef> columns = buildColumnDefsFromResults(sanitizedForCols);
-                    try { columns = applyColumnTemplate(columns, op.getColumnTemplate()); }
+                    Set<String> asyncKeys = sanitizedForCols.isEmpty() ? Set.of() : sanitizedForCols.get(0).keySet();
+                    try { columns = resolveColumns(op, columns, asyncKeys); }
                     catch (Exception ignored) {}
 
                     String batchUuid = UUID.randomUUID().toString();
@@ -3482,8 +3509,56 @@ public class BatchService {
         }
         keys.add("errorMessage");
         return keys.stream()
-                .map(k -> new ColumnDef(k, "string", toDisplayName(k)))
+                .map(k -> new ColumnDef(k, "string", toDisplayName(k), null, null))
                 .toList();
+    }
+
+    /**
+     * Resolves the final column list for an operation, applying either the structured
+     * {@code columns} config (which carries link/colour/availability) or the legacy
+     * {@code columnTemplate.source} name list, whichever is present (structured wins).
+     */
+    private List<ColumnDef> resolveColumns(BatchProperties.OperationProperties op,
+                                           List<ColumnDef> derivedCols,
+                                           Set<String> availableKeys) throws Exception {
+        if (!op.getColumns().isEmpty()) {
+            return applyColumnsConfig(derivedCols, op.getColumns(), availableKeys);
+        }
+        return applyColumnTemplate(derivedCols, op.getColumnTemplate());
+    }
+
+    /** Returns {@code true} when the operation has column filtering configured. */
+    private boolean shouldProject(BatchProperties.OperationProperties op) {
+        if (!op.getColumns().isEmpty()) return true;
+        return op.getColumnTemplate() != null
+                && op.getColumnTemplate().getSource() != null
+                && !op.getColumnTemplate().getSource().isBlank();
+    }
+
+    /**
+     * Applies the structured {@code columns} config, merging display names, link templates
+     * and colours into the derived column list while respecting order, hidden flag, and
+     * availability (REQUIRED / IFAVAILABLE / ERRORCOLUMN).
+     */
+    private List<ColumnDef> applyColumnsConfig(List<ColumnDef> derivedCols,
+                                               List<BatchProperties.ColumnConfig> colsCfg,
+                                               Set<String> availableKeys) {
+        Map<String, ColumnDef> defMap = derivedCols.stream()
+                .collect(Collectors.toMap(ColumnDef::columnName, c -> c, (a, b) -> a, LinkedHashMap::new));
+        return colsCfg.stream()
+                .filter(cfg -> cfg.getColumnName() != null && !cfg.getColumnName().isBlank())
+                .filter(cfg -> !Boolean.TRUE.equals(cfg.getHidden()))
+                .filter(cfg -> !"IFAVAILABLE".equals(cfg.getAvailability())
+                        || availableKeys.contains(cfg.getColumnName()))
+                .map(cfg -> {
+                    String name = cfg.getColumnName();
+                    ColumnDef existing = defMap.getOrDefault(name,
+                            new ColumnDef(name, "string", toDisplayName(name), null, null));
+                    String disp = cfg.getDisplayName() != null && !cfg.getDisplayName().isBlank()
+                            ? cfg.getDisplayName() : existing.displayName();
+                    return new ColumnDef(name, existing.type(), disp, cfg.getLink(), cfg.getColor());
+                })
+                .collect(Collectors.toList());
     }
 
     /**
@@ -3502,21 +3577,16 @@ public class BatchService {
                 .collect(Collectors.toMap(ColumnDef::columnName, c -> c, (a, b) -> a, LinkedHashMap::new));
 
         return orderedNames.stream()
-                .filter(defMap::containsKey) // only include columns that actually exist in results
+                .filter(defMap::containsKey)
                 .map(defMap::get)
                 .collect(Collectors.toList());
     }
 
     /**
      * Projects each row to only the keys present in {@code columns}.
-     * Returns the original list unchanged when no column template is configured.
      */
     private List<Map<String, Object>> projectRowsByColumns(List<Map<String, Object>> rows,
-                                                           List<ColumnDef> columns,
-                                                           BatchProperties.ColumnTemplateProperties template) {
-        if (template == null || template.getSource() == null || template.getSource().isBlank()) {
-            return rows;
-        }
+                                                           List<ColumnDef> columns) {
         if (rows.isEmpty() || columns.isEmpty()) return rows;
         List<String> orderedKeys = columns.stream().map(ColumnDef::columnName).toList();
         return rows.stream().map(row -> {

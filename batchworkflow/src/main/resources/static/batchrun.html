@@ -743,6 +743,11 @@
     function handleCellClicked(params) {
         if (params.value == null) return;
         const text = String(params.value);
+        if (params.colDef.linkTemplate) {
+            const url = params.colDef.linkTemplate.replace(/\$(\w+)/g, (_, k) => params.data?.[k] ?? '');
+            _showCellMenu(url, params.event);
+            return;
+        }
         if (/^https?:\/\//i.test(text)) { _showCellMenu(text, params.event); return; }
         const copy = () => { const ta = document.createElement('textarea'); ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px;top:0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); showCopyToast(); };
         navigator.clipboard.writeText(text).then(showCopyToast).catch(copy);
@@ -903,12 +908,37 @@
     // ag-Grid setup
     // -------------------------------------------------------------------------
 
+    let _errorCols = [];
+
+    function makeColDefs(columns, rows) {
+        if (columns && columns.length) {
+            _errorCols = columns.filter(c => c.availability === 'ERRORCOLUMN').map(c => c.columnName);
+            return columns.map(c => {
+                const def = { field: c.columnName, headerName: c.displayName };
+                if (c.link) {
+                    def.linkTemplate = c.link;
+                    def.cellStyle = () => ({ color: '#0052cc', cursor: 'pointer' });
+                } else if (c.color) {
+                    const bg = c.color;
+                    def.cellStyle = () => ({ backgroundColor: bg });
+                }
+                return def;
+            });
+        }
+        _errorCols = [];
+        return rows && rows.length ? Object.keys(rows[0]).map(k => ({ field: k, headerName: k })) : [];
+    }
+
     const gridOptions = {
         columnDefs: [],
         rowData: [],
         defaultColDef: { sortable: true, filter: true, resizable: true, minWidth: 100,
                          headerComponent: PieHeaderComp },
-        getRowClass: params => (params.data?.operationStatus === 'FAILED' || params.data?.errorMessage) ? 'row-failed' : undefined,
+        getRowClass: params => {
+            if (params.data?.operationStatus === 'FAILED' || params.data?.errorMessage) return 'row-failed';
+            if (_errorCols.length && _errorCols.some(col => { const v = params.data?.[col]; return v != null && String(v).trim() !== ''; })) return 'row-failed';
+            return undefined;
+        },
         animateRows: false,
         onRowDataUpdated: updateRowCount,
         onFilterChanged:  updateRowCount,
@@ -1234,13 +1264,7 @@
             return;
         }
 
-        if (data.columns && data.columns.length > 0) {
-            grid.setGridOption('columnDefs', data.columns.map(c => ({
-                field: c.columnName, headerName: c.displayName
-            })));
-        } else {
-            grid.setGridOption('columnDefs', Object.keys(rows[0]).map(k => ({ field: k, headerName: k })));
-        }
+        grid.setGridOption('columnDefs', makeColDefs(data.columns && data.columns.length > 0 ? data.columns : null, rows));
 
         grid.setGridOption('rowData', rows);
         grid.sizeColumnsToFit();
@@ -1444,8 +1468,7 @@
                     } else {
                         // Replace auto-derived column defs with the server's typed defs if available
                         if (cols.length > 0) {
-                            grid.setGridOption('columnDefs',
-                                cols.map(c => ({ field: c.columnName, headerName: c.displayName })));
+                            grid.setGridOption('columnDefs', makeColDefs(cols, null));
                         }
                         grid.sizeColumnsToFit();
 
