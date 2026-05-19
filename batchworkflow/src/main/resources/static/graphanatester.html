@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Grafana Tester</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+               background: #f4f5f7; color: #172b4d; padding: 24px; }
+        .nav { margin-bottom: 18px; }
+        .nav a { font-size: 13px; color: #0052cc; text-decoration: none; }
+        .nav a:hover { text-decoration: underline; }
+        h1 { font-size: 20px; font-weight: 600; margin-bottom: 16px; }
+
+        .panel { background: #fff; border: 1px solid #dfe1e6; border-radius: 6px;
+                 padding: 16px; margin-bottom: 14px; }
+        .panel-title { font-size: 12px; font-weight: 700; text-transform: uppercase;
+                       letter-spacing: .5px; margin-bottom: 12px; color: #5e6c84; }
+
+        .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .form-group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 0; }
+        .form-group.full { grid-column: 1 / 3; }
+        .form-group label { font-size: 11px; font-weight: 600; color: #5e6c84;
+                            text-transform: uppercase; letter-spacing: .4px; }
+        .form-group input { padding: 7px 10px; font-size: 13px; border: 1px solid #ccc;
+                            border-radius: 4px; outline: none; background: #fff; font-family: inherit; }
+        .form-group input:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.25); }
+        .form-grid { margin-bottom: 12px; }
+
+        .toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+        button { padding: 7px 16px; font-size: 13px; font-weight: 500; border: none;
+                 border-radius: 4px; cursor: pointer; white-space: nowrap; }
+        button.primary   { background: #0052cc; color: #fff; }
+        button.primary:hover   { background: #0065ff; }
+        button.primary:disabled { background: #a5adba; cursor: not-allowed; }
+        button.secondary { background: #fff; color: #0052cc; border: 1px solid #0052cc; }
+        button.secondary:hover { background: #e9f0ff; }
+        button.tool-btn  { background: #f4f5f7; color: #172b4d; border: 1px solid #dfe1e6;
+                           padding: 5px 12px; font-size: 12px; }
+        button.tool-btn:hover { background: #ebecf0; }
+        button.danger    { background: #de350b; color: #fff; }
+        button.danger:hover { background: #ff5630; }
+
+        .status-bar { font-size: 13px; color: #5e6c84; min-height: 18px; }
+        .status-bar.error { color: #de350b; background: #ffebe6; border: 1px solid #ff8f73;
+                            border-radius: 4px; padding: 6px 10px; }
+        .status-bar.ok    { color: #006644; }
+
+        /* Summary cards */
+        .summary-cards { display: flex; flex-wrap: wrap; gap: 10px; }
+        .summary-card { background: #f4f5f7; border: 1px solid #dfe1e6; border-radius: 6px;
+                        padding: 10px 16px; min-width: 130px; }
+        .summary-card .card-label { font-size: 10px; font-weight: 700; color: #5e6c84;
+                                    text-transform: uppercase; letter-spacing: .4px; margin-bottom: 4px; }
+        .summary-card .card-value { font-size: 14px; font-weight: 600; color: #172b4d; word-break: break-all; }
+        .summary-card .card-value.ok  { color: #006644; }
+        .summary-card .card-value.err { color: #de350b; font-size: 12px; font-weight: 400; }
+
+        /* Panel header row */
+        .panel-header-row { display: flex; align-items: center; gap: 10px;
+                            margin-bottom: 10px; flex-wrap: wrap; }
+        .panel-header-row .panel-title { margin-bottom: 0; }
+        .count-badge { font-size: 11px; background: #e9f0ff; color: #0052cc;
+                       border-radius: 10px; padding: 2px 8px; font-weight: 600; }
+
+        .filter-input { padding: 6px 10px; font-size: 13px; border: 1px solid #ccc;
+                        border-radius: 4px; outline: none; font-family: inherit; }
+        .filter-input:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.2); }
+
+        /* Tables */
+        .g-table-wrap { overflow-x: auto; }
+        .g-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .g-table th { background: #f4f5f7; padding: 6px 10px; text-align: left;
+                      border: 1px solid #dfe1e6; font-size: 11px; font-weight: 700;
+                      color: #5e6c84; text-transform: uppercase; letter-spacing: .4px;
+                      white-space: nowrap; position: sticky; top: 0; }
+        .g-table td { padding: 6px 10px; border: 1px solid #f0f1f3; color: #172b4d; }
+        .g-table tbody tr:hover td { background: #f8f9fc; }
+        .g-table tbody tr:nth-child(even) td { background: #fafbfc; }
+        .g-table tbody tr:nth-child(even):hover td { background: #f4f5f7; }
+
+        .g-link-cell { color: #0052cc; cursor: pointer; font-weight: 500; }
+        .g-link-cell:hover { text-decoration: underline; }
+        .g-open-link { color: #0052cc; text-decoration: none; font-size: 14px; font-weight: 700; }
+        .g-open-link:hover { color: #0065ff; }
+
+        .g-tag { display: inline-block; background: #e9f0ff; color: #0052cc; border-radius: 3px;
+                 padding: 1px 6px; font-size: 11px; margin: 1px 2px 1px 0; }
+
+        /* Datasource type chips */
+        .g-type-chip { display: inline-block; padding: 2px 8px; border-radius: 12px;
+                       font-size: 11px; font-weight: 600; white-space: nowrap; }
+        .g-type-prometheus    { background: #fff3e0; color: #e65100; border: 1px solid #ffb74d; }
+        .g-type-mysql,
+        .g-type-mssql         { background: #e3f2fd; color: #0d47a1; border: 1px solid #90caf9; }
+        .g-type-postgres,
+        .g-type-postgresql    { background: #e8eaf6; color: #283593; border: 1px solid #9fa8da; }
+        .g-type-elasticsearch { background: #fce4ec; color: #880e4f; border: 1px solid #f48fb1; }
+        .g-type-influxdb      { background: #e0f7fa; color: #006064; border: 1px solid #80deea; }
+        .g-type-cloudwatch    { background: #fff8e1; color: #f57f17; border: 1px solid #ffcc02; }
+        .g-type-loki          { background: #f3e5f5; color: #4a148c; border: 1px solid #ce93d8; }
+        .g-type-tempo         { background: #e8f5e9; color: #1b5e20; border: 1px solid #a5d6a7; }
+        .g-type-jaeger,
+        .g-type-zipkin        { background: #f1f8e9; color: #33691e; border: 1px solid #aed581; }
+        .g-type-graphite      { background: #fafafa; color: #424242; border: 1px solid #bdbdbd; }
+        .g-type-opentsdb      { background: #e1f5fe; color: #01579b; border: 1px solid #81d4fa; }
+
+        .g-default-badge { color: #006644; font-weight: 600; font-size: 12px; }
+
+        .g-empty { color: #5e6c84; font-size: 13px; padding: 12px 0; }
+
+        .g-uid { font-family: "Cascadia Code","Fira Code",Consolas,monospace;
+                 font-size: 11px; color: #5e6c84; }
+        .g-url-cell { font-family: "Cascadia Code","Fira Code",Consolas,monospace;
+                      font-size: 11px; color: #5e6c84; max-width: 220px;
+                      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+        .g-section-actions { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+    </style>
+</head>
+<body>
+<div class="nav"><a href="/">&larr; Batch Runner</a></div>
+<h1>Grafana Tester</h1>
+
+<!-- Connection Panel -->
+<div class="panel">
+    <div class="panel-title">Connection</div>
+    <div class="form-grid">
+        <div class="form-group full">
+            <label>Grafana URL</label>
+            <input type="text" id="grafanaUrl" placeholder="http://localhost:3000" />
+        </div>
+        <div class="form-group">
+            <label>Username</label>
+            <input type="text" id="grafanaUser" placeholder="admin" autocomplete="username" />
+        </div>
+        <div class="form-group">
+            <label>Password</label>
+            <input type="password" id="grafanaPass" placeholder="password" autocomplete="current-password" />
+        </div>
+        <div class="form-group full">
+            <label>API Token <span style="font-weight:400;text-transform:none;font-size:10px;color:#b3bac5">(optional — overrides username/password)</span></label>
+            <input type="text" id="grafanaToken" placeholder="glsa_xxxxxxxxxxxxxxxxxxxx" />
+        </div>
+    </div>
+    <div class="toolbar">
+        <button class="primary"   onclick="testConnection()">Test Connection</button>
+        <button class="secondary" onclick="loadAll()">Load All</button>
+        <button class="tool-btn"  onclick="loadDashboards()">Dashboards</button>
+        <button class="tool-btn"  onclick="loadDatasources()">Datasources</button>
+        <button class="tool-btn"  onclick="loadFolders()">Folders</button>
+        <button class="danger"    onclick="clearAll()" style="margin-left:auto">Clear</button>
+    </div>
+    <div id="statusBar" class="status-bar"></div>
+</div>
+
+<!-- Summary Panel -->
+<div id="summaryPanel" class="panel" style="display:none">
+    <div class="panel-title">Grafana Info</div>
+    <div id="summaryCards" class="summary-cards"></div>
+</div>
+
+<!-- Dashboards Panel -->
+<div id="dashboardsPanel" class="panel" style="display:none">
+    <div class="panel-header-row">
+        <div class="panel-title">Dashboards</div>
+        <span id="dashCount" class="count-badge"></span>
+        <div class="g-section-actions">
+            <input class="filter-input" id="dashFilter" placeholder="Filter by title, folder, tags..."
+                   oninput="filterDashboards()" style="width:240px" />
+            <button class="tool-btn" onclick="loadDashboards()">&#8635; Refresh</button>
+        </div>
+    </div>
+    <div class="g-table-wrap" id="dashboardsTable"></div>
+</div>
+
+<!-- Datasources Panel -->
+<div id="datasourcesPanel" class="panel" style="display:none">
+    <div class="panel-header-row">
+        <div class="panel-title">Datasources</div>
+        <span id="dsCount" class="count-badge"></span>
+        <div class="g-section-actions">
+            <input class="filter-input" id="dsFilter" placeholder="Filter by name or type..."
+                   oninput="filterDatasources()" style="width:220px" />
+            <button class="tool-btn" onclick="loadDatasources()">&#8635; Refresh</button>
+        </div>
+    </div>
+    <div class="g-table-wrap" id="datasourcesTable"></div>
+</div>
+
+<!-- Folders Panel -->
+<div id="foldersPanel" class="panel" style="display:none">
+    <div class="panel-header-row">
+        <div class="panel-title">Folders</div>
+        <span id="folderCount" class="count-badge"></span>
+        <div class="g-section-actions">
+            <button class="tool-btn" onclick="loadFolders()">&#8635; Refresh</button>
+        </div>
+    </div>
+    <div class="g-table-wrap" id="foldersTable"></div>
+</div>
+
+<script>
+    let _allDashboards  = [];
+    let _allDatasources = [];
+
+    function conn() {
+        return {
+            url:      document.getElementById('grafanaUrl').value.trim(),
+            username: document.getElementById('grafanaUser').value.trim(),
+            password: document.getElementById('grafanaPass').value.trim(),
+            token:    document.getElementById('grafanaToken').value.trim()
+        };
+    }
+
+    function setStatus(msg, type) {
+        const el = document.getElementById('statusBar');
+        el.textContent = msg;
+        el.className = 'status-bar' + (type ? ' ' + type : '');
+    }
+
+    async function post(path, body) {
+        const res = await fetch('/grafana' + path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        return res.json();
+    }
+
+    // ── Test Connection ───────────────────────────────────────────────────────
+
+    async function testConnection() {
+        const c = conn();
+        if (!c.url) { setStatus('Grafana URL is required', 'error'); return; }
+        setStatus('Connecting…');
+        try {
+            const [health, org] = await Promise.all([post('/health', c), post('/org', c)]);
+            renderSummary(health, org);
+            if (!health.ok) {
+                setStatus('Connection failed: ' + (health.error || 'unknown error'), 'error');
+            } else {
+                const orgName = (org.ok && org.data?.name) ? org.data.name : '';
+                setStatus('Connected' + (orgName ? ' — org: ' + orgName : ''), 'ok');
+            }
+        } catch (e) {
+            setStatus('Request failed: ' + e.message, 'error');
+        }
+    }
+
+    function renderSummary(health, org) {
+        const cards = document.getElementById('summaryCards');
+        cards.innerHTML = '';
+
+        const card = (label, value, cls) => {
+            const d = document.createElement('div');
+            d.className = 'summary-card';
+            d.innerHTML = `<div class="card-label">${esc(label)}</div>
+                           <div class="card-value${cls ? ' ' + cls : ''}">${esc(String(value ?? '—'))}</div>`;
+            cards.appendChild(d);
+        };
+
+        if (health.ok && health.data) {
+            const h = health.data;
+            card('Health',  h.database || 'ok', 'ok');
+            card('Version', h.version  || '—');
+            if (h.commit) card('Commit', h.commit.substring(0, 8));
+        } else {
+            card('Health', health.error || 'failed', 'err');
+        }
+
+        if (org.ok && org.data) {
+            card('Org Name', org.data.name || '—');
+            card('Org ID',   org.data.id   || '—');
+        } else if (org.error) {
+            card('Org', org.error, 'err');
+        }
+
+        document.getElementById('summaryPanel').style.display = 'block';
+    }
+
+    // ── Load All ──────────────────────────────────────────────────────────────
+
+    async function loadAll() {
+        const c = conn();
+        if (!c.url) { setStatus('Grafana URL is required', 'error'); return; }
+        setStatus('Loading all…');
+        try {
+            const res = await post('/inspect', c);
+            renderSummary(res.health || {}, res.org || {});
+
+            if (res.dashboards?.ok && Array.isArray(res.dashboards.data)) {
+                _allDashboards = res.dashboards.data;
+                renderDashboards(_allDashboards);
+            } else if (res.dashboards?.error) {
+                showPanelError('dashboardsPanel', 'dashboardsTable', res.dashboards.error);
+            }
+
+            if (res.datasources?.ok && Array.isArray(res.datasources.data)) {
+                _allDatasources = res.datasources.data;
+                renderDatasources(_allDatasources);
+            } else if (res.datasources?.error) {
+                showPanelError('datasourcesPanel', 'datasourcesTable', res.datasources.error);
+            }
+
+            if (res.folders?.ok && Array.isArray(res.folders.data)) {
+                renderFolders(res.folders.data);
+            } else if (res.folders?.error) {
+                showPanelError('foldersPanel', 'foldersTable', res.folders.error);
+            }
+
+            const parts = [];
+            if (res.dashboards?.ok)  parts.push(_allDashboards.length  + ' dashboards');
+            if (res.datasources?.ok) parts.push(_allDatasources.length + ' datasources');
+            if (res.folders?.ok)     parts.push((Array.isArray(res.folders.data) ? res.folders.data.length : 0) + ' folders');
+            setStatus(parts.length ? 'Loaded: ' + parts.join(', ') : 'Load complete', 'ok');
+        } catch (e) {
+            setStatus('Request failed: ' + e.message, 'error');
+        }
+    }
+
+    function showPanelError(panelId, tableId, msg) {
+        document.getElementById(panelId).style.display = 'block';
+        document.getElementById(tableId).innerHTML =
+            `<div class="g-empty" style="color:#de350b">Error: ${esc(msg)}</div>`;
+    }
+
+    // ── Individual loaders ────────────────────────────────────────────────────
+
+    async function loadDashboards() {
+        const c = conn();
+        if (!c.url) { setStatus('Grafana URL is required', 'error'); return; }
+        setStatus('Loading dashboards…');
+        try {
+            const res = await post('/dashboards', c);
+            if (!res.ok) { setStatus('Failed: ' + (res.error || 'unknown error'), 'error'); return; }
+            _allDashboards = Array.isArray(res.data) ? res.data : [];
+            renderDashboards(_allDashboards);
+            setStatus('Loaded ' + _allDashboards.length + ' dashboard(s)', 'ok');
+        } catch (e) {
+            setStatus('Request failed: ' + e.message, 'error');
+        }
+    }
+
+    async function loadDatasources() {
+        const c = conn();
+        if (!c.url) { setStatus('Grafana URL is required', 'error'); return; }
+        setStatus('Loading datasources…');
+        try {
+            const res = await post('/datasources', c);
+            if (!res.ok) { setStatus('Failed: ' + (res.error || 'unknown error'), 'error'); return; }
+            _allDatasources = Array.isArray(res.data) ? res.data : [];
+            renderDatasources(_allDatasources);
+            setStatus('Loaded ' + _allDatasources.length + ' datasource(s)', 'ok');
+        } catch (e) {
+            setStatus('Request failed: ' + e.message, 'error');
+        }
+    }
+
+    async function loadFolders() {
+        const c = conn();
+        if (!c.url) { setStatus('Grafana URL is required', 'error'); return; }
+        setStatus('Loading folders…');
+        try {
+            const res = await post('/folders', c);
+            if (!res.ok) { setStatus('Failed: ' + (res.error || 'unknown error'), 'error'); return; }
+            const folders = Array.isArray(res.data) ? res.data : [];
+            renderFolders(folders);
+            setStatus('Loaded ' + folders.length + ' folder(s)', 'ok');
+        } catch (e) {
+            setStatus('Request failed: ' + e.message, 'error');
+        }
+    }
+
+    // ── Render helpers ────────────────────────────────────────────────────────
+
+    function renderDashboards(list) {
+        document.getElementById('dashCount').textContent = list.length + ' item(s)';
+        const div  = document.getElementById('dashboardsTable');
+        const base = document.getElementById('grafanaUrl').value.trim().replace(/\/+$/, '');
+
+        if (!list.length) {
+            div.innerHTML = '<div class="g-empty">No dashboards found.</div>';
+            document.getElementById('dashboardsPanel').style.display = 'block';
+            return;
+        }
+
+        let html = `<table class="g-table"><thead><tr>
+            <th>Title</th><th>Folder</th><th>Tags</th><th>Type</th><th>UID</th><th></th>
+        </tr></thead><tbody>`;
+
+        for (const d of list) {
+            const tags = (d.tags || []).map(t => `<span class="g-tag">${esc(t)}</span>`).join('');
+            const url  = base + (d.url || '/d/' + d.uid);
+            html += `<tr>
+                <td><span class="g-link-cell" onclick="window.open('${ea(url)}','_blank')">${esc(d.title || '—')}</span></td>
+                <td>${esc(d.folderTitle || 'General')}</td>
+                <td>${tags || '<span style="color:#b3bac5">—</span>'}</td>
+                <td><span class="g-uid">${esc(d.type || '—')}</span></td>
+                <td class="g-uid">${esc(d.uid || '—')}</td>
+                <td><a class="g-open-link" href="${ea(url)}" target="_blank" title="Open in Grafana">&#8599;</a></td>
+            </tr>`;
+        }
+
+        div.innerHTML = html + '</tbody></table>';
+        document.getElementById('dashboardsPanel').style.display = 'block';
+    }
+
+    function renderDatasources(list) {
+        document.getElementById('dsCount').textContent = list.length + ' item(s)';
+        const div = document.getElementById('datasourcesTable');
+
+        if (!list.length) {
+            div.innerHTML = '<div class="g-empty">No datasources found. (Admin privileges may be required.)</div>';
+            document.getElementById('datasourcesPanel').style.display = 'block';
+            return;
+        }
+
+        let html = `<table class="g-table"><thead><tr>
+            <th>Name</th><th>Type</th><th>URL</th><th>Access</th><th>Default</th><th>UID</th>
+        </tr></thead><tbody>`;
+
+        for (const d of list) {
+            const typeKey  = (d.type || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
+            const typeChip = `<span class="g-type-chip g-type-${esc(typeKey)}">${esc(d.type || '—')}</span>`;
+            const dflt     = d.isDefault ? '<span class="g-default-badge">&#10003; Default</span>' : '';
+            html += `<tr>
+                <td style="font-weight:500">${esc(d.name || '—')}</td>
+                <td>${typeChip}</td>
+                <td><span class="g-url-cell" title="${ea(d.url || '')}">${esc(d.url || '—')}</span></td>
+                <td>${esc(d.access || '—')}</td>
+                <td>${dflt}</td>
+                <td class="g-uid">${esc(d.uid || String(d.id || '—'))}</td>
+            </tr>`;
+        }
+
+        div.innerHTML = html + '</tbody></table>';
+        document.getElementById('datasourcesPanel').style.display = 'block';
+    }
+
+    function renderFolders(list) {
+        document.getElementById('folderCount').textContent = list.length + ' item(s)';
+        const div  = document.getElementById('foldersTable');
+        const base = document.getElementById('grafanaUrl').value.trim().replace(/\/+$/, '');
+
+        if (!list.length) {
+            div.innerHTML = '<div class="g-empty">No folders found.</div>';
+            document.getElementById('foldersPanel').style.display = 'block';
+            return;
+        }
+
+        let html = `<table class="g-table"><thead><tr>
+            <th>Title</th><th>UID</th><th></th>
+        </tr></thead><tbody>`;
+
+        for (const f of list) {
+            const url = base + (f.url || '/dashboards/f/' + f.uid);
+            html += `<tr>
+                <td style="font-weight:500">${esc(f.title || '—')}</td>
+                <td class="g-uid">${esc(f.uid || '—')}</td>
+                <td><a class="g-open-link" href="${ea(url)}" target="_blank" title="Open in Grafana">&#8599;</a></td>
+            </tr>`;
+        }
+
+        div.innerHTML = html + '</tbody></table>';
+        document.getElementById('foldersPanel').style.display = 'block';
+    }
+
+    // ── Filter ────────────────────────────────────────────────────────────────
+
+    function filterDashboards() {
+        const q = document.getElementById('dashFilter').value.toLowerCase();
+        if (!q) { renderDashboards(_allDashboards); return; }
+        renderDashboards(_allDashboards.filter(d =>
+            (d.title      || '').toLowerCase().includes(q) ||
+            (d.folderTitle|| '').toLowerCase().includes(q) ||
+            (d.tags       || []).join(' ').toLowerCase().includes(q)
+        ));
+    }
+
+    function filterDatasources() {
+        const q = document.getElementById('dsFilter').value.toLowerCase();
+        if (!q) { renderDatasources(_allDatasources); return; }
+        renderDatasources(_allDatasources.filter(d =>
+            (d.name || '').toLowerCase().includes(q) ||
+            (d.type || '').toLowerCase().includes(q) ||
+            (d.url  || '').toLowerCase().includes(q)
+        ));
+    }
+
+    // ── Clear ─────────────────────────────────────────────────────────────────
+
+    function clearAll() {
+        ['grafanaUrl','grafanaUser','grafanaPass','grafanaToken'].forEach(id => {
+            document.getElementById(id).value = '';
+        });
+        setStatus('');
+        ['summaryPanel','dashboardsPanel','datasourcesPanel','foldersPanel'].forEach(id => {
+            document.getElementById(id).style.display = 'none';
+        });
+        _allDashboards = [];
+        _allDatasources = [];
+    }
+
+    // ── Utilities ─────────────────────────────────────────────────────────────
+
+    function esc(s) {
+        return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function ea(s) {
+        return String(s ?? '').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
+</script>
+</body>
+</html>

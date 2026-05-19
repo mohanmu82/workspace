@@ -736,6 +736,11 @@ button.sm { padding: 4px 10px; font-size: 12px; }
       <input id="t-inputHttpUrl" type="text" placeholder="http://api.example.com/ids">
     </div>
     <div class="fg wide" style="margin-top:8px">
+      <label>Config Keys <span style="font-weight:400;text-transform:none;font-size:10px;color:#a5adba">(comma-separated, e.g. pubmed.dev,cms.uat — properties from matching configs are injected)</span></label>
+      <input type="text" id="t-configKeys" placeholder="pubmed.dev,cms.uat" style="padding:6px 9px;font-size:13px;border:1px solid #ccc;border-radius:4px;outline:none;font-family:inherit">
+      <span id="t-configKeysStatus" class="hint" style="min-height:14px"></span>
+    </div>
+    <div class="fg wide" style="margin-top:8px">
       <label>Extra Properties <span style="font-weight:400;text-transform:none;font-size:10px;color:#a5adba">(key=value per line — merged into the request as top-level properties)</span></label>
       <textarea id="t-extraProps" rows="3" placeholder="username=alice&#10;environment=prod&#10;customFlag=true" style="font-family:Consolas,monospace;font-size:12px"></textarea>
     </div>
@@ -2678,6 +2683,61 @@ function loadOperationIntoForm(op) {
   }
 }
 
+// ─── Config key resolution ────────────────────────────────────────────────────
+const _opConfigCache = {};
+
+async function _resolveConfigPropsT() {
+  const raw = document.getElementById('t-configKeys').value.trim();
+  const statusEl = document.getElementById('t-configKeysStatus');
+  if (!raw) { statusEl.textContent = ''; statusEl.style.color = ''; return {}; }
+
+  const keys = raw.split(',').map(s => s.trim()).filter(Boolean);
+  const props = {};
+  const errors = [];
+
+  for (const key of keys) {
+    const dot = key.lastIndexOf('.');
+    if (dot < 1 || dot === key.length - 1) {
+      errors.push('"' + key + '" must be in format config.environment');
+      continue;
+    }
+    const configName = key.substring(0, dot);
+    const envKey = key.substring(dot + 1);
+
+    let content;
+    if (_opConfigCache[configName]) {
+      content = _opConfigCache[configName];
+    } else {
+      try {
+        const res = await fetch('/batch/operationConfig/' + encodeURIComponent(configName));
+        if (!res.ok) { errors.push('Config "' + configName + '" not found'); continue; }
+        const data = await res.json();
+        content = data.content;
+        _opConfigCache[configName] = content;
+      } catch (e) {
+        errors.push('Error fetching "' + configName + '": ' + e.message);
+        continue;
+      }
+    }
+
+    const env = (content.environments || []).find(e => e.key === envKey);
+    if (!env) {
+      errors.push('Environment "' + envKey + '" not found in config "' + configName + '"');
+      continue;
+    }
+    (env.value || []).forEach(p => { if (p.property) props[p.property] = p.value || ''; });
+  }
+
+  if (errors.length) {
+    statusEl.textContent = errors.join(' | ');
+    statusEl.style.color = '#de350b';
+    return null;
+  }
+  statusEl.textContent = 'Resolved ' + Object.keys(props).length + ' properties from ' + keys.length + ' config key(s)';
+  statusEl.style.color = '#006644';
+  return props;
+}
+
 // ─── Test Run ─────────────────────────────────────────────────────────────────
 async function runTest() {
   const opName = v('f-name').trim();
@@ -2706,6 +2766,13 @@ async function runTest() {
   } else if (src === 'HTTPCONFIG') {
     const url = v('t-inputHttpUrl'); if (url) req.inputHttpUrl = url;
   }
+
+  // Config keys — resolve and merge properties first (extra props override)
+  const configProps = await _resolveConfigPropsT();
+  if (configProps === null) { setStatus('t-status', 'Config key error — see Config Keys field.', 'err'); return; }
+  Object.entries(configProps).forEach(([k, v]) => {
+    if (!Object.prototype.hasOwnProperty.call(req, k)) req[k] = v;
+  });
 
   // Extra properties — merged as top-level keys (unknown keys are captured as properties by the server)
   // Values that parse as JSON (objects/arrays) are sent as structured data, not strings.

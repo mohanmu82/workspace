@@ -1260,6 +1260,82 @@ public class BatchController {
         return ResponseEntity.ok(response);
     }
 
+    // -------------------------------------------------------------------------
+    // Operation Config endpoints
+    //
+    // GET    /batch/operationConfig          — list all config names
+    // GET    /batch/operationConfig/{config} — get a specific config
+    // POST   /batch/operationConfig          — save a config {"content":{...}}
+    // DELETE /batch/operationConfig/{config} — delete a config
+    // -------------------------------------------------------------------------
+
+    private Path operationConfigDir() {
+        String dataDir = serverPropertiesLoader.getProperties().getOrDefault("DATADIR", ".");
+        return Path.of(dataDir).resolve("operationConfig");
+    }
+
+    @GetMapping("/operationConfig")
+    public ResponseEntity<?> listOperationConfigs() {
+        List<String> names = new ArrayList<>();
+        Path dir = operationConfigDir();
+        if (Files.isDirectory(dir)) {
+            try (var stream = Files.list(dir)) {
+                stream.filter(p -> p.toString().endsWith(".json"))
+                      .map(p -> p.getFileName().toString().replaceAll("\\.json$", ""))
+                      .sorted()
+                      .forEach(names::add);
+            } catch (Exception ignored) {}
+        }
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("data", names);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/operationConfig/{config}")
+    public ResponseEntity<?> getOperationConfig(@PathVariable String config) throws Exception {
+        if (!config.matches("[\\w\\-.]+")) return badRequest("invalid config name");
+        Path file = operationConfigDir().resolve(config + ".json");
+        if (!Files.exists(file)) return badRequest("config not found: " + config);
+        Object content = objectMapper.readValue(file.toFile(), Object.class);
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("config", config);
+        response.put("content", content);
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/operationConfig")
+    public ResponseEntity<?> saveOperationConfig(@RequestBody Map<String, Object> body) throws Exception {
+        Object content = body.get("content");
+        if (content == null) return badRequest("content is required");
+        String configName = null;
+        if (content instanceof Map<?, ?> m && m.get("config") instanceof String s) {
+            configName = s.trim();
+        }
+        if (configName == null || configName.isBlank()) return badRequest("content.config is required");
+        if (!configName.matches("[\\w\\-.]+")) return badRequest("config name contains invalid characters");
+        Path dir = operationConfigDir();
+        Files.createDirectories(dir);
+        Path file = dir.resolve(configName + ".json");
+        objectMapper.writerWithDefaultPrettyPrinter().writeValue(file.toFile(), content);
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("status", "saved");
+        response.put("config", configName);
+        response.put("path", file.toAbsolutePath().toString());
+        return ResponseEntity.ok(response);
+    }
+
+    @DeleteMapping("/operationConfig/{config}")
+    public ResponseEntity<?> deleteOperationConfig(@PathVariable String config) throws Exception {
+        if (!config.matches("[\\w\\-.]+")) return badRequest("invalid config name");
+        Path file = operationConfigDir().resolve(config + ".json");
+        if (!Files.exists(file)) return badRequest("config not found: " + config);
+        Files.delete(file);
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("status", "deleted");
+        response.put("config", config);
+        return ResponseEntity.ok(response);
+    }
+
     private ResponseEntity<Map<String, Object>> badRequest(String message) {
         return errorsResponse("validation", message);
     }

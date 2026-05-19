@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Operation Config</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f5f7; color: #172b4d; padding: 24px; }
+.nav { margin-bottom: 18px; }
+.nav a { font-size: 13px; color: #0052cc; text-decoration: none; }
+.nav a:hover { text-decoration: underline; }
+h1 { font-size: 20px; font-weight: 600; margin-bottom: 16px; }
+
+.layout { display: grid; grid-template-columns: 260px 1fr; gap: 16px; align-items: start; }
+
+.panel {
+  background: #fff; border: 1px solid #dfe1e6; border-radius: 6px; padding: 14px; margin-bottom: 14px;
+}
+.panel-title {
+  font-size: 11px; font-weight: 700; color: #5e6c84; text-transform: uppercase;
+  letter-spacing: 0.5px; margin-bottom: 12px;
+}
+
+/* Config list */
+.config-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.config-item {
+  padding: 7px 10px; border-radius: 4px; cursor: pointer; font-size: 13px;
+  border: 1px solid transparent; background: #f4f5f7;
+}
+.config-item:hover { background: #e9f0ff; border-color: #4c9aff; }
+.config-item.active { background: #0052cc; color: #fff; border-color: #0052cc; }
+
+/* Form */
+.fg { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.fg label { font-size: 11px; font-weight: 600; color: #5e6c84; text-transform: uppercase; letter-spacing: 0.4px; }
+.fg input {
+  padding: 7px 10px; font-size: 14px; border: 1px solid #ccc; border-radius: 4px;
+  outline: none; font-family: inherit; background: #fff;
+}
+.fg input:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.25); }
+.fg input.err { border-color: #de350b; box-shadow: 0 0 0 2px rgba(222,53,11,.15); }
+.hint { font-size: 11px; color: #a5adba; margin-top: 2px; }
+
+/* Toolbar */
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 4px; }
+button { padding: 7px 16px; font-size: 13px; font-weight: 500; border: none; border-radius: 4px; cursor: pointer; }
+button.primary { background: #0052cc; color: #fff; }
+button.primary:hover { background: #0065ff; }
+button.secondary { background: #fff; color: #0052cc; border: 1px solid #0052cc; }
+button.secondary:hover { background: #e9f0ff; }
+button.danger { background: #fff; color: #de350b; border: 1px solid #de350b; }
+button.danger:hover { background: #ffebe6; }
+button.sm { padding: 4px 10px; font-size: 12px; }
+
+/* Environments */
+.env-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
+.env-card {
+  border: 1px solid #dfe1e6; border-radius: 5px; overflow: hidden;
+}
+.env-header {
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  background: #f4f5f7; border-bottom: 1px solid #dfe1e6;
+}
+.env-key-input {
+  flex: 1; padding: 4px 8px; font-size: 13px; border: 1px solid #ccc; border-radius: 3px;
+  outline: none; font-family: inherit; font-weight: 600;
+}
+.env-key-input:focus { border-color: #4c9aff; }
+.env-body { padding: 10px 12px; }
+
+/* Properties KV table */
+.kv-wrap { border: 1px solid #dfe1e6; border-radius: 4px; overflow: hidden; margin-bottom: 6px; }
+.kv-head { background: #f4f5f7; display: grid; grid-template-columns: 1fr 1fr 32px; }
+.kv-head span { padding: 4px 8px; font-size: 11px; font-weight: 700; color: #5e6c84; text-transform: uppercase; display: block; }
+.kv-row { display: grid; grid-template-columns: 1fr 1fr 32px; border-top: 1px solid #f0f1f3; }
+.kv-row input {
+  border: none; padding: 5px 8px; font-size: 12px; background: transparent;
+  font-family: Consolas, monospace; outline: none; width: 100%;
+}
+.kv-row input:focus { background: #f0f4ff; }
+.kv-del {
+  display: flex; align-items: center; justify-content: center;
+  color: #de350b; cursor: pointer; font-size: 16px; line-height: 1;
+}
+.kv-del:hover { background: #ffebe6; }
+.add-row-btn { font-size: 12px; color: #0052cc; cursor: pointer; padding: 2px 0; display: inline-block; }
+.add-row-btn:hover { text-decoration: underline; }
+
+/* Status */
+.status { font-size: 13px; min-height: 18px; margin-top: 6px; }
+.status.ok { color: #006644; }
+.status.err { color: #de350b; }
+
+/* JSON preview */
+.json-preview {
+  font-family: Consolas, "Cascadia Code", monospace; font-size: 12px;
+  background: #1e1e2e; color: #cdd6f4; border: 1px solid #2d2d3f; border-left: 3px solid #4c9aff;
+  border-radius: 6px; padding: 10px 14px; width: 100%; min-height: 200px;
+  resize: vertical; outline: none; line-height: 1.5;
+}
+
+.empty-hint { font-size: 13px; color: #a5adba; font-style: italic; padding: 4px 0; }
+</style>
+</head>
+<body>
+
+<div class="nav"><a href="/">&larr; Batch Runner</a></div>
+<h1>Operation Config</h1>
+
+<div class="layout">
+
+<!-- LEFT: config list -->
+<div>
+  <div class="panel">
+    <div class="panel-title">Saved Configs</div>
+    <div id="config-list" class="config-list">
+      <span class="empty-hint" id="list-empty">No configs yet.</span>
+    </div>
+    <button class="secondary sm" onclick="newConfig()">+ New Config</button>
+  </div>
+</div>
+
+<!-- RIGHT: editor -->
+<div id="editor-col">
+  <div class="panel" id="editor-panel">
+    <div class="panel-title" id="editor-title">New Config</div>
+
+    <div class="fg">
+      <label>Config Name <span style="color:#de350b">*</span></label>
+      <input id="f-config" type="text" placeholder="pubmed" oninput="updatePreview()">
+      <span class="hint">Identifier used in config keys, e.g. <code>pubmed.dev</code></span>
+    </div>
+
+    <!-- Environments -->
+    <div style="font-size:11px;font-weight:700;color:#5e6c84;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">
+      Environments
+    </div>
+    <div id="env-list" class="env-list"></div>
+    <span class="add-row-btn" onclick="addEnv()">+ Add environment</span>
+
+    <div class="toolbar" style="margin-top:14px">
+      <button class="primary" onclick="saveConfig()">Save</button>
+      <button class="secondary" onclick="newConfig()">Reset</button>
+      <button class="danger" id="delete-btn" style="display:none" onclick="deleteConfig()">Delete</button>
+    </div>
+    <div class="status" id="save-status"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">JSON Preview</div>
+    <textarea class="json-preview" id="json-preview" readonly></textarea>
+  </div>
+</div>
+
+</div>
+
+<script>
+let envCount = 0;
+let currentConfigName = null;
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+loadConfigList();
+
+// ── Config list ───────────────────────────────────────────────────────────────
+async function loadConfigList() {
+  try {
+    const res = await fetch('/batch/operationConfig');
+    const data = await res.json();
+    const names = data.data || [];
+    renderList(names);
+  } catch (e) {
+    document.getElementById('list-empty').textContent = 'Failed to load: ' + e.message;
+  }
+}
+
+function renderList(names) {
+  const container = document.getElementById('config-list');
+  container.innerHTML = '';
+  if (!names.length) {
+    const hint = document.createElement('span');
+    hint.id = 'list-empty'; hint.className = 'empty-hint'; hint.textContent = 'No configs yet.';
+    container.appendChild(hint);
+    return;
+  }
+  names.forEach(name => {
+    const item = document.createElement('div');
+    item.className = 'config-item' + (name === currentConfigName ? ' active' : '');
+    item.textContent = name;
+    item.onclick = () => loadConfig(name);
+    container.appendChild(item);
+  });
+}
+
+// ── Load config into form ─────────────────────────────────────────────────────
+async function loadConfig(name) {
+  try {
+    const res = await fetch('/batch/operationConfig/' + encodeURIComponent(name));
+    if (!res.ok) { setStatus('Failed to load config: ' + name, 'err'); return; }
+    const data = await res.json();
+    currentConfigName = name;
+    populateForm(data.content);
+    document.getElementById('editor-title').textContent = 'Edit Config: ' + name;
+    document.getElementById('delete-btn').style.display = '';
+    setStatus('', '');
+    highlightActive(name);
+  } catch (e) {
+    setStatus('Error: ' + e.message, 'err');
+  }
+}
+
+function populateForm(content) {
+  document.getElementById('f-config').value = content.config || '';
+  document.getElementById('env-list').innerHTML = '';
+  envCount = 0;
+  (content.environments || []).forEach(env => addEnv(env.key, env.value || []));
+  updatePreview();
+}
+
+function highlightActive(name) {
+  document.querySelectorAll('.config-item').forEach(el => {
+    el.classList.toggle('active', el.textContent === name);
+  });
+}
+
+// ── New config ────────────────────────────────────────────────────────────────
+function newConfig() {
+  currentConfigName = null;
+  document.getElementById('f-config').value = '';
+  document.getElementById('env-list').innerHTML = '';
+  envCount = 0;
+  document.getElementById('editor-title').textContent = 'New Config';
+  document.getElementById('delete-btn').style.display = 'none';
+  setStatus('', '');
+  highlightActive(null);
+  updatePreview();
+}
+
+// ── Environment cards ─────────────────────────────────────────────────────────
+function addEnv(key, properties) {
+  const id = ++envCount;
+  const card = document.createElement('div');
+  card.className = 'env-card';
+  card.id = 'env-card-' + id;
+  card.innerHTML = `
+    <div class="env-header">
+      <span style="font-size:11px;font-weight:700;color:#5e6c84;text-transform:uppercase;letter-spacing:.4px;flex-shrink:0">Key</span>
+      <input class="env-key-input" id="env-key-${id}" type="text" placeholder="dev" value="${esc(key||'')}" oninput="updatePreview()">
+      <button class="danger sm" onclick="removeEnv(${id})">&times;</button>
+    </div>
+    <div class="env-body">
+      <div class="kv-wrap" id="env-props-wrap-${id}">
+        <div class="kv-head"><span>Property</span><span>Value</span><span></span></div>
+      </div>
+      <span class="add-row-btn" onclick="addPropRow(${id})">+ Add property</span>
+    </div>`;
+  document.getElementById('env-list').appendChild(card);
+  (properties || []).forEach(p => addPropRow(id, p.property || '', p.value || ''));
+  updatePreview();
+}
+
+function removeEnv(id) {
+  document.getElementById('env-card-' + id)?.remove();
+  updatePreview();
+}
+
+let propCount = 0;
+function addPropRow(envId, property, value) {
+  const pid = ++propCount;
+  const wrap = document.getElementById('env-props-wrap-' + envId);
+  const row = document.createElement('div');
+  row.className = 'kv-row';
+  row.id = 'prop-row-' + pid;
+  row.innerHTML = `
+    <input type="text" id="prop-k-${pid}" value="${esc(property||'')}" placeholder="property" oninput="updatePreview()">
+    <input type="text" id="prop-v-${pid}" value="${esc(value||'')}" placeholder="value" oninput="updatePreview()">
+    <span class="kv-del" onclick="document.getElementById('prop-row-${pid}').remove();updatePreview()">&times;</span>`;
+  wrap.appendChild(row);
+  updatePreview();
+}
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+}
+
+// ── Build config object from form ─────────────────────────────────────────────
+function buildConfig() {
+  const config = document.getElementById('f-config').value.trim();
+  const environments = [];
+  document.querySelectorAll('.env-card').forEach(card => {
+    const id = card.id.replace('env-card-', '');
+    const key = document.getElementById('env-key-' + id)?.value.trim() || '';
+    const value = [];
+    card.querySelectorAll('.kv-row').forEach(row => {
+      const pid = row.id.replace('prop-row-', '');
+      const k = document.getElementById('prop-k-' + pid)?.value.trim() || '';
+      const v = document.getElementById('prop-v-' + pid)?.value || '';
+      if (k) value.push({ property: k, value: v });
+    });
+    if (key || value.length) environments.push({ key, value });
+  });
+  return { config, environments };
+}
+
+function updatePreview() {
+  document.getElementById('json-preview').value = JSON.stringify(buildConfig(), null, 2);
+}
+
+// ── Save ──────────────────────────────────────────────────────────────────────
+async function saveConfig() {
+  const content = buildConfig();
+  if (!content.config) {
+    setStatus('Config name is required.', 'err');
+    document.getElementById('f-config').classList.add('err');
+    return;
+  }
+  document.getElementById('f-config').classList.remove('err');
+
+  for (const env of content.environments) {
+    if (!env.key) { setStatus('All environments must have a key.', 'err'); return; }
+  }
+
+  try {
+    const res = await fetch('/batch/operationConfig', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content })
+    });
+    const data = await res.json();
+    if (!res.ok) { setStatus((data.Errors?.[0]?.message) || 'Save failed', 'err'); return; }
+    currentConfigName = content.config;
+    document.getElementById('editor-title').textContent = 'Edit Config: ' + content.config;
+    document.getElementById('delete-btn').style.display = '';
+    setStatus('Saved ✓', 'ok');
+    await loadConfigList();
+    highlightActive(content.config);
+  } catch (e) {
+    setStatus('Error: ' + e.message, 'err');
+  }
+}
+
+// ── Delete ────────────────────────────────────────────────────────────────────
+async function deleteConfig() {
+  if (!currentConfigName) return;
+  if (!confirm('Delete config "' + currentConfigName + '"?')) return;
+  try {
+    const res = await fetch('/batch/operationConfig/' + encodeURIComponent(currentConfigName), { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) { setStatus((data.Errors?.[0]?.message) || 'Delete failed', 'err'); return; }
+    newConfig();
+    setStatus('Deleted.', 'ok');
+    await loadConfigList();
+  } catch (e) {
+    setStatus('Error: ' + e.message, 'err');
+  }
+}
+
+// ── Status ────────────────────────────────────────────────────────────────────
+function setStatus(msg, type) {
+  const el = document.getElementById('save-status');
+  el.textContent = msg;
+  el.className = 'status' + (type ? ' ' + type : '');
+}
+</script>
+</body>
+</html>

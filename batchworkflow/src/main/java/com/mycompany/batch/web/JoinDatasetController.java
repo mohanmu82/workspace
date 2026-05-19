@@ -303,11 +303,16 @@ public class JoinDatasetController {
                 }
 
                 List<Map<String, Object>> newResult = new ArrayList<>();
+                Set<Map<String, Object>> matchedRightRows =
+                        Collections.newSetFromMap(new IdentityHashMap<>());
+                List<Map<String, Object>> rightRows = loadedData.get(dsName);
+
                 for (Map<String, Object> row : result) {
                     String kVal = String.valueOf(row.getOrDefault(refCol, "")).toLowerCase(Locale.ROOT);
                     List<Map<String, Object>> matches = idx.get(kVal);
                     if (matches != null && !matches.isEmpty()) {
                         for (Map<String, Object> m : matches) {
+                            matchedRightRows.add(m);
                             Map<String, Object> merged = new LinkedHashMap<>(row);
                             for (Map.Entry<String, Object> e : m.entrySet()) {
                                 if (e.getKey().equals(fkCol)) continue;
@@ -321,6 +326,14 @@ public class JoinDatasetController {
                         newResult.add(new LinkedHashMap<>(row));
                     }
                 }
+
+                // Full outer join: include right-side rows with no matching left-side row
+                for (Map<String, Object> rightRow : rightRows) {
+                    if (!matchedRightRows.contains(rightRow)) {
+                        newResult.add(new LinkedHashMap<>(rightRow));
+                    }
+                }
+
                 result = newResult;
             }
         }

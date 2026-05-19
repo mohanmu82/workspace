@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Utils</title>
     <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@31/dist/ag-grid-community.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jsonata/jsonata.min.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -73,6 +74,92 @@
         #gridSection { display: none; }
 
         .ag-cell { cursor: pointer !important; }
+
+        /* Grid toolbar */
+        .grid-toolbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; }
+        .grid-toolbar button { padding: 4px 10px; font-size: 12px; font-weight: 500; border-radius: 4px;
+            cursor: pointer; background: #f4f5f7; color: #172b4d; border: 1px solid #dfe1e6; }
+        .grid-toolbar button:hover { background: #ebecf0; }
+        .row-count-bar { font-size: 11px; color: #5e6c84; text-align: right; margin-bottom: 3px; min-height: 14px; }
+
+        /* Column chooser */
+        #utilColChooserBar {
+            display: none; flex-wrap: wrap; gap: 5px; padding: 6px 10px;
+            background: #fff; border: 1px solid #dfe1e6; border-radius: 6px;
+            margin-bottom: 6px; align-items: center;
+        }
+        #utilColChooserBar .chooser-lbl {
+            font-size: 11px; font-weight: 700; color: #5e6c84;
+            text-transform: uppercase; letter-spacing: .4px; margin-right: 4px; flex-shrink: 0;
+        }
+        .u-col-chip {
+            display: inline-flex; align-items: center; gap: 4px;
+            padding: 2px 9px; background: #f4f5f7; border: 1px solid #dfe1e6;
+            border-radius: 14px; font-size: 12px; cursor: pointer; user-select: none;
+        }
+        .u-col-chip:hover { background: #ebecf0; }
+        .u-col-chip input[type=checkbox] { cursor: pointer; margin: 0; }
+        .u-chip-drag { cursor: grab; font-size: 11px; color: #b3bac5; line-height: 1; flex-shrink: 0; }
+        .u-chip-drag:active { cursor: grabbing; }
+        .u-chip-drag:hover { color: #5e6c84; }
+        .u-col-chip.dragging { opacity: 0.35; border-style: dashed; }
+        .u-col-chip.drag-over { border-color: #0052cc; background: #e9f0ff; }
+        .u-pie-btn { padding: 0 4px; font-size: 11px; border: 1px solid #ccc; border-radius: 3px;
+            cursor: pointer; background: #fff; color: #0052cc; line-height: 1.5; margin-left: 3px; }
+        .u-pie-btn:hover { background: #e9f0ff; }
+
+        /* Chart modal */
+        .u-chart-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center; }
+        .u-chart-overlay.open { display: flex; }
+        .u-chart-box { background: #fff; border-radius: 8px; padding: 20px 24px; width: 480px;
+            max-width: 95vw; box-shadow: 0 8px 32px rgba(0,0,0,0.25); }
+        .u-chart-hdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+        .u-chart-hdr h3 { font-size: 16px; font-weight: 600; margin: 0; }
+        .u-chart-hdr button { background: none; border: none; font-size: 18px; cursor: pointer;
+            color: #5e6c84; padding: 2px 6px; border-radius: 4px; }
+        .u-chart-hdr button:hover { background: #f4f5f7; }
+
+        /* Pivot modal */
+        .u-pivot-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+            z-index: 1100; align-items: flex-start; justify-content: center; padding: 24px 0; overflow-y: auto; }
+        .u-pivot-overlay.open { display: flex; }
+        .u-pivot-box { background: #fff; border-radius: 8px; width: 96vw; max-width: 1200px;
+            box-shadow: 0 8px 40px rgba(0,0,0,0.28); display: flex; flex-direction: column; }
+        .u-pivot-hdr { display: flex; justify-content: space-between; align-items: center;
+            padding: 14px 20px; border-bottom: 1px solid #e0e4ea; flex-shrink: 0; }
+        .u-pivot-hdr h3 { font-size: 16px; font-weight: 600; margin: 0; }
+        .u-pivot-hdr button { background: none; border: none; font-size: 18px; cursor: pointer; color: #5e6c84; padding: 2px 6px; border-radius: 4px; }
+        .u-pivot-hdr button:hover { background: #f4f5f7; }
+        .u-pivot-body { display: flex; gap: 0; min-height: 0; }
+        .u-pivot-cfg { width: 340px; min-width: 260px; border-right: 1px solid #e0e4ea; padding: 14px;
+            display: flex; flex-direction: column; gap: 10px; overflow-y: auto; max-height: calc(90vh - 56px); }
+        .u-pivot-lbl { font-size: 11px; font-weight: 600; color: #5e6c84; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 3px; }
+        .u-pivot-avail { display: flex; flex-wrap: wrap; gap: 4px; max-height: 110px; overflow-y: auto;
+            padding: 5px; background: #f4f5f7; border: 1px solid #dfe1e6; border-radius: 4px; }
+        .u-pchip { display: inline-flex; align-items: center; gap: 3px; padding: 2px 7px;
+            border-radius: 12px; font-size: 12px; cursor: pointer; user-select: none; white-space: nowrap; }
+        .u-pchip.avail   { background: #e9f0ff; color: #0052cc; border: 1px solid #4c9aff; }
+        .u-pchip.avail:hover { background: #d0e4ff; }
+        .u-pchip.row-grp { background: #e3fcef; color: #006644; border: 1px solid #57d9a3; }
+        .u-pchip.piv-col { background: #fff0b3; color: #7a4600; border: 1px solid #ffab00; }
+        .u-pchip.val-col { background: #ffe2dd; color: #bf2600; border: 1px solid #ff7452; }
+        .u-pchip .prm { font-size: 14px; line-height: 1; color: inherit; opacity: .7; }
+        .u-pchip .prm:hover { opacity: 1; }
+        .u-pivot-drop { min-height: 34px; display: flex; flex-wrap: wrap; gap: 4px; padding: 5px;
+            background: #f4f5f7; border: 1px dashed #b3bac5; border-radius: 4px; }
+        .u-pivot-drop.empty::after { content: attr(data-hint); color: #b3bac5; font-size: 11px; font-style: italic; }
+        .u-pivot-ctrl { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+        .u-pivot-ctrl select { flex: 1; padding: 4px 7px; border: 1px solid #dfe1e6; border-radius: 4px; font-size: 12px; }
+        .u-pivot-result { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 14px; overflow: hidden; }
+        .u-pivot-result-bar { display: flex; gap: 7px; align-items: center; margin-bottom: 8px; flex-shrink: 0; }
+        .u-pivot-tbl-wrap { flex: 1; overflow: auto; border: 1px solid #dfe1e6; border-radius: 4px; }
+        .u-pivot-tbl { border-collapse: collapse; font-size: 12px; width: 100%; }
+        .u-pivot-tbl th { background: #f4f5f7; padding: 4px 9px; text-align: left; border: 1px solid #dfe1e6; white-space: nowrap; position: sticky; top: 0; z-index: 1; }
+        .u-pivot-tbl td { padding: 3px 9px; border: 1px solid #dfe1e6; white-space: nowrap; }
+        .u-pivot-tbl tr:nth-child(even) td { background: #fafbfc; }
+        .u-pivot-chart-wrap { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 240px; position: relative; }
+        #utilPivotCanvas { max-height: 400px; }
         #copyToast {
             position: fixed; bottom: 24px; right: 24px; z-index: 9999;
             background: #172b4d; color: #fff; padding: 8px 18px;
@@ -124,6 +211,9 @@
             <button class="tool-btn" onclick="htmlUnescapeBtn('valueArea')">HTML Unescape</button>
             <button class="tool-btn" onclick="xmlToJson('valueArea')">XML to JSON</button>
             <button class="tool-btn" onclick="jsonStringify('valueArea')">JSON Stringify</button>
+            <button class="tool-btn" onclick="jsonUnstringify('valueArea')">JSON Unstringify</button>
+            <button class="tool-btn" onclick="propsToJson('valueArea')">Props to JSON</button>
+            <button class="tool-btn" onclick="loadGridFrom('valueArea')">Load to Grid</button>
         </div>
     </div>
 
@@ -159,6 +249,9 @@
             <button class="tool-btn" onclick="htmlUnescapeBtn('responseArea')">HTML Unescape</button>
             <button class="tool-btn" onclick="xmlToJson('responseArea')">XML to JSON</button>
             <button class="tool-btn" onclick="jsonStringify('responseArea')">JSON Stringify</button>
+            <button class="tool-btn" onclick="jsonUnstringify('responseArea')">JSON Unstringify</button>
+            <button class="tool-btn" onclick="propsToJson('responseArea')">Props to JSON</button>
+            <button class="tool-btn" onclick="loadGridFrom('responseArea')">Load to Grid</button>
         </div>
     </div>
 
@@ -168,6 +261,9 @@
         <label>Result</label>
         <textarea id="resultArea" readonly placeholder="Transform result will appear here..."
                   aria-label="Transform result (read-only)" style="min-height:100px"></textarea>
+    </div>
+    <div class="toolbar">
+        <button class="tool-btn" onclick="loadGridFrom('resultArea')">Load to Grid</button>
     </div>
 </div>
 
@@ -210,15 +306,28 @@
 <div id="gridSection" class="panel">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
         <div class="panel-title" style="margin-bottom:0">Data Grid</div>
-        <button class="tool-btn" onclick="copyColumnsAsJson(utilGrid)">Copy Cols JSON</button>
         <button class="tool-btn" onclick="viewAsHtml()">&#128203; View as HTML</button>
-        <span id="gridRowCount" style="font-size:12px;color:#5e6c84;margin-left:auto"></span>
+        <button class="tool-btn" onclick="document.getElementById('gridSection').style.display='none'" style="margin-left:auto">&#10005; Close</button>
     </div>
+    <div class="grid-toolbar">
+        <button onclick="utilGrid && utilGrid.autoSizeAllColumns()">Expand Cols</button>
+        <button onclick="utilGrid && utilGrid.sizeColumnsToFit()">Fit Cols</button>
+        <button onclick="exportCsvUtil()">Export CSV</button>
+        <button onclick="openPivotUtil()">&#8644; Pivot</button>
+        <button onclick="copyColumnsAsJson(utilGrid)">Copy Cols JSON</button>
+    </div>
+    <div id="utilColChooserBar"><span class="chooser-lbl">Columns:</span></div>
+    <div class="row-count-bar" id="gridRowCount"></div>
     <div id="utilGrid" class="ag-theme-alpine"></div>
 </div>
 
 <script>
     let utilGrid = null;
+    let _utilGridData = [];
+    let _utilGridCols = [];
+    let _utilPieChart = null;
+    let _utilPivotChart = null;
+    let _utilPivotRowGrps = [], _utilPivotCols = [], _utilPivotVals = [];
     let _toastTimer;
     function showCopyToast() {
         const t = document.getElementById('copyToast');
@@ -337,6 +446,13 @@
         if (!loaded) setStatus('No array found in the JSON to load into the grid', 'error');
     }
 
+    function loadGridFrom(sourceId) {
+        const text = document.getElementById(sourceId).value.trim();
+        if (!text) { setStatus('No data to load', 'error'); return; }
+        const loaded = tryLoadGridFromText(text, true);
+        if (!loaded) setStatus('No array found in the JSON to load into the grid', 'error');
+    }
+
     function tryLoadGridFromText(text, explicit = false) {
         let parsed;
         try { parsed = JSON.parse(text); } catch (_) { return false; }
@@ -357,45 +473,266 @@
     }
 
     function renderGrid(rows) {
-        const cols = [];
         const keys = new Set();
         rows.forEach(r => { if (r && typeof r === 'object') Object.keys(r).forEach(k => keys.add(k)); });
-        keys.forEach(k => cols.push({
+        const colNames = [...keys];
+        _utilGridData = rows;
+        _utilGridCols = colNames;
+
+        const colDefs = colNames.map(k => ({
             field: k,
             headerName: k,
             sortable: true,
             filter: true,
             resizable: true,
+            minWidth: 80,
             tooltipValueGetter: p => (p.value !== null && p.value !== undefined) ? String(p.value) : ''
         }));
 
-        const section = document.getElementById('gridSection');
-        section.style.display = 'block';
+        document.getElementById('gridSection').style.display = 'block';
 
-        if (utilGrid) {
-            utilGrid.setGridOption('columnDefs', cols);
-            utilGrid.setGridOption('rowData', rows);
+        if (utilGrid) { try { utilGrid.destroy(); } catch(e){} utilGrid = null; }
+        const el = document.getElementById('utilGrid');
+        el.innerHTML = '';
+        utilGrid = agGrid.createGrid(el, {
+            columnDefs:    colDefs,
+            rowData:       rows,
+            defaultColDef: { sortable: true, filter: true, resizable: true, minWidth: 80 },
+            pagination: true,
+            paginationPageSize: 50,
+            tooltipShowDelay: 300,
+            onCellClicked: handleCellClicked,
+            onGridReady: () => {
+                document.getElementById('gridRowCount').textContent = rows.length.toLocaleString() + ' row(s)';
+                buildColChooserUtil(colNames);
+            }
+        });
+    }
+
+    function buildColChooserUtil(colNames) {
+        const bar = document.getElementById('utilColChooserBar');
+        bar.innerHTML = '<span class="chooser-lbl">Columns:</span>';
+        if (!colNames || !colNames.length) { bar.style.display = 'none'; return; }
+        bar.style.display = 'flex';
+
+        let dragSrc = null;
+
+        function applyColOrder() {
+            if (!utilGrid) return;
+            const order = [...bar.querySelectorAll('.u-col-chip')].map(el => el.dataset.field);
+            utilGrid.applyColumnState({ state: order.map(colId => ({ colId })), applyOrder: true });
+        }
+
+        colNames.forEach(field => {
+            const chip = document.createElement('label');
+            chip.className = 'u-col-chip';
+            chip.draggable = true;
+            chip.dataset.field = field;
+
+            const handle = document.createElement('span');
+            handle.className = 'u-chip-drag';
+            handle.textContent = '⠿';
+            handle.title = 'Drag to reorder';
+
+            const cb = document.createElement('input');
+            cb.type = 'checkbox'; cb.checked = true;
+            cb.addEventListener('change', () => {
+                if (!utilGrid) return;
+                utilGrid.setColumnVisible(field, cb.checked);
+            });
+
+            const span = document.createElement('span');
+            span.textContent = field;
+
+            const pie = document.createElement('button');
+            pie.className = 'u-pie-btn'; pie.textContent = '◕'; pie.title = 'Chart: ' + field;
+            pie.type = 'button';
+            pie.addEventListener('click', e => { e.preventDefault(); openChartUtil(field, field); });
+
+            chip.addEventListener('dragstart', e => {
+                dragSrc = chip;
+                e.dataTransfer.effectAllowed = 'move';
+                setTimeout(() => chip.classList.add('dragging'), 0);
+            });
+            chip.addEventListener('dragend', () => {
+                chip.classList.remove('dragging');
+                bar.querySelectorAll('.u-col-chip').forEach(el => el.classList.remove('drag-over'));
+                dragSrc = null;
+            });
+            chip.addEventListener('dragover', e => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                if (dragSrc && dragSrc !== chip) chip.classList.add('drag-over');
+            });
+            chip.addEventListener('dragleave', () => chip.classList.remove('drag-over'));
+            chip.addEventListener('drop', e => {
+                e.preventDefault();
+                chip.classList.remove('drag-over');
+                if (!dragSrc || dragSrc === chip) return;
+                const chips = [...bar.querySelectorAll('.u-col-chip')];
+                const from = chips.indexOf(dragSrc);
+                const to   = chips.indexOf(chip);
+                if (from < to) chip.after(dragSrc); else chip.before(dragSrc);
+                applyColOrder();
+            });
+
+            chip.appendChild(handle);
+            chip.appendChild(cb);
+            chip.appendChild(span);
+            chip.appendChild(pie);
+            bar.appendChild(chip);
+        });
+    }
+
+    // ─── Charts ──────────────────────────────────────────────────────────────────
+    function openChartUtil(field, label) {
+        const counts = {};
+        _utilGridData.forEach(r => {
+            const v = String(r[field] ?? '(empty)');
+            counts[v] = (counts[v] || 0) + 1;
+        });
+        const entries = Object.entries(counts).sort((a,b) => b[1]-a[1]).slice(0, 30);
+        if (_utilPieChart) { _utilPieChart.destroy(); _utilPieChart = null; }
+        document.getElementById('utilChartTitle').textContent = label;
+        const canvas = document.getElementById('utilPieCanvas');
+        const ctx = canvas.getContext('2d');
+        _utilPieChart = new Chart(ctx, {
+            type: 'pie',
+            data: {
+                labels: entries.map(e => e[0]),
+                datasets: [{ data: entries.map(e => e[1]),
+                    backgroundColor: ['#4c9aff','#57d9a3','#ffab00','#ff7452','#a08af0','#79e2f2','#f4c8e8',
+                        '#b3bac5','#36b37e','#ff5630','#6554c0','#00b8d9','#ff991f','#8777d9','#2684ff','#00875a'] }]
+            },
+            options: { plugins: { legend: { position: 'right' } }, maintainAspectRatio: true }
+        });
+        document.getElementById('utilChartModal').classList.add('open');
+    }
+    function closeChartUtil() { document.getElementById('utilChartModal').classList.remove('open'); }
+
+    // ─── Export ──────────────────────────────────────────────────────────────────
+    function exportCsvUtil() {
+        if (!utilGrid) return;
+        utilGrid.exportDataAsCsv({ fileName: 'utils-grid.csv' });
+    }
+
+    // ─── Pivot ───────────────────────────────────────────────────────────────────
+    function openPivotUtil() {
+        const avail = document.getElementById('utilPivotAvail');
+        avail.innerHTML = '';
+        _utilGridCols.forEach(f => {
+            const chip = document.createElement('span');
+            chip.className = 'u-pchip avail'; chip.textContent = f;
+            chip.addEventListener('click', () => addToPivotUtil(f));
+            avail.appendChild(chip);
+        });
+        _utilPivotRowGrps = []; _utilPivotCols = []; _utilPivotVals = [];
+        renderPivotDropzonesUtil();
+        document.getElementById('utilPivotModal').classList.add('open');
+    }
+    function closePivotUtil() { document.getElementById('utilPivotModal').classList.remove('open'); }
+    function resetPivotUtil() {
+        _utilPivotRowGrps = []; _utilPivotCols = []; _utilPivotVals = [];
+        renderPivotDropzonesUtil();
+        document.getElementById('utilPivotTblWrap').style.display = 'none';
+        document.getElementById('utilPivotChartWrap').style.display = 'none';
+        document.getElementById('utilPivotEmpty').style.display = 'flex';
+        document.getElementById('utilPivotInfo').textContent = '';
+        document.getElementById('utilPivotExportBtn').style.display = 'none';
+    }
+    function addToPivotUtil(field) {
+        if (!_utilPivotRowGrps.includes(field)) { _utilPivotRowGrps.push(field); renderPivotDropzonesUtil(); }
+    }
+    function renderPivotDropzonesUtil() {
+        const renderZone = (zoneId, arr, cls) => {
+            const zone = document.getElementById(zoneId);
+            zone.innerHTML = '';
+            if (!arr.length) { zone.classList.add('empty'); return; }
+            zone.classList.remove('empty');
+            arr.forEach((f, i) => {
+                const chip = document.createElement('span');
+                chip.className = 'u-pchip ' + cls; chip.textContent = f;
+                const rm = document.createElement('span'); rm.className = 'prm'; rm.textContent = '×';
+                rm.addEventListener('click', () => { arr.splice(i, 1); renderPivotDropzonesUtil(); });
+                chip.appendChild(rm); zone.appendChild(chip);
+            });
+        };
+        renderZone('utilPivotRowGrps', _utilPivotRowGrps, 'row-grp');
+        renderZone('utilPivotColsZone', _utilPivotCols, 'piv-col');
+        renderZone('utilPivotVals', _utilPivotVals, 'val-col');
+    }
+    function applyPivotUtil() {
+        if (!_utilPivotRowGrps.length) { alert('Add at least one Row Group to pivot.'); return; }
+        const displayType = document.getElementById('utilPivotDisplay').value;
+        const grouped = {};
+        _utilGridData.forEach(row => {
+            const key = _utilPivotRowGrps.map(f => row[f] ?? '').join(' | ');
+            if (!grouped[key]) grouped[key] = [];
+            grouped[key].push(row);
+        });
+        const valueFields = _utilPivotVals.length ? _utilPivotVals : (_utilGridCols.filter(f => !_utilPivotRowGrps.includes(f)).slice(0, 1));
+        const rows = Object.entries(grouped).map(([key, recs]) => {
+            const out = {};
+            _utilPivotRowGrps.forEach((f, i) => { out[f] = key.split(' | ')[i]; });
+            valueFields.forEach(f => {
+                const nums = recs.map(r => parseFloat(r[f])).filter(n => !isNaN(n));
+                out[f + '_count'] = recs.length;
+                if (nums.length) { out[f + '_sum'] = nums.reduce((a,b) => a+b, 0); out[f + '_avg'] = (out[f + '_sum'] / nums.length).toFixed(2); }
+            });
+            return out;
+        });
+
+        document.getElementById('utilPivotEmpty').style.display = 'none';
+
+        if (displayType === 'table') {
+            if (!rows.length) return;
+            const hdrs = Object.keys(rows[0]);
+            const tbl = '<table class="u-pivot-tbl"><thead><tr>' + hdrs.map(h => `<th>${escU(h)}</th>`).join('') + '</tr></thead><tbody>'
+                + rows.map(r => '<tr>' + hdrs.map(h => `<td>${escU(String(r[h] ?? ''))}</td>`).join('') + '</tr>').join('') + '</tbody></table>';
+            document.getElementById('utilPivotTblWrap').innerHTML = tbl;
+            document.getElementById('utilPivotTblWrap').style.display = '';
+            document.getElementById('utilPivotChartWrap').style.display = 'none';
+            document.getElementById('utilPivotExportBtn').style.display = '';
         } else {
-            utilGrid = agGrid.createGrid(document.getElementById('utilGrid'), {
-                columnDefs:    cols,
-                rowData:       rows,
-                defaultColDef: { sortable: true, filter: true, resizable: true, minWidth: 80 },
-                tooltipShowDelay: 300,
-                onCellClicked: params => {
-                    if (params.value == null) return;
-                    const text = String(params.value);
-                    const copy = () => {
-                        const ta = document.createElement('textarea');
-                        ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px;top:0';
-                        document.body.appendChild(ta); ta.select(); document.execCommand('copy');
-                        document.body.removeChild(ta);
-                        showCopyToast();
-                    };
-                    navigator.clipboard.writeText(text).then(showCopyToast).catch(copy);
-                },
+            document.getElementById('utilPivotTblWrap').style.display = 'none';
+            document.getElementById('utilPivotChartWrap').style.display = '';
+            document.getElementById('utilPivotExportBtn').style.display = 'none';
+            const labels = rows.map(r => _utilPivotRowGrps.map(f => r[f]).join(' | '));
+            const vField = valueFields[0];
+            const values = rows.map(r => r[vField + '_count'] || 0);
+            if (_utilPivotChart) { _utilPivotChart.destroy(); _utilPivotChart = null; }
+            const ctx = document.getElementById('utilPivotCanvas').getContext('2d');
+            const typeMap = { bar:'bar', line:'line', horizontalBar:'bar', pie:'pie' };
+            const chartType = typeMap[displayType] || 'bar';
+            const isHoriz = displayType === 'horizontalBar';
+            _utilPivotChart = new Chart(ctx, {
+                type: chartType,
+                data: { labels, datasets: [{ label: vField + ' count', data: values,
+                    backgroundColor: '#4c9aff', borderColor: '#0052cc', borderWidth: 1 }] },
+                options: { indexAxis: isHoriz ? 'y' : 'x', plugins: { legend: { display: false } }, maintainAspectRatio: false }
             });
         }
-        document.getElementById('gridRowCount').textContent = rows.length.toLocaleString() + ' row(s)';
+        document.getElementById('utilPivotInfo').textContent = rows.length + ' groups';
+    }
+    function exportPivotCsvUtil() {
+        const tbl = document.querySelector('#utilPivotTblWrap .u-pivot-tbl');
+        if (!tbl) return;
+        const hdrs = [...tbl.querySelectorAll('thead th')].map(th => th.textContent);
+        const dataRows = [...tbl.querySelectorAll('tbody tr')].map(tr =>
+            [...tr.querySelectorAll('td')].map(td => '"' + td.textContent.replace(/"/g,'""') + '"'));
+        const csv = [hdrs.map(h => '"' + h + '"').join(','), ...dataRows.map(r => r.join(','))].join('\n');
+        const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
+        a.download = 'pivot.csv'; a.click();
+    }
+    function escU(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    // ─── Public API ──────────────────────────────────────────────────────────────
+    function showInGrid(jsonArray) {
+        if (!Array.isArray(jsonArray) || jsonArray.length === 0) {
+            setStatus('showInGrid: argument must be a non-empty array', 'error'); return;
+        }
+        renderGrid(jsonArray);
+        document.getElementById('gridSection').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     // ---- Transform tools ----
@@ -487,6 +824,26 @@
         }
     }
 
+    function jsonUnstringify(sourceId) {
+        const src = document.getElementById(sourceId).value;
+        if (!src) { setStatus('Nothing to unstringify', 'error'); return; }
+        try {
+            let inner;
+            try {
+                const parsed = JSON.parse(src);
+                inner = typeof parsed === 'string' ? JSON.parse(parsed) : parsed;
+            } catch (_) {
+                // Input has raw \" escapes without outer quotes — wrap and parse to decode
+                const unescaped = JSON.parse('"' + src + '"');
+                inner = JSON.parse(unescaped);
+            }
+            setOutput(JSON.stringify(inner, null, 2));
+            setStatus('JSON unstringified', 'ok');
+        } catch (e) {
+            setStatus('Invalid JSON string: ' + e.message, 'error');
+        }
+    }
+
     function base64Decode(sourceId) {
         const src = document.getElementById(sourceId).value.trim();
         if (!src) { setStatus('Nothing to decode', 'error'); return; }
@@ -542,6 +899,33 @@
         el.innerHTML = src;
         setOutput(el.value);
         setStatus('HTML unescaped', 'ok');
+    }
+
+    function propsToJson(sourceId) {
+        const src = document.getElementById(sourceId).value.trim();
+        if (!src) { setStatus('Nothing to convert', 'error'); return; }
+        try {
+            const parseRow = line => {
+                let s = line.trim();
+                if (s.startsWith('{') && s.endsWith('}')) s = s.slice(1, -1).trim();
+                const pairs = s.split(/,\s*(?=[^\s=,]+=)/);
+                const obj = {};
+                for (const pair of pairs) {
+                    const eqIdx = pair.indexOf('=');
+                    if (eqIdx === -1) continue;
+                    const key = pair.slice(0, eqIdx).trim();
+                    const val = pair.slice(eqIdx + 1).trim();
+                    if (key) obj[key] = val;
+                }
+                return obj;
+            };
+            const lines = src.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+            const result = lines.length === 1 ? parseRow(lines[0]) : lines.map(parseRow);
+            setOutput(JSON.stringify(result, null, 2));
+            setStatus('Properties converted to JSON' + (lines.length > 1 ? ' (' + lines.length + ' rows)' : ''), 'ok');
+        } catch (e) {
+            setStatus('Conversion error: ' + e.message, 'error');
+        }
     }
 
     function xmlToJson(sourceId) {
@@ -606,7 +990,12 @@
         document.getElementById('statusBar').textContent = '';
         document.getElementById('statusBar').className   = 'status-bar';
         document.getElementById('gridSection').style.display = 'none';
-        if (utilGrid) { utilGrid.destroy(); utilGrid = null; }
+        document.getElementById('gridRowCount').textContent = '';
+        const bar = document.getElementById('utilColChooserBar');
+        bar.innerHTML = '<span class="chooser-lbl">Columns:</span>';
+        bar.style.display = 'none';
+        _utilGridData = []; _utilGridCols = [];
+        if (utilGrid) { try { utilGrid.destroy(); } catch(e){} utilGrid = null; }
     }
 
     // -------------------------------------------------------------------------
@@ -761,5 +1150,62 @@
     }
 </script>
 <div id="copyToast">Copied!</div>
+
+<!-- Chart modal -->
+<div id="utilChartModal" class="u-chart-overlay" onclick="if(event.target===this)closeChartUtil()">
+  <div class="u-chart-box">
+    <div class="u-chart-hdr">
+      <h3 id="utilChartTitle"></h3>
+      <button onclick="closeChartUtil()">&#10005;</button>
+    </div>
+    <canvas id="utilPieCanvas"></canvas>
+  </div>
+</div>
+
+<!-- Pivot modal -->
+<div id="utilPivotModal" class="u-pivot-overlay" onclick="if(event.target===this)closePivotUtil()">
+  <div class="u-pivot-box">
+    <div class="u-pivot-hdr">
+      <h3>&#8644; Pivot &amp; Chart</h3>
+      <button onclick="closePivotUtil()">&#10005;</button>
+    </div>
+    <div class="u-pivot-body">
+      <div class="u-pivot-cfg">
+        <div>
+          <div class="u-pivot-lbl">Available Columns <span style="font-weight:400;text-transform:none;font-size:10px;color:#b3bac5">(click to add)</span></div>
+          <div id="utilPivotAvail" class="u-pivot-avail"></div>
+        </div>
+        <div><div class="u-pivot-lbl">Row Groups</div><div id="utilPivotRowGrps" class="u-pivot-drop" data-hint="Add row group columns…"></div></div>
+        <div><div class="u-pivot-lbl">Pivot Columns</div><div id="utilPivotColsZone" class="u-pivot-drop" data-hint="Add pivot columns (optional)…"></div></div>
+        <div><div class="u-pivot-lbl">Values</div><div id="utilPivotVals" class="u-pivot-drop" data-hint="Add value columns + aggregation…"></div></div>
+        <div>
+          <div class="u-pivot-lbl">Display</div>
+          <div class="u-pivot-ctrl">
+            <select id="utilPivotDisplay">
+              <option value="table">Table</option>
+              <option value="bar">Bar Chart</option>
+              <option value="line">Line Chart</option>
+              <option value="horizontalBar">Horizontal Bar</option>
+              <option value="pie">Pie Chart</option>
+            </select>
+            <button onclick="applyPivotUtil()" style="padding:4px 10px;font-size:12px">&#9654; Apply</button>
+            <button onclick="resetPivotUtil()" style="padding:4px 10px;font-size:12px">Reset</button>
+          </div>
+        </div>
+      </div>
+      <div class="u-pivot-result">
+        <div class="u-pivot-result-bar">
+          <button id="utilPivotExportBtn" onclick="exportPivotCsvUtil()" style="display:none;padding:4px 10px;font-size:12px">Export CSV</button>
+          <span id="utilPivotInfo" style="font-size:12px;color:#5e6c84"></span>
+        </div>
+        <div id="utilPivotTblWrap" class="u-pivot-tbl-wrap" style="display:none"></div>
+        <div id="utilPivotChartWrap" class="u-pivot-chart-wrap" style="display:none"><canvas id="utilPivotCanvas"></canvas></div>
+        <div id="utilPivotEmpty" style="flex:1;display:flex;align-items:center;justify-content:center;color:#b3bac5;font-size:12px">
+          Configure row groups &amp; values to display.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 </body>
 </html>

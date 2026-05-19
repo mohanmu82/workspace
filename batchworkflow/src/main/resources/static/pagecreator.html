@@ -89,11 +89,21 @@ button.xs  { padding: 2px 8px; font-size: 11px; }
 .action-chip { padding: 3px 9px; font-size: 11px; background: #e9f0ff; color: #0052cc; border: 1px solid #4c9aff; border-radius: 12px; cursor: pointer; user-select: none; }
 .action-chip:hover { background: #d0e4ff; }
 
+/* Required control chips */
+.req-ctrl-chips { display: flex; flex-wrap: wrap; gap: 4px; min-height: 24px; padding: 2px 0; }
+.req-ctrl-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; font-size: 11px; background: #fff4e6; color: #974f0c; border: 1px solid #faa04b; border-radius: 12px; }
+.req-ctrl-chip .rm-rc { cursor: pointer; font-size: 14px; line-height: 1; opacity: 0.6; }
+.req-ctrl-chip .rm-rc:hover { opacity: 1; color: #de350b; }
+
 /* Control type extra fields */
 .ctrl-type-fields { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #dfe1e6; }
 
 /* Empty state */
 .empty-hint { font-size: 13px; color: #a5adba; font-style: italic; padding: 8px 0; }
+
+/* Summary drag states */
+.item-card.dragging { opacity: 0.4; }
+.item-card.drag-over { box-shadow: 0 0 0 2px #0052cc; }
 </style>
 </head>
 <body>
@@ -113,6 +123,7 @@ button.xs  { padding: 2px 8px; font-size: 11px; }
       <button class="tab-btn" onclick="showTab('state',this)">State</button>
       <button class="tab-btn" onclick="showTab('controls',this)">Controls</button>
       <button class="tab-btn" onclick="showTab('datagrids',this)">Data Grids</button>
+      <button class="tab-btn" onclick="showTab('summary',this)">Summary</button>
     </div>
 
     <!-- PAGE TAB -->
@@ -178,6 +189,29 @@ button.xs  { padding: 2px 8px; font-size: 11px; }
       </div>
     </div>
 
+    <!-- SUMMARY TAB -->
+    <div id="tab-summary" class="tab-content">
+      <p class="hint" style="margin-bottom:12px">Define KPI summary cards shown at the top of the page viewer. Drag to reorder.</p>
+      <div class="form-row" style="margin-bottom:14px">
+        <div class="fg">
+          <label>Layout Mode</label>
+          <select id="summary-layout-mode" onchange="onSummaryLayoutChange(this.value)">
+            <option value="row">Row (horizontal)</option>
+            <option value="column">Column (vertical)</option>
+            <option value="table">Table (x,y grid)</option>
+          </select>
+        </div>
+        <div class="fg" style="max-width:110px" id="summary-per-line-wrap">
+          <label>Per Line</label>
+          <input type="number" id="summary-per-line" value="5" min="1" max="10" oninput="summaryLayout.perLine=+this.value||5;updateJson()">
+        </div>
+      </div>
+      <div id="summary-list" class="item-list"></div>
+      <div class="add-row">
+        <button class="secondary sm" onclick="addSummaryVar()">+ Add Variable</button>
+      </div>
+    </div>
+
   </div><!-- /editor-col -->
 
   <!-- ===================== PREVIEW COLUMN ===================== -->
@@ -237,10 +271,13 @@ button.xs  { padding: 2px 8px; font-size: 11px; }
 // State
 // ============================================================
 
-let grids     = [];   // { _id, id, title, row, col, span, type }
-let stateVars = [];   // { _id, key, value }
-let controls  = [];   // { _id, id, grid, type, label, binding, defaultValue, dataSource, onClick }
-let dataGrids = [];   // { _id, id, columns:[{field,header}], rowActions }
+let grids       = [];   // { _id, id, title, row, col, span, type }
+let stateVars   = [];   // { _id, key, value }
+let controls    = [];   // { _id, id, grid, type, label, binding, defaultValue, dataSource, onClick }
+let dataGrids   = [];   // { _id, id, columns:[{field,header}], rowActions }
+let summaryVars = [];   // { _id, name, type, visible, defaultValue, color, fontStyle, variableDisplay, row, col, formulaType, formulaConst, formulaKey, formulaGrid, formulaExpr, formulaSrcVar, formulaPattern, formulaGroup, formulaList }
+let summaryLayout = { mode: 'row', perLine: 5 };
+let _svDragSrcId  = null;
 
 let _uid = 1;
 function uid() { return _uid++; }
@@ -283,6 +320,24 @@ function buildJson() {
     controls: controls.map(buildControlJson),
     dataGrids: dataGrids.map(buildDataGridJson)
   };
+  if (summaryVars.length > 0) {
+    const sumLayout = { mode: summaryLayout.mode };
+    if (summaryLayout.mode !== 'table') sumLayout.perLine = summaryLayout.perLine;
+    obj.summary = {
+      layout: sumLayout,
+      variables: summaryVars.map(sv => {
+        const o = {
+          name: sv.name, type: sv.type, visible: sv.visible,
+          defaultValue: sv.defaultValue, color: sv.color,
+          fontStyle: sv.fontStyle || 'small',
+          variableDisplay: sv.variableDisplay || 'label',
+          formula: buildFormulaJson(sv)
+        };
+        if (summaryLayout.mode === 'table') { o.row = sv.row || 1; o.col = sv.col || 1; }
+        return o;
+      })
+    };
+  }
   return JSON.stringify(obj, null, 2);
 }
 
@@ -294,6 +349,7 @@ function buildControlJson(c) {
   } else if (c.type === 'select') {
     try { o.dataSource = JSON.parse(c.dataSource); } catch(e) { o.dataSource = c.dataSource || {}; }
   } else if (c.type === 'button') {
+    if (c.requiredControls && c.requiredControls.length > 0) o.requiredControls = c.requiredControls;
     try { o.onClick = JSON.parse(c.onClick); } catch(e) { o.onClick = c.onClick || []; }
   }
   return o;
@@ -400,21 +456,44 @@ function removeStateVar(_id) {
   renderStateVars();
 }
 
+function cloneStateVar(_id) {
+  const idx = stateVars.findIndex(s => s._id === _id);
+  if (idx === -1) return;
+  stateVars.splice(idx + 1, 0, { ...stateVars[idx], _id: uid() });
+  renderStateVars();
+}
+
+function isDupeKey(sv, idx) {
+  return sv.key.trim() !== '' && stateVars.some((s, j) => j !== idx && s.key === sv.key);
+}
+
 function renderStateVars() {
   const list = document.getElementById('state-list');
   list.innerHTML = '';
   if (!stateVars.length) { list.innerHTML = '<p class="empty-hint">No state variables yet.</p>'; }
   stateVars.forEach((sv, i) => {
+    const dupe = isDupeKey(sv, i);
     const card = el('div', 'item-card');
     card.innerHTML = `
       <div class="item-card-body" style="display:flex;gap:8px;align-items:flex-end">
-        <div class="fg" style="flex:1"><label>Key</label><input data-bind="key" type="text" value="${hq(sv.key)}" placeholder="selectedCustomerId"></div>
+        <div class="fg" style="flex:1"><label>Key</label><input data-bind="key" type="text" value="${hq(sv.key)}" placeholder="selectedCustomerId" style="${dupe ? 'border-color:#de350b' : ''}"><span class="hint" style="color:#de350b;${dupe ? '' : 'display:none'}">Duplicate name</span></div>
         <div class="fg" style="flex:1"><label>Default Value</label><input data-bind="value" type="text" value="${hq(sv.value)}" placeholder="null or value"></div>
+        <button class="secondary xs" data-clone-sid="${sv._id}" style="margin-bottom:1px">Clone</button>
         <button class="danger xs" data-sid="${sv._id}" style="margin-bottom:1px">Remove</button>
       </div>`;
+    card.querySelector('[data-clone-sid]').addEventListener('click', () => cloneStateVar(sv._id));
     card.querySelector('[data-sid]').addEventListener('click', () => removeStateVar(sv._id));
     card.querySelectorAll('[data-bind]').forEach(inp => {
-      inp.addEventListener('input', () => { stateVars[i][inp.dataset.bind] = inp.value; updateJson(); });
+      inp.addEventListener('input', () => {
+        stateVars[i][inp.dataset.bind] = inp.value;
+        if (inp.dataset.bind === 'key') {
+          const isDupe = isDupeKey(stateVars[i], i);
+          inp.style.borderColor = isDupe ? '#de350b' : '';
+          const errEl = inp.nextElementSibling;
+          if (errEl) errEl.style.display = isDupe ? '' : 'none';
+        }
+        updateJson();
+      });
     });
     list.appendChild(card);
   });
@@ -459,18 +538,19 @@ const DATASOURCE_TEMPLATE = JSON.stringify({
 }, null, 2);
 
 const ACTION_SNIPPETS = {
-  clearGrid:        { action: 'clearGrid', targetGrid: 'errorGrid' },
-  httpRequest:      { action: 'httpRequest', name: 'request', method: 'GET', url: '/api/endpoint',
-                      onSuccess: [{ action: 'bindGridData', targetGrid: 'resultGrid', data: '{{response.data}}' }],
-                      onError:   [{ action: 'bindGridData', targetGrid: 'errorGrid', data: { source: 'Request', message: '{{error.message}}', status: '{{error.status}}' } }] },
-  bindGridData:     { action: 'bindGridData', targetGrid: '', data: '{{response.data}}' },
-  setState:         { action: 'setState', target: 'stateKey', value: '{{row.field}}' },
-  showNotification: { action: 'showNotification', message: 'Done' },
-  appendGridRow:    { action: 'appendGridRow', targetGrid: 'errorGrid', data: { source: '', message: '{{error.message}}' } }
+  clearGrid:           { action: 'clearGrid', targetGrid: 'errorGrid' },
+  httpRequest:         { action: 'httpRequest', name: 'request', method: 'GET', url: '/api/endpoint',
+                         onSuccess: [{ action: 'bindGridData', targetGrid: 'resultGrid', data: '{{response.data}}' }],
+                         onError:   [{ action: 'bindGridData', targetGrid: 'errorGrid', data: { source: 'Request', message: '{{error.message}}', status: '{{error.status}}' } }] },
+  bindGridData:        { action: 'bindGridData', targetGrid: '', data: '{{response.data}}' },
+  bindGridProperties:  { action: 'bindGridProperties', targetName: 'ssh', targetGrid: 'resultGrid', data: '{{response.data}}' },
+  setState:            { action: 'setState', target: 'stateKey', value: '{{row.field}}' },
+  showNotification:    { action: 'showNotification', message: 'Done' },
+  appendGridRow:       { action: 'appendGridRow', targetGrid: 'errorGrid', data: { source: '', message: '{{error.message}}' } }
 };
 
 function addControl() {
-  controls.push({ _id: uid(), id: '', grid: '', type: 'text', label: '', binding: '', defaultValue: '', dataSource: DATASOURCE_TEMPLATE, onClick: ONCLICK_TEMPLATE });
+  controls.push({ _id: uid(), id: '', grid: '', type: 'text', label: '', binding: '', defaultValue: '', dataSource: DATASOURCE_TEMPLATE, onClick: ONCLICK_TEMPLATE, requiredControls: [] });
   renderControls();
 }
 
@@ -505,14 +585,27 @@ function renderControls() {
           </div>
         </div>`;
     } else if (c.type === 'button') {
+      const rcChips = (c.requiredControls || []).map(rc =>
+        `<span class="req-ctrl-chip">${hq(rc)}<span class="rm-rc" data-rm-rc="${hq(rc)}" title="Remove">&#10005;</span></span>`
+      ).join('');
       typeSection = `
         <div class="ctrl-type-fields">
+          <div class="fg wide" style="margin-bottom:12px">
+            <label>Required Controls (must not be blank to execute)</label>
+            <div class="req-ctrl-chips">${rcChips || '<span class="hint" style="font-style:italic">None &mdash; action always runs</span>'}</div>
+            <div style="display:flex;gap:6px;margin-top:6px">
+              <input type="text" data-req-input placeholder="controlId e.g. dealid" style="flex:1;padding:5px 8px;font-size:12px;border:1px solid #ccc;border-radius:4px;outline:none">
+              <button class="secondary xs" data-add-req>+ Add</button>
+            </div>
+            <span class="hint">If any listed control is blank, the action is blocked and a warning is shown.</span>
+          </div>
           <div class="fg wide">
             <label>onClick Actions (JSON)</label>
             <div class="action-chips">
               <span class="action-chip" data-action="clearGrid">+ clearGrid</span>
               <span class="action-chip" data-action="httpRequest">+ httpRequest</span>
               <span class="action-chip" data-action="bindGridData">+ bindGridData</span>
+              <span class="action-chip" data-action="bindGridProperties">+ bindGridProperties</span>
               <span class="action-chip" data-action="setState">+ setState</span>
               <span class="action-chip" data-action="showNotification">+ showNotification</span>
               <span class="action-chip" data-action="appendGridRow">+ appendGridRow</span>
@@ -527,6 +620,8 @@ function renderControls() {
     card.innerHTML = `
       <div class="item-card-header">
         <span class="card-title">Control ${i+1}${c.id?' — '+hq(c.id):''} <span style="font-weight:400;color:#5e6c84">(${c.type})</span></span>
+        <button class="xs" title="Move up" data-cup="${c._id}"${i===0?' disabled':''} style="min-width:24px;padding:2px 6px">&#8679;</button>
+        <button class="xs" title="Move down" data-cdn="${c._id}"${i===controls.length-1?' disabled':''} style="min-width:24px;padding:2px 6px">&#8681;</button>
         <button class="danger xs" data-cid="${c._id}">Remove</button>
       </div>
       <div class="item-card-body">
@@ -555,6 +650,14 @@ function renderControls() {
     // Remove button
     card.querySelector('[data-cid]').addEventListener('click', () => removeControl(c._id));
 
+    // Move up / down
+    card.querySelector('[data-cup]').addEventListener('click', () => {
+      if (i > 0) { [controls[i-1], controls[i]] = [controls[i], controls[i-1]]; renderControls(); }
+    });
+    card.querySelector('[data-cdn]').addEventListener('click', () => {
+      if (i < controls.length-1) { [controls[i], controls[i+1]] = [controls[i+1], controls[i]]; renderControls(); }
+    });
+
     // Bound inputs / selects / textareas
     card.querySelectorAll('[data-bind]').forEach(inp => {
       inp.addEventListener('input', () => {
@@ -578,6 +681,30 @@ function renderControls() {
           controls[i].onClick = JSON.stringify(arr, null, 2);
           ta.value = controls[i].onClick;
           updateJson();
+        });
+      });
+
+      // Required controls: add
+      const reqInput = card.querySelector('[data-req-input]');
+      card.querySelector('[data-add-req]').addEventListener('click', () => {
+        const val = reqInput.value.trim();
+        if (!val) return;
+        if (!controls[i].requiredControls) controls[i].requiredControls = [];
+        if (!controls[i].requiredControls.includes(val)) {
+          controls[i].requiredControls.push(val);
+          renderControls();
+        }
+      });
+      reqInput.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); card.querySelector('[data-add-req]').click(); }
+      });
+
+      // Required controls: remove
+      card.querySelectorAll('.rm-rc').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const rc = btn.dataset.rmRc;
+          controls[i].requiredControls = (controls[i].requiredControls || []).filter(x => x !== rc);
+          renderControls();
         });
       });
     }
@@ -722,6 +849,197 @@ function renderDataGrids() {
 }
 
 // ============================================================
+// Summary Variables
+// ============================================================
+
+function addSummaryVar() {
+  summaryVars.push({
+    _id: uid(), name: '', type: 'number', visible: true,
+    defaultValue: '0', color: '#0052cc',
+    fontStyle: 'small', variableDisplay: 'label',
+    row: 1, col: 1,
+    formulaType: 'constant', formulaConst: '', formulaKey: '',
+    formulaGrid: '', formulaExpr: '', formulaSrcVar: '',
+    formulaPattern: '', formulaGroup: 0, formulaList: ''
+  });
+  renderSummaryVars();
+}
+
+function cloneSummaryVar(_id) {
+  const idx = summaryVars.findIndex(s => s._id === _id);
+  if (idx === -1) return;
+  summaryVars.splice(idx + 1, 0, { ...summaryVars[idx], _id: uid() });
+  renderSummaryVars();
+}
+
+function onSummaryLayoutChange(val) {
+  summaryLayout.mode = val;
+  document.getElementById('summary-per-line-wrap').style.display = val === 'table' ? 'none' : '';
+  renderSummaryVars();
+}
+
+function removeSummaryVar(_id) {
+  summaryVars = summaryVars.filter(s => s._id !== _id);
+  renderSummaryVars();
+}
+
+function buildFormulaJson(sv) {
+  switch (sv.formulaType) {
+    case 'constant':       return { type: 'constant', value: sv.formulaConst };
+    case 'propertylookup': return { type: 'propertylookup', key: sv.formulaKey };
+    case 'rowcount':       return { type: 'rowcount', targetGrid: sv.formulaGrid };
+    case 'mathoperation':  return { type: 'mathoperation', expression: sv.formulaExpr };
+    case 'regex':          return { type: 'regex', sourceVar: sv.formulaSrcVar, pattern: sv.formulaPattern, group: sv.formulaGroup || 0 };
+    case 'list':           return { type: 'list', keys: sv.formulaList };
+    default:               return { type: sv.formulaType };
+  }
+}
+
+function renderSummaryVars() {
+  const list = document.getElementById('summary-list');
+  list.innerHTML = '';
+  if (!summaryVars.length) {
+    list.innerHTML = '<p class="empty-hint">No summary variables yet — click "+ Add Variable" to begin.</p>';
+    updateJson(); return;
+  }
+
+  summaryVars.forEach((sv, i) => {
+    const card = el('div', 'item-card');
+    card.draggable = true;
+
+    let formulaFields = '';
+    if (sv.formulaType === 'constant') {
+      formulaFields = `<div class="fg"><label>Value</label><input data-bind="formulaConst" type="text" value="${hq(sv.formulaConst)}" placeholder="100"></div>`;
+    } else if (sv.formulaType === 'propertylookup') {
+      formulaFields = `<div class="fg"><label>Property Key</label><input data-bind="formulaKey" type="text" value="${hq(sv.formulaKey)}" placeholder="wsconfig.hostname"></div>`;
+    } else if (sv.formulaType === 'rowcount') {
+      formulaFields = `<div class="fg"><label>Target Grid</label><input data-bind="formulaGrid" type="text" value="${hq(sv.formulaGrid)}" placeholder="resultGrid"></div>`;
+    } else if (sv.formulaType === 'mathoperation') {
+      formulaFields = `<div class="fg wide"><label>Expression (use variable names)</label><input data-bind="formulaExpr" type="text" value="${hq(sv.formulaExpr)}" placeholder="count1 * count2"></div>`;
+    } else if (sv.formulaType === 'regex') {
+      formulaFields = `
+        <div class="fg"><label>Source Variable</label><input data-bind="formulaSrcVar" type="text" value="${hq(sv.formulaSrcVar)}" placeholder="hostProp"></div>
+        <div class="fg"><label>Pattern</label><input data-bind="formulaPattern" type="text" value="${hq(sv.formulaPattern)}" placeholder="(\\w+)"></div>
+        <div class="fg" style="max-width:80px"><label>Group #</label><input data-bind="formulaGroup" type="number" value="${sv.formulaGroup || 0}" min="0"></div>`;
+    } else if (sv.formulaType === 'list') {
+      formulaFields = `<div class="fg wide"><label>Variable Keys (comma-separated or wildcard, e.g. sshconfig.*)</label><input data-bind="formulaList" type="text" value="${hq(sv.formulaList)}" placeholder="sshconfig.*,wsconfig.hostname"></div>`;
+    }
+
+    const tableCoords = summaryLayout.mode === 'table' ? `
+      <div class="fg" style="max-width:70px"><label>Row</label><input data-bind="row" type="number" value="${sv.row||1}" min="1"></div>
+      <div class="fg" style="max-width:70px"><label>Col</label><input data-bind="col" type="number" value="${sv.col||1}" min="1"></div>` : '';
+
+    card.innerHTML = `
+      <div class="item-card-header" style="cursor:grab">
+        <span style="color:#c1c7d0;font-size:15px;margin-right:4px;user-select:none">⠿</span>
+        <span class="card-title">Var ${i+1}${sv.name ? ' — ' + hq(sv.name) : ''}</span>
+        <button class="secondary xs" data-clone-svid="${sv._id}" style="cursor:pointer">Clone</button>
+        <button class="danger xs" data-svid="${sv._id}">Remove</button>
+      </div>
+      <div class="item-card-body">
+        <div class="form-row">
+          <div class="fg"><label>Name</label><input data-bind="name" type="text" value="${hq(sv.name)}" placeholder="recordCount"></div>
+          <div class="fg">
+            <label>Type</label>
+            <select data-bind="type">
+              <option value="number"${sv.type==='number'?' selected':''}>number</option>
+              <option value="text"${sv.type==='text'?' selected':''}>text</option>
+              <option value="boolean"${sv.type==='boolean'?' selected':''}>boolean</option>
+            </select>
+          </div>
+          <div class="fg" style="max-width:90px">
+            <label>Visible</label>
+            <select data-bind="visible">
+              <option value="true"${sv.visible !== false ? ' selected' : ''}>true</option>
+              <option value="false"${sv.visible === false ? ' selected' : ''}>false</option>
+            </select>
+          </div>
+          <div class="fg"><label>Default Value</label><input data-bind="defaultValue" type="text" value="${hq(sv.defaultValue)}" placeholder="0"></div>
+          <div class="fg" style="max-width:90px"><label>Color</label><input data-bind="color" type="color" value="${hq(sv.color || '#0052cc')}"></div>
+          <div class="fg" style="max-width:100px">
+            <label>Font Size</label>
+            <select data-bind="fontStyle">
+              <option value="small"${(sv.fontStyle||'small')==='small'?' selected':''}>small</option>
+              <option value="medium"${sv.fontStyle==='medium'?' selected':''}>medium</option>
+              <option value="large"${sv.fontStyle==='large'?' selected':''}>large</option>
+            </select>
+          </div>
+          <div class="fg" style="max-width:110px">
+            <label>Display As</label>
+            <select data-bind="variableDisplay">
+              <option value="label"${(sv.variableDisplay||'label')==='label'?' selected':''}>label</option>
+              <option value="textbox"${sv.variableDisplay==='textbox'?' selected':''}>textbox</option>
+            </select>
+          </div>
+          ${tableCoords}
+        </div>
+        <div class="form-row" style="margin-top:8px;padding-top:8px;border-top:1px dashed #dfe1e6">
+          <div class="fg">
+            <label>Formula Type</label>
+            <select data-bind="formulaType">
+              <option value="constant"${sv.formulaType==='constant'?' selected':''}>constant</option>
+              <option value="propertylookup"${sv.formulaType==='propertylookup'?' selected':''}>propertylookup</option>
+              <option value="rowcount"${sv.formulaType==='rowcount'?' selected':''}>rowcount</option>
+              <option value="mathoperation"${sv.formulaType==='mathoperation'?' selected':''}>mathoperation</option>
+              <option value="regex"${sv.formulaType==='regex'?' selected':''}>regex</option>
+              <option value="list"${sv.formulaType==='list'?' selected':''}>list</option>
+            </select>
+          </div>
+          ${formulaFields}
+        </div>
+      </div>`;
+
+    card.querySelector('[data-svid]').addEventListener('click', () => removeSummaryVar(sv._id));
+    card.querySelector('[data-clone-svid]').addEventListener('click', () => cloneSummaryVar(sv._id));
+    card.querySelectorAll('[data-bind]').forEach(inp => {
+      const evt = inp.tagName === 'SELECT' ? 'change' : 'input';
+      inp.addEventListener(evt, () => {
+        const key = inp.dataset.bind;
+        let val = inp.value;
+        if (key === 'visible') val = val === 'true';
+        if (key === 'formulaGroup') val = +val || 0;
+        if (key === 'row' || key === 'col') val = +val || 1;
+        summaryVars[i][key] = val;
+        if (key === 'formulaType') renderSummaryVars(); else updateJson();
+      });
+    });
+
+    card.addEventListener('dragstart', e => {
+      _svDragSrcId = sv._id;
+      e.dataTransfer.effectAllowed = 'move';
+      setTimeout(() => card.classList.add('dragging'), 0);
+    });
+    card.addEventListener('dragend', () => {
+      card.classList.remove('dragging');
+      document.querySelectorAll('#summary-list .item-card').forEach(c => c.classList.remove('drag-over'));
+      _svDragSrcId = null;
+    });
+    card.addEventListener('dragover', e => {
+      if (!_svDragSrcId || _svDragSrcId === sv._id) return;
+      e.preventDefault();
+      card.classList.add('drag-over');
+    });
+    card.addEventListener('dragleave', e => {
+      if (!card.contains(e.relatedTarget)) card.classList.remove('drag-over');
+    });
+    card.addEventListener('drop', e => {
+      e.preventDefault();
+      card.classList.remove('drag-over');
+      if (!_svDragSrcId || _svDragSrcId === sv._id) return;
+      const srcIdx = summaryVars.findIndex(v => v._id === _svDragSrcId);
+      const tgtIdx = summaryVars.findIndex(v => v._id === sv._id);
+      if (srcIdx === -1 || tgtIdx === -1 || srcIdx === tgtIdx) return;
+      const [moved] = summaryVars.splice(srcIdx, 1);
+      summaryVars.splice(tgtIdx, 0, moved);
+      renderSummaryVars();
+    });
+
+    list.appendChild(card);
+  });
+  updateJson();
+}
+
+// ============================================================
 // Save / Load
 // ============================================================
 
@@ -796,7 +1114,7 @@ function importPageData(pg, name) {
     let dataSource = DATASOURCE_TEMPLATE, onClick = ONCLICK_TEMPLATE;
     if (c.dataSource) try { dataSource = JSON.stringify(c.dataSource, null, 2); } catch(e) {}
     if (c.onClick)    try { onClick    = JSON.stringify(c.onClick,    null, 2); } catch(e) {}
-    controls.push({ _id: uid(), id: c.id||'', grid: c.grid||'', type: c.type||'text', label: c.label||'', binding: c.binding||'', defaultValue: c.defaultValue !== undefined ? String(c.defaultValue) : '', dataSource, onClick });
+    controls.push({ _id: uid(), id: c.id||'', grid: c.grid||'', type: c.type||'text', label: c.label||'', binding: c.binding||'', defaultValue: c.defaultValue !== undefined ? String(c.defaultValue) : '', dataSource, onClick, requiredControls: c.requiredControls || [] });
   });
 
   (pg.dataGrids || []).forEach(dg => {
@@ -805,23 +1123,58 @@ function importPageData(pg, name) {
     dataGrids.push({ _id: uid(), id: dg.id||'', columns: (dg.columns||[]).map(col => ({ field: col.field||'', header: col.header||'' })), rowActions });
   });
 
+  summaryVars = [];
+  summaryLayout = { mode: 'row', perLine: 5 };
+  if (pg.summary) {
+    if (pg.summary.layout) {
+      summaryLayout.mode    = pg.summary.layout.mode    || 'row';
+      summaryLayout.perLine = pg.summary.layout.perLine || 5;
+      document.getElementById('summary-layout-mode').value = summaryLayout.mode;
+      document.getElementById('summary-per-line').value    = String(summaryLayout.perLine);
+      document.getElementById('summary-per-line-wrap').style.display = summaryLayout.mode === 'table' ? 'none' : '';
+    }
+    (pg.summary.variables || []).forEach(sv => {
+      const f = sv.formula || {};
+      summaryVars.push({
+        _id: uid(), name: sv.name || '', type: sv.type || 'number',
+        visible: sv.visible !== false,
+        defaultValue: sv.defaultValue != null ? String(sv.defaultValue) : '0',
+        color: sv.color || '#0052cc',
+        fontStyle: sv.fontStyle || 'small',
+        variableDisplay: sv.variableDisplay || 'label',
+        row: sv.row || 1, col: sv.col || 1,
+        formulaType: f.type || 'constant',
+        formulaConst: f.value != null ? String(f.value) : '',
+        formulaKey: f.key || '', formulaGrid: f.targetGrid || '',
+        formulaExpr: f.expression || '', formulaSrcVar: f.sourceVar || '',
+        formulaPattern: f.pattern || '', formulaGroup: f.group || 0,
+        formulaList: f.keys || ''
+      });
+    });
+  }
+
   renderGrids();
   renderStateVars();
   renderControls();
   renderDataGrids();
+  renderSummaryVars();
   updateJson();
   setStatus('Loaded: ' + (pg.page?.id || name), 'ok');
 }
 
 function newPage() {
   _uid = 1;
-  grids = []; stateVars = []; controls = []; dataGrids = [];
-  document.getElementById('page-id').value         = '';
-  document.getElementById('page-title').value      = '';
-  document.getElementById('page-layout-type').value = 'grid';
-  document.getElementById('page-layout-cols').value  = '12';
-  document.getElementById('save-name').value        = '';
-  renderGrids(); renderStateVars(); renderControls(); renderDataGrids();
+  grids = []; stateVars = []; controls = []; dataGrids = []; summaryVars = [];
+  summaryLayout = { mode: 'row', perLine: 5 };
+  document.getElementById('page-id').value              = '';
+  document.getElementById('page-title').value           = '';
+  document.getElementById('page-layout-type').value     = 'grid';
+  document.getElementById('page-layout-cols').value     = '12';
+  document.getElementById('save-name').value            = '';
+  document.getElementById('summary-layout-mode').value  = 'row';
+  document.getElementById('summary-per-line').value     = '5';
+  document.getElementById('summary-per-line-wrap').style.display = '';
+  renderGrids(); renderStateVars(); renderControls(); renderDataGrids(); renderSummaryVars();
   updateJson();
   setStatus('');
 }
@@ -830,7 +1183,7 @@ async function previewPage() {
   const name = v('save-name');
   if (!name) { setStatus('Enter a file name first to preview.', 'err'); return; }
   await savePage();
-  window.open('/page/' + encodeURIComponent(name), '_blank');
+  window.open('/pageviewer.html?name=' + encodeURIComponent(name), '_blank');
 }
 
 function copyJson() {
@@ -872,6 +1225,7 @@ function setStatus(msg, type) {
 // Boot
 // ============================================================
 
+renderSummaryVars();
 updateJson();
 loadPageList();
 </script>

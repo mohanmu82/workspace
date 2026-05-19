@@ -1,0 +1,1105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Page Viewer</title>
+<script src="https://cdn.jsdelivr.net/npm/ag-grid-community@31/dist/ag-grid-community.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+       background: #f4f5f7; color: #172b4d; }
+
+/* Page header */
+.page-header { background: #fff; border-bottom: 1px solid #dfe1e6;
+               padding: 10px 20px; display: flex; align-items: center; gap: 16px; }
+.page-header a { font-size: 13px; color: #0052cc; text-decoration: none; white-space: nowrap; }
+.page-header a:hover { text-decoration: underline; }
+.page-header h1 { font-size: 18px; font-weight: 600; }
+
+/* Main layout */
+.page-content { padding: 20px; }
+.grid-container { display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px; }
+
+/* Grid panels */
+.grid-panel { background: #fff; border: 1px solid #dfe1e6; border-radius: 6px; overflow: hidden; }
+.grid-panel.no-title > .panel-body { padding: 14px; }
+.panel-header { padding: 8px 14px; background: #f4f5f7; border-bottom: 1px solid #dfe1e6;
+                font-size: 12px; font-weight: 700; color: #5e6c84;
+                text-transform: uppercase; letter-spacing: 0.5px;
+                display: flex; align-items: center; }
+.panel-header-title { flex: 1; }
+.panel-body { padding: 14px; display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+
+/* Controls */
+.ctrl-wrapper { display: flex; flex-direction: column; gap: 4px; }
+.ctrl-label { font-size: 11px; font-weight: 600; color: #5e6c84;
+              text-transform: uppercase; letter-spacing: 0.4px; }
+.ctrl-input { padding: 6px 10px; font-size: 13px; border: 1px solid #ccc;
+              border-radius: 4px; outline: none; background: #fff; font-family: inherit;
+              min-width: 160px; }
+.ctrl-input:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.2); }
+.ctrl-select { padding: 6px 10px; font-size: 13px; border: 1px solid #ccc;
+               border-radius: 4px; outline: none; background: #fff;
+               font-family: inherit; min-width: 160px; cursor: pointer; }
+.ctrl-btn { padding: 7px 18px; font-size: 13px; font-weight: 500;
+            background: #0052cc; color: #fff; border: none; border-radius: 4px;
+            cursor: pointer; white-space: nowrap; }
+.ctrl-btn:hover { background: #0065ff; }
+.ctrl-btn:disabled { background: #a5adba; cursor: not-allowed; }
+
+/* Data grids */
+.data-grid-wrap { width: 100%; }
+.data-grid { width: 100%; height: 360px; }
+
+/* Dynamic grids area */
+.dynamic-section { margin-top: 14px; display: flex; flex-direction: column; gap: 14px; }
+.dyn-panel { background: #fff; border: 1px solid #dfe1e6; border-radius: 6px; overflow: hidden; }
+.dyn-panel-header { padding: 8px 14px; background: #f4f5f7; border-bottom: 1px solid #dfe1e6;
+                    display: flex; align-items: center; gap: 8px; }
+.dyn-panel-title { font-size: 12px; font-weight: 700; color: #5e6c84;
+                   text-transform: uppercase; letter-spacing: 0.5px; flex: 1; }
+.dyn-panel-body { padding: 0; }
+.row-count { font-size: 11px; color: #a5adba; }
+
+/* Panel drag & minimize actions */
+.panel-actions { display: flex; align-items: center; gap: 1px; flex-shrink: 0; }
+.panel-grip { cursor: grab; color: #c1c7d0; font-size: 15px; padding: 1px 4px;
+              border-radius: 3px; user-select: none; line-height: 1; }
+.panel-grip:hover { background: rgba(0,0,0,.08); color: #5e6c84; }
+.panel-grip:active { cursor: grabbing; }
+.panel-action-btn { background: none; border: none; cursor: pointer; color: #c1c7d0;
+                    font-size: 14px; font-weight: 700; padding: 1px 5px; border-radius: 3px;
+                    line-height: 1.1; font-family: inherit; }
+.panel-action-btn:hover { background: rgba(0,0,0,.08); color: #5e6c84; }
+
+/* Drag states */
+.grid-panel.dragging, .dyn-panel.dragging { opacity: 0.35; }
+.grid-panel.drag-over, .dyn-panel.drag-over { box-shadow: 0 0 0 2px #0052cc; }
+
+/* Collapsed state — hide everything except the header */
+.grid-panel.collapsed > *:not(.panel-header),
+.dyn-panel.collapsed > *:not(.dyn-panel-header) { display: none !important; }
+
+/* Notification toast */
+#toast { position: fixed; bottom: 24px; right: 24px; z-index: 9999;
+         background: #172b4d; color: #fff; padding: 10px 20px;
+         border-radius: 6px; font-size: 13px; font-weight: 500;
+         opacity: 0; pointer-events: none; transition: opacity 0.2s ease; }
+#toast.show { opacity: 1; }
+#toast.toast-error { background: #de350b; }
+
+/* Error / loading states */
+.state-msg { padding: 40px 20px; text-align: center; color: #5e6c84; font-size: 14px; }
+.state-msg.error { color: #de350b; }
+
+/* Result tabs */
+.grid-tab-bar { display: flex; gap: 0; border-bottom: 2px solid #dfe1e6; overflow-x: auto; background: #f4f5f7; }
+.grid-tab-btn { padding: 7px 16px; font-size: 12px; font-weight: 500; color: #5e6c84; background: none; border: none; border-bottom: 3px solid transparent; margin-bottom: -2px; cursor: pointer; white-space: nowrap; flex-shrink: 0; }
+.grid-tab-btn:hover { color: #172b4d; background: #ebecf0; }
+.grid-tab-btn.active { color: #0052cc; border-bottom-color: #0052cc; background: #fff; }
+.grid-tab-pane { display: none; width: 100%; }
+.grid-tab-pane.active { display: block; }
+
+/* Property grid */
+.prop-grid-search { width: 100%; padding: 6px 10px; font-size: 13px; border: 1px solid #ccc; border-radius: 4px; outline: none; margin-bottom: 10px; font-family: inherit; }
+.prop-grid-search:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.2); }
+.prop-grid-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.prop-grid-table th { text-align: left; padding: 5px 8px; font-size: 11px; font-weight: 700; color: #5e6c84; text-transform: uppercase; letter-spacing: .4px; border-bottom: 2px solid #dfe1e6; white-space: nowrap; }
+.prop-grid-table td { padding: 4px 8px; border-bottom: 1px solid #f0f0f0; }
+.prop-grid-table tr:nth-child(even) td { background: #fafbfc; }
+.prop-grid-label { color: #5e6c84; font-size: 12px; white-space: nowrap; font-family: Consolas, monospace; }
+.prop-grid-value { padding: 6px 9px; font-size: 13px; border: 1px solid #ccc; border-radius: 4px; outline: none; background: #fff; font-family: inherit; width: 100%; min-width: 140px; }
+.prop-grid-value:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.2); }
+
+/* Remove panel button */
+.panel-action-btn.close { color: #de350b; }
+.panel-action-btn.close:hover { background: #ffebe6; color: #de350b; }
+
+/* Summary panel */
+#summary-panel { background: #fff; border-bottom: 2px solid #dfe1e6; padding: 12px 20px; }
+.summary-panel-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.summary-panel-title { font-size: 12px; font-weight: 700; color: #5e6c84; text-transform: uppercase; letter-spacing: 0.5px; flex: 1; }
+.summary-cards { display: flex; flex-wrap: wrap; gap: 10px; }
+.summary-cards.col-mode { flex-direction: column; align-items: flex-start; }
+.summary-row { display: flex; gap: 10px; flex-wrap: wrap; width: 100%; }
+.summary-card { background: #fff; border: 1px solid #dfe1e6; border-radius: 6px; padding: 12px 16px;
+                min-width: 140px; border-left-width: 4px; border-left-style: solid;
+                cursor: grab; user-select: none; flex: 1 1 140px; }
+.summary-card:active { cursor: grabbing; }
+.summary-card.dragging { opacity: 0.35; }
+.summary-card.drag-over { box-shadow: 0 0 0 2px #0052cc; }
+.summary-card-label { font-size: 11px; font-weight: 600; color: #5e6c84; text-transform: uppercase;
+                      letter-spacing: 0.4px; margin-bottom: 6px; white-space: nowrap; }
+.summary-card-value { font-size: 22px; font-weight: 700; color: #172b4d; }
+.summary-btn { padding: 5px 12px; font-size: 12px; background: #f4f5f7; color: #172b4d;
+               border: 1px solid #dfe1e6; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+.summary-btn:hover { background: #ebecf0; }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <a href="/pagecreator.html">&larr; Page Creator</a>
+  <h1 id="page-title">Loading…</h1>
+  <button class="summary-btn" id="toggle-summary-btn" onclick="toggleSummary()" style="display:none;margin-left:auto">&#8862; View Summary</button>
+  <button class="summary-btn" id="refresh-summary-btn" onclick="refreshSummaryFromHeader()" style="display:none" title="Reload summary values">&#8635; Refresh Summary</button>
+</div>
+
+<div id="summary-panel" style="display:none">
+  <div class="summary-panel-header">
+    <span class="summary-panel-title">Summary</span>
+    <button class="summary-btn" onclick="refreshSummary()">&#8635; Refresh</button>
+    <button class="summary-btn" onclick="toggleSummary()">Hide</button>
+  </div>
+  <div id="summary-cards" class="summary-cards"></div>
+</div>
+
+<div id="root">
+  <div class="state-msg" id="loading-msg">Loading page…</div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+let pageState = {};
+let gridRegistry = {};   // id -> { grid, el, rowCountEl, panelEl, panelBodyEl, tabs?, tabBarEl?, activeTab? }
+let propStore = {};      // { [ns_lower]: { [attr_lower]: value } }  — populated by bindGridProperties
+let propGridPanels = {}; // { [targetName]: HTMLElement }            — property grid panel elements
+let propGridState = {};  // { [gridKey]: { tbody, rows, rowsByNs, searchInput } } — shared per targetGrid
+let panelBodyMap = {};   // grid id -> panel body element (from page definition grids)
+let pageDefinition = null;
+let ctrlIdPrefix = 'pv-ctrl-';
+
+// ─── Boot ────────────────────────────────────────────────────────────────────
+
+async function init() {
+  const name = new URLSearchParams(location.search).get('name');
+  if (!name) { showRootError('No page name specified in URL. Expected: /pageviewer.html?name=<pageName>'); return; }
+
+  let res, data;
+  try {
+    res  = await fetch('/batch/page/' + encodeURIComponent(name));
+    data = await res.json();
+  } catch (e) {
+    showRootError('Failed to load page: ' + e.message); return;
+  }
+  if (!res.ok) {
+    const msg = data?.Errors?.[0]?.message ?? JSON.stringify(data);
+    showRootError('Page not found: ' + msg); return;
+  }
+
+  pageDefinition = data.content;
+  pageState = Object.assign({}, pageDefinition.state || {});
+
+  const titleText = pageDefinition.page?.title || name;
+  document.getElementById('page-title').textContent = titleText;
+  document.title = titleText;
+
+  document.getElementById('loading-msg').remove();
+  if (pageDefinition.summary?.variables?.length > 0) {
+    document.getElementById('toggle-summary-btn').style.display = '';
+    document.getElementById('refresh-summary-btn').style.display = '';
+  }
+  renderPage(pageDefinition);
+}
+
+// ─── Render ──────────────────────────────────────────────────────────────────
+
+function renderPage(pg) {
+  const root = document.getElementById('root');
+
+  // ── Grid container (12-col CSS grid) ──
+  const gridCont = document.createElement('div');
+  gridCont.className = 'page-content';
+  const gridLayout = document.createElement('div');
+  gridLayout.className = 'grid-container';
+  gridCont.appendChild(gridLayout);
+  root.appendChild(gridCont);
+
+  // Panel map: grid id → panel body element
+  const panelMap = {};
+  (pg.grids || []).forEach(g => {
+    const pos = g.position || {};
+    const col = pos.col || 1;
+    const span = pos.span || 12;
+    const row = pos.row || 1;
+
+    const panel = document.createElement('div');
+    panel.className = 'grid-panel' + (g.title ? '' : ' no-title');
+    panel.style.cssText = `grid-column:${col}/span ${span};grid-row:${row}`;
+
+    if (g.title) {
+      const hdr = document.createElement('div');
+      hdr.className = 'panel-header';
+      const titleSpan = document.createElement('span');
+      titleSpan.className = 'panel-header-title';
+      titleSpan.textContent = g.title;
+      hdr.appendChild(titleSpan);
+      panel.appendChild(hdr);
+    }
+
+    const body = document.createElement('div');
+    body.className = 'panel-body';
+    panel.appendChild(body);
+
+    panelMap[g.id] = body;
+    panelBodyMap[g.id] = body;
+    gridLayout.appendChild(panel);
+    addPanelFeatures(panel, gridLayout, 'grid');
+  });
+
+  // Pre-defined data grids (placed inside their panels, hidden until data is bound)
+  (pg.dataGrids || []).forEach(dg => {
+    const panelBody = panelMap[dg.id];
+    const colDefs = (dg.columns || []).map(col => ({
+      field: col.field, headerName: col.header,
+      sortable: true, filter: true, resizable: true, minWidth: 80
+    }));
+    const entry = createGridIn(panelBody || gridLayout, dg.id, colDefs);
+    const panelEl = panelBody ? panelBody.parentElement : null;
+    if (panelEl) panelEl.style.display = 'none';
+    if (!panelBody) {
+      // Orphaned — wrap it in a panel added directly to layout
+      entry.el.parentElement.style.cssText = 'grid-column:1/span 12';
+    }
+    gridRegistry[dg.id] = { ...entry, panelEl, panelBodyEl: panelBody };
+  });
+
+  // Controls
+  (pg.controls || []).forEach(ctrl => {
+    const panelBody = panelMap[ctrl.grid];
+    renderControl(ctrl, panelBody || gridLayout);
+  });
+
+  // Dynamic grids area (auto-created grids land here)
+  const dynSection = document.createElement('div');
+  dynSection.className = 'page-content dynamic-section';
+  dynSection.id = 'dyn-section';
+  root.appendChild(dynSection);
+}
+
+function renderControl(ctrl, container) {
+  const wrap = document.createElement('div');
+  wrap.className = 'ctrl-wrapper';
+
+  if (ctrl.type === 'text') {
+    if (ctrl.label) { const lbl = document.createElement('label'); lbl.className = 'ctrl-label'; lbl.textContent = ctrl.label; wrap.appendChild(lbl); }
+    const inp = document.createElement('input');
+    inp.type = 'text'; inp.className = 'ctrl-input';
+    inp.id = ctrlIdPrefix + ctrl.id;
+    inp.value = ctrl.defaultValue != null ? String(ctrl.defaultValue) : '';
+    if (ctrl.binding) inp.addEventListener('input', () => setNestedPath(pageState, ctrl.binding, inp.value));
+    wrap.appendChild(inp);
+
+  } else if (ctrl.type === 'select') {
+    if (ctrl.label) { const lbl = document.createElement('label'); lbl.className = 'ctrl-label'; lbl.textContent = ctrl.label; wrap.appendChild(lbl); }
+    const sel = document.createElement('select');
+    sel.className = 'ctrl-select'; sel.id = ctrlIdPrefix + ctrl.id;
+    loadSelectOptions(sel, ctrl.dataSource);
+    wrap.appendChild(sel);
+
+  } else if (ctrl.type === 'button') {
+    const btn = document.createElement('button');
+    btn.className = 'ctrl-btn'; btn.id = ctrlIdPrefix + ctrl.id;
+    btn.textContent = ctrl.label || ctrl.id;
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try { await runActions(ctrl.onClick || [], {}); }
+      finally { btn.disabled = false; }
+    });
+    wrap.appendChild(btn);
+  }
+
+  container.appendChild(wrap);
+}
+
+// ─── AG Grid helpers ─────────────────────────────────────────────────────────
+
+function createGridIn(container, id, colDefs) {
+  const wrap = document.createElement('div');
+  wrap.className = 'data-grid-wrap';
+
+  const gridEl = document.createElement('div');
+  gridEl.className = 'data-grid ag-theme-alpine';
+  wrap.appendChild(gridEl);
+  container.appendChild(wrap);
+
+  const grid = agGrid.createGrid(gridEl, {
+    columnDefs: colDefs,
+    rowData: [],
+    defaultColDef: { sortable: true, filter: true, resizable: true, minWidth: 80 },
+    pagination: true,
+    paginationPageSize: 50
+  });
+
+  return { grid, el: gridEl };
+}
+
+function getOrCreateDynGrid(targetId) {
+  if (gridRegistry[targetId]) return gridRegistry[targetId];
+
+  const sec = document.getElementById('dyn-section');
+  const panel = document.createElement('div');
+  panel.className = 'dyn-panel';
+
+  const hdr = document.createElement('div');
+  hdr.className = 'dyn-panel-header';
+  const title = document.createElement('span');
+  title.className = 'dyn-panel-title'; title.textContent = targetId;
+  const rowCnt = document.createElement('span');
+  rowCnt.className = 'row-count'; rowCnt.id = 'rc-' + targetId;
+  hdr.appendChild(title); hdr.appendChild(rowCnt);
+
+  const body = document.createElement('div');
+  body.className = 'dyn-panel-body';
+
+  const gridEl = document.createElement('div');
+  gridEl.className = 'data-grid ag-theme-alpine';
+  body.appendChild(gridEl);
+
+  panel.appendChild(hdr); panel.appendChild(body);
+  sec.appendChild(panel);
+  addPanelFeatures(panel, sec, 'flex');
+
+  const grid = agGrid.createGrid(gridEl, {
+    columnDefs: [],
+    rowData: [],
+    defaultColDef: { sortable: true, filter: true, resizable: true, minWidth: 80 },
+    pagination: true,
+    paginationPageSize: 50
+  });
+
+  const entry = { grid, el: gridEl, rowCountEl: rowCnt, panelEl: panel, panelBodyEl: body };
+  gridRegistry[targetId] = entry;
+  return entry;
+}
+
+function _setGridData(grid, rows) {
+  if (rows.length > 0) {
+    const keys = new Set();
+    rows.forEach(r => { if (r && typeof r === 'object') Object.keys(r).forEach(k => keys.add(k)); });
+    const colDefs = [...keys].map(k => ({ field: k, headerName: k, sortable: true, filter: true, resizable: true, minWidth: 80 }));
+    grid.setGridOption('columnDefs', colDefs);
+  }
+  grid.setGridOption('rowData', rows);
+}
+
+function _showPanel(entry) {
+  if (entry.panelEl && entry.panelEl.style.display === 'none') {
+    entry.panelEl.style.display = '';
+    setTimeout(() => {
+      const activeGrid = entry.tabs ? (entry.tabs[entry.activeTab]?.grid) : entry.grid;
+      if (activeGrid) try { activeGrid.sizeColumnsToFit(); } catch(_) {}
+    }, 0);
+  }
+}
+
+function _convertToTabbed(targetId, entry) {
+  if (entry.grid) { try { entry.grid.destroy(); } catch(_) {} }
+  const bodyEl = entry.panelBodyEl;
+  if (bodyEl) bodyEl.innerHTML = '';
+
+  const panelEl = entry.panelEl;
+  const hdrEl = panelEl ? panelEl.querySelector('.dyn-panel-header, .panel-header') : null;
+  const tabBar = document.createElement('div');
+  tabBar.className = 'grid-tab-bar';
+  if (hdrEl) hdrEl.after(tabBar);
+  else if (panelEl) panelEl.insertBefore(tabBar, bodyEl || panelEl.firstChild);
+
+  entry.mode = 'tabbed';
+  entry.tabs = {};
+  entry.tabBarEl = tabBar;
+  entry.activeTab = null;
+  entry.grid = null;
+  gridRegistry[targetId] = entry;
+}
+
+function _createTab(entry, tabName) {
+  const tabBtn = document.createElement('button');
+  tabBtn.className = 'grid-tab-btn';
+  tabBtn.textContent = tabName;
+  tabBtn.addEventListener('click', () => _switchTab(entry, tabName));
+  entry.tabBarEl.appendChild(tabBtn);
+
+  const pane = document.createElement('div');
+  pane.className = 'grid-tab-pane';
+  const gridEl = document.createElement('div');
+  gridEl.className = 'data-grid ag-theme-alpine';
+  pane.appendChild(gridEl);
+  entry.panelBodyEl.appendChild(pane);
+
+  const grid = agGrid.createGrid(gridEl, {
+    columnDefs: [], rowData: [],
+    defaultColDef: { sortable: true, filter: true, resizable: true, minWidth: 80 },
+    pagination: true, paginationPageSize: 50
+  });
+  entry.tabs[tabName] = { grid, el: gridEl, pane, tabBtn };
+}
+
+function _switchTab(entry, tabName) {
+  Object.values(entry.tabs).forEach(t => {
+    t.pane.classList.remove('active');
+    t.tabBtn.classList.remove('active');
+  });
+  const tab = entry.tabs[tabName];
+  if (tab) {
+    tab.pane.classList.add('active');
+    tab.tabBtn.classList.add('active');
+    entry.activeTab = tabName;
+  }
+}
+
+function bindGridData(targetId, rows, tabName) {
+  if (!Array.isArray(rows)) rows = rows != null ? [rows] : [];
+
+  if (tabName) {
+    let entry = getOrCreateDynGrid(targetId);
+    _showPanel(entry);
+    if (!entry.tabs) { _convertToTabbed(targetId, entry); entry = gridRegistry[targetId]; }
+    if (!entry.tabs[tabName]) _createTab(entry, tabName);
+    _setGridData(entry.tabs[tabName].grid, rows);
+    if (entry.rowCountEl) entry.rowCountEl.textContent = rows.length + ' row(s)';
+    _switchTab(entry, tabName);
+    return;
+  }
+
+  const entry = getOrCreateDynGrid(targetId);
+  _setGridData(entry.grid, rows);
+  if (entry.rowCountEl) entry.rowCountEl.textContent = rows.length + ' row(s)';
+  _showPanel(entry);
+}
+
+function clearGridData(targetId) {
+  const entry = gridRegistry[targetId];
+  if (!entry) return;
+  if (entry.tabs) {
+    Object.values(entry.tabs).forEach(t => t.grid.setGridOption('rowData', []));
+  } else if (entry.grid) {
+    entry.grid.setGridOption('rowData', []);
+  }
+  if (entry.rowCountEl) entry.rowCountEl.textContent = '0 row(s)';
+}
+
+function appendGridRow(targetId, rowData) {
+  const entry = getOrCreateDynGrid(targetId);
+  const grid = (entry.tabs && entry.activeTab) ? entry.tabs[entry.activeTab].grid : entry.grid;
+  if (!grid) return;
+
+  const existing = [];
+  grid.forEachNode(n => { if (n.data) existing.push(n.data); });
+  const newRow = rowData && typeof rowData === 'object' ? rowData : { value: rowData };
+  existing.push(newRow);
+
+  const colIds = new Set(grid.getColumnDefs().map(c => c.field));
+  const newCols = Object.keys(newRow).filter(k => !colIds.has(k));
+  if (newCols.length) {
+    const allCols = [...grid.getColumnDefs(),
+      ...newCols.map(k => ({ field: k, headerName: k, sortable: true, filter: true, resizable: true, minWidth: 80 }))];
+    grid.setGridOption('columnDefs', allCols);
+  }
+  grid.setGridOption('rowData', existing);
+  if (entry.rowCountEl) entry.rowCountEl.textContent = existing.length + ' row(s)';
+  _showPanel(entry);
+}
+
+// ─── Property grid ───────────────────────────────────────────────────────────
+
+function bindGridProperties(targetName, targetGridId, data) {
+  let obj = data;
+  if (Array.isArray(obj)) obj = obj[0] || {};
+  if (!obj || typeof obj !== 'object') return;
+
+  const nsKey = targetName.toLowerCase();
+
+  // Build lowercase-keyed store so {{ssh.HostName}} and {{ssh.hostname}} both resolve
+  const storeEntry = {};
+  Object.entries(obj).forEach(([k, v]) => { storeEntry[k.toLowerCase()] = v; });
+  propStore[nsKey] = storeEntry;
+
+  // Key the shared table state on the targetGrid (or fall back to targetName for dyn panels)
+  const gridKey = targetGridId || ('__prop_' + nsKey);
+  let state = propGridState[gridKey];
+
+  if (!state) {
+    // First call for this targetGrid — create search input + table once
+    let container;
+    const declaredBody = targetGridId ? panelBodyMap[targetGridId] : null;
+    if (declaredBody) {
+      container = declaredBody;
+      const panelEl = declaredBody.parentElement;
+      if (panelEl && panelEl.style.display === 'none') panelEl.style.display = '';
+    } else {
+      let panelEl = propGridPanels[nsKey];
+      if (!panelEl) {
+        const sec = document.getElementById('dyn-section');
+        panelEl = document.createElement('div');
+        panelEl.className = 'dyn-panel';
+        const hdr = document.createElement('div');
+        hdr.className = 'dyn-panel-header';
+        const title = document.createElement('span');
+        title.className = 'dyn-panel-title';
+        title.textContent = targetName + ' Properties';
+        hdr.appendChild(title);
+        panelEl.appendChild(hdr);
+        const b = document.createElement('div');
+        b.className = 'dyn-panel-body';
+        b.style.cssText = 'padding:12px 14px';
+        panelEl.appendChild(b);
+        sec.appendChild(panelEl);
+        addPanelFeatures(panelEl, sec, 'flex');
+        propGridPanels[nsKey] = panelEl;
+      }
+      container = panelEl.querySelector('.dyn-panel-body');
+      container.innerHTML = '';
+    }
+
+    const searchInput = document.createElement('input');
+    searchInput.type = 'text';
+    searchInput.className = 'prop-grid-search';
+    searchInput.placeholder = 'Search by label or attribute name…';
+    container.appendChild(searchInput);
+
+    const table = document.createElement('table');
+    table.className = 'prop-grid-table';
+    const thead = document.createElement('thead');
+    const hdrRow = document.createElement('tr');
+    ['Label', 'Attribute Name', 'Attribute Value'].forEach(h => {
+      const th = document.createElement('th'); th.textContent = h; hdrRow.appendChild(th);
+    });
+    thead.appendChild(hdrRow);
+    table.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    table.appendChild(tbody);
+    container.appendChild(table);
+
+    state = { tbody, rows: [], rowsByNs: {}, searchInput };
+    propGridState[gridKey] = state;
+
+    searchInput.addEventListener('input', () => {
+      const q = searchInput.value.toLowerCase().trim();
+      state.rows.forEach(({ tr, labelLower, attrLower }) => {
+        tr.style.display = (!q || labelLower.includes(q) || attrLower.includes(q)) ? '' : 'none';
+      });
+    });
+  }
+
+  // Remove previous rows for this namespace (handles re-runs of same targetName)
+  if (state.rowsByNs[nsKey]) {
+    state.rowsByNs[nsKey].forEach(r => r.tr.remove());
+    state.rows = state.rows.filter(r => !state.rowsByNs[nsKey].includes(r));
+  }
+  const nsRows = [];
+
+  Object.entries(obj).forEach(([key, value]) => {
+    const tr = document.createElement('tr');
+    const labelText = targetName + '.' + key;
+    const attrLower = key.toLowerCase();
+
+    const tdLabel = document.createElement('td');
+    tdLabel.className = 'prop-grid-label';
+    tdLabel.textContent = labelText;
+
+    const tdName = document.createElement('td');
+    tdName.textContent = key;
+
+    const tdValue = document.createElement('td');
+    const inp = document.createElement('input');
+    inp.type = 'text';
+    inp.className = 'prop-grid-value';
+    inp.value = value != null ? String(value) : '';
+    inp.addEventListener('input', () => { propStore[nsKey][attrLower] = inp.value; });
+    tdValue.appendChild(inp);
+
+    tr.appendChild(tdLabel); tr.appendChild(tdName); tr.appendChild(tdValue);
+    state.tbody.appendChild(tr);
+
+    const rowEntry = { tr, labelLower: labelText.toLowerCase(), attrLower };
+    state.rows.push(rowEntry);
+    nsRows.push(rowEntry);
+  });
+
+  state.rowsByNs[nsKey] = nsRows;
+}
+
+// Case-insensitive lookup into propStore: resolves "ssh.hostname", "SSH.HostName", etc.
+function propGet(path) {
+  const lower = path.toLowerCase();
+  const dot = lower.indexOf('.');
+  if (dot === -1) return null;
+  const ns = lower.slice(0, dot);
+  const attr = lower.slice(dot + 1);
+  const store = propStore[ns];
+  return store != null && store[attr] != null ? store[attr] : null;
+}
+
+// ─── Panel drag & minimize ───────────────────────────────────────────────────
+
+let _dragSrc = null;
+
+function addPanelFeatures(panelEl, containerEl, mode) {
+  const header = panelEl.querySelector('.panel-header, .dyn-panel-header');
+  if (!header) return;
+
+  // Actions container (grip + minimize button)
+  const actions = document.createElement('div');
+  actions.className = 'panel-actions';
+
+  // Grip — drag handle
+  const grip = document.createElement('span');
+  grip.className = 'panel-grip';
+  grip.textContent = '⠿';
+  grip.title = 'Drag to move';
+  actions.appendChild(grip);
+
+  // Minimize button
+  const minBtn = document.createElement('button');
+  minBtn.className = 'panel-action-btn';
+  minBtn.textContent = '−';
+  minBtn.title = 'Minimize';
+  minBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    const collapsed = panelEl.classList.toggle('collapsed');
+    minBtn.textContent = collapsed ? '+' : '−';
+    minBtn.title = collapsed ? 'Expand' : 'Minimize';
+  });
+  actions.appendChild(minBtn);
+
+  // Close button — removes the panel from view
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'panel-action-btn close';
+  closeBtn.textContent = '×';
+  closeBtn.title = 'Remove panel';
+  closeBtn.addEventListener('click', e => { e.stopPropagation(); panelEl.remove(); });
+  actions.appendChild(closeBtn);
+
+  header.appendChild(actions);
+
+  // Only start drag when the grip is held down
+  grip.addEventListener('mousedown', () => { panelEl.draggable = true; });
+  document.addEventListener('mouseup', () => { panelEl.draggable = false; }, { passive: true });
+
+  panelEl.addEventListener('dragstart', e => {
+    _dragSrc = panelEl;
+    e.dataTransfer.effectAllowed = 'move';
+    // Delay opacity so the browser snapshot is taken first
+    setTimeout(() => panelEl.classList.add('dragging'), 0);
+  });
+
+  panelEl.addEventListener('dragend', () => {
+    panelEl.draggable = false;
+    panelEl.classList.remove('dragging');
+    document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+    _dragSrc = null;
+  });
+
+  panelEl.addEventListener('dragover', e => {
+    if (!_dragSrc || _dragSrc === panelEl) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    panelEl.classList.add('drag-over');
+  });
+
+  panelEl.addEventListener('dragleave', e => {
+    if (!panelEl.contains(e.relatedTarget)) {
+      panelEl.classList.remove('drag-over');
+    }
+  });
+
+  panelEl.addEventListener('drop', e => {
+    e.preventDefault();
+    panelEl.classList.remove('drag-over');
+    if (!_dragSrc || _dragSrc === panelEl) return;
+
+    if (mode === 'grid') {
+      // Swap explicit CSS grid positions between the two panels
+      const srcCol = _dragSrc.style.gridColumn;
+      const srcRow = _dragSrc.style.gridRow;
+      _dragSrc.style.gridColumn = panelEl.style.gridColumn;
+      _dragSrc.style.gridRow = panelEl.style.gridRow;
+      panelEl.style.gridColumn = srcCol;
+      panelEl.style.gridRow = srcRow;
+    } else {
+      // Reorder within the flex column by moving the dragged panel
+      const panels = [...containerEl.children];
+      const srcIdx = panels.indexOf(_dragSrc);
+      const tgtIdx = panels.indexOf(panelEl);
+      if (srcIdx !== -1 && tgtIdx !== -1) {
+        if (srcIdx < tgtIdx) {
+          containerEl.insertBefore(_dragSrc, panelEl.nextSibling);
+        } else {
+          containerEl.insertBefore(_dragSrc, panelEl);
+        }
+      }
+    }
+  });
+}
+
+// ─── Summary panel ───────────────────────────────────────────────────────────
+
+let _summaryDragSrc = null;
+
+function refreshSummaryFromHeader() {
+  const panel = document.getElementById('summary-panel');
+  const toggleBtn = document.getElementById('toggle-summary-btn');
+  if (panel.style.display === 'none') {
+    panel.style.display = '';
+    toggleBtn.textContent = '⊟ Hide Summary';
+  }
+  refreshSummary();
+}
+
+function toggleSummary() {
+  const panel = document.getElementById('summary-panel');
+  const btn   = document.getElementById('toggle-summary-btn');
+  const shown = panel.style.display !== 'none';
+  if (shown) {
+    panel.style.display = 'none';
+    btn.textContent = '⊞ View Summary';
+  } else {
+    panel.style.display = '';
+    btn.textContent = '⊟ Hide Summary';
+    refreshSummary();
+  }
+}
+
+function refreshSummary() {
+  const summaryDef = pageDefinition?.summary;
+  const container  = document.getElementById('summary-cards');
+  container.innerHTML = '';
+  if (!summaryDef?.variables?.length) {
+    container.innerHTML = '<span style="color:#a5adba;font-size:13px">No summary variables defined for this page.</span>';
+    return;
+  }
+
+  const mode    = summaryDef.layout?.mode    || 'row';
+  const perLine = summaryDef.layout?.perLine || 5;
+  container.className = 'summary-cards' + (mode === 'column' ? ' col-mode' : '');
+
+  const vars   = summaryDef.variables.filter(v => v.visible !== false);
+  const values = _computeSummaryValues(summaryDef.variables);
+
+  if (mode === 'row') {
+    for (let r = 0; r < vars.length; r += perLine) {
+      const row = document.createElement('div');
+      row.className = 'summary-row';
+      vars.slice(r, r + perLine).forEach(v => row.appendChild(_makeSummaryCard(v, values[v.name])));
+      container.appendChild(row);
+    }
+  } else if (mode === 'table') {
+    const rowMap = {};
+    vars.forEach(v => {
+      const r = v.row || 1;
+      if (!rowMap[r]) rowMap[r] = [];
+      rowMap[r].push(v);
+    });
+    Object.keys(rowMap).map(Number).sort((a, b) => a - b).forEach(rNum => {
+      const rowEl = document.createElement('div');
+      rowEl.className = 'summary-row';
+      rowMap[rNum].sort((a, b) => (a.col || 1) - (b.col || 1));
+      rowMap[rNum].forEach(v => rowEl.appendChild(_makeSummaryCard(v, values[v.name])));
+      container.appendChild(rowEl);
+    });
+  } else {
+    vars.forEach(v => container.appendChild(_makeSummaryCard(v, values[v.name])));
+  }
+}
+
+function _computeSummaryValues(vars) {
+  const out = {};
+  vars.forEach(v => { out[v.name] = v.defaultValue != null ? v.defaultValue : null; });
+  vars.forEach(v => { out[v.name] = _evalFormula(v.formula, out); });
+  return out;
+}
+
+function _evalFormula(f, vals) {
+  if (!f) return null;
+  switch (f.type) {
+    case 'constant':
+      return f.value != null ? f.value : null;
+
+    case 'propertylookup':
+      return f.key ? propGet(f.key) : null;
+
+    case 'rowcount': {
+      const entry = f.targetGrid ? gridRegistry[f.targetGrid] : null;
+      if (!entry) return 0;
+      const grid = (entry.tabs && entry.activeTab) ? entry.tabs[entry.activeTab].grid : entry.grid;
+      if (!grid) return 0;
+      let n = 0; grid.forEachNode(nd => { if (nd.data) n++; });
+      return n;
+    }
+
+    case 'mathoperation': {
+      if (!f.expression) return null;
+      let expr = f.expression;
+      Object.entries(vals).forEach(([name, val]) => {
+        const num = parseFloat(val);
+        expr = expr.replace(
+          new RegExp('\\b' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'gi'),
+          isNaN(num) ? 0 : num
+        );
+      });
+      try { return Function('"use strict"; return (' + expr + ')')(); } catch (_) { return null; }
+    }
+
+    case 'regex': {
+      const src = f.sourceVar ? String(vals[f.sourceVar] ?? '') : '';
+      if (!f.pattern) return src;
+      try {
+        const m = src.match(new RegExp(f.pattern));
+        const g = f.group != null ? +f.group : 0;
+        return m ? (m[g] ?? '') : null;
+      } catch (_) { return null; }
+    }
+
+    case 'list': {
+      if (!f.keys) return null;
+      const parts = String(f.keys).split(',').map(s => s.trim()).filter(Boolean);
+      const collected = [];
+      parts.forEach(key => {
+        if (key.endsWith('.*')) {
+          const ns = key.slice(0, -2).toLowerCase();
+          const store = propStore[ns];
+          if (store) Object.values(store).forEach(v => { if (v != null) collected.push(v); });
+        } else {
+          const v = propGet(key);
+          if (v != null) collected.push(v);
+        }
+      });
+      return collected.length > 0 ? collected.join(', ') : null;
+    }
+
+    default: return null;
+  }
+}
+
+function _makeSummaryCard(varDef, value) {
+  const card = document.createElement('div');
+  card.className = 'summary-card';
+  card.style.borderLeftColor = varDef.color || '#0052cc';
+
+  const lbl = document.createElement('div');
+  lbl.className = 'summary-card-label';
+  lbl.textContent = varDef.name;
+
+  const displayVal = value != null ? String(value) : (varDef.defaultValue != null ? String(varDef.defaultValue) : '—');
+  const fontSizeMap = { small: '14px', medium: '22px', large: '30px' };
+  const fontSize = fontSizeMap[varDef.fontStyle] || '22px';
+
+  let valEl;
+  if (varDef.variableDisplay === 'textbox') {
+    valEl = document.createElement('input');
+    valEl.type = 'text';
+    valEl.readOnly = true;
+    valEl.className = 'summary-card-value';
+    valEl.value = displayVal;
+    valEl.style.cssText = `font-size:${fontSize};font-weight:700;border:1px solid #dfe1e6;border-radius:3px;padding:2px 6px;width:100%;background:#fafbfc;color:#172b4d;`;
+  } else {
+    valEl = document.createElement('div');
+    valEl.className = 'summary-card-value';
+    valEl.textContent = displayVal;
+    valEl.style.fontSize = fontSize;
+  }
+
+  card.appendChild(lbl);
+  card.appendChild(valEl);
+
+  card.draggable = true;
+  card.addEventListener('dragstart', e => {
+    _summaryDragSrc = card;
+    e.dataTransfer.effectAllowed = 'move';
+    setTimeout(() => card.classList.add('dragging'), 0);
+  });
+  card.addEventListener('dragend', () => {
+    card.classList.remove('dragging');
+    document.querySelectorAll('.summary-card.drag-over').forEach(el => el.classList.remove('drag-over'));
+    _summaryDragSrc = null;
+  });
+  card.addEventListener('dragover', e => {
+    if (!_summaryDragSrc || _summaryDragSrc === card) return;
+    e.preventDefault();
+    card.classList.add('drag-over');
+  });
+  card.addEventListener('dragleave', e => {
+    if (!card.contains(e.relatedTarget)) card.classList.remove('drag-over');
+  });
+  card.addEventListener('drop', e => {
+    e.preventDefault();
+    card.classList.remove('drag-over');
+    if (!_summaryDragSrc || _summaryDragSrc === card) return;
+    const parent = card.parentElement;
+    const cards  = [...parent.children];
+    const si = cards.indexOf(_summaryDragSrc);
+    const ti = cards.indexOf(card);
+    if (si < ti) parent.insertBefore(_summaryDragSrc, card.nextSibling);
+    else parent.insertBefore(_summaryDragSrc, card);
+  });
+
+  return card;
+}
+
+// ─── Action engine ───────────────────────────────────────────────────────────
+
+function resolveTargetName(name) {
+  if (!name) return null;
+  return name.replace(/\$\{([^}]+)\}/g, (_, key) => {
+    const el = document.getElementById(ctrlIdPrefix + key);
+    if (el) return el.value || '';
+    return pageState[key] != null ? String(pageState[key]) : '';
+  });
+}
+
+function buildCtx(extra = {}) {
+  const controls = {};
+  (pageDefinition?.controls || []).forEach(c => {
+    const el = document.getElementById(ctrlIdPrefix + c.id);
+    controls[c.id] = { value: el ? el.value : '' };
+  });
+  return { controls, state: { ...pageState }, ...extra };
+}
+
+function resolveVal(val, ctx) {
+  if (typeof val === 'string') {
+    // Single template token → return resolved value (preserves non-string types)
+    const m = val.match(/^\{\{([^}]+)\}\}$/);
+    if (m) {
+      const path = m[1].trim();
+      const v = pathGet(ctx, path);
+      if (v != null) return v;
+      return propGet(path);  // fall back to propStore (ssh.hostname etc., case-insensitive)
+    }
+    return val.replace(/\{\{([^}]+)\}\}/g, (_, p) => {
+      const path = p.trim();
+      const v = pathGet(ctx, path);
+      if (v != null) return String(v);
+      const pv = propGet(path);
+      return pv != null ? String(pv) : '';
+    });
+  }
+  if (Array.isArray(val)) return val.map(v => resolveVal(v, ctx));
+  if (val && typeof val === 'object') {
+    const r = {};
+    for (const [k, v] of Object.entries(val)) r[k] = resolveVal(v, ctx);
+    return r;
+  }
+  return val;
+}
+
+function pathGet(obj, path) {
+  return path.split('.').reduce((cur, p) => cur != null ? cur[p] : null, obj);
+}
+
+function setNestedPath(obj, path, value) {
+  const parts = path.split('.');
+  let cur = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (cur[parts[i]] == null) cur[parts[i]] = {};
+    cur = cur[parts[i]];
+  }
+  cur[parts[parts.length - 1]] = value;
+}
+
+async function runActions(actions, ctx) {
+  for (const raw of (actions || [])) {
+    const a = resolveVal(raw, buildCtx(ctx));
+    await runAction(a, ctx, raw);
+  }
+}
+
+async function runAction(a, ctx, raw = a) {
+  switch (a.action) {
+    case 'httpRequest': {
+      const method = (a.method || 'GET').toUpperCase();
+      const opts = { method };
+      if (a.body && method !== 'GET') {
+        opts.headers = { 'Content-Type': 'application/json' };
+        opts.body = typeof a.body === 'string' ? a.body : JSON.stringify(a.body);
+      }
+      try {
+        const res = await fetch(a.url, opts);
+        const text = await res.text();
+        let response;
+        try { response = JSON.parse(text); } catch (_) { response = text; }
+        if (res.ok) {
+          await runActions(raw.onSuccess, { ...ctx, response });
+        } else {
+          await runActions(raw.onError, { ...ctx, error: { message: text, status: String(res.status) } });
+        }
+      } catch (e) {
+        await runActions(raw.onError, { ...ctx, error: { message: e.message, status: '0' } });
+      }
+      break;
+    }
+    case 'bindGridData': {
+      const tabName = a.targetName ? resolveTargetName(a.targetName) : null;
+      let data = a.data;
+      if (!Array.isArray(data)) data = data != null ? [data] : [];
+      bindGridData(a.targetGrid, data, tabName);
+      break;
+    }
+    case 'bindGridProperties': {
+      let data = a.data;
+      if (Array.isArray(data) && data.length === 1) data = data[0];
+      bindGridProperties(a.targetName, a.targetGrid, data);
+      break;
+    }
+    case 'clearGrid':    clearGridData(a.targetGrid); break;
+    case 'setState':     if (a.target) { pageState[a.target] = a.value; } break;
+    case 'showNotification': showToast(a.message || '', false); break;
+    case 'appendGridRow': appendGridRow(a.targetGrid, a.data); break;
+  }
+}
+
+// ─── Select options ──────────────────────────────────────────────────────────
+
+async function loadSelectOptions(sel, dataSource) {
+  if (!dataSource) return;
+  let cfg = dataSource;
+  if (typeof cfg === 'string') { try { cfg = JSON.parse(cfg); } catch (_) { return; } }
+  if (!cfg || typeof cfg !== 'object') return;
+
+  if (cfg.type === 'http') {
+    try {
+      const res = await fetch(cfg.url);
+      const data = await res.json();
+      const items = Array.isArray(data) ? data : (Array.isArray(data.data) ? data.data : []);
+      items.forEach(item => {
+        const opt = new Option(item[cfg.labelField] ?? item[cfg.valueField] ?? String(item),
+                               item[cfg.valueField] ?? String(item));
+        sel.appendChild(opt);
+      });
+    } catch (_) {}
+  } else if (Array.isArray(cfg.options)) {
+    cfg.options.forEach(item => {
+      const opt = new Option(item.label ?? item.value ?? String(item),
+                             item.value ?? String(item));
+      sel.appendChild(opt);
+    });
+  }
+}
+
+// ─── Toast ───────────────────────────────────────────────────────────────────
+
+let _toastTimer;
+function showToast(msg, isError = false) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'show' + (isError ? ' toast-error' : '');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { t.className = ''; }, 3500);
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function showRootError(msg) {
+  const root = document.getElementById('root');
+  root.innerHTML = `<div class="state-msg error">${msg}</div>`;
+}
+
+init();
+</script>
+</body>
+</html>

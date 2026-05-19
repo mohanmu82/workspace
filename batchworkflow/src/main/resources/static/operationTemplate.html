@@ -382,6 +382,45 @@
             transition: opacity 0.15s ease;
         }
         #copyToast.show { opacity: 1; }
+
+        /* Template editor modal */
+        .tpl-edit-overlay {
+            display: none; position: fixed; inset: 0;
+            background: rgba(0,0,0,0.55); z-index: 1200;
+            align-items: flex-start; justify-content: center;
+            padding: 32px 16px; overflow-y: auto;
+        }
+        .tpl-edit-overlay.open { display: flex; }
+        .tpl-edit-box {
+            background: #fff; border-radius: 8px; width: 860px; max-width: 98vw;
+            box-shadow: 0 8px 40px rgba(0,0,0,0.30);
+            display: flex; flex-direction: column;
+        }
+        .tpl-edit-header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 14px 20px; border-bottom: 1px solid #e0e4ea; flex-shrink: 0;
+        }
+        .tpl-edit-header h3 { font-size: 15px; font-weight: 600; margin: 0; }
+        .tpl-edit-header .tpl-edit-close {
+            background: none; border: none; font-size: 20px; cursor: pointer;
+            color: #5e6c84; padding: 2px 7px; border-radius: 4px; line-height: 1;
+        }
+        .tpl-edit-header .tpl-edit-close:hover { background: #f4f5f7; }
+        .tpl-edit-body { padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; }
+        .tpl-edit-editor {
+            width: 100%; background: #1e1e2e; color: #cdd6f4;
+            font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+            font-size: 12px; border-radius: 6px; padding: 12px 14px;
+            border: 1px solid #2d2d3f; border-left: 3px solid #4c9aff;
+            min-height: 420px; resize: vertical; outline: none;
+        }
+        .tpl-edit-footer {
+            display: flex; gap: 8px; align-items: center;
+            padding: 12px 20px; border-top: 1px solid #e0e4ea; flex-shrink: 0;
+        }
+        .tpl-edit-status { font-size: 12px; color: #5e6c84; flex: 1; }
+        .tpl-edit-status.err { color: #de350b; }
+        .tpl-edit-status.ok  { color: #006644; }
     </style>
 </head>
 <body>
@@ -398,6 +437,7 @@
         </select>
         <span id="templateEmptyHint" class="empty-state" style="display:none">No templates saved yet — use Save Template on any page to create one.</span>
         <button class="primary" id="runBtn" onclick="runTemplate()" disabled>Run</button>
+        <button class="secondary" id="editTplBtn" onclick="openTemplateEditor()" disabled title="View and edit this template's JSON">&#9998; Edit</button>
         <button class="secondary" onclick="reloadTemplates()">Reload</button>
         <button class="secondary" id="runAllBtn" onclick="runAllTemplates()" title="Run all templates as a regression test">&#9654;&#9654; Run All</button>
     </div>
@@ -414,6 +454,11 @@
     <div id="mandPropsSection" style="display:none; margin-bottom:12px;">
         <div class="panel-title" style="margin-bottom:8px;">Mandatory Properties</div>
         <div id="mandPropsFields" class="mp-grid"></div>
+    </div>
+    <div class="form-group">
+        <label>Config Keys <span class="hint">(comma-separated, e.g. pubmed.dev,cms.uat — properties from matching configs are injected)</span></label>
+        <input type="text" id="configKeys" placeholder="pubmed.dev,cms.uat" style="padding:7px 10px;font-size:14px;border:1px solid #ccc;border-radius:4px;outline:none;font-family:inherit" oninput="onExtraPropsChange()">
+        <span id="configKeysStatus" class="hint" style="min-height:16px"></span>
     </div>
     <div class="form-group">
         <label>Extra Properties <span class="hint">(key=value per line — merged into template properties, override template values)</span></label>
@@ -537,6 +582,25 @@
   </div>
 </div>
 
+<!-- Template editor modal -->
+<div id="tplEditModal" class="tpl-edit-overlay" onclick="onTplEditOverlayClick(event)">
+  <div class="tpl-edit-box">
+    <div class="tpl-edit-header">
+      <h3 id="tplEditTitle">Edit Template</h3>
+      <button class="tpl-edit-close" onclick="closeTemplateEditor()">&#10005;</button>
+    </div>
+    <div class="tpl-edit-body">
+      <textarea id="tplEditEditor" class="tpl-edit-editor" spellcheck="false"></textarea>
+    </div>
+    <div class="tpl-edit-footer">
+      <span id="tplEditStatus" class="tpl-edit-status"></span>
+      <button class="secondary" onclick="prettyTplEdit()">Pretty</button>
+      <button class="primary" onclick="saveTemplateEdit()">Save</button>
+      <button class="secondary" onclick="closeTemplateEditor()">Close</button>
+    </div>
+  </div>
+</div>
+
 <script>
     // -------------------------------------------------------------------------
     // Init
@@ -624,13 +688,14 @@
     async function onSelect() {
         const name = document.getElementById('templateSelect').value;
         document.getElementById('runBtn').disabled = !name;
+        document.getElementById('editTplBtn').disabled = !name;
         if (!name) {
             document.getElementById('requestSection').style.display = 'none';
             renderMandatoryProps();
             return;
         }
         renderMandatoryProps();
-        rebuildRequest();
+        await rebuildRequest();
         document.getElementById('requestSection').style.display = '';
         const hasUnfilledRequired = [...document.querySelectorAll('[data-mp-prop][data-mp-required="true"]')]
             .some(inp => !inp.value.trim());
@@ -643,6 +708,8 @@
 
     function onExtraPropsChange() {
         if (document.getElementById('templateSelect').value) rebuildRequest();
+        // Clear config cache so changed keys re-fetch
+        Object.keys(_configCache).forEach(k => delete _configCache[k]);
     }
 
     // -------------------------------------------------------------------------
@@ -717,6 +784,67 @@
     }
 
     // -------------------------------------------------------------------------
+    // Config key resolution
+    // -------------------------------------------------------------------------
+
+    const _configCache = {};
+
+    async function resolveConfigProps() {
+        const raw = document.getElementById('configKeys').value.trim();
+        const statusEl = document.getElementById('configKeysStatus');
+        if (!raw) { statusEl.textContent = ''; statusEl.style.color = ''; return {}; }
+
+        const keys = raw.split(',').map(s => s.trim()).filter(Boolean);
+        const props = {};
+        const errors = [];
+
+        for (const key of keys) {
+            const dot = key.lastIndexOf('.');
+            if (dot < 1 || dot === key.length - 1) {
+                errors.push('"' + key + '" must be in format config.environment');
+                continue;
+            }
+            const configName = key.substring(0, dot);
+            const envKey = key.substring(dot + 1);
+
+            let content;
+            if (_configCache[configName]) {
+                content = _configCache[configName];
+            } else {
+                try {
+                    const res = await fetch('/batch/operationConfig/' + encodeURIComponent(configName));
+                    if (!res.ok) { errors.push('Config "' + configName + '" not found'); continue; }
+                    const data = await res.json();
+                    content = data.content;
+                    _configCache[configName] = content;
+                } catch (e) {
+                    errors.push('Error fetching "' + configName + '": ' + e.message);
+                    continue;
+                }
+            }
+
+            const env = (content.environments || []).find(e => e.key === envKey);
+            if (!env) {
+                errors.push('Environment "' + envKey + '" not found in config "' + configName + '"');
+                continue;
+            }
+            (env.value || []).forEach(p => { if (p.property) props[p.property] = p.value || ''; });
+        }
+
+        if (errors.length) {
+            statusEl.textContent = errors.join(' | ');
+            statusEl.style.color = '#de350b';
+        } else if (keys.length) {
+            statusEl.textContent = 'Resolved ' + Object.keys(props).length + ' properties from ' + keys.length + ' config key(s)';
+            statusEl.style.color = '#006644';
+        } else {
+            statusEl.textContent = '';
+            statusEl.style.color = '';
+        }
+        return errors.length ? null : props;
+    }
+
+    // -------------------------------------------------------------------------
     // Request building
     // -------------------------------------------------------------------------
 
@@ -729,10 +857,11 @@
         return props;
     }
 
-    function rebuildRequest() {
+    async function rebuildRequest() {
         const name = document.getElementById('templateSelect').value;
         if (!name) return;
-        const body = Object.assign({ name }, parseMandatoryPropsValues(), parseExtraProps());
+        const configProps = await resolveConfigProps() || {};
+        const body = Object.assign({ name }, parseMandatoryPropsValues(), configProps, parseExtraProps());
         document.getElementById('lastRequest').value = JSON.stringify(body, null, 2);
     }
 
@@ -750,7 +879,8 @@
     // -------------------------------------------------------------------------
 
     async function runTemplate() {
-        rebuildRequest();
+        await rebuildRequest();
+        if (document.getElementById('configKeysStatus').style.color === 'rgb(222, 53, 11)') return;
         await sendRequest();
     }
 
@@ -1468,6 +1598,91 @@
             const blob = new Blob([_lastHtml], { type: 'text/html' });
             navigator.clipboard.write([new ClipboardItem({ 'text/html': blob })]).then(flash).catch(fallback);
         } catch (e) { fallback(); }
+    }
+
+    // -------------------------------------------------------------------------
+    // Template editor
+    // -------------------------------------------------------------------------
+
+    async function openTemplateEditor() {
+        const name = document.getElementById('templateSelect').value;
+        if (!name) return;
+        document.getElementById('tplEditTitle').textContent = 'Edit Template: ' + name;
+        document.getElementById('tplEditEditor').value = '';
+        document.getElementById('tplEditStatus').textContent = 'Loading…';
+        document.getElementById('tplEditStatus').className = 'tpl-edit-status';
+        document.getElementById('tplEditModal').classList.add('open');
+        try {
+            const res = await fetch('/batch/operationTemplate/' + encodeURIComponent(name));
+            const data = await res.json();
+            if (!res.ok) {
+                document.getElementById('tplEditStatus').textContent = data?.Errors?.[0]?.message ?? 'Failed to load template';
+                document.getElementById('tplEditStatus').className = 'tpl-edit-status err';
+                return;
+            }
+            document.getElementById('tplEditEditor').value = JSON.stringify(data.content, null, 2);
+            document.getElementById('tplEditStatus').textContent = '';
+        } catch (e) {
+            document.getElementById('tplEditStatus').textContent = 'Error: ' + e.message;
+            document.getElementById('tplEditStatus').className = 'tpl-edit-status err';
+        }
+    }
+
+    function closeTemplateEditor() {
+        document.getElementById('tplEditModal').classList.remove('open');
+    }
+
+    function onTplEditOverlayClick(e) {
+        if (e.target === document.getElementById('tplEditModal')) closeTemplateEditor();
+    }
+
+    function prettyTplEdit() {
+        const ta = document.getElementById('tplEditEditor');
+        try {
+            ta.value = JSON.stringify(JSON.parse(ta.value), null, 2);
+            document.getElementById('tplEditStatus').textContent = '';
+        } catch (e) {
+            document.getElementById('tplEditStatus').textContent = 'Invalid JSON: ' + e.message;
+            document.getElementById('tplEditStatus').className = 'tpl-edit-status err';
+        }
+    }
+
+    async function saveTemplateEdit() {
+        const name = document.getElementById('templateSelect').value;
+        if (!name) return;
+        const raw = document.getElementById('tplEditEditor').value.trim();
+        let content;
+        try {
+            content = JSON.parse(raw);
+        } catch (e) {
+            document.getElementById('tplEditStatus').textContent = 'Invalid JSON: ' + e.message;
+            document.getElementById('tplEditStatus').className = 'tpl-edit-status err';
+            return;
+        }
+        document.getElementById('tplEditStatus').textContent = 'Saving…';
+        document.getElementById('tplEditStatus').className = 'tpl-edit-status';
+        try {
+            const res = await fetch('/batch/operationTemplate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, content })
+            });
+            const data = await res.json();
+            if (res.ok && data.status === 'saved') {
+                document.getElementById('tplEditStatus').textContent = 'Saved successfully.';
+                document.getElementById('tplEditStatus').className = 'tpl-edit-status ok';
+                // Refresh the template body cache so Run picks up the changes
+                templateBodyCache[name] = content;
+                renderMandatoryProps();
+                await rebuildRequest();
+            } else {
+                document.getElementById('tplEditStatus').textContent = data?.Errors?.[0]?.message ?? 'Save failed';
+                document.getElementById('tplEditStatus').className = 'tpl-edit-status err';
+            }
+        } catch (e) {
+            document.getElementById('tplEditStatus').textContent = 'Error: ' + e.message;
+            document.getElementById('tplEditStatus').className = 'tpl-edit-status err';
+        }
     }
 
     // -------------------------------------------------------------------------
