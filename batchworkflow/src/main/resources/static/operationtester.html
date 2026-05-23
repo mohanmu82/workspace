@@ -356,7 +356,15 @@ button.sm { padding: 4px 10px; font-size: 12px; }
       </div>
       <span class="add-row-btn" onclick="addKvRow('props-attrs-wrap','props-attrs',genJson)">+ Add attribute</span>
     </div>
-    <div class="act-section" style="margin-top:8px">File Sources</div>
+    <div class="fg wide" style="margin-top:10px">
+      <label>Operation Config <span style="font-weight:400;text-transform:none;font-size:10px;color:#a5adba">(comma-separated config keys, e.g. jds.sit,fid.sit — loaded into operation properties before file/HTTP sources)</span></label>
+      <div style="display:flex;align-items:center;gap:8px">
+        <input type="text" id="f-operationConfig" placeholder="jds.sit,fid.sit" oninput="genJson();_updateOpCfgLinks()" style="flex:1;padding:6px 9px;font-size:13px;border:1px solid #ccc;border-radius:4px;outline:none;font-family:inherit">
+        <a id="f-operationConfig-link" href="operationConfig.html" target="_blank" style="font-size:12px;color:#0052cc;text-decoration:none;white-space:nowrap" title="Open Operation Config manager">&#9881; Manage</a>
+      </div>
+      <span id="f-opCfgLinks" style="font-size:11px;color:#5e6c84;margin-top:3px;display:block"></span>
+    </div>
+    <div class="act-section" style="margin-top:10px">File Sources</div>
     <div id="props-file-list"></div>
     <span class="add-row-btn" onclick="addPropsFile()">+ Add file source</span>
     <div class="act-section" style="margin-top:10px">HTTP Sources</div>
@@ -2218,11 +2226,13 @@ function buildJson() {
       propsHttps.push(entry);
     }
   });
-  if (Object.keys(propsAttrs).length || propsFiles.length || propsHttps.length) {
+  const propsOpCfg = v('f-operationConfig').trim();
+  if (Object.keys(propsAttrs).length || propsFiles.length || propsHttps.length || propsOpCfg) {
     op.properties = {};
     if (Object.keys(propsAttrs).length) op.properties.attributes = propsAttrs;
     if (propsFiles.length) op.properties.file = propsFiles;
     if (propsHttps.length) op.properties.http = propsHttps;
+    if (propsOpCfg) op.properties.operationConfig = propsOpCfg;
   }
 
   // Input source
@@ -2560,6 +2570,8 @@ function loadOperationIntoForm(op) {
   document.querySelectorAll('[id^="props-http-card-"]').forEach(c => c.remove());
   propsHttpCount = 0;
   (Array.isArray(props.http) ? props.http : (props.http ? [props.http] : [])).forEach(h => addPropsHttp(h));
+  document.getElementById('f-operationConfig').value = props.operationConfig || '';
+  _updateOpCfgLinks();
 
   // Input source — accept both object { type: "REQUEST" } and plain string "REQUEST"
   const isRaw = op.inputSource;
@@ -2681,6 +2693,21 @@ function loadOperationIntoForm(op) {
     const line = `jsonataTransform=${jtStr}`;
     extraEl.value = existing ? existing + '\n' + line : line;
   }
+}
+
+// ─── Operation Config links in Properties panel ───────────────────────────────
+function _updateOpCfgLinks() {
+  const raw = document.getElementById('f-operationConfig').value.trim();
+  const el = document.getElementById('f-opCfgLinks');
+  if (!raw) { el.innerHTML = ''; return; }
+  const parts = raw.split(',').map(s => s.trim()).filter(Boolean);
+  el.innerHTML = parts.map(key => {
+    const dot = key.lastIndexOf('.');
+    if (dot < 1 || dot === key.length - 1) return `<span style="color:#de350b">${esc(key)}: invalid format (expected config.env)</span>`;
+    const cfg = key.substring(0, dot);
+    const env = key.substring(dot + 1);
+    return `<a href="operationConfig.html?key=${encodeURIComponent(key)}" target="_blank" style="color:#0052cc;text-decoration:none;margin-right:10px" title="Open ${cfg} / ${env}">\u{1F517} ${esc(key)}</a>`;
+  }).join('');
 }
 
 // ─── Config key resolution ────────────────────────────────────────────────────

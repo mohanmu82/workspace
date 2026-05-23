@@ -605,7 +605,7 @@
             const res  = await fetch('/batch/operationTemplate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, content })
+                body: JSON.stringify({ name, templateType: 'OPERATION', content })
             });
             const data = await res.json();
             if (res.ok) setStatus('Saved: ' + data.path, 'ok');

@@ -483,9 +483,11 @@ public class BatchProperties {
     // -------------------------------------------------------------------------
 
     public static class OperationPropertiesConfig {
-        private Map<String, String>        attributes = new LinkedHashMap<>();
-        private List<HttpPropertiesSource> http       = new ArrayList<>();
-        private List<FilePropertiesSource> file       = new ArrayList<>();
+        private Map<String, String>        attributes       = new LinkedHashMap<>();
+        private List<HttpPropertiesSource> http             = new ArrayList<>();
+        private List<FilePropertiesSource> file             = new ArrayList<>();
+        /** Comma-separated operationConfig keys (e.g. "jds.sit,fid.sit") loaded before file/http sources. */
+        private String                     operationConfig  = null;
 
         public Map<String, String>        getAttributes()                              { return attributes; }
         public void setAttributes(Map<String, String> a)                              { this.attributes = a != null ? a : new LinkedHashMap<>(); }
@@ -493,6 +495,8 @@ public class BatchProperties {
         public void setHttp(List<HttpPropertiesSource> h)                             { this.http = h != null ? h : new ArrayList<>(); }
         public List<FilePropertiesSource> getFile()                                   { return file; }
         public void setFile(List<FilePropertiesSource> f)                             { this.file = f != null ? f : new ArrayList<>(); }
+        public String getOperationConfig()                                            { return operationConfig; }
+        public void setOperationConfig(String oc)                                     { this.operationConfig = oc; }
     }
 
     public static class HttpPropertiesSource {

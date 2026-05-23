@@ -125,5 +125,12 @@ public record RunRequest(
          *       {@code $.RESPONSEBODY} in JSONata instead of {@code data[0].RESPONSEBODY}.</li>
          * </ul>
          */
-        String operationType) {
+        String operationType,
+        /**
+         * Comma-separated operationConfig keys (e.g. {@code "jds.sit,fid.sit"}).
+         * Overrides any {@code properties.operationConfig} defined in the operation JSON.
+         * Properties from each referenced config environment are merged into operationProperties
+         * before file/HTTP sources, after static attributes.
+         */
+        String operationConfig) {
 }

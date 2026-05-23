@@ -49,6 +49,7 @@
         button.filter-btn.f-both.active     { background:#e3fcef; border-color:#57d9a3; color:#006644; }
         button.filter-btn.f-ds1.active      { background:#deebff; border-color:#79b8ff; color:#0052cc; }
         button.filter-btn.f-ds2.active      { background:#fffae6; border-color:#ffd700; color:#974900; }
+        button.filter-btn.f-mismatch.active { background:#ffebe6; border-color:#ff8f73; color:#de350b; }
         button.danger { background:#de350b; color:#fff; }
         button.danger:hover { background:#ff5630; }
 
@@ -234,10 +235,11 @@
     <!-- Grid panel -->
     <div class="panel" style="padding:12px">
         <div class="grid-toolbar">
-            <button class="filter-btn f-all active" id="fAll"  onclick="setFilter('ALL')">All Rows</button>
-            <button class="filter-btn f-both"        id="fBoth" onclick="setFilter('BOTH')">Both Datasets</button>
-            <button class="filter-btn f-ds1"         id="fDs1"  onclick="setFilter('DS1')">DS1 Only</button>
-            <button class="filter-btn f-ds2"         id="fDs2"  onclick="setFilter('DS2')">DS2 Only</button>
+            <button class="filter-btn f-all active" id="fAll"      onclick="setFilter('ALL')">All Rows</button>
+            <button class="filter-btn f-both"        id="fBoth"     onclick="setFilter('BOTH')">Both Datasets</button>
+            <button class="filter-btn f-ds1"         id="fDs1"      onclick="setFilter('DS1')">DS1 Only</button>
+            <button class="filter-btn f-ds2"         id="fDs2"      onclick="setFilter('DS2')">DS2 Only</button>
+            <button class="filter-btn f-mismatch"    id="fMismatch" onclick="setFilter('MISMATCH')">Mismatches Only</button>
             <button class="secondary" onclick="exportCompareCsv()">&#8595; Export CSV</button>
             <button class="secondary" onclick="showAsHtml()" style="margin-left:4px">&#128203; Show as HTML</button>
             <button class="secondary" onclick="copyColumnsAsJson(compareGrid)" style="margin-left:4px">Copy Cols JSON</button>
@@ -464,10 +466,10 @@
     }
 
     function updateFilterButtons() {
-        ['fAll','fBoth','fDs1','fDs2'].forEach(id => {
+        ['fAll','fBoth','fDs1','fDs2','fMismatch'].forEach(id => {
             document.getElementById(id).classList.remove('active');
         });
-        const map = { ALL:'fAll', BOTH:'fBoth', DS1:'fDs1', DS2:'fDs2' };
+        const map = { ALL:'fAll', BOTH:'fBoth', DS1:'fDs1', DS2:'fDs2', MISMATCH:'fMismatch' };
         const el = document.getElementById(map[_activeFilter]);
         if (el) el.classList.add('active');
     }
@@ -517,9 +519,10 @@
                 isExternalFilterPresent: () => _activeFilter !== 'ALL',
                 doesExternalFilterPass: p => {
                     const s = p.data?.compareStatus;
-                    if (_activeFilter === 'BOTH') return s === 'SAME' || s === 'MISMATCH';
-                    if (_activeFilter === 'DS1')  return s === 'DATASET1_ONLY';
-                    if (_activeFilter === 'DS2')  return s === 'DATASET2_ONLY';
+                    if (_activeFilter === 'BOTH')     return s === 'SAME' || s === 'MISMATCH';
+                    if (_activeFilter === 'DS1')      return s === 'DATASET1_ONLY';
+                    if (_activeFilter === 'DS2')      return s === 'DATASET2_ONLY';
+                    if (_activeFilter === 'MISMATCH') return s === 'MISMATCH';
                     return true;
                 },
                 onRowDataUpdated: updateRowCount,
@@ -670,7 +673,7 @@
             const res = await fetch('/batch/operationTemplate', {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body:    JSON.stringify({ name, content })
+                body:    JSON.stringify({ name, templateType: 'COMPARE', content })
             });
             const data = await res.json();
             if (!res.ok) { showTplMsg(data.error || 'Save failed', 'error'); return; }
@@ -684,14 +687,15 @@
 
     async function loadTemplateList() {
         try {
-            const res  = await fetch('/batch/operationTemplate');
+            const res  = await fetch('/batch/operationTemplate?templateType=COMPARE');
             const data = await res.json();
             const sel  = document.getElementById('tplSelect');
             const cur  = sel.value;
             sel.innerHTML = '<option value="">— load template —</option>';
-            (data.data || []).forEach(n => {
+            (data.data || []).forEach(item => {
                 const opt = document.createElement('option');
-                opt.value = opt.textContent = n;
+                opt.value = item.templateName;
+                opt.textContent = item.templateName;
                 sel.appendChild(opt);
             });
             if (cur) sel.value = cur;

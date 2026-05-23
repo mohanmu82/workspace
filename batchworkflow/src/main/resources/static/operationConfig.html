@@ -87,6 +87,15 @@ button.sm { padding: 4px 10px; font-size: 12px; }
 .add-row-btn { font-size: 12px; color: #0052cc; cursor: pointer; padding: 2px 0; display: inline-block; }
 .add-row-btn:hover { text-decoration: underline; }
 
+/* Env header link button */
+.env-link-btn {
+  background: none; border: none; padding: 2px 6px; cursor: pointer;
+  color: #0052cc; font-size: 14px; line-height: 1; border-radius: 3px;
+  flex-shrink: 0;
+}
+.env-link-btn:hover { background: #e9f0ff; }
+.env-card.highlighted { outline: 2px solid #4c9aff; box-shadow: 0 0 0 3px rgba(76,154,255,.2); }
+
 /* Status */
 .status { font-size: 13px; min-height: 18px; margin-top: 6px; }
 .status.ok { color: #006644; }
@@ -246,6 +255,7 @@ function addEnv(key, properties) {
     <div class="env-header">
       <span style="font-size:11px;font-weight:700;color:#5e6c84;text-transform:uppercase;letter-spacing:.4px;flex-shrink:0">Key</span>
       <input class="env-key-input" id="env-key-${id}" type="text" placeholder="dev" value="${esc(key||'')}" oninput="updatePreview()">
+      <button class="env-link-btn" title="Copy link for this environment" onclick="copyEnvLink(${id})">&#128279;</button>
       <button class="danger sm" onclick="removeEnv(${id})">&times;</button>
     </div>
     <div class="env-body">
@@ -361,6 +371,41 @@ function setStatus(msg, type) {
   el.textContent = msg;
   el.className = 'status' + (type ? ' ' + type : '');
 }
+
+// ── Environment link ──────────────────────────────────────────────────────────
+function copyEnvLink(envId) {
+  const configName = document.getElementById('f-config').value.trim();
+  const envKey = document.getElementById('env-key-' + envId)?.value.trim();
+  if (!configName || !envKey) { setStatus('Save the config first, then copy the link.', 'err'); return; }
+  const url = location.origin + location.pathname + '?key=' + encodeURIComponent(configName + '.' + envKey);
+  navigator.clipboard.writeText(url).then(() => {
+    setStatus('Link copied: ' + configName + '.' + envKey, 'ok');
+  }).catch(() => {
+    setStatus('Copy failed — link: ' + url, 'err');
+  });
+}
+
+function highlightEnv(envKey) {
+  document.querySelectorAll('.env-card').forEach(card => {
+    const id = card.id.replace('env-card-', '');
+    const key = document.getElementById('env-key-' + id)?.value.trim();
+    card.classList.toggle('highlighted', key === envKey);
+    if (key === envKey) card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
+}
+
+// ── URL parameter boot (?key=jds.sit) ─────────────────────────────────────────
+(async function bootFromUrl() {
+  const params = new URLSearchParams(location.search);
+  const key = params.get('key');
+  if (!key) return;
+  const dot = key.lastIndexOf('.');
+  if (dot < 1 || dot === key.length - 1) return;
+  const configName = key.substring(0, dot);
+  const envKey = key.substring(dot + 1);
+  await loadConfig(configName);
+  highlightEnv(envKey);
+})();
 </script>
 </body>
 </html>

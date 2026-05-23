@@ -846,7 +846,8 @@ public class BatchController {
             extraProps.remove("name");
             return executeTemplateRun(name.trim(), extraProps);
         }
-        // List mode
+        // List mode — optional ?templateType=COMPARE filter
+        String typeFilter = params.get("templateType");
         Path dir = templateDir();
         List<Map<String, Object>> templates = new ArrayList<>();
         if (Files.isDirectory(dir)) {
@@ -855,9 +856,15 @@ public class BatchController {
                 for (Path p : files) {
                     String templateName = p.getFileName().toString().replaceAll("\\.json$", "");
                     Object templateBody = objectMapper.readValue(p.toFile(), Object.class);
+                    String templateType = "OPERATION";
+                    if (templateBody instanceof Map<?,?> m && m.get("templateType") instanceof String t) {
+                        templateType = t;
+                    }
+                    if (typeFilter != null && !typeFilter.equalsIgnoreCase(templateType)) continue;
                     Map<String, Object> entry = new LinkedHashMap<>();
                     entry.put("templateName", templateName);
                     entry.put("templateBody", templateBody);
+                    entry.put("templateType", templateType);
                     templates.add(entry);
                 }
             } catch (Exception ignored) {}
@@ -895,10 +902,21 @@ public class BatchController {
             // Save mode
             if (!name.matches("[\\w\\-. ]+")) return badRequest("name contains invalid characters");
             Object content = body.get("content");
+            String templateType = body.get("templateType") instanceof String t ? t.trim() : "OPERATION";
+            // Embed templateType inside the stored content so it can be read back when listing
+            Map<String, Object> storedContent;
+            if (content instanceof Map<?,?> rawMap) {
+                storedContent = new LinkedHashMap<>();
+                rawMap.forEach((k, v) -> storedContent.put(String.valueOf(k), v));
+            } else {
+                storedContent = objectMapper.convertValue(content,
+                        new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+            }
+            storedContent.put("templateType", templateType);
             Path dir = templateDir();
             Files.createDirectories(dir);
             Path file = dir.resolve(name + ".json");
-            objectMapper.writerWithDefaultPrettyPrinter().writeValue(file.toFile(), content);
+            objectMapper.writerWithDefaultPrettyPrinter().writeValue(file.toFile(), storedContent);
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("status", "saved");
             response.put("path",   file.toAbsolutePath().toString());
@@ -908,7 +926,7 @@ public class BatchController {
         // Run mode — all keys except "name" become extra properties
         Map<String, String> extraProps = new LinkedHashMap<>();
         body.forEach((k, v) -> {
-            if (!"name".equals(k) && v != null) extraProps.put(k, v.toString());
+            if (!"name".equals(k) && !"templateType".equals(k) && v != null) extraProps.put(k, v.toString());
         });
         return executeTemplateRun(name, extraProps);
     }

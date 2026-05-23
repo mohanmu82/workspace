@@ -3951,6 +3951,13 @@ public class BatchService {
         if (cfg != null) {
             if (cfg.getAttributes() != null) result.putAll(cfg.getAttributes());
 
+            // 2a. operationConfig — request override takes precedence over operation-level setting
+            String opCfgKeys = resolved.operationConfig() != null ? resolved.operationConfig()
+                    : cfg.getOperationConfig();
+            if (opCfgKeys != null && !opCfgKeys.isBlank()) {
+                loadOperationConfigProperties(opCfgKeys, result);
+            }
+
             List<BatchProperties.FilePropertiesSource> fileSrcs = cfg.getFile();
             if (fileSrcs != null) {
                 for (BatchProperties.FilePropertiesSource fileSrc : fileSrcs) {
@@ -3998,6 +4005,11 @@ public class BatchService {
                     }
                 }
             }
+        }
+
+        // 2b. Request-level operationConfig when operation has no properties block
+        if (cfg == null && resolved.operationConfig() != null && !resolved.operationConfig().isBlank()) {
+            loadOperationConfigProperties(resolved.operationConfig(), result);
         }
 
         // 3. Alias request scalar fields (lower priority than the incoming request)
@@ -4054,6 +4066,47 @@ public class BatchService {
             m.appendTail(sb);
             return sb.toString();
         });
+    }
+
+    /**
+     * Parses comma-separated operationConfig keys (e.g. "jds.sit,fid.sit"), loads each
+     * referenced config file from ${DATADIR}/operationConfig/, finds the matching environment,
+     * and merges the environment's properties into {@code target}.
+     */
+    private void loadOperationConfigProperties(String keys, Map<String, String> target) {
+        String dataDir = serverPropertiesLoader.getProperties().getOrDefault("DATADIR", "");
+        if (dataDir.isBlank()) return;
+        Path configDir = Path.of(dataDir).resolve("operationConfig");
+        for (String key : keys.split(",")) {
+            key = key.trim();
+            int dot = key.lastIndexOf('.');
+            if (dot < 1 || dot == key.length() - 1) continue;
+            String configName = key.substring(0, dot);
+            String envKey = key.substring(dot + 1);
+            if (!configName.matches("[\\w\\-.]+")) continue;
+            Path file = configDir.resolve(configName + ".json");
+            if (!Files.exists(file)) continue;
+            try {
+                Map<String, Object> content = objectMapper.readValue(file.toFile(), new TypeReference<>() {});
+                List<?> environments = (List<?>) content.get("environments");
+                if (environments == null) continue;
+                for (Object envObj : environments) {
+                    if (!(envObj instanceof Map<?, ?> env)) continue;
+                    if (!envKey.equals(env.get("key"))) continue;
+                    List<?> values = (List<?>) env.get("value");
+                    if (values == null) continue;
+                    for (Object valObj : values) {
+                        if (!(valObj instanceof Map<?, ?> prop)) continue;
+                        Object propName = prop.get("property");
+                        Object propVal  = prop.get("value");
+                        if (propName != null && !propName.toString().isBlank()) {
+                            target.put(propName.toString(), propVal != null ? propVal.toString() : "");
+                        }
+                    }
+                    break;
+                }
+            } catch (Exception ignored) {}
+        }
     }
 
     private void checkMandatoryProperties(RunRequest request,
