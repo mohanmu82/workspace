@@ -1,18 +1,14 @@
 package com.mycompany.taskmanagement.service;
 
+import com.mycompany.taskmanagement.dto.TaskBulkCreateRequest;
 import com.mycompany.taskmanagement.dto.TaskListResponse;
 import com.mycompany.taskmanagement.dto.TaskSearchRequest;
 import com.mycompany.taskmanagement.model.Task;
 import com.mycompany.taskmanagement.model.TaskComment;
 import com.mycompany.taskmanagement.model.TaskHistory;
-import com.mycompany.taskmanagement.repository.TaskCommentRepository;
-import com.mycompany.taskmanagement.repository.TaskHistoryRepository;
-import com.mycompany.taskmanagement.repository.TaskRepository;
-import com.mycompany.taskmanagement.repository.TaskSpecification;
+import com.mycompany.taskmanagement.store.TaskDataStore;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,29 +22,22 @@ import java.util.Objects;
 @RequiredArgsConstructor
 public class TaskService {
 
-    private final TaskRepository taskRepository;
-    private final TaskCommentRepository commentRepository;
-    private final TaskHistoryRepository historyRepository;
+    private final TaskDataStore dataStore;
 
     public TaskListResponse search(TaskSearchRequest req) {
-        Sort sort = req.getSortDir().equalsIgnoreCase("desc")
-                ? Sort.by(req.getSortBy()).descending()
-                : Sort.by(req.getSortBy()).ascending();
-
-        PageRequest pageReq = PageRequest.of(req.getPage(), req.getSize(), sort);
-        Page<Task> page = taskRepository.findAll(TaskSpecification.withSearch(req), pageReq);
+        Page<Task> page = dataStore.search(req);
         return new TaskListResponse(page.getContent(), page.getTotalElements(),
                 req.getPage(), req.getSize());
     }
 
     public Task getById(Long id) {
-        return taskRepository.findById(id)
+        return dataStore.findById(id)
                 .orElseThrow(() -> new RuntimeException("Task not found: " + id));
     }
 
     @Transactional
     public Task create(Task task) {
-        return taskRepository.save(task);
+        return dataStore.save(task);
     }
 
     @Transactional
@@ -117,20 +106,80 @@ public class TaskService {
         existing.setCustomField10(updated.getCustomField10());
 
         if (!histories.isEmpty()) {
-            historyRepository.saveAll(histories);
+            dataStore.saveAllHistory(histories);
         }
-        return taskRepository.save(existing);
+        return dataStore.save(existing);
+    }
+
+    @Transactional
+    public Task updateStatus(Long id, String status, String changedBy) {
+        Task existing = getById(id);
+        List<TaskHistory> histories = new ArrayList<>();
+        record(histories, id, "status", existing.getStatus(), status, changedBy);
+        existing.setStatus(status);
+        if (!histories.isEmpty()) {
+            dataStore.saveAllHistory(histories);
+        }
+        return dataStore.save(existing);
+    }
+
+    @Transactional
+    public Task updateBoardPosition(Long id, String status, String project, String programme, String assignee, String changedBy) {
+        Task existing = getById(id);
+        List<TaskHistory> histories = new ArrayList<>();
+        if (status != null) {
+            record(histories, id, "status", existing.getStatus(), status, changedBy);
+            existing.setStatus(status);
+        }
+        if (project != null) {
+            String newProject = project.isBlank() ? null : project;
+            record(histories, id, "project", existing.getProject(), newProject, changedBy);
+            existing.setProject(newProject);
+        }
+        if (programme != null) {
+            String newProgramme = programme.isBlank() ? null : programme;
+            record(histories, id, "programme", existing.getProgramme(), newProgramme, changedBy);
+            existing.setProgramme(newProgramme);
+        }
+        if (assignee != null) {
+            String newAssignee = assignee.isBlank() ? null : assignee;
+            record(histories, id, "assignee", existing.getAssignee(), newAssignee, changedBy);
+            existing.setAssignee(newAssignee);
+        }
+        if (!histories.isEmpty()) {
+            dataStore.saveAllHistory(histories);
+        }
+        return dataStore.save(existing);
+    }
+
+    @Transactional
+    public List<Task> bulkCreate(TaskBulkCreateRequest req) {
+        List<Task> created = new ArrayList<>();
+        if (req.getTitles() == null) {
+            return created;
+        }
+        for (String rawTitle : req.getTitles()) {
+            if (rawTitle == null || rawTitle.isBlank()) {
+                continue;
+            }
+            Task task = new Task();
+            task.setTitle(rawTitle.trim());
+            task.setProject(req.getProject());
+            task.setProgramme(req.getProgramme());
+            created.add(dataStore.save(task));
+        }
+        return created;
     }
 
     @Transactional
     public void delete(Long id) {
-        commentRepository.deleteByTaskId(id);
-        historyRepository.deleteByTaskId(id);
-        taskRepository.deleteById(id);
+        dataStore.deleteCommentsByTaskId(id);
+        dataStore.deleteHistoryByTaskId(id);
+        dataStore.deleteById(id);
     }
 
     public List<TaskComment> getComments(Long taskId) {
-        return commentRepository.findByTaskIdOrderByCreatedAtAsc(taskId);
+        return dataStore.findCommentsByTaskId(taskId);
     }
 
     @Transactional
@@ -139,21 +188,21 @@ public class TaskService {
         comment.setTaskId(taskId);
         comment.setContent(content);
         comment.setAuthor(author);
-        return commentRepository.save(comment);
+        return dataStore.saveComment(comment);
     }
 
     public List<TaskHistory> getHistory(Long taskId) {
-        return historyRepository.findByTaskIdOrderByChangedAtDesc(taskId);
+        return dataStore.findHistoryByTaskId(taskId);
     }
 
     public Map<String, List<String>> getFilterOptions() {
         return Map.of(
-                "categories", taskRepository.findDistinctCategories(),
-                "programmes", taskRepository.findDistinctProgrammes(),
-                "projects", taskRepository.findDistinctProjects(),
-                "assignees", taskRepository.findDistinctAssignees(),
-                "workingGroups", taskRepository.findDistinctWorkingGroups(),
-                "assetClasses", taskRepository.findDistinctAssetClasses()
+                "categories", dataStore.findDistinctCategories(),
+                "programmes", dataStore.findDistinctProgrammes(),
+                "projects", dataStore.findDistinctProjects(),
+                "assignees", dataStore.findDistinctAssignees(),
+                "workingGroups", dataStore.findDistinctWorkingGroups(),
+                "assetClasses", dataStore.findDistinctAssetClasses()
         );
     }
 

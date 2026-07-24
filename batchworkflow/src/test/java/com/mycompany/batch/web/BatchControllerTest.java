@@ -329,7 +329,7 @@ class BatchControllerTest {
         RunRequest req = new RunRequest("myOp", null, null, null, null, null, null, null,
                 null, null, null, null, null, null, null, null, null, null,
                 ExecutionMode.ASYNC, null, null, null, null, null,
-                null, null, null, null, null);
+                null, null, null, null, null, null);
 
         ResponseEntity<?> response = controller.executeRun(req);
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
@@ -342,7 +342,7 @@ class BatchControllerTest {
     private RunRequest minimalRequest(String operation) {
         return new RunRequest(operation, null, null, null, null, null, null, null,
                 null, null, null, null, null, null, null, null, null, null,
-                null, null, null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, null, null);
     }
 
     private BatchService.BatchResult buildResult(int processed, int succeeded, int failed,

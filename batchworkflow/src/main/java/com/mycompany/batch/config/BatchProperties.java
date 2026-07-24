@@ -300,6 +300,7 @@ public class BatchProperties {
         private ValidationProperties         validation          = null;
         private DataEnricherProperties       dataEnricher        = new DataEnricherProperties();
         private JsonValidationProperties     jsonValidation      = new JsonValidationProperties();
+        private DirectoryReaderProperties    directoryReader     = new DirectoryReaderProperties();
         /** Operation-level property overrides visible inside this activity. */
         private Map<String, String>          properties          = new LinkedHashMap<>();
         /** Property definitions that must be non-blank before this activity runs. */
@@ -343,6 +344,9 @@ public class BatchProperties {
 
         public JsonValidationProperties getJsonValidation()                              { return jsonValidation; }
         public void setJsonValidation(JsonValidationProperties jv)                       { this.jsonValidation = jv != null ? jv : new JsonValidationProperties(); }
+
+        public DirectoryReaderProperties getDirectoryReader()                            { return directoryReader; }
+        public void setDirectoryReader(DirectoryReaderProperties dr)                     { this.directoryReader = dr != null ? dr : new DirectoryReaderProperties(); }
 
         public Map<String, String> getProperties()                   { return properties; }
         public void setProperties(Map<String, String> p) {
@@ -476,6 +480,23 @@ public class BatchProperties {
         public void                setSchemaLocation(String s)        { this.schemaLocation = s != null ? s : ""; }
         public Map<String, String> getExtract()                       { return extract; }
         public void                setExtract(Map<String, String> m)  { this.extract = m != null ? m : new LinkedHashMap<>(); }
+    }
+
+    // -------------------------------------------------------------------------
+    // DirectoryReader activity config
+    // -------------------------------------------------------------------------
+
+    public static class DirectoryReaderProperties {
+        private String              directoryPath = "";
+        private String              filePattern   = "*";
+        private Map<String, String> extract       = new LinkedHashMap<>();
+
+        public String              getDirectoryPath()                   { return directoryPath; }
+        public void                setDirectoryPath(String p)           { this.directoryPath = p != null ? p : ""; }
+        public String              getFilePattern()                     { return filePattern; }
+        public void                setFilePattern(String p)             { this.filePattern = p != null ? p : "*"; }
+        public Map<String, String> getExtract()                         { return extract; }
+        public void                setExtract(Map<String, String> m)    { this.extract = m != null ? m : new LinkedHashMap<>(); }
     }
 
     // -------------------------------------------------------------------------

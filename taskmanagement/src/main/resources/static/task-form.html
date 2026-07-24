@@ -12,6 +12,7 @@
     .section-title { font-weight:700; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.05em; color:#6c757d; margin-bottom:1rem; padding-bottom:0.5rem; border-bottom:1px solid #f0f0f0; }
     .form-label { font-size:0.78rem; font-weight:600; color:#495057; margin-bottom:3px; }
     .form-control, .form-select { font-size:0.82rem; }
+    .badge-status-BACKLOG    { background:#495057; color:#fff; }
     .badge-status-TODO       { background:#6c757d; color:#fff; }
     .badge-status-IN_PROGRESS{ background:#0d6efd; color:#fff; }
     .badge-status-REVIEW     { background:#fd7e14; color:#fff; }
@@ -32,7 +33,14 @@
 
 <nav class="navbar navbar-dark bg-dark px-3">
   <a class="navbar-brand fw-bold" href="index.html"><i class="bi bi-check2-square me-2"></i>Task Manager</a>
-  <span class="text-light" id="navTitle">New Task</span>
+  <div class="d-flex gap-2 align-items-center">
+    <span class="text-light" id="navTitle">New Task</span>
+    <a href="due-dates.html" class="btn btn-outline-light btn-sm ms-3"><i class="bi bi-calendar-event me-1"></i>Due Dates</a>
+    <a href="projects.html" class="btn btn-outline-light btn-sm"><i class="bi bi-diagram-3 me-1"></i>Projects</a>
+    <a href="programmes.html" class="btn btn-outline-light btn-sm"><i class="bi bi-diagram-2 me-1"></i>Programmes</a>
+    <a href="timeline.html" class="btn btn-outline-light btn-sm"><i class="bi bi-bar-chart-steps me-1"></i>Timeline</a>
+    <a href="admin.html" class="btn btn-outline-light btn-sm"><i class="bi bi-gear me-1"></i>Admin</a>
+  </div>
 </nav>
 
 <div class="container-fluid" style="max-width:1100px; padding:1.5rem 1rem;">
@@ -79,6 +87,7 @@
           <div class="col-md-2">
             <label class="form-label">Status</label>
             <select id="status" class="form-select">
+              <option value="BACKLOG">BACKLOG</option>
               <option value="TODO">TODO</option>
               <option value="IN_PROGRESS">IN PROGRESS</option>
               <option value="REVIEW">REVIEW</option>
@@ -269,6 +278,7 @@
 
   async function init() {
     toast = new bootstrap.Toast(document.getElementById('toastEl'), { delay: 2500 });
+    await loadFieldConfigs();
     if (taskId) {
       document.getElementById('navTitle').textContent = `Task #${taskId}`;
       document.getElementById('breadcrumbCurrent').textContent = `Task #${taskId}`;
@@ -279,6 +289,108 @@
       await loadComments();
       await loadHistory();
     }
+  }
+
+  async function loadFieldConfigs() {
+    let configs;
+    try {
+      configs = await fetch('/api/field-configs').then(r => r.json());
+    } catch (e) {
+      return;
+    }
+
+    // Apply display name overrides to labels
+    Object.entries(configs).forEach(([fieldId, cfg]) => {
+      if (cfg.displayName) updateFieldLabel(fieldId, cfg.displayName);
+    });
+
+    // Set defaults for new tasks
+    if (!taskId) {
+      Object.entries(configs).forEach(([fieldId, cfg]) => {
+        if (cfg.defaultValue != null && cfg.defaultValue !== '') {
+          setField(fieldId, cfg.defaultValue);
+        }
+      });
+    }
+
+    // Process type overrides and dropdown sources
+    const httpFields = [];
+    Object.entries(configs).forEach(([fieldId, cfg]) => {
+      const ftype = cfg.fieldType;
+      const source = cfg.source;
+
+      if (ftype === 'select') {
+        if (source?.type === 'static' && source.staticOptions) {
+          applySelectOptions(fieldId, source.staticOptions.map(o => ({ name: o, value: o })));
+        } else if (source?.type === 'http' || source?.type === 'file' || source?.type === 'entity') {
+          httpFields.push(fieldId);
+        }
+      } else if (ftype === 'textarea') {
+        replaceInputWithTextarea(fieldId);
+      }
+    });
+
+    // Fetch HTTP dropdown options in parallel
+    await Promise.all(httpFields.map(async fieldId => {
+      try {
+        const options = await fetch(`/api/field-options/${fieldId}`).then(r => r.json());
+        if (Array.isArray(options)) applySelectOptions(fieldId, options);
+      } catch (_) {}
+    }));
+  }
+
+  function applySelectOptions(fieldId, options) {
+    const el = document.getElementById(fieldId);
+    if (!el) return;
+    if (el.tagName === 'SELECT') {
+      // Replace options on existing select (e.g. status, priority)
+      const cur = el.value;
+      el.innerHTML = '';
+      options.forEach(opt => {
+        const o = document.createElement('option');
+        o.value = opt.value;
+        o.textContent = opt.name;
+        el.appendChild(o);
+      });
+      el.value = cur;
+    } else {
+      // Replace text input with a new select
+      const select = document.createElement('select');
+      select.id = el.id;
+      select.className = el.className.replace('form-control', 'form-select');
+      const blank = document.createElement('option');
+      blank.value = '';
+      blank.textContent = '-- Select --';
+      select.appendChild(blank);
+      options.forEach(opt => {
+        const o = document.createElement('option');
+        o.value = opt.value;
+        o.textContent = opt.name;
+        select.appendChild(o);
+      });
+      el.parentNode.replaceChild(select, el);
+    }
+  }
+
+  function replaceInputWithTextarea(fieldId) {
+    const el = document.getElementById(fieldId);
+    if (!el || el.tagName !== 'INPUT') return;
+    const ta = document.createElement('textarea');
+    ta.id = el.id;
+    ta.className = el.className;
+    ta.placeholder = el.placeholder || '';
+    ta.rows = 3;
+    el.parentNode.replaceChild(ta, el);
+  }
+
+  function updateFieldLabel(fieldId, displayName) {
+    const el = document.getElementById(fieldId);
+    if (!el) return;
+    const label = el.parentElement?.querySelector('label.form-label');
+    if (!label) return;
+    const star = label.querySelector('.required-star');
+    label.textContent = displayName;
+    if (star) label.appendChild(star);
   }
 
   async function loadTask() {
@@ -312,7 +424,19 @@
 
   function setField(id, val) {
     const el = document.getElementById(id);
-    if (el && val != null) el.value = val;
+    if (!el || val == null) return;
+    if (el.tagName === 'SELECT') {
+      const exists = Array.from(el.options).some(o => o.value === String(val));
+      if (!exists && val !== '') {
+        const o = document.createElement('option');
+        o.value = val;
+        o.textContent = val;
+        el.appendChild(o);
+      }
+      el.value = val;
+    } else {
+      el.value = val;
+    }
   }
   function setSelect(id, val) {
     const el = document.getElementById(id);

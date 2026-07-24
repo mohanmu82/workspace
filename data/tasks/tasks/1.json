@@ -1,0 +1,14 @@
+{
+  "id" : 1,
+  "title" : "Create JIRA Subtasks for SPOne Feature Testing",
+  "description" : "Create JIRA Subtasks for SPOne Feature",
+  "status" : "TODO",
+  "priority" : "MEDIUM",
+  "assignee" : "abhishek",
+  "createdBy" : "muthu",
+  "createdAt" : "2026-06-01T16:11:36.2421973",
+  "updatedAt" : "2026-07-23T17:54:24.5621629",
+  "tags" : [ ],
+  "project" : "Test Project",
+  "jira" : "ICECR-24567"
+}

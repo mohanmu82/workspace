@@ -41,7 +41,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 @RestController
-@RequestMapping("/batch")
+@RequestMapping(value = "/batch", produces = MediaType.APPLICATION_JSON_VALUE)
 public class BatchController {
 
     private final BatchService batchService;
@@ -617,7 +617,8 @@ public class BatchController {
                 null,  // jsonataTransform
                 null,  // templateName
                 null,  // auth
-                null   // operationType
+                null,  // operationType
+                null   // operationConfig
         );
     }
 

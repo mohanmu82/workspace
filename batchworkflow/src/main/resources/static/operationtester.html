@@ -304,6 +304,8 @@ button.sm { padding: 4px 10px; font-size: 12px; }
 <div class="nav" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
   <a href="/">← Batch Runner</a>
   <span style="color:#dfe1e6">|</span>
+  <a href="/inputSourceTemplate.html" style="font-size:13px">Input Source Templates</a>
+  <span style="color:#dfe1e6">|</span>
   <label style="font-size:13px;color:#5e6c84;white-space:nowrap">Load operation:</label>
   <select id="op-loader" style="font-size:13px;padding:3px 8px;border:1px solid #ccc;border-radius:4px" onchange="loadSelectedOperation()">
     <option value="">— select —</option>
@@ -679,6 +681,7 @@ button.sm { padding: 4px 10px; font-size: 12px; }
           <option value="FILE">FILE</option>
           <option value="HTTPCONFIG">HTTPCONFIG</option>
           <option value="DB">DB</option>
+          <option value="TEMPLATE">TEMPLATE</option>
         </select>
       </div>
       <div class="fg" id="t-alias-fg">
@@ -742,6 +745,13 @@ button.sm { padding: 4px 10px; font-size: 12px; }
     <div class="fg wide" id="t-http-fg" style="display:none">
       <label>HTTP Input URL</label>
       <input id="t-inputHttpUrl" type="text" placeholder="http://api.example.com/ids">
+    </div>
+    <div class="fg" id="t-template-fg" style="display:none;margin-top:8px">
+      <label>Input Source Template</label>
+      <select id="t-is-templateName">
+        <option value="">— select a template —</option>
+      </select>
+      <span class="hint">Reusable input source defined in <a href="/inputSourceTemplate.html" target="_blank">inputSourceTemplate</a></span>
     </div>
     <div class="fg wide" style="margin-top:8px">
       <label>Config Keys <span style="font-weight:400;text-transform:none;font-size:10px;color:#a5adba">(comma-separated, e.g. pubmed.dev,cms.uat — properties from matching configs are injected)</span></label>
@@ -1082,6 +1092,11 @@ function showTestFields() {
   document.getElementById('t-file-fg').style.display = val === 'FILE' ? '' : 'none';
   document.getElementById('t-http-fg').style.display = val === 'HTTPCONFIG' ? '' : 'none';
   document.getElementById('t-count-fg').style.display = (val === 'SPECIFIC' || val === 'ALIAS') ? 'none' : '';
+  const tmplFg = document.getElementById('t-template-fg');
+  if (tmplFg) {
+    tmplFg.style.display = val === 'TEMPLATE' ? '' : 'none';
+    if (val === 'TEMPLATE') loadInputSourceTemplateNames();
+  }
 }
 
 // ─── Initialization ───────────────────────────────────────────────────────────
@@ -1182,6 +1197,7 @@ function addActivity(data) {
         <option value="DB" ${type==='DB'?'selected':''}>DB</option>
         <option value="INITIALIZE" ${type==='INITIALIZE'?'selected':''}>Initialize</option>
         <option value="JSONVALIDATION" ${type==='JSONVALIDATION'?'selected':''}>JSON Validation</option>
+        <option value="DIRECTORYREADER" ${type==='DIRECTORYREADER'?'selected':''}>Directory Reader</option>
       </select>
       <button class="secondary sm" onclick="moveActivityUp(${id})" title="Move up" style="padding:3px 7px;font-size:11px">↑</button>
       <button class="secondary sm" onclick="moveActivityDown(${id})" title="Move down" style="padding:3px 7px;font-size:11px">↓</button>
@@ -1440,6 +1456,33 @@ function renderActivity(id, data) {
       ${outputVarHtml(id, data)}
       ${mandPropSection(id)}`;
     if (jv.extract) setKvMap(`act-jv-ext-wrap-${id}`, `act-jv-ext-${id}`, jv.extract);
+    if (data?.mandatoryProperties) setMandProps(id, data.mandatoryProperties);
+  } else if (type === 'DIRECTORYREADER') {
+    const dr = data?.directoryReader || {};
+    body.innerHTML = `
+      <div class="form-row">
+        <div class="fg"><label>Activity Name</label>
+          <input id="act-name-${id}" type="text" placeholder="list-files" value="${esc(data?.name||'')}" oninput="genJson()"></div>
+        <div class="fg wide"><label>Directory Path</label>
+          <input id="act-dr-path-${id}" type="text" placeholder="/data/files or \${DIR_PATH}" value="${esc(dr.directoryPath||'')}" oninput="genJson()">
+          <span class="hint">Supports \${PROPERTY} substitution</span></div>
+        <div class="fg"><label>File Pattern</label>
+          <input id="act-dr-pattern-${id}" type="text" placeholder="*.csv" value="${esc(dr.filePattern||'')}" oninput="genJson()">
+          <span class="hint">Glob pattern, e.g. *.csv, *.xml, report_*</span></div>
+      </div>
+      <div class="act-section">Extract — column name maps to a file attribute</div>
+      <div style="font-size:11px;color:#5e6c84;margin-bottom:6px">
+        Available paths: <code>$.fileName</code> &nbsp;|&nbsp; <code>$.filePath</code> &nbsp;|&nbsp;
+        <code>$.fileType</code> &nbsp;|&nbsp; <code>$.fileSize</code> &nbsp;|&nbsp;
+        <code>$.fileLastModifiedTime</code> &nbsp;|&nbsp; <code>$.fileLastModifiedTimeHumanReadable</code>
+      </div>
+      <div class="kv-wrap" id="act-dr-ext-wrap-${id}">
+        <div class="kv-row kv-head"><span>Column Name</span><span>Path</span><span></span></div>
+      </div>
+      <span class="add-row-btn" onclick="addKvRow('act-dr-ext-wrap-${id}','act-dr-ext-${id}',genJson)">+ Add extraction</span>
+      ${outputVarHtml(id, data)}
+      ${mandPropSection(id)}`;
+    if (dr.extract) setKvMap(`act-dr-ext-wrap-${id}`, `act-dr-ext-${id}`, dr.extract);
     if (data?.mandatoryProperties) setMandProps(id, data.mandatoryProperties);
   } else {
     const de = data?.dataExtraction || {};
@@ -2409,6 +2452,13 @@ function buildJson() {
         }
       }
       if (Object.keys(db).length) act.db = db;
+    } else if (type === 'DIRECTORYREADER') {
+      const dr = {};
+      const drPath = v(`act-dr-path-${id}`); if (drPath) dr.directoryPath = drPath;
+      const drPattern = v(`act-dr-pattern-${id}`); if (drPattern) dr.filePattern = drPattern;
+      const drExtract = getKvMap(`act-dr-ext-${id}`);
+      if (Object.keys(drExtract).length) dr.extract = drExtract;
+      act.directoryReader = dr;
     } else if (type === 'INITIALIZE') {
       const initMode = v(`act-init-mode-${id}`) || 'HTTP';
       if (initMode === 'DB') {
@@ -2792,6 +2842,8 @@ async function runTest() {
     if (ids.length) req.ids = ids;
   } else if (src === 'HTTPCONFIG') {
     const url = v('t-inputHttpUrl'); if (url) req.inputHttpUrl = url;
+  } else if (src === 'TEMPLATE') {
+    const tmplName = v('t-is-templateName'); if (tmplName) req.inputSourceTemplateName = tmplName;
   }
 
   // Config keys — resolve and merge properties first (extra props override)
@@ -3620,15 +3672,19 @@ async function loadInputSourceTemplateNames() {
   try {
     const res = await fetch('/batch/inputsourcetemplate');
     const data = await res.json();
-    const sel = document.getElementById('f-is-templateName');
-    const cur = sel.value;
-    while (sel.options.length > 1) sel.remove(1);
-    (data.data || []).forEach(t => {
-      const opt = document.createElement('option');
-      opt.value = t.name; opt.textContent = t.name;
-      if (t.name === cur) opt.selected = true;
-      sel.appendChild(opt);
-    });
+    const templates = data.data || [];
+    for (const selId of ['f-is-templateName', 't-is-templateName']) {
+      const sel = document.getElementById(selId);
+      if (!sel) continue;
+      const cur = sel.value;
+      while (sel.options.length > 1) sel.remove(1);
+      templates.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t.name; opt.textContent = t.name;
+        if (t.name === cur) opt.selected = true;
+        sel.appendChild(opt);
+      });
+    }
     _istLoaded = true;
   } catch (e) { /* server may not be running */ }
 }

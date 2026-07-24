@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Project Timeline</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"/>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"/>
+  <style>
+    body { background: #f4f6f9; font-size: 0.875rem; }
+    .badge-proj-PLANNING  { background: #6c757d; }
+    .badge-proj-ACTIVE    { background: #0d6efd; }
+    .badge-proj-ON_HOLD   { background: #fd7e14; }
+    .badge-proj-COMPLETED { background: #198754; }
+    .badge-proj-CANCELLED { background: #adb5bd; color:#000; }
+    .STATUS_TODO         { background:#6c757d; }
+    .STATUS_IN_PROGRESS   { background:#0d6efd; }
+    .STATUS_REVIEW        { background:#fd7e14; }
+    .STATUS_DONE          { background:#198754; }
+    .STATUS_BLOCKED       { background:#dc3545; }
+    .STATUS_BACKLOG       { background:#495057; }
+    .STATUS_CANCELLED     { background:#adb5bd; }
+
+    .gantt-wrap { background:#fff; border:1px solid #dee2e6; border-radius:8px; overflow-x:auto; }
+    .gantt-inner { min-width: 900px; position: relative; }
+    .gantt-header { display:flex; border-bottom:1px solid #dee2e6; position:sticky; top:0; background:#fff; z-index:2; }
+    .gantt-label-col { width:200px; flex-shrink:0; padding:0.5rem; font-weight:700; font-size:0.75rem; text-transform:uppercase; color:#6c757d; border-right:1px solid #dee2e6; }
+    .gantt-track-header { flex:1; position:relative; height:32px; }
+    .month-label { position:absolute; top:0; height:32px; display:flex; align-items:center; font-size:0.72rem; font-weight:600; color:#495057; border-left:1px solid #eee; padding-left:4px; }
+
+    .gantt-row { display:flex; border-bottom:1px solid #f0f0f0; }
+    .gantt-row:hover { background:#fafbfe; }
+    .gantt-row-label { width:200px; flex-shrink:0; padding:0.6rem 0.5rem; border-right:1px solid #dee2e6; }
+    .gantt-row-label .pname { font-weight:600; font-size:0.8rem; }
+    .gantt-track { flex:1; position:relative; min-height:48px; }
+
+    .project-bar { position:absolute; top:16px; height:16px; border-radius:8px; opacity:0.85; }
+    .milestone-marker { position:absolute; top:6px; width:14px; height:14px; transform:translateX(-50%) rotate(45deg); border:1px solid rgba(0,0,0,0.15); cursor:default; }
+    .task-marker { position:absolute; top:32px; width:9px; height:9px; border-radius:50%; transform:translateX(-50%); border:1px solid rgba(0,0,0,0.15); cursor:pointer; }
+    .today-line { position:absolute; top:0; bottom:0; width:1px; background:#dc3545; z-index:1; }
+    .today-label { position:absolute; top:-2px; font-size:0.65rem; color:#dc3545; font-weight:700; transform:translateX(-50%); background:#fff; padding:0 2px; }
+
+    .legend-item { display:inline-flex; align-items:center; gap:4px; margin-right:1rem; font-size:0.75rem; color:#495057; }
+    .legend-swatch { width:10px; height:10px; border-radius:50%; display:inline-block; }
+    .legend-diamond { width:9px; height:9px; display:inline-block; transform:rotate(45deg); border:1px solid rgba(0,0,0,0.2); }
+    #noResults { display:none; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark bg-dark px-3">
+  <a class="navbar-brand fw-bold" href="index.html"><i class="bi bi-check2-square me-2"></i>Task Manager</a>
+  <div class="d-flex gap-2 align-items-center">
+    <a href="index.html" class="btn btn-outline-light btn-sm"><i class="bi bi-list-task me-1"></i>Tasks</a>
+    <a href="due-dates.html" class="btn btn-outline-light btn-sm"><i class="bi bi-calendar-event me-1"></i>Due Dates</a>
+    <a href="projects.html" class="btn btn-outline-light btn-sm"><i class="bi bi-diagram-3 me-1"></i>Projects</a>
+    <a href="programmes.html" class="btn btn-outline-light btn-sm"><i class="bi bi-diagram-2 me-1"></i>Programmes</a>
+    <span class="text-light fw-semibold"><i class="bi bi-bar-chart-steps me-1"></i>Timeline</span>
+    <a href="admin.html" class="btn btn-outline-light btn-sm"><i class="bi bi-gear me-1"></i>Admin</a>
+  </div>
+</nav>
+
+<div class="container-fluid" style="max-width:1300px; padding:1.5rem 1rem;">
+
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h5 class="mb-0">Project Timeline</h5>
+      <small class="text-muted">Project spans, milestones (◆), and task due dates (●) at a glance.</small>
+    </div>
+  </div>
+
+  <div id="loadingIndicator" class="text-center py-4 text-muted" style="display:none"><div class="spinner-border spinner-border-sm"></div> Loading...</div>
+  <div id="noResults" class="text-center py-5 text-muted"><i class="bi bi-bar-chart-steps fs-1 d-block mb-2"></i>No projects yet — create one on the Projects page</div>
+
+  <div class="gantt-wrap" id="ganttWrap" style="display:none">
+    <div class="gantt-inner" id="ganttInner"></div>
+  </div>
+
+  <div class="mt-3">
+    <span class="legend-item"><span class="legend-swatch" style="background:#6c757d"></span>Todo</span>
+    <span class="legend-item"><span class="legend-swatch" style="background:#0d6efd"></span>In Progress</span>
+    <span class="legend-item"><span class="legend-swatch" style="background:#198754"></span>Done</span>
+    <span class="legend-item"><span class="legend-swatch" style="background:#dc3545"></span>Blocked</span>
+    <span class="legend-item"><span class="legend-diamond" style="background:#198754"></span>Milestone (complete)</span>
+    <span class="legend-item"><span class="legend-diamond" style="background:#dc3545"></span>Milestone (overdue)</span>
+    <span class="legend-item"><span class="legend-diamond" style="background:#6c757d"></span>Milestone (pending)</span>
+  </div>
+
+</div>
+
+<script>
+let projects = [], allTasks = [], allMilestones = [];
+let rangeStart, rangeEnd;
+
+async function init() {
+  document.getElementById('loadingIndicator').style.display = 'block';
+  try {
+    const [projRes, taskRes, mileRes] = await Promise.all([
+      fetch('/api/projects').then(r => r.json()),
+      fetch('/api/tasks?size=1000').then(r => r.json()),
+      fetch('/api/projects/all-milestones').then(r => r.json())
+    ]);
+    projects = projRes || [];
+    allTasks = (taskRes.tasks) || [];
+    allMilestones = mileRes || [];
+    render();
+  } catch (e) {
+    console.error(e);
+  } finally {
+    document.getElementById('loadingIndicator').style.display = 'none';
+  }
+}
+
+function tasksForProject(name) {
+  return allTasks.filter(t => (t.project || '').toLowerCase() === (name || '').toLowerCase() && t.dueDate);
+}
+function milestonesForProject(id) {
+  return allMilestones.filter(m => m.projectId === id && m.targetDate);
+}
+
+function computeRange() {
+  const dates = [];
+  projects.forEach(p => { if (p.startDate) dates.push(new Date(p.startDate)); if (p.endDate) dates.push(new Date(p.endDate)); });
+  allMilestones.forEach(m => { if (m.targetDate) dates.push(new Date(m.targetDate)); });
+  allTasks.forEach(t => { if (t.dueDate) dates.push(new Date(t.dueDate)); });
+  const today = new Date();
+  if (dates.length === 0) {
+    rangeStart = addDays(today, -30);
+    rangeEnd = addDays(today, 90);
+    return;
+  }
+  let min = new Date(Math.min(...dates, today.getTime()));
+  let max = new Date(Math.max(...dates, today.getTime()));
+  rangeStart = addDays(min, -7);
+  rangeEnd = addDays(max, 14);
+  if ((rangeEnd - rangeStart) < 30 * 86400000) rangeEnd = addDays(rangeStart, 30);
+}
+
+function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
+
+function pctFor(dateStr) {
+  const d = new Date(dateStr);
+  const total = rangeEnd - rangeStart;
+  const offset = d - rangeStart;
+  return Math.min(100, Math.max(0, (offset / total) * 100));
+}
+
+function render() {
+  document.getElementById('noResults').style.display = projects.length === 0 ? 'block' : 'none';
+  document.getElementById('ganttWrap').style.display = projects.length === 0 ? 'none' : 'block';
+  if (projects.length === 0) return;
+
+  computeRange();
+
+  const header = buildHeader();
+  const rows = projects.map(p => buildRow(p)).join('');
+  const todayPct = pctFor(new Date().toISOString().slice(0,10));
+
+  document.getElementById('ganttInner').innerHTML = `
+    <div class="gantt-header">
+      <div class="gantt-label-col">Project</div>
+      <div class="gantt-track-header">${header}</div>
+    </div>
+    ${rows}
+  `;
+
+  // Draw today-line overlay across full height
+  const inner = document.getElementById('ganttInner');
+  const totalHeight = inner.scrollHeight;
+  const overlay = document.createElement('div');
+  overlay.className = 'today-line';
+  overlay.style.left = `calc(200px + (100% - 200px) * ${todayPct / 100})`;
+  overlay.style.height = totalHeight + 'px';
+  inner.appendChild(overlay);
+}
+
+function buildHeader() {
+  const months = [];
+  let cursor = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), 1);
+  while (cursor <= rangeEnd) {
+    const next = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+    const segStart = cursor < rangeStart ? rangeStart : cursor;
+    const segEnd = next > rangeEnd ? rangeEnd : next;
+    const left = pctFor(segStart.toISOString().slice(0,10));
+    const right = pctFor(segEnd.toISOString().slice(0,10));
+    months.push(`<div class="month-label" style="left:${left}%; width:${Math.max(0, right-left)}%">${cursor.toLocaleString('default',{month:'short', year:'2-digit'})}</div>`);
+    cursor = next;
+  }
+  return months.join('');
+}
+
+function buildRow(p) {
+  const tasks = tasksForProject(p.name);
+  const mss = milestonesForProject(p.id);
+  const today = new Date(); today.setHours(0,0,0,0);
+
+  let bar = '';
+  if (p.startDate && p.endDate) {
+    const left = pctFor(p.startDate);
+    const right = pctFor(p.endDate);
+    const color = { PLANNING:'#6c757d', ACTIVE:'#0d6efd', ON_HOLD:'#fd7e14', COMPLETED:'#198754', CANCELLED:'#adb5bd' }[p.status] || '#6c757d';
+    bar = `<div class="project-bar" style="left:${left}%; width:${Math.max(0.5, right-left)}%; background:${color}" title="${escAttr(p.name)}: ${p.startDate} → ${p.endDate}"></div>`;
+  }
+
+  const milestoneMarkers = mss.map(m => {
+    const overdue = new Date(m.targetDate) < today && m.status !== 'COMPLETED';
+    const color = m.status === 'COMPLETED' ? '#198754' : (overdue ? '#dc3545' : '#6c757d');
+    return `<div class="milestone-marker" style="left:${pctFor(m.targetDate)}%; background:${color}" title="${escAttr(m.name)} — ${m.targetDate} (${m.status})"></div>`;
+  }).join('');
+
+  const taskMarkers = tasks.map(t => {
+    const color = { TODO:'#6c757d', IN_PROGRESS:'#0d6efd', REVIEW:'#fd7e14', DONE:'#198754', BLOCKED:'#dc3545', BACKLOG:'#495057', CANCELLED:'#adb5bd' }[t.status] || '#6c757d';
+    return `<div class="task-marker" style="left:${pctFor(t.dueDate)}%; background:${color}" title="${escAttr(t.title)} — due ${new Date(t.dueDate).toLocaleDateString()} (${t.status})" onclick="location.href='task-form.html?id=${t.id}'"></div>`;
+  }).join('');
+
+  return `
+  <div class="gantt-row">
+    <div class="gantt-row-label">
+      <div class="pname">${esc(p.name)}</div>
+      <span class="badge badge-proj-${p.status}" style="font-size:0.62rem">${esc((p.status||'').replace('_',' '))}</span>
+    </div>
+    <div class="gantt-track">${bar}${milestoneMarkers}${taskMarkers}</div>
+  </div>`;
+}
+
+function esc(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function escAttr(s) { return esc(s).replace(/'/g, '&#39;'); }
+
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "id" : 2,
+  "title" : "Follow-up on Python Uninstallation",
+  "description" : "Your product has completely revolutionized how we handle so many functions in our troop.      Read More >>\n- Lisa Erck, Webmaster, Troop 700, Rescue, California\nTroopWebHost has totally changed the dynamics within our Troop.      Read More >>\n- Ed Underwood, Committee Chair, Troop 51, Mansfield, Massachusetts\nThanks for making TroopWebHost the best scouting website out there!     Read More >>\n- Garrett Davis, Assistant Scoutmaster, Troop 61, Houston, Texas",
+  "status" : "TODO",
+  "priority" : "MEDIUM",
+  "assignee" : "nitin",
+  "dueDate" : "2026-08-01T08:24:00",
+  "createdAt" : "2026-06-01T16:15:13.4459063",
+  "updatedAt" : "2026-07-23T18:12:37.5197711",
+  "category" : "DEVELOPMENT",
+  "tags" : [ ],
+  "programme" : "IceX",
+  "project" : "Test Project"
+}

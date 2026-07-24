@@ -54,8 +54,10 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.PathMatcher;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -370,6 +372,55 @@ public class BatchService {
     ) {}
 
     // -------------------------------------------------------------------------
+    // Internal parameter objects (reduce method arity)
+    // -------------------------------------------------------------------------
+
+    /** Shared execution environment threaded through all activity dispatchers. */
+    private record ActivityContext(
+            HttpClient httpClient,
+            ExecutorService httpPool,
+            ExecutorService xpathPool,
+            String authHeader,
+            Map<String, String> opProperties,
+            Map<String, String> extraHeaders,
+            BatchProperties.OperationProperties op,
+            Map<String, Session> sharedSshSessions,
+            List<Long> httpDurationsMs,
+            AtomicLong totalResponseBytes) {}
+
+    /** Mutable row-level aggregation (succeeded/failed counts + result list). */
+    private record RowAccumulator(
+            AtomicInteger succeeded,
+            AtomicInteger failed,
+            List<Map<String, Object>> results) {}
+
+    /** Options controlling how runCore / runCoreAsync execute a batch. */
+    private record RunCoreOptions(
+            Integer threadCountOverride,
+            Integer timeoutMsOverride,
+            int debugMode,
+            Map<String, String> opProperties,
+            Map<String, String> extraHeaders,
+            String authHeaderOverride) {}
+
+    /** Collects the per-call parameters for a local (non-HTTP) activity invocation. */
+    private record LocalHttpCallContext(
+            String localUrl,
+            String requestBody,
+            String cacheName,
+            String resolvedCacheKey,
+            BatchProperties.HttpProperties httpConfig) {}
+
+    /** Bundles the HTTP response details passed to applyHttpExtract. */
+    private record HttpResponseContext(
+            HttpRequest httpRequest,
+            String requestBody,
+            HttpResponse<String> response,
+            String body,
+            String resolvedUrl,
+            long responseTimeMs) {}
+
+    // -------------------------------------------------------------------------
     // Alias resolution — merges preset fields into the incoming request
     // -------------------------------------------------------------------------
 
@@ -431,7 +482,8 @@ public class BatchService {
                 mergeObj(req.jsonataTransform(),      a.jsonataTransform()),
                 mergeStr(req.templateName(),          a.templateName()),
                 mergeObj(req.auth(),                  a.auth()),
-                mergeStr(req.operationType(),         a.operationType()));
+                mergeStr(req.operationType(),         a.operationType()),
+                mergeStr(req.operationConfig(),       a.operationConfig()));
     }
 
     /** Returns {@code a} if non-null and non-blank, otherwise {@code b}. */
@@ -1250,7 +1302,8 @@ public class BatchService {
                 null,   // jsonataTransform
                 null,   // templateName
                 null,   // auth
-                null    // operationType
+                null,   // operationType
+                null    // operationConfig
         );
 
         BatchResult innerResult = run(innerRequest);
@@ -1503,7 +1556,9 @@ public class BatchService {
             // Run INITIALIZE activities once before any per-row processing; errors propagate to the controller
             if (!initActConfigs.isEmpty()) {
                 List<ResolvedActivity> resolvedInits = preloadActivities(initActConfigs, effectiveTimeoutMs, operation, opProperties);
-                executeInitializeActivities(resolvedInits, httpClient, httpPool, authHeader, opProperties);
+                executeInitializeActivities(resolvedInits, new ActivityContext(
+                        httpClient, httpPool, xpathPool, authHeader, opProperties, extraHeaders,
+                        op, Map.of(), new CopyOnWriteArrayList<>(), new AtomicLong()));
             }
 
             // Pre-load activity resources (classpath files, etc.) once for all rows
@@ -1519,10 +1574,11 @@ public class BatchService {
 
             futures = rows.stream()
                     .map(row -> processOneRowWithActivities(
-                            row, resolvedActivities, httpClient, httpPool, xpathPool,
-                            succeeded, failed, results, extraHeaders,
-                            httpDurationsMs, totalResponseBytes,
-                            authHeader, includeMetadata, opProperties, op, null, null, sshSessions))
+                            row, resolvedActivities,
+                            new ActivityContext(httpClient, httpPool, xpathPool, authHeader,
+                                    opProperties, extraHeaders, op, sshSessions, httpDurationsMs, totalResponseBytes),
+                            new RowAccumulator(succeeded, failed, results),
+                            includeMetadata, null, null))
                     .collect(Collectors.toList());
 
             CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
@@ -1611,16 +1667,20 @@ public class BatchService {
             if (extractionType == DataExtractionType.JSON || extractionType == DataExtractionType.JSONATA) {
                 final String jsonataTransform = resolveJsonataExpression(op.getDataExtraction().getJsonataTransform());
                 futures = rows.stream()
-                        .map(row -> processOneJson(row.getData(), httpClient, httpPool, jsonataTransform,
-                                succeeded, failed, results, httpDurationsMs, totalResponseBytes,
-                                authHeader, op, resolvedBodyTemplate, effectiveTimeoutMs, extraHeaders))
+                        .map(row -> processOneJson(row.getData(), jsonataTransform,
+                                new ActivityContext(httpClient, httpPool, xpathPool, authHeader,
+                                        opProperties, extraHeaders, op, Map.of(), httpDurationsMs, totalResponseBytes),
+                                new RowAccumulator(succeeded, failed, results),
+                                resolvedBodyTemplate, effectiveTimeoutMs))
                         .collect(Collectors.toList());
             } else {
                 final Map<String, String> finalXpathMap = Map.copyOf(xpathMap);
                 futures = rows.stream()
-                        .map(row -> processOneXpath(row.getData(), httpClient, httpPool, finalXpathMap, xpathPool,
-                                succeeded, failed, results, httpDurationsMs, totalResponseBytes,
-                                authHeader, op, resolvedBodyTemplate, effectiveTimeoutMs, extraHeaders))
+                        .map(row -> processOneXpath(row.getData(), finalXpathMap,
+                                new ActivityContext(httpClient, httpPool, xpathPool, authHeader,
+                                        opProperties, extraHeaders, op, Map.of(), httpDurationsMs, totalResponseBytes),
+                                new RowAccumulator(succeeded, failed, results),
+                                resolvedBodyTemplate, effectiveTimeoutMs))
                         .collect(Collectors.toList());
             }
 
@@ -1748,7 +1808,9 @@ public class BatchService {
         // Run INITIALIZE activities once before any per-row processing; errors propagate to the controller
         if (!initActConfigsAsync.isEmpty()) {
             List<ResolvedActivity> resolvedInits = preloadActivities(initActConfigsAsync, effectiveTimeoutMs, operation, opProperties);
-            executeInitializeActivities(resolvedInits, httpClient, httpPool, authHeader, opProperties);
+            executeInitializeActivities(resolvedInits, new ActivityContext(
+                    httpClient, httpPool, xpathPool, authHeader, opProperties, Map.of(),
+                    op, Map.of(), new CopyOnWriteArrayList<>(), new AtomicLong()));
         }
 
         List<ResolvedActivity> resolvedActivities = preloadActivities(activities, effectiveTimeoutMs, operation, opProperties);
@@ -1765,11 +1827,11 @@ public class BatchService {
 
         List<CompletableFuture<Void>> futures = rows.stream()
                 .map(row -> processOneRowWithActivities(
-                        row, resolvedActivities, httpClient, httpPool, xpathPool,
-                        succeeded, failed, results, extraHeaders,
-                        httpDurationsMs, totalResponseBytes,
-                        authHeader, includeMetadata, opProperties, op,
-                        filterOutput, effectiveCallback, sshSessionsAsync))
+                        row, resolvedActivities,
+                        new ActivityContext(httpClient, httpPool, xpathPool, authHeader,
+                                opProperties, extraHeaders, op, sshSessionsAsync, httpDurationsMs, totalResponseBytes),
+                        new RowAccumulator(succeeded, failed, results),
+                        includeMetadata, filterOutput, effectiveCallback))
                 .collect(Collectors.toList());
 
         return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
@@ -1816,10 +1878,7 @@ public class BatchService {
      */
     private void executeInitializeActivities(
             List<ResolvedActivity> resolvedInits,
-            HttpClient httpClient,
-            ExecutorService httpPool,
-            String authHeader,
-            Map<String, String> opProperties) throws Exception {
+            ActivityContext ctx) throws Exception {
         for (ResolvedActivity initAct : resolvedInits) {
             boolean isDb = initAct.config().getDb() != null
                     && !initAct.config().getDb().getJdbcUrl().isBlank();
@@ -1827,16 +1886,16 @@ public class BatchService {
             try {
                 DataRow result;
                 if (isDb) {
-                    result = executeDbInitActivity(initAct, opProperties);
+                    result = executeDbInitActivity(initAct, ctx.opProperties());
                 } else {
-                    result = executeHttpActivity(
-                            initRow, initAct, httpClient, httpPool,
-                            new java.util.ArrayList<>(), new AtomicLong(),
-                            authHeader, opProperties, Map.of()
-                    ).get();
+                    ActivityContext initCtx = new ActivityContext(
+                            ctx.httpClient(), ctx.httpPool(), ctx.xpathPool(),
+                            ctx.authHeader(), ctx.opProperties(), Map.of(), ctx.op(),
+                            ctx.sharedSshSessions(), new CopyOnWriteArrayList<>(), new AtomicLong());
+                    result = executeHttpActivity(initRow, initAct, initCtx).get();
                 }
                 result.getData().forEach((k, v) -> {
-                    if (v != null) opProperties.put(k, v.toString());
+                    if (v != null) ctx.opProperties().put(k, v.toString());
                 });
             } catch (java.util.concurrent.ExecutionException e) {
                 Throwable cause = e.getCause() != null ? e.getCause() : e;
@@ -1974,7 +2033,7 @@ public class BatchService {
                     steps.add(new ResolvedTransformStep(s.getSource(), isNone, expr, s.getOnError(), s.getOutput()));
                 }
                 resolved.add(new ResolvedActivity(act, null, null, null, null, null, steps, null, null));
-            } else if (type == ActivityType.DB) {
+            } else if (type == ActivityType.DB || type == ActivityType.DIRECTORYREADER) {
                 resolved.add(new ResolvedActivity(act, null, null, null, null, null, null, null, null));
             } else if (type == ActivityType.DATAENRICHER) {
                 String file = act.getDataEnricher().getFile();
@@ -1995,20 +2054,11 @@ public class BatchService {
     private CompletableFuture<Void> processOneRowWithActivities(
             DataRow inputRow,
             List<ResolvedActivity> activities,
-            HttpClient httpClient,
-            ExecutorService httpPool,
-            ExecutorService xpathPool,
-            AtomicInteger succeeded, AtomicInteger failed,
-            List<Map<String, Object>> results,
-            Map<String, String> extraHeaders,
-            List<Long> httpDurationsMs, AtomicLong totalResponseBytes,
-            String authHeader,
+            ActivityContext ctx,
+            RowAccumulator acc,
             boolean includeMetadata,
-            Map<String, String> opProperties,
-            BatchProperties.OperationProperties op,
             List<FilterRule> filterOutput,          // nullable — only used when rowCallback != null
-            Consumer<Map<String, Object>> rowCallback, // nullable — ASYNC streaming
-            Map<String, Session> sharedSshSessions) { // shared SSH sessions keyed by reference name
+            Consumer<Map<String, Object>> rowCallback) { // nullable — ASYNC streaming
 
         // Group activities into sequential stages; activities sharing a sequence number run in parallel
         CompletableFuture<DataRow> chain = CompletableFuture.completedFuture(inputRow);
@@ -2016,16 +2066,10 @@ public class BatchService {
         for (List<ResolvedActivity> stage : buildStages(activities)) {
             if (stage.size() == 1) {
                 ResolvedActivity activity = stage.get(0);
-                chain = chain.thenCompose(row -> executeOneActivity(
-                        activity, row, httpClient, httpPool, xpathPool,
-                        httpDurationsMs, totalResponseBytes, authHeader, opProperties, extraHeaders,
-                        op, sharedSshSessions));
+                chain = chain.thenCompose(row -> executeOneActivity(activity, row, ctx));
             } else {
                 List<ResolvedActivity> parallelStage = stage;
-                chain = chain.thenCompose(row -> executeParallelStage(
-                        row, parallelStage, httpClient, httpPool, xpathPool,
-                        httpDurationsMs, totalResponseBytes, authHeader, opProperties, extraHeaders,
-                        op, sharedSshSessions));
+                chain = chain.thenCompose(row -> executeParallelStage(row, parallelStage, ctx));
             }
         }
 
@@ -2040,7 +2084,7 @@ public class BatchService {
                     Map<String, Object> resultMap = row.toResponseMap(includeMetadata);
                     resultMap.putAll(expandedData);
                     resultMap.put("operationStatus", opStatus);
-                    results.add(resultMap);
+                    acc.results().add(resultMap);
                     if (rowCallback != null) {
                         Map<String, Object> sanitized = sanitizeRow(resultMap);
                         if (matchesAll(sanitized, filterOutput != null ? filterOutput : List.of())) {
@@ -2051,7 +2095,7 @@ public class BatchService {
             } else {
                 Map<String, Object> resultMap = row.toResponseMap(includeMetadata);
                 resultMap.put("operationStatus", opStatus);
-                results.add(resultMap);
+                acc.results().add(resultMap);
                 if (rowCallback != null) {
                     Map<String, Object> sanitized = sanitizeRow(resultMap);
                     if (matchesAll(sanitized, filterOutput != null ? filterOutput : List.of())) {
@@ -2060,12 +2104,12 @@ public class BatchService {
                 }
             }
             if (httpSuccess) {
-                succeeded.incrementAndGet();
+                acc.succeeded().incrementAndGet();
             } else {
-                failed.incrementAndGet();
+                acc.failed().incrementAndGet();
             }
         }).exceptionally(ex -> {
-            failed.incrementAndGet();
+            acc.failed().incrementAndGet();
             Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
             Map<String, Object> resultMap;
             if (cause instanceof ValidationException ve) {
@@ -2081,7 +2125,7 @@ public class BatchService {
                 resultMap.put("operationStatus", "FAILED");
                 resultMap.put("errorMessage", message);
             }
-            results.add(resultMap);
+            acc.results().add(resultMap);
             if (rowCallback != null) {
                 rowCallback.accept(sanitizeRow(resultMap)); // stream FAILED rows too
             }
@@ -2151,23 +2195,18 @@ public class BatchService {
 
     /** Dispatches a single activity, then applies outputVar post-processing if configured. */
     private CompletableFuture<DataRow> executeOneActivity(
-            ResolvedActivity activity, DataRow row,
-            HttpClient httpClient, ExecutorService httpPool, ExecutorService xpathPool,
-            List<Long> httpDurationsMs, AtomicLong totalResponseBytes,
-            String authHeader, Map<String, String> opProperties, Map<String, String> extraHeaders,
-            BatchProperties.OperationProperties op, Map<String, Session> sharedSshSessions) {
+            ResolvedActivity activity, DataRow row, ActivityContext ctx) {
 
         ActivityType type = activity.config().getType();
         CompletableFuture<DataRow> future;
         if (type == ActivityType.HTTP) {
-            future = executeHttpActivity(row, activity, httpClient, httpPool,
-                    httpDurationsMs, totalResponseBytes, authHeader, opProperties, extraHeaders);
+            future = executeHttpActivity(row, activity, ctx);
         } else if (type == ActivityType.DATAEXTRACTION) {
-            future = executeExtractionActivity(row, activity, xpathPool);
+            future = executeExtractionActivity(row, activity, ctx.xpathPool());
         } else if (type == ActivityType.DB) {
-            future = executeDbActivity(row, activity, httpPool, opProperties, op);
+            future = executeDbActivity(row, activity, ctx);
         } else if (type == ActivityType.SSH) {
-            future = executeSshActivity(row, activity, httpPool, opProperties, op, sharedSshSessions);
+            future = executeSshActivity(row, activity, ctx);
         } else if (type == ActivityType.TRANSFORM) {
             future = executeTransformActivity(row, activity);
         } else if (type == ActivityType.VALIDATION) {
@@ -2175,7 +2214,9 @@ public class BatchService {
         } else if (type == ActivityType.DATAENRICHER) {
             future = executeDataEnricherActivity(row, activity);
         } else if (type == ActivityType.JSONVALIDATION) {
-            future = executeJsonValidationActivity(row, activity, httpPool, opProperties);
+            future = executeJsonValidationActivity(row, activity, ctx);
+        } else if (type == ActivityType.DIRECTORYREADER) {
+            future = executeDirectoryReaderActivity(row, activity, ctx);
         } else {
             future = CompletableFuture.completedFuture(row);
         }
@@ -2193,16 +2234,10 @@ public class BatchService {
      * Parallel activities should use distinct {@code outputVar} names to avoid write conflicts.
      */
     private CompletableFuture<DataRow> executeParallelStage(
-            DataRow row, List<ResolvedActivity> activities,
-            HttpClient httpClient, ExecutorService httpPool, ExecutorService xpathPool,
-            List<Long> httpDurationsMs, AtomicLong totalResponseBytes,
-            String authHeader, Map<String, String> opProperties, Map<String, String> extraHeaders,
-            BatchProperties.OperationProperties op, Map<String, Session> sharedSshSessions) {
+            DataRow row, List<ResolvedActivity> activities, ActivityContext ctx) {
 
         List<CompletableFuture<DataRow>> futures = activities.stream()
-                .map(act -> executeOneActivity(act, row, httpClient, httpPool, xpathPool,
-                        httpDurationsMs, totalResponseBytes, authHeader, opProperties, extraHeaders,
-                        op, sharedSshSessions))
+                .map(act -> executeOneActivity(act, row, ctx))
                 .collect(Collectors.toList());
 
         return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
@@ -2260,15 +2295,10 @@ public class BatchService {
     private CompletableFuture<DataRow> executeHttpActivity(
             DataRow row,
             ResolvedActivity activity,
-            HttpClient httpClient,
-            ExecutorService httpPool,
-            List<Long> httpDurationsMs, AtomicLong totalResponseBytes,
-            String authHeader,
-            Map<String, String> opProperties,
-            Map<String, String> extraHeaders) {
+            ActivityContext ctx) {
 
         BatchProperties.HttpProperties httpConfig = activity.config().getHttp();
-        Map<String, String> effectiveProps = new LinkedHashMap<>(opProperties);
+        Map<String, String> effectiveProps = new LinkedHashMap<>(ctx.opProperties());
         if (activity.config().getProperties() != null) effectiveProps.putAll(activity.config().getProperties());
 
         // Validate mandatory activity properties against row data and effective properties;
@@ -2344,11 +2374,12 @@ public class BatchService {
                 String cached = cacheFactory.get(cacheName, resolvedCacheKey,
                                                  resolveMaxRetentionTime(cacheConfig.getMaxRetentionTime(), row.getData(), effectiveProps));
                 if (cached != null) {
-                    totalResponseBytes.addAndGet(cached.length());
+                    ctx.totalResponseBytes().addAndGet(cached.length());
                     row.setResponseBody(cached);
                     row.putNamedOutput(activityName + ".RESPONSEBODY", cached);
-                    applyHttpExtract(httpConfig.getExtract().getFields(), null, resolvedBody, null, cached, resolvedUrl, 0L, row);
-                    httpDurationsMs.add(0L);
+                    applyHttpExtract(httpConfig.getExtract().getFields(),
+                            new HttpResponseContext(null, resolvedBody, null, cached, resolvedUrl, 0L), row);
+                    ctx.httpDurationsMs().add(0L);
                     row.getMetadata().put(activityName + ".timetakenmillis", 0L);
                     row.getMetadata().put(activityName + ".httpurl", resolvedUrl + " [CACHED]");
                     return CompletableFuture.completedFuture(row);
@@ -2361,11 +2392,11 @@ public class BatchService {
         }
 
         if (!resolvedUrl.startsWith("http://") && !resolvedUrl.startsWith("https://"))
-            return executeLocalHttpActivity(row, activity, resolvedUrl, resolvedBody,
-                    httpDurationsMs, totalResponseBytes, cacheName, resolvedCacheKey, httpConfig);
+            return executeLocalHttpActivity(row, activity,
+                    new LocalHttpCallContext(resolvedUrl, resolvedBody, cacheName, resolvedCacheKey, httpConfig), ctx);
 
         String effectiveAuthHeader = activity.activityAuthHeader() != null
-                ? activity.activityAuthHeader() : authHeader;
+                ? activity.activityAuthHeader() : ctx.authHeader();
 
         // Support NTLM credentials injected per-row via request properties (from the HTTP page)
         String ntlmUser = effectiveProps.get("ntlmUsername");
@@ -2375,8 +2406,9 @@ public class BatchService {
                 ? HttpClient.newBuilder()
                         .authenticator(new NtlmAuthProvider(ntlmUser, ntlmPass).toAuthenticator())
                         .build()
-                : httpClient;
+                : ctx.httpClient();
 
+        Map<String, String> extraHeaders = ctx.extraHeaders();
         Map<String, String> resolvedExtraHeaders = (extraHeaders == null || extraHeaders.isEmpty()) ? extraHeaders
                 : extraHeaders.entrySet().stream().collect(Collectors.toMap(
                         Map.Entry::getKey,
@@ -2405,17 +2437,18 @@ public class BatchService {
                 row.setResponseBody(body);
                 row.putNamedOutput(activityName + ".RESPONSEBODY", body);
                 BatchProperties.HttpExtractProperties extract = httpConfig.getExtract();
-                applyHttpExtract(extract.getFields(), request, finalResolvedBody, response, body, finalResolvedUrl, responseTimeMs, row);
+                HttpResponseContext hrc = new HttpResponseContext(request, finalResolvedBody, response, body, finalResolvedUrl, responseTimeMs);
+                applyHttpExtract(extract.getFields(), hrc, row);
                 if (response.statusCode() < 200 || response.statusCode() >= 300) {
                     if (extract != null && !extract.getIfError().isEmpty()) {
-                        applyHttpExtract(extract.getIfError(), request, finalResolvedBody, response, body, finalResolvedUrl, responseTimeMs, row);
+                        applyHttpExtract(extract.getIfError(), hrc, row);
                     } else if (extract == null || extract.getFields().isEmpty()) {
                         throw new RuntimeException("HTTP " + response.statusCode()
                                 + (body != null && !body.isBlank() ? " — " + body : ""));
                     }
                     return row;
                 }
-                totalResponseBytes.addAndGet(body.length());
+                ctx.totalResponseBytes().addAndGet(body.length());
                 if (finalCacheName != null) {
                     cacheFactory.save(finalCacheName, finalResolvedCacheKey, body, finalResolvedUrl);
                 }
@@ -2429,23 +2462,21 @@ public class BatchService {
                 throw new RuntimeException("HTTP activity failed for '" + finalResolvedUrl + "': " + detail, e);
             } finally {
                 long elapsed = System.currentTimeMillis() - start;
-                httpDurationsMs.add(elapsed);
+                ctx.httpDurationsMs().add(elapsed);
                 row.getMetadata().put(activityName + ".timetakenmillis", elapsed);
                 row.getMetadata().put(activityName + ".httpurl", finalResolvedUrl);
             }
-        }, httpPool);
+        }, ctx.httpPool());
     }
 
     /** Executes a JDBC query for one DataRow and stores the result set as JSON in the response body. */
     private CompletableFuture<DataRow> executeDbActivity(
             DataRow row,
             ResolvedActivity activity,
-            ExecutorService pool,
-            Map<String, String> opProperties,
-            BatchProperties.OperationProperties op) {
+            ActivityContext ctx) {
 
         BatchProperties.DbProperties dbConfig = activity.config().getDb();
-        Map<String, String> effectiveProps = new LinkedHashMap<>(opProperties);
+        Map<String, String> effectiveProps = new LinkedHashMap<>(ctx.opProperties());
         if (activity.config().getProperties() != null) effectiveProps.putAll(activity.config().getProperties());
 
         // If the activity references a named DB initialization entry, use its credentials
@@ -2453,6 +2484,7 @@ public class BatchService {
         String rawUserName = dbConfig.getUserName();
         String rawPassword = dbConfig.getPassword();
         String ref = dbConfig.getReference();
+        BatchProperties.OperationProperties op = ctx.op();
         if (ref != null && !ref.isBlank() && op != null && op.getInitialization() != null) {
             BatchProperties.InitializationProperties initEntry = op.getInitialization().stream()
                     .filter(i -> ref.equalsIgnoreCase(i.getName()) && "DB".equalsIgnoreCase(i.getType()))
@@ -2581,18 +2613,18 @@ public class BatchService {
                 row.getMetadata().put(activityName + ".timetakenmillis", elapsed);
                 row.getMetadata().put(activityName + ".sql", finalResolvedSql);
             }
-        }, pool);
+        }, ctx.httpPool());
     }
 
     private CompletableFuture<DataRow> executeSshActivity(
             DataRow row,
             ResolvedActivity activity,
-            ExecutorService pool,
-            Map<String, String> opProperties,
-            BatchProperties.OperationProperties op,
-            Map<String, Session> sharedSessions) {
+            ActivityContext ctx) {
 
         BatchProperties.SshProperties sshConfig = activity.config().getSsh();
+        Map<String, String> opProperties = ctx.opProperties();
+        BatchProperties.OperationProperties op = ctx.op();
+        Map<String, Session> sharedSessions = ctx.sharedSshSessions();
         Map<String, String> effectiveProps = new LinkedHashMap<>(opProperties);
         if (activity.config().getProperties() != null) effectiveProps.putAll(activity.config().getProperties());
 
@@ -2765,7 +2797,7 @@ public class BatchService {
                 // Only disconnect if we own this session (not a shared one)
                 if (ownSession && session != null && session.isConnected()) session.disconnect();
             }
-        }, pool);
+        }, ctx.httpPool());
     }
 
     /** Resolves the SSH threadCount string (may contain ${VAR}) to an integer. */
@@ -2854,29 +2886,27 @@ public class BatchService {
 
     private CompletableFuture<DataRow> executeLocalHttpActivity(
             DataRow row, ResolvedActivity activity,
-            String localUrl, String requestBody,
-            List<Long> httpDurationsMs, AtomicLong totalResponseBytes,
-            String cacheName, String resolvedCacheKey,
-            BatchProperties.HttpProperties httpConfig) {
+            LocalHttpCallContext call, ActivityContext ctx) {
         long start = System.currentTimeMillis();
         try {
-            String body = callLocalEndpointToJson(localUrl);
+            String body = callLocalEndpointToJson(call.localUrl());
             long responseTimeMs = System.currentTimeMillis() - start;
             row.setLastHttpStatusCode(200);
             row.setResponseBody(body);
-            totalResponseBytes.addAndGet(body.length());
+            ctx.totalResponseBytes().addAndGet(body.length());
             String activityName = activity.config().getName();
-            applyHttpExtract(httpConfig.getExtract().getFields(), null, requestBody, null, body, localUrl, responseTimeMs, row);
-            httpDurationsMs.add(responseTimeMs);
+            applyHttpExtract(call.httpConfig().getExtract().getFields(),
+                    new HttpResponseContext(null, call.requestBody(), null, body, call.localUrl(), responseTimeMs), row);
+            ctx.httpDurationsMs().add(responseTimeMs);
             row.getMetadata().put(activityName + ".timetakenmillis", responseTimeMs);
-            row.getMetadata().put(activityName + ".httpurl", localUrl + " [LOCAL]");
-            if (cacheName != null)
-                cacheFactory.save(cacheName, resolvedCacheKey, body, localUrl);
+            row.getMetadata().put(activityName + ".httpurl", call.localUrl() + " [LOCAL]");
+            if (call.cacheName() != null)
+                cacheFactory.save(call.cacheName(), call.resolvedCacheKey(), body, call.localUrl());
             return CompletableFuture.completedFuture(row);
         } catch (Exception e) {
             CompletableFuture<DataRow> f = new CompletableFuture<>();
             f.completeExceptionally(new RuntimeException(
-                    "Local endpoint call failed for '" + localUrl + "': " + e.getMessage(), e));
+                    "Local endpoint call failed for '" + call.localUrl() + "': " + e.getMessage(), e));
             return f;
         }
     }
@@ -2917,7 +2947,8 @@ public class BatchService {
                     params.get("cacheName"),
                     null, null, null,
                     null,   // auth
-                    null    // operationType
+                    null,   // operationType
+                    null    // operationConfig
             );
             BatchResult result = run(inner);
             Map<String, Object> resp = new LinkedHashMap<>();
@@ -3015,12 +3046,7 @@ public class BatchService {
     }
 
     private void applyHttpExtract(Map<String, String> extractMap,
-                                  HttpRequest httpRequest,
-                                  String requestBody,
-                                  HttpResponse<String> response,
-                                  String body,
-                                  String resolvedUrl,
-                                  long responseTimeMs,
+                                  HttpResponseContext hrc,
                                   DataRow row) {
         if (extractMap == null || extractMap.isEmpty()) return;
         for (Map.Entry<String, String> entry : extractMap.entrySet()) {
@@ -3028,16 +3054,16 @@ public class BatchService {
             String path = entry.getValue();
             if (path == null) continue;
             switch (path) {
-                case "$.statusCode"                  -> row.getData().put(key, response != null ? response.statusCode() : 200);
-                case "$.body", "$.responseBody"      -> row.getData().put(key, body);
-                case "$.requestBody"                 -> row.getData().put(key, requestBody);
-                case "$.url"                         -> row.getData().put(key, resolvedUrl);
-                case "$.requestHeaders"              -> row.getData().put(key, httpRequest != null ? httpRequest.headers().map().toString() : "");
-                case "$.responseHeaders", "$.headers"-> row.getData().put(key, response != null ? response.headers().map().toString() : "");
-                case "$.responseTimeMs"              -> row.getData().put(key, responseTimeMs);
+                case "$.statusCode"                  -> row.getData().put(key, hrc.response() != null ? hrc.response().statusCode() : 200);
+                case "$.body", "$.responseBody"      -> row.getData().put(key, hrc.body());
+                case "$.requestBody"                 -> row.getData().put(key, hrc.requestBody());
+                case "$.url"                         -> row.getData().put(key, hrc.resolvedUrl());
+                case "$.requestHeaders"              -> row.getData().put(key, hrc.httpRequest() != null ? hrc.httpRequest().headers().map().toString() : "");
+                case "$.responseHeaders", "$.headers"-> row.getData().put(key, hrc.response() != null ? hrc.response().headers().map().toString() : "");
+                case "$.responseTimeMs"              -> row.getData().put(key, hrc.responseTimeMs());
                 default -> {
                     try {
-                        Object val = com.jayway.jsonpath.JsonPath.read(body, path);
+                        Object val = com.jayway.jsonpath.JsonPath.read(hrc.body(), path);
                         row.getData().put(key, val);
                     } catch (Exception ignored) {}
                 }
@@ -3169,14 +3195,14 @@ public class BatchService {
 
     private CompletableFuture<DataRow> executeJsonValidationActivity(
             DataRow row, ResolvedActivity activity,
-            ExecutorService pool, Map<String, String> opProperties) {
+            ActivityContext ctx) {
 
         return CompletableFuture.supplyAsync(() -> {
             BatchProperties.JsonValidationProperties cfg = activity.config().getJsonValidation();
             if (cfg == null) return row;
 
-            String resolvedJson   = resolveTemplate(cfg.getJsonString(),   row.getData(), opProperties);
-            String resolvedSchema = resolveTemplate(cfg.getSchemaLocation(), row.getData(), opProperties);
+            String resolvedJson   = resolveTemplate(cfg.getJsonString(),   row.getData(), ctx.opProperties());
+            String resolvedSchema = resolveTemplate(cfg.getSchemaLocation(), row.getData(), ctx.opProperties());
 
             String schemaContent;
             try {
@@ -3249,7 +3275,94 @@ public class BatchService {
                 row.getData().put("VALID",        valid);
             }
             return row;
-        }, pool);
+        }, ctx.httpPool());
+    }
+
+    private CompletableFuture<DataRow> executeDirectoryReaderActivity(
+            DataRow row, ResolvedActivity activity,
+            ActivityContext ctx) {
+
+        return CompletableFuture.supplyAsync(() -> {
+            BatchProperties.DirectoryReaderProperties cfg = activity.config().getDirectoryReader();
+            Map<String, String> effectiveProps = new LinkedHashMap<>(ctx.opProperties());
+            if (activity.config().getProperties() != null) effectiveProps.putAll(activity.config().getProperties());
+
+            String dirPath = resolveTemplate(cfg.getDirectoryPath(), row.getData(), effectiveProps);
+            String pattern = resolveTemplate(cfg.getFilePattern(),   row.getData(), effectiveProps);
+            if (pattern == null || pattern.isBlank()) pattern = "*";
+
+            Path dir = Path.of(dirPath);
+            if (!Files.isDirectory(dir)) {
+                throw new RuntimeException("Directory not found or not accessible: " + dirPath);
+            }
+
+            PathMatcher matcher = FileSystems.getDefault().getPathMatcher("glob:" + pattern);
+            DateTimeFormatter fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+            List<Map<String, Object>> fileRows;
+            try (java.util.stream.Stream<Path> stream = Files.list(dir)) {
+                fileRows = stream
+                        .filter(p -> Files.isRegularFile(p) && matcher.matches(p.getFileName()))
+                        .map(p -> {
+                            Map<String, Object> fileData = new LinkedHashMap<>();
+                            String name = p.getFileName().toString();
+                            fileData.put("fileName", name);
+                            fileData.put("filePath", p.toAbsolutePath().toString());
+                            int dot = name.lastIndexOf('.');
+                            fileData.put("fileType", dot > 0 ? name.substring(dot + 1) : "file");
+                            try {
+                                java.nio.file.attribute.BasicFileAttributes attrs =
+                                        Files.readAttributes(p, java.nio.file.attribute.BasicFileAttributes.class);
+                                fileData.put("fileSize", attrs.size());
+                                long lastModMs = attrs.lastModifiedTime().toMillis();
+                                fileData.put("fileLastModifiedTime", lastModMs);
+                                fileData.put("fileLastModifiedTimeHumanReadable",
+                                        java.time.Instant.ofEpochMilli(lastModMs)
+                                                .atZone(java.time.ZoneId.systemDefault())
+                                                .toLocalDateTime().format(fmt));
+                            } catch (Exception e) {
+                                fileData.put("fileSize", 0L);
+                                fileData.put("fileLastModifiedTime", 0L);
+                                fileData.put("fileLastModifiedTimeHumanReadable", "");
+                            }
+                            return fileData;
+                        })
+                        .collect(Collectors.toList());
+            } catch (RuntimeException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new RuntimeException(
+                        "Failed to read directory '" + dirPath + "': " + e.getMessage(), e);
+            }
+
+            Map<String, String> extractMap = cfg.getExtract();
+            List<Map<String, Object>> outputRows = fileRows.stream()
+                    .map(fileData -> {
+                        if (extractMap != null && !extractMap.isEmpty()) {
+                            Map<String, Object> outputRow = new LinkedHashMap<>();
+                            for (Map.Entry<String, String> e : extractMap.entrySet()) {
+                                String col  = e.getKey();
+                                String path = e.getValue();
+                                if (path == null) continue;
+                                if (path.startsWith("$.")) {
+                                    Object val = fileData.get(path.substring(2));
+                                    if (val != null) outputRow.put(col, val);
+                                }
+                            }
+                            return outputRow;
+                        }
+                        return new LinkedHashMap<>(fileData);
+                    })
+                    .collect(Collectors.toList());
+
+            if (outputRows.size() == 1) {
+                row.getData().putAll(outputRows.get(0));
+            } else if (!outputRows.isEmpty()) {
+                row.setExpandedRows(outputRows);
+            }
+
+            return row;
+        }, ctx.httpPool());
     }
 
     private boolean evaluateConditionGroup(BatchProperties.ConditionGroupProperties group, DataRow row) {
@@ -3329,22 +3442,22 @@ public class BatchService {
     // -------------------------------------------------------------------------
 
     private CompletableFuture<Void> processOneXpath(
-            Map<String, Object> row, HttpClient httpClient, ExecutorService httpPool,
-            Map<String, String> xpaths, ExecutorService xpathPool,
-            AtomicInteger succeeded, AtomicInteger failed, List<Map<String, Object>> results,
-            List<Long> httpDurationsMs, AtomicLong totalResponseBytes, String authHeader,
-            BatchProperties.OperationProperties op, String resolvedBodyTemplate, int timeoutMs,
-            Map<String, String> extraHeaders) {
+            Map<String, Object> row,
+            Map<String, String> xpaths,
+            ActivityContext ctx,
+            RowAccumulator acc,
+            String resolvedBodyTemplate,
+            int timeoutMs) {
 
         HttpRequest request;
         try {
-            request = buildRequest(row, authHeader, op, resolvedBodyTemplate, timeoutMs, extraHeaders);
+            request = buildRequest(row, ctx.authHeader(), ctx.op(), resolvedBodyTemplate, timeoutMs, ctx.extraHeaders());
         } catch (IllegalArgumentException e) {
-            failed.incrementAndGet();
+            acc.failed().incrementAndGet();
             Map<String, Object> entry = new LinkedHashMap<>(row);
             entry.put("operationStatus", "FAILED");
             entry.put("errorMessage", e.getMessage());
-            results.add(entry);
+            acc.results().add(entry);
             return CompletableFuture.completedFuture(null);
         }
 
@@ -3352,13 +3465,13 @@ public class BatchService {
                 .supplyAsync(() -> {
                     long start = System.currentTimeMillis();
                     try {
-                        HttpResponse<String> response = httpClient.send(
+                        HttpResponse<String> response = ctx.httpClient().send(
                                 request, HttpResponse.BodyHandlers.ofString());
                         if (response.statusCode() < 200 || response.statusCode() >= 300) {
                             throw new RuntimeException("HTTP " + response.statusCode());
                         }
                         String body = response.body();
-                        totalResponseBytes.addAndGet(body.length());
+                        ctx.totalResponseBytes().addAndGet(body.length());
                         return body;
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
@@ -3366,46 +3479,46 @@ public class BatchService {
                     } catch (Exception e) {
                         throw new RuntimeException(e.getMessage(), e);
                     } finally {
-                        httpDurationsMs.add(System.currentTimeMillis() - start);
+                        ctx.httpDurationsMs().add(System.currentTimeMillis() - start);
                     }
-                }, httpPool)
-                .thenCompose(xml -> xpathExtractor.extractAsync(xml, xpaths, xpathPool))
+                }, ctx.httpPool())
+                .thenCompose(xml -> xpathExtractor.extractAsync(xml, xpaths, ctx.xpathPool()))
                 .thenAccept(attributes -> {
                     Map<String, Object> entry = new LinkedHashMap<>(row);
                     entry.put("operationStatus", "SUCCESS");
                     entry.putAll(attributes);
-                    results.add(entry);
-                    succeeded.incrementAndGet();
+                    acc.results().add(entry);
+                    acc.succeeded().incrementAndGet();
                 })
                 .exceptionally(ex -> {
-                    failed.incrementAndGet();
+                    acc.failed().incrementAndGet();
                     Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
                     String message = cause.getMessage() != null ? cause.getMessage() : cause.getClass().getSimpleName();
                     Map<String, Object> entry = new LinkedHashMap<>(row);
                     entry.put("operationStatus", "FAILED");
                     entry.put("errorMessage", message);
-                    results.add(entry);
+                    acc.results().add(entry);
                     return null;
                 });
     }
 
     private CompletableFuture<Void> processOneJson(
-            Map<String, Object> row, HttpClient httpClient, ExecutorService httpPool,
+            Map<String, Object> row,
             String jsonataTransform,
-            AtomicInteger succeeded, AtomicInteger failed, List<Map<String, Object>> results,
-            List<Long> httpDurationsMs, AtomicLong totalResponseBytes, String authHeader,
-            BatchProperties.OperationProperties op, String resolvedBodyTemplate, int timeoutMs,
-            Map<String, String> extraHeaders) {
+            ActivityContext ctx,
+            RowAccumulator acc,
+            String resolvedBodyTemplate,
+            int timeoutMs) {
 
         HttpRequest request;
         try {
-            request = buildRequest(row, authHeader, op, resolvedBodyTemplate, timeoutMs, extraHeaders);
+            request = buildRequest(row, ctx.authHeader(), ctx.op(), resolvedBodyTemplate, timeoutMs, ctx.extraHeaders());
         } catch (IllegalArgumentException e) {
-            failed.incrementAndGet();
+            acc.failed().incrementAndGet();
             Map<String, Object> entry = new LinkedHashMap<>(row);
             entry.put("operationStatus", "FAILED");
             entry.put("errorMessage", e.getMessage());
-            results.add(entry);
+            acc.results().add(entry);
             return CompletableFuture.completedFuture(null);
         }
 
@@ -3413,13 +3526,13 @@ public class BatchService {
                 .supplyAsync(() -> {
                     long start = System.currentTimeMillis();
                     try {
-                        HttpResponse<String> response = httpClient.send(
+                        HttpResponse<String> response = ctx.httpClient().send(
                                 request, HttpResponse.BodyHandlers.ofString());
                         if (response.statusCode() < 200 || response.statusCode() >= 300) {
                             throw new RuntimeException("HTTP " + response.statusCode());
                         }
                         String body = response.body();
-                        totalResponseBytes.addAndGet(body.length());
+                        ctx.totalResponseBytes().addAndGet(body.length());
                         return body;
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
@@ -3427,9 +3540,9 @@ public class BatchService {
                     } catch (Exception e) {
                         throw new RuntimeException(e.getMessage(), e);
                     } finally {
-                        httpDurationsMs.add(System.currentTimeMillis() - start);
+                        ctx.httpDurationsMs().add(System.currentTimeMillis() - start);
                     }
-                }, httpPool)
+                }, ctx.httpPool())
                 .thenAccept(responseBody -> {
                     try {
                         List<Map<String, Object>> extractedRows = extractJson(responseBody, jsonataTransform);
@@ -3437,25 +3550,25 @@ public class BatchService {
                             Map<String, Object> entry = new LinkedHashMap<>(row);
                             entry.put("operationStatus", "SUCCESS");
                             entry.putAll(extracted);
-                            results.add(entry);
+                            acc.results().add(entry);
                         }
-                        succeeded.incrementAndGet();
+                        acc.succeeded().incrementAndGet();
                     } catch (Exception e) {
-                        failed.incrementAndGet();
+                        acc.failed().incrementAndGet();
                         Map<String, Object> entry = new LinkedHashMap<>(row);
                         entry.put("operationStatus", "FAILED");
                         entry.put("errorMessage", "JSON extraction failed: " + e.getMessage());
-                        results.add(entry);
+                        acc.results().add(entry);
                     }
                 })
                 .exceptionally(ex -> {
-                    failed.incrementAndGet();
+                    acc.failed().incrementAndGet();
                     Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
                     String message = cause.getMessage() != null ? cause.getMessage() : cause.getClass().getSimpleName();
                     Map<String, Object> entry = new LinkedHashMap<>(row);
                     entry.put("operationStatus", "FAILED");
                     entry.put("errorMessage", message);
-                    results.add(entry);
+                    acc.results().add(entry);
                     return null;
                 });
     }

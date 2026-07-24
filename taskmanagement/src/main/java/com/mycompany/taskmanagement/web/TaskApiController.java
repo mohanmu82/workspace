@@ -1,5 +1,6 @@
 package com.mycompany.taskmanagement.web;
 
+import com.mycompany.taskmanagement.dto.TaskBulkCreateRequest;
 import com.mycompany.taskmanagement.dto.TaskListResponse;
 import com.mycompany.taskmanagement.dto.TaskSearchRequest;
 import com.mycompany.taskmanagement.model.Task;
@@ -84,6 +85,25 @@ public class TaskApiController {
                        @Valid @RequestBody Task task,
                        @RequestHeader(value = "X-Changed-By", defaultValue = "system") String changedBy) {
         return taskService.update(id, task, changedBy);
+    }
+
+    @PatchMapping("/{id}/status")
+    public Task updateStatus(@PathVariable Long id,
+                             @RequestBody Map<String, String> body,
+                             @RequestHeader(value = "X-Changed-By", defaultValue = "system") String changedBy) {
+        return taskService.updateStatus(id, body.get("status"), changedBy);
+    }
+
+    @PatchMapping("/{id}/board")
+    public Task updateBoardPosition(@PathVariable Long id,
+                                    @RequestBody Map<String, String> body,
+                                    @RequestHeader(value = "X-Changed-By", defaultValue = "system") String changedBy) {
+        return taskService.updateBoardPosition(id, body.get("status"), body.get("project"), body.get("programme"), body.get("assignee"), changedBy);
+    }
+
+    @PostMapping("/bulk")
+    public List<Task> bulkCreate(@RequestBody TaskBulkCreateRequest req) {
+        return taskService.bulkCreate(req);
     }
 
     @DeleteMapping("/{id}")

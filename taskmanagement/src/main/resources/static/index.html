@@ -11,7 +11,13 @@
     .sidebar { min-height: calc(100vh - 56px); background: #fff; border-right: 1px solid #dee2e6; padding: 1rem; }
     .sidebar label { font-weight: 600; font-size: 0.75rem; text-transform: uppercase; color: #6c757d; margin-top: 0.75rem; margin-bottom: 0.25rem; display: block; }
     .sidebar .form-control, .sidebar .form-select { font-size: 0.8rem; }
+    .filter-group-toggle { font-weight: 600; font-size: 0.75rem; text-transform: uppercase; color: #6c757d; margin-top: 0.75rem; text-decoration: none; }
+    .filter-group-toggle:hover { color: #495057; }
+    .filter-group-toggle .bi-chevron-down { transition: transform 0.15s ease; }
+    .filter-group-toggle.collapsed .bi-chevron-down { transform: rotate(-90deg); }
+    .filter-group-toggle .badge { text-transform: none; }
     .stat-card { border-radius: 8px; padding: 0.75rem 1rem; color: #fff; }
+    .badge-status-BACKLOG    { background: #495057; }
     .badge-status-TODO       { background: #6c757d; }
     .badge-status-IN_PROGRESS{ background: #0d6efd; }
     .badge-status-REVIEW     { background: #fd7e14; }
@@ -25,10 +31,14 @@
     .kanban-board { display: flex; gap: 0.75rem; overflow-x: auto; padding-bottom: 1rem; }
     .kanban-col   { min-width: 220px; background: #fff; border-radius: 8px; border: 1px solid #dee2e6; }
     .kanban-col-header { padding: 0.5rem 0.75rem; font-weight: 700; border-radius: 8px 8px 0 0; font-size: 0.8rem; }
-    .kanban-cards { padding: 0.5rem; min-height: 100px; }
-    .kanban-card  { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; padding: 0.5rem; margin-bottom: 0.5rem; cursor: pointer; }
+    .kanban-cards { padding: 0.5rem; min-height: 100px; transition: background-color 0.15s ease; }
+    .kanban-cards.drag-over { background-color: #e7f1ff; outline: 2px dashed #0d6efd; outline-offset: -2px; }
+    .kanban-card  { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; padding: 0.5rem; margin-bottom: 0.5rem; cursor: grab; }
     .kanban-card:hover { background: #e9ecef; }
+    .kanban-card.dragging { opacity: 0.4; }
     .group-header { background: #e9ecef; padding: 0.4rem 0.75rem; font-weight: 700; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .group-header.overdue-header { background: #f8d7da; color: #842029; }
+    .group-header.today-header   { background: #fff3cd; color: #664d03; }
     .task-row:hover { cursor: pointer; background: #f0f4ff !important; }
     .overdue { color: #dc3545 !important; font-weight: 600; }
     .tag-badge { background: #e9ecef; color: #495057; padding: 1px 6px; border-radius: 10px; font-size: 0.7rem; }
@@ -37,6 +47,12 @@
     .col-sidebar { width: 220px; flex-shrink: 0; }
     .col-main { flex: 1; min-width: 0; }
     .main-wrap { display: flex; gap: 0; }
+    /* Sortable column headers */
+    th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+    th.sortable:hover { background: #e9ecef; }
+    th.sort-asc  { color: #0d6efd; background: #f0f4ff; }
+    th.sort-desc { color: #0d6efd; background: #f0f4ff; }
+    .sort-icon { font-size: 0.7em; margin-left: 3px; }
   </style>
 </head>
 <body>
@@ -45,7 +61,16 @@
   <span class="navbar-brand fw-bold"><i class="bi bi-check2-square me-2"></i>Task Manager</span>
   <div class="d-flex gap-2 align-items-center">
     <input id="globalSearch" class="form-control form-control-sm" placeholder="&#128269; Search tasks..." style="width:250px" oninput="debounceSearch()"/>
+    <div class="input-group input-group-sm" style="width:280px">
+      <input id="quickAddTitle" class="form-control" placeholder="Quick add task title..." onkeydown="if(event.key==='Enter') quickAddTask();"/>
+      <button class="btn btn-outline-light" onclick="quickAddTask()" title="Add task with just a title"><i class="bi bi-lightning-charge"></i></button>
+    </div>
     <a href="task-form.html" class="btn btn-success btn-sm"><i class="bi bi-plus-lg me-1"></i>New Task</a>
+    <button class="btn btn-outline-light btn-sm" onclick="openBulkAddModal()"><i class="bi bi-list-check me-1"></i>Bulk Add</button>
+    <a href="projects.html" class="btn btn-outline-light btn-sm"><i class="bi bi-diagram-3 me-1"></i>Projects</a>
+    <a href="programmes.html" class="btn btn-outline-light btn-sm"><i class="bi bi-diagram-2 me-1"></i>Programmes</a>
+    <a href="timeline.html" class="btn btn-outline-light btn-sm"><i class="bi bi-bar-chart-steps me-1"></i>Timeline</a>
+    <a href="admin.html" class="btn btn-outline-light btn-sm"><i class="bi bi-gear me-1"></i>Admin</a>
   </div>
 </nav>
 
@@ -59,9 +84,13 @@
         <button class="btn btn-link btn-sm p-0" onclick="clearFilters()">Clear all</button>
       </div>
 
-      <label>Status</label>
-      <div id="statusFilters">
-        <div class="form-check form-check-sm" style="font-size:0.8rem" title="To-Do"><input class="form-check-input filter-status" type="checkbox" value="TODO" id="s1" onchange="loadTasks()"><label class="form-check-label" for="s1"><span class="badge badge-status-TODO">TODO</span></label></div>
+      <button class="btn btn-sm w-100 d-flex justify-content-between align-items-center px-0 filter-group-toggle collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#statusFilters" aria-expanded="false" aria-controls="statusFilters">
+        <span>Status <span id="statusFilterCount" class="badge bg-primary rounded-pill ms-1" style="display:none"></span></span>
+        <i class="bi bi-chevron-down small"></i>
+      </button>
+      <div id="statusFilters" class="collapse">
+        <div class="form-check form-check-sm" style="font-size:0.8rem"><input class="form-check-input filter-status" type="checkbox" value="BACKLOG" id="s0" onchange="loadTasks()"><label class="form-check-label" for="s0"><span class="badge badge-status-BACKLOG">BACKLOG</span></label></div>
+        <div class="form-check form-check-sm" style="font-size:0.8rem"><input class="form-check-input filter-status" type="checkbox" value="TODO" id="s1" onchange="loadTasks()"><label class="form-check-label" for="s1"><span class="badge badge-status-TODO">TODO</span></label></div>
         <div class="form-check form-check-sm" style="font-size:0.8rem"><input class="form-check-input filter-status" type="checkbox" value="IN_PROGRESS" id="s2" onchange="loadTasks()"><label class="form-check-label" for="s2"><span class="badge badge-status-IN_PROGRESS">IN PROGRESS</span></label></div>
         <div class="form-check form-check-sm" style="font-size:0.8rem"><input class="form-check-input filter-status" type="checkbox" value="REVIEW" id="s3" onchange="loadTasks()"><label class="form-check-label" for="s3"><span class="badge badge-status-REVIEW">REVIEW</span></label></div>
         <div class="form-check form-check-sm" style="font-size:0.8rem"><input class="form-check-input filter-status" type="checkbox" value="DONE" id="s4" onchange="loadTasks()"><label class="form-check-label" for="s4"><span class="badge badge-status-DONE">DONE</span></label></div>
@@ -69,8 +98,11 @@
         <div class="form-check form-check-sm" style="font-size:0.8rem"><input class="form-check-input filter-status" type="checkbox" value="CANCELLED" id="s6" onchange="loadTasks()"><label class="form-check-label" for="s6"><span class="badge badge-status-CANCELLED">CANCELLED</span></label></div>
       </div>
 
-      <label>Priority</label>
-      <div>
+      <button class="btn btn-sm w-100 d-flex justify-content-between align-items-center px-0 filter-group-toggle collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#priorityFilters" aria-expanded="false" aria-controls="priorityFilters">
+        <span>Priority <span id="priorityFilterCount" class="badge bg-primary rounded-pill ms-1" style="display:none"></span></span>
+        <i class="bi bi-chevron-down small"></i>
+      </button>
+      <div id="priorityFilters" class="collapse">
         <div class="form-check form-check-sm" style="font-size:0.8rem"><input class="form-check-input filter-priority" type="checkbox" value="CRITICAL" id="p1" onchange="loadTasks()"><label class="form-check-label" for="p1"><span class="badge badge-priority-CRITICAL">CRITICAL</span></label></div>
         <div class="form-check form-check-sm" style="font-size:0.8rem"><input class="form-check-input filter-priority" type="checkbox" value="HIGH" id="p2" onchange="loadTasks()"><label class="form-check-label" for="p2"><span class="badge badge-priority-HIGH">HIGH</span></label></div>
         <div class="form-check form-check-sm" style="font-size:0.8rem"><input class="form-check-input filter-priority" type="checkbox" value="MEDIUM" id="p3" onchange="loadTasks()"><label class="form-check-label" for="p3"><span class="badge badge-priority-MEDIUM">MEDIUM</span></label></div>
@@ -136,8 +168,22 @@
         <div class="btn-group btn-group-sm">
           <button class="btn btn-outline-primary active" id="btnTable" onclick="setView('table')"><i class="bi bi-table"></i> Table</button>
           <button class="btn btn-outline-primary" id="btnKanban" onclick="setView('kanban')"><i class="bi bi-kanban"></i> Kanban</button>
+          <button class="btn btn-outline-primary" id="btnSwimlaneProject" onclick="setView('swimlaneProject')"><i class="bi bi-columns-gap"></i> By Project</button>
+          <button class="btn btn-outline-primary" id="btnSwimlaneProgramme" onclick="setView('swimlaneProgramme')"><i class="bi bi-columns-gap"></i> By Programme</button>
+          <button class="btn btn-outline-primary" id="btnSwimlaneAssignee" onclick="setView('swimlaneAssignee')"><i class="bi bi-person-lines-fill"></i> By Assignee</button>
+          <button class="btn btn-outline-primary" id="btnDueDates" onclick="setView('dueDates')"><i class="bi bi-calendar-event"></i> Due Dates</button>
         </div>
         <div class="d-flex align-items-center gap-2">
+          <button class="btn btn-outline-warning btn-sm" id="btnUnassigned" onclick="toggleUnassignedFilter()" title="Show only tasks with no assignee">
+            <i class="bi bi-person-x me-1"></i>Unassigned
+          </button>
+          <div class="input-group input-group-sm" style="width:auto">
+            <button class="btn btn-outline-warning" id="btnRecentlyUpdated" onclick="toggleRecentFilter()" title="Show tasks updated within the last N days">
+              <i class="bi bi-clock-history me-1"></i>Updated in last
+            </button>
+            <input type="number" id="recentDays" class="form-control" style="width:55px" min="1" value="5" onchange="onRecentDaysChange()"/>
+            <span class="input-group-text">days</span>
+          </div>
           <label class="mb-0 small fw-semibold">Group by:</label>
           <select id="groupBySelect" class="form-select form-select-sm" style="width:140px" onchange="renderTasks()">
             <option value="">None</option>
@@ -151,19 +197,12 @@
             <option value="workingGroup">Working Group</option>
             <option value="dueDate">Due Date</option>
           </select>
-          <label class="mb-0 small fw-semibold">Sort:</label>
-          <select id="sortBySelect" class="form-select form-select-sm" style="width:130px" onchange="loadTasks()">
-            <option value="createdAt">Created</option>
-            <option value="dueDate">Due Date</option>
-            <option value="priority">Priority</option>
-            <option value="status">Status</option>
-            <option value="title">Title</option>
-            <option value="updatedAt">Updated</option>
-          </select>
-          <select id="sortDirSelect" class="form-select form-select-sm" style="width:80px" onchange="loadTasks()">
-            <option value="desc">DESC</option>
-            <option value="asc">ASC</option>
-          </select>
+          <button class="btn btn-outline-secondary btn-sm" onclick="openColumnChooser()" title="Show/hide columns">
+            <i class="bi bi-layout-three-columns me-1"></i>Columns
+          </button>
+          <button class="btn btn-outline-success btn-sm" onclick="exportCsv()" title="Export visible data as CSV">
+            <i class="bi bi-download me-1"></i>CSV
+          </button>
         </div>
       </div>
 
@@ -174,21 +213,7 @@
       <div id="tableView">
         <div class="table-responsive">
           <table class="table table-sm table-hover table-bordered bg-white mb-0" style="font-size:0.82rem">
-            <thead class="table-light sticky-top">
-              <tr>
-                <th style="width:50px">#</th>
-                <th>Title</th>
-                <th style="width:110px">Status</th>
-                <th style="width:90px">Priority</th>
-                <th style="width:110px">Assignee</th>
-                <th style="width:100px">Due Date</th>
-                <th style="width:100px">Category</th>
-                <th style="width:100px">Programme</th>
-                <th style="width:100px">Project</th>
-                <th style="width:120px">Tags</th>
-                <th style="width:80px">Actions</th>
-              </tr>
-            </thead>
+            <thead class="table-light sticky-top" id="tableHead"></thead>
             <tbody id="taskTableBody"></tbody>
           </table>
         </div>
@@ -197,6 +222,46 @@
       <!-- Kanban view -->
       <div id="kanbanView" style="display:none">
         <div class="kanban-board" id="kanbanBoard"></div>
+      </div>
+
+      <!-- Swimlane by Project view -->
+      <div id="swimlaneProjectView" style="display:none">
+        <div class="kanban-board" id="swimlaneProjectBoard"></div>
+      </div>
+
+      <!-- Swimlane by Programme view -->
+      <div id="swimlaneProgrammeView" style="display:none">
+        <div class="kanban-board" id="swimlaneProgrammeBoard"></div>
+      </div>
+
+      <!-- Swimlane by Assignee view -->
+      <div id="swimlaneAssigneeView" style="display:none">
+        <div class="kanban-board" id="swimlaneAssigneeBoard"></div>
+      </div>
+
+      <!-- Due Dates view -->
+      <div id="dueDatesView" style="display:none">
+        <div class="d-flex justify-content-end align-items-center mb-2">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="includeDoneDueDates" onchange="renderTasks()">
+            <label class="form-check-label small" for="includeDoneDueDates">Include Done / Cancelled</label>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm table-hover table-bordered bg-white mb-0" style="font-size:0.82rem">
+            <thead class="table-light sticky-top">
+              <tr>
+                <th style="width:105px">Due Date</th>
+                <th style="width:110px">Status</th>
+                <th style="width:90px">Priority</th>
+                <th>Title</th>
+                <th style="width:110px">Assignee</th>
+                <th style="width:110px">Project</th>
+              </tr>
+            </thead>
+            <tbody id="dueDatesTableBody"></tbody>
+          </table>
+        </div>
       </div>
 
     </div>
@@ -217,234 +282,834 @@
   </div>
 </div>
 
+<!-- Bulk add modal -->
+<div class="modal fade" id="bulkAddModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title"><i class="bi bi-list-check me-1"></i>Bulk Add Tasks</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-2">
+          <label class="form-label small fw-semibold mb-1">Programme</label>
+          <select id="bulkAddProgramme" class="form-select form-select-sm"><option value="">(none)</option></select>
+        </div>
+        <div class="mb-2">
+          <label class="form-label small fw-semibold mb-1">Project</label>
+          <select id="bulkAddProject" class="form-select form-select-sm"><option value="">(none)</option></select>
+        </div>
+        <div class="mb-1">
+          <label class="form-label small fw-semibold mb-1">Tasks (one per line)</label>
+          <textarea id="bulkAddTasks" class="form-control form-control-sm" rows="10" placeholder="Task title 1&#10;Task title 2&#10;Task title 3"></textarea>
+        </div>
+        <div id="bulkAddError" class="text-danger small mt-1" style="display:none"></div>
+      </div>
+      <div class="modal-footer py-2">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary btn-sm" onclick="submitBulkAdd()"><i class="bi bi-plus-lg me-1"></i>Create Tasks</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Column chooser modal -->
+<div class="modal fade" id="colModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title"><i class="bi bi-layout-three-columns me-1"></i>Choose Columns</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="colChooserBody"></div>
+      <div class="modal-footer py-2">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+        <button class="btn btn-primary btn-sm" onclick="applyColumnChoices()">Apply</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-  let allTasks = [];
-  let currentView = 'table';
-  let deleteTaskId = null;
-  let searchTimer = null;
-  const today = new Date();
+// ── Column definitions ────────────────────────────────────────────────────────
+const ALL_COLUMNS = [
+  { id: 'id',          label: '#',            sortKey: 'id',           width: '50px'  },
+  { id: 'title',       label: 'Title',        sortKey: 'title',        width: null    },
+  { id: 'status',      label: 'Status',       sortKey: 'status',       width: '110px' },
+  { id: 'priority',    label: 'Priority',     sortKey: 'priority',     width: '90px'  },
+  { id: 'assignee',    label: 'Assignee',     sortKey: 'assignee',     width: '110px' },
+  { id: 'dueDate',     label: 'Due Date',     sortKey: 'dueDate',      width: '105px' },
+  { id: 'updatedAt',   label: 'Updated',      sortKey: 'updatedAt',    width: '130px' },
+  { id: 'category',    label: 'Category',     sortKey: 'category',     width: '100px' },
+  { id: 'programme',   label: 'Programme',    sortKey: 'programme',    width: '100px' },
+  { id: 'project',     label: 'Project',      sortKey: 'project',      width: '100px' },
+  { id: 'workingGroup',label: 'Working Grp',  sortKey: 'workingGroup', width: '110px' },
+  { id: 'assetClass',  label: 'Asset Class',  sortKey: 'assetClass',   width: '100px' },
+  { id: 'stakeholder', label: 'Stakeholder',  sortKey: 'stakeholder',  width: '110px' },
+  { id: 'jira',        label: 'Jira',         sortKey: 'jira',         width: '100px' },
+  { id: 'createdBy',   label: 'Created By',   sortKey: 'createdBy',    width: '100px' },
+  { id: 'tags',        label: 'Tags',         sortKey: null,           width: '120px' },
+  { id: 'actions',     label: 'Actions',      sortKey: null,           width: '80px'  },
+];
+const DEFAULT_VISIBLE = new Set(['id','title','status','priority','assignee','dueDate','updatedAt','category','programme','project','tags','actions']);
+const LS_KEY_COLS = 'taskColVisibility';
 
-  const STATUSES = ['TODO','IN_PROGRESS','REVIEW','DONE','BLOCKED','CANCELLED'];
-  const STATUS_COLORS = {TODO:'#6c757d',IN_PROGRESS:'#0d6efd',REVIEW:'#fd7e14',DONE:'#198754',BLOCKED:'#dc3545',CANCELLED:'#adb5bd'};
+// ── State ─────────────────────────────────────────────────────────────────────
+let allTasks = [];
+let currentView = 'table';
+let deleteTaskId = null;
+let searchTimer = null;
+const today = new Date();
+let sortState = { col: null, dir: 'asc' };
+let showUnassignedOnly = false;
+let showRecentOnly = false;
+let colVisibility = {};
+let fieldConfigs = {};
+let statusOptions = ['BACKLOG','TODO','IN_PROGRESS','REVIEW','DONE','BLOCKED','CANCELLED'];
+const STATUS_COLORS = {BACKLOG:'#495057',TODO:'#6c757d',IN_PROGRESS:'#0d6efd',REVIEW:'#fd7e14',DONE:'#198754',BLOCKED:'#dc3545',CANCELLED:'#adb5bd'};
+let masterProgrammes = [];
+let masterProjects = [];
 
-  async function init() {
-    await loadFilterOptions();
-    await loadTasks();
+// ── Init ──────────────────────────────────────────────────────────────────────
+async function init() {
+  loadColVisibility();
+  await loadFieldConfigs();
+  await loadFilterOptions();
+  await loadMasterLists();
+  await loadTasks();
+}
+
+async function loadMasterLists() {
+  try {
+    const [programmes, projects] = await Promise.all([
+      fetch('/api/programmes').then(r => r.json()),
+      fetch('/api/projects').then(r => r.json())
+    ]);
+    masterProgrammes = (programmes || []).map(p => p.name).filter(Boolean);
+    masterProjects = (projects || []).map(p => p.name).filter(Boolean);
+  } catch (e) {
+    console.error(e);
   }
+}
 
-  async function loadFilterOptions() {
-    try {
-      const opts = await fetch('/api/tasks/filter-options').then(r => r.json());
-      populateSelect('filterAssignee', opts.assignees || []);
-      populateSelect('filterCategory', opts.categories || []);
-      populateSelect('filterProgramme', opts.programmes || []);
-      populateSelect('filterProject', opts.projects || []);
-      populateSelect('filterWorkingGroup', opts.workingGroups || []);
-      populateSelect('filterAssetClass', opts.assetClasses || []);
-    } catch(e) { console.error(e); }
-  }
-
-  function populateSelect(id, values) {
-    const sel = document.getElementById(id);
-    values.forEach(v => {
-      const o = document.createElement('option');
-      o.value = v; o.textContent = v;
-      sel.appendChild(o);
-    });
-  }
-
-  function buildParams() {
-    const p = new URLSearchParams();
-    const q = document.getElementById('globalSearch').value.trim();
-    if (q) p.append('q', q);
-
-    document.querySelectorAll('.filter-status:checked').forEach(cb => p.append('status', cb.value));
-    document.querySelectorAll('.filter-priority:checked').forEach(cb => p.append('priority', cb.value));
-
-    const assignee = document.getElementById('filterAssignee').value;
-    if (assignee) p.append('assignee', assignee);
-
-    const dueFrom = document.getElementById('filterDueFrom').value;
-    if (dueFrom) p.append('dueFrom', dueFrom);
-    const dueTo = document.getElementById('filterDueTo').value;
-    if (dueTo) p.append('dueTo', dueTo);
-
-    const cat = document.getElementById('filterCategory').value;
-    if (cat) p.append('category', cat);
-    const prog = document.getElementById('filterProgramme').value;
-    if (prog) p.append('programme', prog);
-    const proj = document.getElementById('filterProject').value;
-    if (proj) p.append('project', proj);
-    const wg = document.getElementById('filterWorkingGroup').value;
-    if (wg) p.append('workingGroup', wg);
-    const ac = document.getElementById('filterAssetClass').value;
-    if (ac) p.append('assetClass', ac);
-    const tags = document.getElementById('filterTags').value.trim();
-    if (tags) tags.split(',').forEach(t => { if(t.trim()) p.append('tags', t.trim()); });
-    const jira = document.getElementById('filterJira').value.trim();
-    if (jira) p.append('jira', jira);
-
-    p.append('sortBy', document.getElementById('sortBySelect').value);
-    p.append('sortDir', document.getElementById('sortDirSelect').value);
-    p.append('size', '500');
-    return p;
-  }
-
-  async function loadTasks() {
-    document.getElementById('loadingIndicator').style.display = 'block';
-    try {
-      const res = await fetch('/api/tasks?' + buildParams());
-      const data = await res.json();
-      allTasks = data.tasks || [];
-      updateStats();
-      renderTasks();
-    } catch(e) {
-      console.error(e);
-    } finally {
-      document.getElementById('loadingIndicator').style.display = 'none';
-    }
-  }
-
-  function updateStats() {
-    document.getElementById('statTotal').textContent = allTasks.length;
-    document.getElementById('statInProgress').textContent = allTasks.filter(t => t.status === 'IN_PROGRESS').length;
-    document.getElementById('statBlocked').textContent = allTasks.filter(t => t.status === 'BLOCKED').length;
-    document.getElementById('statDone').textContent = allTasks.filter(t => t.status === 'DONE').length;
-    const now = new Date();
-    document.getElementById('statOverdue').textContent = allTasks.filter(t =>
-      t.dueDate && new Date(t.dueDate) < now && t.status !== 'DONE' && t.status !== 'CANCELLED'
-    ).length;
-  }
-
-  function renderTasks() {
-    if (currentView === 'table') renderTable();
-    else renderKanban();
-    document.getElementById('noResults').style.display = allTasks.length === 0 ? 'block' : 'none';
-  }
-
-  function renderTable() {
-    const groupBy = document.getElementById('groupBySelect').value;
-    const tbody = document.getElementById('taskTableBody');
-    tbody.innerHTML = '';
-
-    if (!groupBy) {
-      allTasks.forEach(t => tbody.innerHTML += taskRow(t));
+function loadColVisibility() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(LS_KEY_COLS) || 'null');
+    if (stored && typeof stored === 'object') {
+      colVisibility = stored;
     } else {
-      const groups = groupTasks(allTasks, groupBy);
-      Object.entries(groups).forEach(([key, tasks]) => {
-        const headerRow = `<tr><td colspan="11" class="group-header">${key || '(none)'} <span class="badge bg-secondary ms-1">${tasks.length}</span></td></tr>`;
-        tbody.innerHTML += headerRow;
-        tasks.forEach(t => tbody.innerHTML += taskRow(t));
-      });
+      colVisibility = {};
+      ALL_COLUMNS.forEach(c => { colVisibility[c.id] = DEFAULT_VISIBLE.has(c.id); });
     }
+  } catch (_) {
+    colVisibility = {};
+    ALL_COLUMNS.forEach(c => { colVisibility[c.id] = DEFAULT_VISIBLE.has(c.id); });
   }
+}
 
-  function taskRow(t) {
-    const due = t.dueDate ? new Date(t.dueDate) : null;
-    const isOverdue = due && due < today && t.status !== 'DONE' && t.status !== 'CANCELLED';
-    const dueStr = due ? due.toLocaleDateString() : '';
-    const tags = (t.tags || []).map(tag => `<span class="tag-badge">${esc(tag)}</span>`).join(' ');
-    return `<tr class="task-row" onclick="location.href='task-form.html?id=${t.id}'">
-      <td class="text-muted">${t.id}</td>
-      <td><strong>${esc(t.title)}</strong>${t.parentTaskId ? `<span class="ms-1 text-muted small">↳${t.parentTaskId}</span>` : ''}</td>
-      <td><span class="badge badge-status-${t.status}">${t.status}</span></td>
-      <td><span class="badge badge-priority-${t.priority}">${t.priority}</span></td>
-      <td>${esc(t.assignee||'')}</td>
-      <td class="${isOverdue?'overdue':''}">${dueStr}${isOverdue?' ⚠':''}</td>
-      <td>${esc(t.category||'')}</td>
-      <td>${esc(t.programme||'')}</td>
-      <td>${esc(t.project||'')}</td>
-      <td>${tags}</td>
-      <td onclick="event.stopPropagation()">
-        <a href="task-form.html?id=${t.id}" class="btn btn-xs btn-outline-primary" style="padding:1px 6px;font-size:0.75rem"><i class="bi bi-pencil"></i></a>
-        <button class="btn btn-xs btn-outline-danger ms-1" style="padding:1px 6px;font-size:0.75rem" onclick="confirmDelete(${t.id})"><i class="bi bi-trash"></i></button>
-      </td>
-    </tr>`;
-  }
+function saveColVisibility() {
+  localStorage.setItem(LS_KEY_COLS, JSON.stringify(colVisibility));
+}
 
-  function renderKanban() {
-    const board = document.getElementById('kanbanBoard');
-    board.innerHTML = '';
-    const grouped = {};
-    STATUSES.forEach(s => grouped[s] = []);
-    allTasks.forEach(t => {
-      const s = t.status || 'TODO';
-      if (!grouped[s]) grouped[s] = [];
-      grouped[s].push(t);
+function getVisibleColumns() {
+  return ALL_COLUMNS.filter(c => colVisibility[c.id] !== false);
+}
+
+async function loadFieldConfigs() {
+  try {
+    fieldConfigs = await fetch('/api/field-configs').then(r => r.json());
+    // Apply custom display names to column labels
+    ALL_COLUMNS.forEach(col => {
+      const cfg = fieldConfigs[col.id];
+      if (cfg?.displayName) col.label = cfg.displayName;
     });
-    STATUSES.forEach(status => {
-      const col = document.createElement('div');
-      col.className = 'kanban-col';
-      const cards = (grouped[status]||[]).map(t => {
-        const due = t.dueDate ? new Date(t.dueDate) : null;
-        const isOverdue = due && due < today && status !== 'DONE' && status !== 'CANCELLED';
-        return `<div class="kanban-card" onclick="location.href='task-form.html?id=${t.id}'">
-          <div class="fw-semibold">${esc(t.title)}</div>
-          <div class="text-muted small">${esc(t.assignee||'')} ${due ? `· <span class="${isOverdue?'text-danger':''}">📅 ${due.toLocaleDateString()}</span>` : ''}</div>
-          <div class="mt-1"><span class="badge badge-priority-${t.priority}" style="font-size:0.65rem">${t.priority}</span></div>
-        </div>`;
-      }).join('');
-      col.innerHTML = `<div class="kanban-col-header" style="background:${STATUS_COLORS[status]};color:#fff">${status.replace('_',' ')} <span class="badge bg-white text-dark ms-1">${(grouped[status]||[]).length}</span></div><div class="kanban-cards">${cards || '<p class="text-muted small p-2">Empty</p>'}</div>`;
-      board.appendChild(col);
-    });
-  }
+    // Use configured status options for kanban
+    const scfg = fieldConfigs['status'];
+    if (scfg?.source?.type === 'static' && scfg.source.staticOptions?.length) {
+      statusOptions = scfg.source.staticOptions;
+    }
+  } catch (_) {}
+}
 
-  function groupTasks(tasks, field) {
-    const groups = {};
-    tasks.forEach(t => {
-      let key = t[field];
-      if (field === 'dueDate' && key) key = new Date(key).toLocaleDateString();
-      key = key || '(none)';
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(t);
-    });
-    return Object.fromEntries(Object.entries(groups).sort((a,b) => a[0].localeCompare(b[0])));
-  }
+// ── Filter options ─────────────────────────────────────────────────────────────
+async function loadFilterOptions() {
+  try {
+    const opts = await fetch('/api/tasks/filter-options').then(r => r.json());
+    populateSelect('filterAssignee', opts.assignees || []);
+    populateSelect('filterCategory', opts.categories || []);
+    populateSelect('filterProgramme', opts.programmes || []);
+    populateSelect('filterProject', opts.projects || []);
+    populateSelect('filterWorkingGroup', opts.workingGroups || []);
+    populateSelect('filterAssetClass', opts.assetClasses || []);
+  } catch(e) { console.error(e); }
+}
 
-  function setView(view) {
-    currentView = view;
-    document.getElementById('tableView').style.display = view === 'table' ? '' : 'none';
-    document.getElementById('kanbanView').style.display = view === 'kanban' ? '' : 'none';
-    document.getElementById('btnTable').classList.toggle('active', view === 'table');
-    document.getElementById('btnKanban').classList.toggle('active', view === 'kanban');
-    document.getElementById('groupBySelect').disabled = view === 'kanban';
+function populateSelect(id, values) {
+  const sel = document.getElementById(id);
+  // Remove previously added options (keep "All" at index 0)
+  while (sel.options.length > 1) sel.remove(1);
+  values.forEach(v => {
+    const o = document.createElement('option');
+    o.value = v; o.textContent = v;
+    sel.appendChild(o);
+  });
+}
+
+// ── Load tasks ────────────────────────────────────────────────────────────────
+function updateFilterGroupCounts() {
+  const statusCount = document.querySelectorAll('.filter-status:checked').length;
+  const statusBadge = document.getElementById('statusFilterCount');
+  statusBadge.textContent = statusCount;
+  statusBadge.style.display = statusCount ? '' : 'none';
+
+  const priorityCount = document.querySelectorAll('.filter-priority:checked').length;
+  const priorityBadge = document.getElementById('priorityFilterCount');
+  priorityBadge.textContent = priorityCount;
+  priorityBadge.style.display = priorityCount ? '' : 'none';
+}
+
+function buildParams() {
+  const p = new URLSearchParams();
+  const q = document.getElementById('globalSearch').value.trim();
+  if (q) p.append('q', q);
+  document.querySelectorAll('.filter-status:checked').forEach(cb => p.append('status', cb.value));
+  document.querySelectorAll('.filter-priority:checked').forEach(cb => p.append('priority', cb.value));
+  updateFilterGroupCounts();
+  const assignee = document.getElementById('filterAssignee').value;
+  if (assignee) p.append('assignee', assignee);
+  const dueFrom = document.getElementById('filterDueFrom').value;
+  if (dueFrom) p.append('dueFrom', dueFrom);
+  const dueTo = document.getElementById('filterDueTo').value;
+  if (dueTo) p.append('dueTo', dueTo);
+  ['filterCategory','filterProgramme','filterProject','filterWorkingGroup','filterAssetClass'].forEach(id => {
+    const v = document.getElementById(id).value;
+    if (v) p.append(id.replace('filter','').replace(/^./,c=>c.toLowerCase()), v);
+  });
+  const tags = document.getElementById('filterTags').value.trim();
+  if (tags) tags.split(',').forEach(t => { if(t.trim()) p.append('tags', t.trim()); });
+  const jira = document.getElementById('filterJira').value.trim();
+  if (jira) p.append('jira', jira);
+  p.append('sortBy', 'createdAt');
+  p.append('sortDir', 'desc');
+  p.append('size', '500');
+  return p;
+}
+
+async function loadTasks() {
+  document.getElementById('loadingIndicator').style.display = 'block';
+  try {
+    const res = await fetch('/api/tasks?' + buildParams());
+    const data = await res.json();
+    allTasks = data.tasks || [];
+    updateStats();
+    renderTasks();
+  } catch(e) {
+    console.error(e);
+  } finally {
+    document.getElementById('loadingIndicator').style.display = 'none';
+  }
+}
+
+// ── Unassigned / recently-updated toggle filters ───────────────────────────────
+function toggleUnassignedFilter() {
+  showUnassignedOnly = !showUnassignedOnly;
+  document.getElementById('btnUnassigned').classList.toggle('active', showUnassignedOnly);
+  updateStats();
+  renderTasks();
+}
+
+function toggleRecentFilter() {
+  showRecentOnly = !showRecentOnly;
+  document.getElementById('btnRecentlyUpdated').classList.toggle('active', showRecentOnly);
+  updateStats();
+  renderTasks();
+}
+
+function onRecentDaysChange() {
+  if (showRecentOnly) {
+    updateStats();
     renderTasks();
   }
+}
 
-  function clearFilters() {
-    document.getElementById('globalSearch').value = '';
-    document.querySelectorAll('.filter-status, .filter-priority').forEach(cb => cb.checked = false);
-    ['filterAssignee','filterCategory','filterProgramme','filterProject','filterWorkingGroup','filterAssetClass'].forEach(id => document.getElementById(id).value = '');
-    ['filterDueFrom','filterDueTo','filterTags','filterJira'].forEach(id => document.getElementById(id).value = '');
-    loadTasks();
+function getFilteredTasks() {
+  let tasks = allTasks;
+  if (showUnassignedOnly) {
+    tasks = tasks.filter(t => !t.assignee || !t.assignee.trim());
   }
-
-  function debounceSearch() {
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(loadTasks, 350);
+  if (showRecentOnly) {
+    const days = parseInt(document.getElementById('recentDays').value, 10) || 5;
+    const cutoff = Date.now() - days * 86400000;
+    tasks = tasks.filter(t => t.updatedAt && new Date(t.updatedAt).getTime() >= cutoff);
   }
+  return tasks;
+}
 
-  function confirmDelete(id) {
-    deleteTaskId = id;
-    new bootstrap.Modal(document.getElementById('deleteModal')).show();
+// ── Stats ─────────────────────────────────────────────────────────────────────
+function updateStats() {
+  const tasks = getFilteredTasks();
+  document.getElementById('statTotal').textContent = tasks.length;
+  document.getElementById('statInProgress').textContent = tasks.filter(t => t.status === 'IN_PROGRESS').length;
+  document.getElementById('statBlocked').textContent = tasks.filter(t => t.status === 'BLOCKED').length;
+  document.getElementById('statDone').textContent = tasks.filter(t => t.status === 'DONE').length;
+  const now = new Date();
+  document.getElementById('statOverdue').textContent = tasks.filter(t =>
+    t.dueDate && new Date(t.dueDate) < now && t.status !== 'DONE' && t.status !== 'CANCELLED'
+  ).length;
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function renderTasks() {
+  if (currentView === 'table') renderTable();
+  else if (currentView === 'kanban') renderKanban();
+  else if (currentView === 'swimlaneProject') renderLaneBoard('project', 'swimlaneProjectBoard', masterProjects);
+  else if (currentView === 'swimlaneProgramme') renderLaneBoard('programme', 'swimlaneProgrammeBoard', masterProgrammes);
+  else if (currentView === 'swimlaneAssignee') renderLaneBoard('assignee', 'swimlaneAssigneeBoard');
+  else if (currentView === 'dueDates') renderDueDates();
+  document.getElementById('noResults').style.display = getFilteredTasks().length === 0 ? 'block' : 'none';
+}
+
+function getSortedTasks() {
+  const filtered = getFilteredTasks();
+  if (!sortState.col) return [...filtered];
+  const col = sortState.col;
+  const dir = sortState.dir;
+  return [...filtered].sort((a, b) => {
+    let av = a[col], bv = b[col];
+    if (['dueDate','updatedAt','createdAt'].includes(col)) {
+      av = av ? new Date(av).getTime() : (dir === 'asc' ? Infinity : -Infinity);
+      bv = bv ? new Date(bv).getTime() : (dir === 'asc' ? Infinity : -Infinity);
+      return dir === 'asc' ? av - bv : bv - av;
+    }
+    if (typeof av === 'number' || typeof bv === 'number') {
+      av = av ?? (dir === 'asc' ? Infinity : -Infinity);
+      bv = bv ?? (dir === 'asc' ? Infinity : -Infinity);
+      return dir === 'asc' ? av - bv : bv - av;
+    }
+    if (av == null && bv == null) return 0;
+    if (av == null) return dir === 'asc' ? 1 : -1;
+    if (bv == null) return dir === 'asc' ? -1 : 1;
+    const cmp = String(av).localeCompare(String(bv));
+    return dir === 'asc' ? cmp : -cmp;
+  });
+}
+
+function renderTable() {
+  const visCols = getVisibleColumns();
+  const groupBy = document.getElementById('groupBySelect').value;
+
+  // Build header
+  const head = document.getElementById('tableHead');
+  head.innerHTML = '<tr>' + visCols.map(col => {
+    if (!col.sortKey) {
+      return `<th${col.width ? ` style="width:${col.width}"` : ''}>${col.label}</th>`;
+    }
+    const isSorted = sortState.col === col.sortKey;
+    const cls = isSorted ? ` sort-${sortState.dir}` : '';
+    const icon = isSorted ? `<span class="sort-icon">${sortState.dir === 'asc' ? '▲' : '▼'}</span>` : '<span class="sort-icon text-muted">⇅</span>';
+    return `<th class="sortable${cls}"${col.width ? ` style="width:${col.width}"` : ''} onclick="onColumnSort('${col.sortKey}')">${col.label}${icon}</th>`;
+  }).join('') + '</tr>';
+
+  // Build body
+  const tbody = document.getElementById('taskTableBody');
+  tbody.innerHTML = '';
+  const tasks = getSortedTasks();
+
+  if (!groupBy) {
+    tasks.forEach(t => tbody.innerHTML += taskRow(t, visCols));
+  } else {
+    const groups = groupTasks(tasks, groupBy);
+    const colspan = visCols.length;
+    Object.entries(groups).forEach(([key, gtasks]) => {
+      tbody.innerHTML += `<tr><td colspan="${colspan}" class="group-header">${esc(key)} <span class="badge bg-secondary ms-1">${gtasks.length}</span></td></tr>`;
+      gtasks.forEach(t => tbody.innerHTML += taskRow(t, visCols));
+    });
   }
+}
 
-  document.getElementById('confirmDeleteBtn').addEventListener('click', async () => {
-    if (!deleteTaskId) return;
-    await fetch(`/api/tasks/${deleteTaskId}`, { method: 'DELETE' });
-    bootstrap.Modal.getInstance(document.getElementById('deleteModal')).hide();
-    deleteTaskId = null;
-    await loadTasks();
-    await loadFilterOptions();
+function taskRow(t, visCols) {
+  return `<tr class="task-row" onclick="location.href='task-form.html?id=${t.id}'">${visCols.map(col => taskCell(t, col.id)).join('')}</tr>`;
+}
+
+function taskCell(t, colId) {
+  switch(colId) {
+    case 'id':
+      return `<td class="text-muted">${t.id}</td>`;
+    case 'title':
+      return `<td><strong>${esc(t.title)}</strong>${t.parentTaskId ? `<span class="ms-1 text-muted small">↳${t.parentTaskId}</span>` : ''}</td>`;
+    case 'status':
+      return `<td><span class="badge badge-status-${t.status}">${esc(t.status||'')}</span></td>`;
+    case 'priority':
+      return `<td><span class="badge badge-priority-${t.priority}">${esc(t.priority||'')}</span></td>`;
+    case 'assignee':
+      return `<td>${esc(t.assignee||'')}</td>`;
+    case 'dueDate': {
+      const due = t.dueDate ? new Date(t.dueDate) : null;
+      const over = due && due < today && t.status !== 'DONE' && t.status !== 'CANCELLED';
+      return `<td class="${over?'overdue':''}">${due ? due.toLocaleDateString() : ''}${over?' ⚠':''}</td>`;
+    }
+    case 'updatedAt':
+      return `<td class="text-muted small">${t.updatedAt ? new Date(t.updatedAt).toLocaleString() : ''}</td>`;
+    case 'category':    return `<td>${esc(t.category||'')}</td>`;
+    case 'programme':   return `<td>${esc(t.programme||'')}</td>`;
+    case 'project':     return `<td>${esc(t.project||'')}</td>`;
+    case 'workingGroup':return `<td>${esc(t.workingGroup||'')}</td>`;
+    case 'assetClass':  return `<td>${esc(t.assetClass||'')}</td>`;
+    case 'stakeholder': return `<td>${esc(t.stakeholder||'')}</td>`;
+    case 'jira':        return `<td>${esc(t.jira||'')}</td>`;
+    case 'createdBy':   return `<td>${esc(t.createdBy||'')}</td>`;
+    case 'tags':
+      return `<td>${(t.tags||[]).map(tag=>`<span class="tag-badge">${esc(tag)}</span>`).join(' ')}</td>`;
+    case 'actions':
+      return `<td onclick="event.stopPropagation()">
+        <a href="task-form.html?id=${t.id}" class="btn btn-xs btn-outline-primary" style="padding:1px 6px;font-size:0.75rem"><i class="bi bi-pencil"></i></a>
+        <button class="btn btn-xs btn-outline-danger ms-1" style="padding:1px 6px;font-size:0.75rem" onclick="confirmDelete(${t.id})"><i class="bi bi-trash"></i></button>
+      </td>`;
+    default:
+      return `<td>${esc(String(t[colId]??''))}</td>`;
+  }
+}
+
+// ── Column sort ────────────────────────────────────────────────────────────────
+function onColumnSort(sortKey) {
+  if (sortState.col === sortKey) {
+    sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    sortState.col = sortKey;
+    sortState.dir = 'asc';
+  }
+  renderTable();
+}
+
+// ── Column chooser ─────────────────────────────────────────────────────────────
+function openColumnChooser() {
+  const body = document.getElementById('colChooserBody');
+  body.innerHTML = ALL_COLUMNS.map(col => `
+    <div class="form-check">
+      <input class="form-check-input" type="checkbox" id="cc-${col.id}"
+             ${colVisibility[col.id] !== false ? 'checked' : ''}>
+      <label class="form-check-label" for="cc-${col.id}">${col.label}</label>
+    </div>`).join('');
+  new bootstrap.Modal(document.getElementById('colModal')).show();
+}
+
+function applyColumnChoices() {
+  ALL_COLUMNS.forEach(col => {
+    colVisibility[col.id] = document.getElementById(`cc-${col.id}`)?.checked ?? true;
+  });
+  saveColVisibility();
+  bootstrap.Modal.getInstance(document.getElementById('colModal')).hide();
+  renderTable();
+}
+
+// ── CSV export ────────────────────────────────────────────────────────────────
+function exportCsv() {
+  const visCols = getVisibleColumns().filter(c => c.id !== 'actions');
+  const header  = visCols.map(c => csvCell(c.label)).join(',');
+  const rows    = getSortedTasks().map(t =>
+    visCols.map(c => csvCell(getCellRaw(t, c.id))).join(',')
+  );
+  const csv  = [header, ...rows].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = `tasks-${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function getCellRaw(t, colId) {
+  switch(colId) {
+    case 'dueDate':   return t.dueDate   ? new Date(t.dueDate).toLocaleDateString()   : '';
+    case 'updatedAt': return t.updatedAt ? new Date(t.updatedAt).toLocaleString()      : '';
+    case 'tags':      return (t.tags||[]).join(', ');
+    default:          return t[colId] != null ? String(t[colId]) : '';
+  }
+}
+
+function csvCell(val) {
+  const s = String(val ?? '');
+  if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+// ── Kanban ────────────────────────────────────────────────────────────────────
+function renderKanban() {
+  const board = document.getElementById('kanbanBoard');
+  board.innerHTML = '';
+  const grouped = {};
+  statusOptions.forEach(s => grouped[s] = []);
+  getFilteredTasks().forEach(t => {
+    const s = t.status || statusOptions[0];
+    if (!grouped[s]) grouped[s] = [];
+    grouped[s].push(t);
+  });
+  statusOptions.forEach(status => {
+    const col = document.createElement('div');
+    col.className = 'kanban-col';
+    const cards = (grouped[status]||[]).map(t => {
+      const due = t.dueDate ? new Date(t.dueDate) : null;
+      const over = due && due < today && status !== 'DONE' && status !== 'CANCELLED';
+      return `<div class="kanban-card" draggable="true" data-task-id="${t.id}" onclick="location.href='task-form.html?id=${t.id}'">
+        <div class="fw-semibold">${esc(t.title)}</div>
+        <div class="text-muted small">${esc(t.assignee||'')}${due ? ` · <span class="${over?'text-danger':''}">📅 ${due.toLocaleDateString()}</span>` : ''}</div>
+        <div class="mt-1"><span class="badge badge-priority-${t.priority}" style="font-size:0.65rem">${t.priority}</span></div>
+      </div>`;
+    }).join('');
+    const color = STATUS_COLORS[status] || '#6c757d';
+    col.innerHTML = `<div class="kanban-col-header" style="background:${color};color:#fff">${esc(status.replace(/_/g,' '))} <span class="badge bg-white text-dark ms-1">${(grouped[status]||[]).length}</span></div><div class="kanban-cards" data-status="${status}">${cards||'<p class="text-muted small p-2">Empty</p>'}</div>`;
+    board.appendChild(col);
+  });
+  wireKanbanDragAndDrop();
+}
+
+// ── Kanban drag & drop ─────────────────────────────────────────────────────────
+function wireKanbanDragAndDrop() {
+  document.querySelectorAll('.kanban-card').forEach(card => {
+    card.addEventListener('dragstart', e => {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', card.dataset.taskId);
+      card.classList.add('dragging');
+    });
+    card.addEventListener('dragend', () => card.classList.remove('dragging'));
   });
 
-  function esc(s) {
-    if (!s) return '';
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  }
+  document.querySelectorAll('.kanban-cards').forEach(zone => {
+    zone.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      zone.classList.add('drag-over');
+    });
+    zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+    zone.addEventListener('drop', async e => {
+      e.preventDefault();
+      zone.classList.remove('drag-over');
+      const taskId = e.dataTransfer.getData('text/plain');
+      const newStatus = zone.dataset.status;
+      await moveTaskToStatus(taskId, newStatus);
+    });
+  });
+}
 
-  init();
+async function moveTaskToStatus(taskId, newStatus) {
+  const task = allTasks.find(t => String(t.id) === String(taskId));
+  if (!task || task.status === newStatus) return;
+  const prevStatus = task.status;
+  task.status = newStatus;
+  renderKanban();
+  updateStats();
+  try {
+    await fetch(`/api/tasks/${taskId}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: newStatus })
+    });
+  } catch (e) {
+    console.error(e);
+    task.status = prevStatus;
+    renderKanban();
+    updateStats();
+  }
+}
+
+// ── Swimlanes (by Project / by Programme) ───────────────────────────────────────
+// Columns are the distinct project/programme values (not status); dragging a card
+// to another column only changes that field, leaving status untouched.
+const LANE_COLORS = ['#0d6efd','#6f42c1','#20c997','#fd7e14','#e83e8c','#198754','#0dcaf0','#6610f2','#d63384','#495057'];
+
+function renderLaneBoard(field, boardId, masterList) {
+  const board = document.getElementById(boardId);
+  board.innerHTML = '';
+  const tasks = getFilteredTasks();
+  const masterNames = (masterList || []).map(v => v.trim()).filter(v => v);
+  const masterSet = new Set(masterNames);
+  const taskValues = tasks.map(t => (t[field] || '').trim()).filter(v => v);
+  // Lanes = every master-list entry (even with 0 tasks) plus any values in use that aren't in the master list.
+  const laneValues = Array.from(new Set([...masterNames, ...taskValues])).sort();
+  laneValues.push('(none)');
+
+  laneValues.forEach((lane, idx) => {
+    const laneTasks = tasks.filter(t => (lane === '(none)') ? !((t[field] || '').trim()) : (t[field] || '').trim() === lane);
+    const isInvalid = lane !== '(none)' && masterSet.size > 0 && !masterSet.has(lane);
+    const col = document.createElement('div');
+    col.className = 'kanban-col';
+    const cards = laneTasks.map(t => {
+      const due = t.dueDate ? new Date(t.dueDate) : null;
+      const over = due && due < today && t.status !== 'DONE' && t.status !== 'CANCELLED';
+      return `<div class="kanban-card" draggable="true" data-task-id="${t.id}" onclick="location.href='task-form.html?id=${t.id}'">
+        <div class="fw-semibold">${esc(t.title)}</div>
+        <div class="text-muted small">${esc(t.assignee||'')}${due ? ` · <span class="${over?'text-danger':''}">📅 ${due.toLocaleDateString()}</span>` : ''}</div>
+        <div class="mt-1"><span class="badge badge-status-${t.status}" style="font-size:0.65rem">${esc(t.status||'')}</span> <span class="badge badge-priority-${t.priority}" style="font-size:0.65rem">${t.priority}</span></div>
+      </div>`;
+    }).join('');
+    const color = lane === '(none)' ? '#6c757d' : (isInvalid ? '#dc3545' : LANE_COLORS[idx % LANE_COLORS.length]);
+    const label = isInvalid
+      ? `<i class="bi bi-exclamation-triangle-fill me-1" title="Not in the master ${esc(field)} list"></i>${esc(lane)} <span class="badge bg-light text-danger ms-1">Invalid</span>`
+      : esc(lane);
+    col.innerHTML = `<div class="kanban-col-header" style="background:${color};color:#fff">${label} <span class="badge bg-white text-dark ms-1">${laneTasks.length}</span></div><div class="kanban-cards" data-field="${field}" data-lane="${lane==='(none)'?'':esc(lane)}">${cards||'<p class="text-muted small p-2">Empty</p>'}</div>`;
+    board.appendChild(col);
+  });
+
+  wireLaneDragAndDrop(boardId);
+}
+
+function wireLaneDragAndDrop(boardId) {
+  const board = document.getElementById(boardId);
+  board.querySelectorAll('.kanban-card').forEach(card => {
+    card.addEventListener('dragstart', e => {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', card.dataset.taskId);
+      card.classList.add('dragging');
+    });
+    card.addEventListener('dragend', () => card.classList.remove('dragging'));
+  });
+
+  board.querySelectorAll('.kanban-cards').forEach(zone => {
+    zone.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      zone.classList.add('drag-over');
+    });
+    zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+    zone.addEventListener('drop', async e => {
+      e.preventDefault();
+      zone.classList.remove('drag-over');
+      const taskId = e.dataTransfer.getData('text/plain');
+      await moveTaskToLane(taskId, zone.dataset.field, zone.dataset.lane, boardId);
+    });
+  });
+}
+
+async function moveTaskToLane(taskId, field, newLaneValue, boardId) {
+  const task = allTasks.find(t => String(t.id) === String(taskId));
+  if (!task) return;
+  const currentLane = (task[field] || '').trim();
+  if (currentLane === newLaneValue) return;
+
+  const prevValue = task[field];
+  task[field] = newLaneValue || null;
+  renderTasks();
+  updateStats();
+  try {
+    const body = {};
+    body[field] = newLaneValue || '';
+    await fetch(`/api/tasks/${taskId}/board`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    await loadFilterOptions();
+  } catch (e) {
+    console.error(e);
+    task[field] = prevValue;
+    renderTasks();
+    updateStats();
+  }
+}
+
+// ── Due Dates ─────────────────────────────────────────────────────────────────
+function dueDateBucketFor(t) {
+  if (!t.dueDate) return 'No Due Date';
+  const due = new Date(t.dueDate);
+  due.setHours(0, 0, 0, 0);
+  const todayMid = new Date(today);
+  todayMid.setHours(0, 0, 0, 0);
+  const diffDays = Math.round((due - todayMid) / 86400000);
+  if (diffDays < 0) return 'Overdue';
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Tomorrow';
+  if (diffDays <= 7) return 'This Week';
+  if (diffDays <= 30) return 'This Month';
+  return 'Later';
+}
+
+function renderDueDates() {
+  const includeDone = document.getElementById('includeDoneDueDates').checked;
+  const tasks = getFilteredTasks()
+    .filter(t => includeDone || (t.status !== 'DONE' && t.status !== 'CANCELLED'))
+    .slice()
+    .sort((a, b) => {
+      const av = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
+      const bv = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
+      return av - bv;
+    });
+
+  const buckets = ['Overdue', 'Today', 'Tomorrow', 'This Week', 'This Month', 'Later', 'No Due Date'];
+  const grouped = {};
+  buckets.forEach(b => grouped[b] = []);
+  tasks.forEach(t => grouped[dueDateBucketFor(t)].push(t));
+
+  const tbody = document.getElementById('dueDatesTableBody');
+  tbody.innerHTML = '';
+  buckets.forEach(b => {
+    const gtasks = grouped[b];
+    if (!gtasks.length) return;
+    const headerCls = b === 'Overdue' ? 'overdue-header' : (b === 'Today' ? 'today-header' : '');
+    tbody.innerHTML += `<tr><td colspan="6" class="group-header ${headerCls}">${b} <span class="badge bg-secondary ms-1">${gtasks.length}</span></td></tr>`;
+    gtasks.forEach(t => tbody.innerHTML += dueDateRow(t));
+  });
+}
+
+function dueDateRow(t) {
+  const due = t.dueDate ? new Date(t.dueDate) : null;
+  const over = due && due < today && t.status !== 'DONE' && t.status !== 'CANCELLED';
+  return `<tr class="task-row" onclick="location.href='task-form.html?id=${t.id}'">
+    <td class="${over ? 'overdue' : ''}">${due ? due.toLocaleDateString() : ''}${over ? ' ⚠' : ''}</td>
+    <td><span class="badge badge-status-${t.status}">${esc(t.status||'')}</span></td>
+    <td><span class="badge badge-priority-${t.priority}">${esc(t.priority||'')}</span></td>
+    <td><strong>${esc(t.title)}</strong></td>
+    <td>${esc(t.assignee||'')}</td>
+    <td>${esc(t.project||'')}</td>
+  </tr>`;
+}
+
+// ── Group tasks ────────────────────────────────────────────────────────────────
+function groupTasks(tasks, field) {
+  const groups = {};
+  tasks.forEach(t => {
+    let key = t[field];
+    if (field === 'dueDate' && key) key = new Date(key).toLocaleDateString();
+    key = key || '(none)';
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(t);
+  });
+  return Object.fromEntries(Object.entries(groups).sort((a,b) => a[0].localeCompare(b[0])));
+}
+
+// ── View toggle ────────────────────────────────────────────────────────────────
+function setView(view) {
+  currentView = view;
+  document.getElementById('tableView').style.display            = view === 'table'            ? '' : 'none';
+  document.getElementById('kanbanView').style.display            = view === 'kanban'           ? '' : 'none';
+  document.getElementById('swimlaneProjectView').style.display   = view === 'swimlaneProject'  ? '' : 'none';
+  document.getElementById('swimlaneProgrammeView').style.display = view === 'swimlaneProgramme' ? '' : 'none';
+  document.getElementById('swimlaneAssigneeView').style.display  = view === 'swimlaneAssignee'  ? '' : 'none';
+  document.getElementById('dueDatesView').style.display          = view === 'dueDates'         ? '' : 'none';
+  document.getElementById('btnTable').classList.toggle('active', view === 'table');
+  document.getElementById('btnKanban').classList.toggle('active', view === 'kanban');
+  document.getElementById('btnSwimlaneProject').classList.toggle('active', view === 'swimlaneProject');
+  document.getElementById('btnSwimlaneProgramme').classList.toggle('active', view === 'swimlaneProgramme');
+  document.getElementById('btnSwimlaneAssignee').classList.toggle('active', view === 'swimlaneAssignee');
+  document.getElementById('btnDueDates').classList.toggle('active', view === 'dueDates');
+  document.getElementById('groupBySelect').disabled = view !== 'table';
+  renderTasks();
+}
+
+// ── Filters ────────────────────────────────────────────────────────────────────
+function clearFilters() {
+  document.getElementById('globalSearch').value = '';
+  document.querySelectorAll('.filter-status, .filter-priority').forEach(cb => cb.checked = false);
+  ['filterAssignee','filterCategory','filterProgramme','filterProject','filterWorkingGroup','filterAssetClass']
+    .forEach(id => document.getElementById(id).value = '');
+  ['filterDueFrom','filterDueTo','filterTags','filterJira']
+    .forEach(id => document.getElementById(id).value = '');
+  showUnassignedOnly = false;
+  showRecentOnly = false;
+  document.getElementById('btnUnassigned').classList.remove('active');
+  document.getElementById('btnRecentlyUpdated').classList.remove('active');
+  document.getElementById('recentDays').value = 5;
+  loadTasks();
+}
+
+function debounceSearch() {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(loadTasks, 350);
+}
+
+// ── Quick add ─────────────────────────────────────────────────────────────────
+async function quickAddTask() {
+  const input = document.getElementById('quickAddTitle');
+  const title = input.value.trim();
+  if (!title) return;
+  try {
+    const res = await fetch('/api/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title })
+    });
+    if (!res.ok) throw new Error('Failed to create task');
+    input.value = '';
+    await loadTasks();
+    await loadFilterOptions();
+  } catch (e) {
+    console.error(e);
+    alert('Could not create task.');
+  }
+}
+
+// ── Bulk add ──────────────────────────────────────────────────────────────────
+async function openBulkAddModal() {
+  document.getElementById('bulkAddError').style.display = 'none';
+  document.getElementById('bulkAddTasks').value = '';
+  document.getElementById('bulkAddProgramme').value = '';
+  document.getElementById('bulkAddProject').value = '';
+  try {
+    const opts = await fetch('/api/tasks/filter-options').then(r => r.json());
+    populateSelect('bulkAddProgramme', opts.programmes || []);
+    populateSelect('bulkAddProject', opts.projects || []);
+  } catch (e) { console.error(e); }
+  new bootstrap.Modal(document.getElementById('bulkAddModal')).show();
+}
+
+async function submitBulkAdd() {
+  const errEl = document.getElementById('bulkAddError');
+  errEl.style.display = 'none';
+  const programme = document.getElementById('bulkAddProgramme').value;
+  const project = document.getElementById('bulkAddProject').value;
+  const titles = document.getElementById('bulkAddTasks').value
+    .split('\n')
+    .map(t => t.trim())
+    .filter(t => t.length > 0);
+  if (!titles.length) {
+    errEl.textContent = 'Enter at least one task title.';
+    errEl.style.display = 'block';
+    return;
+  }
+  try {
+    const res = await fetch('/api/tasks/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ programme, project, titles })
+    });
+    if (!res.ok) throw new Error('Failed to create tasks');
+    bootstrap.Modal.getInstance(document.getElementById('bulkAddModal')).hide();
+    await loadTasks();
+    await loadFilterOptions();
+  } catch (e) {
+    console.error(e);
+    errEl.textContent = 'Could not create tasks.';
+    errEl.style.display = 'block';
+  }
+}
+
+// ── Delete ────────────────────────────────────────────────────────────────────
+function confirmDelete(id) {
+  deleteTaskId = id;
+  new bootstrap.Modal(document.getElementById('deleteModal')).show();
+}
+
+document.getElementById('confirmDeleteBtn').addEventListener('click', async () => {
+  if (!deleteTaskId) return;
+  await fetch(`/api/tasks/${deleteTaskId}`, { method: 'DELETE' });
+  bootstrap.Modal.getInstance(document.getElementById('deleteModal')).hide();
+  deleteTaskId = null;
+  await loadTasks();
+  await loadFilterOptions();
+});
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+function esc(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+init();
 </script>
 </body>
 </html>

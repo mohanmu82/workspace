@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Projects</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"/>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"/>
+  <style>
+    body { background: #f4f6f9; font-size: 0.875rem; }
+    .badge-status-BACKLOG    { background: #495057; }
+    .badge-status-TODO       { background: #6c757d; }
+    .badge-status-IN_PROGRESS{ background: #0d6efd; }
+    .badge-status-REVIEW     { background: #fd7e14; }
+    .badge-status-DONE       { background: #198754; }
+    .badge-status-BLOCKED    { background: #dc3545; }
+    .badge-status-CANCELLED  { background: #adb5bd; color: #000; }
+    .badge-proj-PLANNING  { background: #6c757d; }
+    .badge-proj-ACTIVE    { background: #0d6efd; }
+    .badge-proj-ON_HOLD   { background: #fd7e14; }
+    .badge-proj-COMPLETED { background: #198754; }
+    .badge-proj-CANCELLED { background: #adb5bd; color:#000; }
+    .badge-mile-PENDING     { background: #6c757d; }
+    .badge-mile-IN_PROGRESS { background: #0d6efd; }
+    .badge-mile-COMPLETED   { background: #198754; }
+    .project-card { background:#fff; border:1px solid #dee2e6; border-radius:8px; padding:1rem; margin-bottom:1rem; }
+    .project-title { font-weight:700; font-size:1rem; }
+    .progress { height: 8px; }
+    .mini-stat { font-size:0.72rem; color:#6c757d; }
+    .overdue { color:#dc3545 !important; font-weight:600; }
+    .detail-panel { display:none; border-top:1px dashed #dee2e6; margin-top:0.75rem; padding-top:0.75rem; }
+    .milestone-item { display:flex; justify-content:space-between; align-items:center; padding:0.35rem 0.5rem; border:1px solid #eee; border-radius:6px; margin-bottom:0.35rem; background:#f8f9fa; }
+    .mini-task-row td { font-size: 0.78rem; }
+    #noResults { display:none; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark bg-dark px-3">
+  <a class="navbar-brand fw-bold" href="index.html"><i class="bi bi-check2-square me-2"></i>Task Manager</a>
+  <div class="d-flex gap-2 align-items-center">
+    <a href="index.html" class="btn btn-outline-light btn-sm"><i class="bi bi-list-task me-1"></i>Tasks</a>
+    <a href="due-dates.html" class="btn btn-outline-light btn-sm"><i class="bi bi-calendar-event me-1"></i>Due Dates</a>
+    <span class="text-light fw-semibold"><i class="bi bi-diagram-3 me-1"></i>Projects</span>
+    <a href="programmes.html" class="btn btn-outline-light btn-sm"><i class="bi bi-diagram-2 me-1"></i>Programmes</a>
+    <a href="timeline.html" class="btn btn-outline-light btn-sm"><i class="bi bi-bar-chart-steps me-1"></i>Timeline</a>
+    <a href="admin.html" class="btn btn-outline-light btn-sm"><i class="bi bi-gear me-1"></i>Admin</a>
+  </div>
+</nav>
+
+<div class="container-fluid" style="max-width:1200px; padding:1.5rem 1rem;">
+
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h5 class="mb-0">Projects</h5>
+      <small class="text-muted">Track progress, milestones, and owners across all projects.</small>
+    </div>
+    <button class="btn btn-success btn-sm" onclick="openProjectModal()"><i class="bi bi-plus-lg me-1"></i>New Project</button>
+  </div>
+
+  <div id="loadingIndicator" class="text-center py-4 text-muted" style="display:none"><div class="spinner-border spinner-border-sm"></div> Loading...</div>
+  <div id="noResults" class="text-center py-5 text-muted"><i class="bi bi-diagram-3 fs-1 d-block mb-2"></i>No projects yet — create one to get started</div>
+
+  <div id="projectList" class="row" style="--bs-gutter-x: 1rem;"></div>
+
+</div>
+
+<!-- Project create/edit modal -->
+<div class="modal fade" id="projectModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title" id="projectModalTitle"><i class="bi bi-diagram-3 me-1"></i>New Project</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="pj-id"/>
+        <div class="mb-2">
+          <label class="form-label fw-semibold">Name <span class="text-danger">*</span></label>
+          <input type="text" class="form-control form-control-sm" id="pj-name"/>
+        </div>
+        <div class="mb-2">
+          <label class="form-label fw-semibold">Description</label>
+          <textarea class="form-control form-control-sm" id="pj-description" rows="3"></textarea>
+        </div>
+        <div class="row g-2">
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Owner</label>
+            <input type="text" class="form-control form-control-sm" id="pj-owner"/>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Status</label>
+            <select class="form-select form-select-sm" id="pj-status">
+              <option value="PLANNING">Planning</option>
+              <option value="ACTIVE">Active</option>
+              <option value="ON_HOLD">On Hold</option>
+              <option value="COMPLETED">Completed</option>
+              <option value="CANCELLED">Cancelled</option>
+            </select>
+          </div>
+        </div>
+        <div class="row g-2 mt-1">
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Start Date</label>
+            <input type="date" class="form-control form-control-sm" id="pj-start"/>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">End Date</label>
+            <input type="date" class="form-control form-control-sm" id="pj-end"/>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer py-2">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary btn-sm" onclick="saveProject()">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Milestone create/edit modal -->
+<div class="modal fade" id="milestoneModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title" id="milestoneModalTitle"><i class="bi bi-flag me-1"></i>New Milestone</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="ms-project-id"/>
+        <input type="hidden" id="ms-id"/>
+        <div class="mb-2">
+          <label class="form-label fw-semibold">Name <span class="text-danger">*</span></label>
+          <input type="text" class="form-control form-control-sm" id="ms-name"/>
+        </div>
+        <div class="mb-2">
+          <label class="form-label fw-semibold">Description</label>
+          <textarea class="form-control form-control-sm" id="ms-description" rows="2"></textarea>
+        </div>
+        <div class="row g-2">
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Target Date</label>
+            <input type="date" class="form-control form-control-sm" id="ms-target"/>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Status</label>
+            <select class="form-select form-select-sm" id="ms-status">
+              <option value="PENDING">Pending</option>
+              <option value="IN_PROGRESS">In Progress</option>
+              <option value="COMPLETED">Completed</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer py-2">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary btn-sm" onclick="saveMilestone()">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Delete confirm modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header py-2"><h6 class="modal-title" id="deleteModalTitle">Delete</h6><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body" id="deleteModalBody">Are you sure?</div>
+      <div class="modal-footer py-2">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-danger btn-sm" id="confirmDeleteBtn">Delete</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast-container position-fixed bottom-0 end-0 p-3">
+  <div id="toastEl" class="toast align-items-center border-0" role="alert">
+    <div class="d-flex">
+      <div class="toast-body" id="toastMsg"></div>
+      <button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast"></button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+let projects = [];
+let allTasks = [];
+let allMilestones = [];
+let expandedIds = new Set();
+let toast = null, projectModal = null, milestoneModal = null, deleteModal = null;
+let pendingDelete = null; // { type: 'project'|'milestone', projectId, milestoneId }
+const today = new Date(); today.setHours(0,0,0,0);
+
+async function init() {
+  toast = new bootstrap.Toast(document.getElementById('toastEl'), { delay: 2500 });
+  projectModal = new bootstrap.Modal(document.getElementById('projectModal'));
+  milestoneModal = new bootstrap.Modal(document.getElementById('milestoneModal'));
+  deleteModal = new bootstrap.Modal(document.getElementById('deleteModal'));
+  await loadAll();
+}
+
+async function loadAll() {
+  document.getElementById('loadingIndicator').style.display = 'block';
+  try {
+    const [projRes, taskRes, mileRes] = await Promise.all([
+      fetch('/api/projects').then(r => r.json()),
+      fetch('/api/tasks?size=1000').then(r => r.json()),
+      fetch('/api/projects/all-milestones').then(r => r.json())
+    ]);
+    projects = projRes || [];
+    allTasks = (taskRes.tasks) || [];
+    allMilestones = mileRes || [];
+    render();
+  } catch (e) {
+    console.error(e);
+  } finally {
+    document.getElementById('loadingIndicator').style.display = 'none';
+  }
+}
+
+function tasksForProject(name) {
+  return allTasks.filter(t => (t.project || '').toLowerCase() === (name || '').toLowerCase());
+}
+
+function milestonesForProject(id) {
+  return allMilestones.filter(m => m.projectId === id)
+    .sort((a,b) => (a.targetDate||'9999').localeCompare(b.targetDate||'9999'));
+}
+
+function render() {
+  const list = document.getElementById('projectList');
+  document.getElementById('noResults').style.display = projects.length === 0 ? 'block' : 'none';
+  list.innerHTML = projects.map(p => projectCard(p)).join('');
+}
+
+function projectCard(p) {
+  const tasks = tasksForProject(p.name);
+  const total = tasks.length;
+  const done = tasks.filter(t => t.status === 'DONE').length;
+  const inProgress = tasks.filter(t => t.status === 'IN_PROGRESS').length;
+  const blocked = tasks.filter(t => t.status === 'BLOCKED').length;
+  const overdue = tasks.filter(t => t.dueDate && new Date(t.dueDate) < today && t.status !== 'DONE' && t.status !== 'CANCELLED').length;
+  const pct = total === 0 ? 0 : Math.round((done / total) * 100);
+  const mss = milestonesForProject(p.id);
+  const nextMs = mss.find(m => m.status !== 'COMPLETED');
+  const expanded = expandedIds.has(p.id);
+
+  return `
+  <div class="col-md-6 col-lg-4">
+    <div class="project-card">
+      <div class="d-flex justify-content-between align-items-start">
+        <div>
+          <div class="project-title">${esc(p.name)}</div>
+          <div class="mini-stat">${esc(p.owner || 'Unassigned owner')}${p.startDate || p.endDate ? ' · ' + fmtRange(p.startDate, p.endDate) : ''}</div>
+        </div>
+        <span class="badge badge-proj-${p.status}">${esc((p.status||'').replace('_',' '))}</span>
+      </div>
+      ${p.description ? `<div class="text-muted small mt-2">${esc(p.description)}</div>` : ''}
+
+      <div class="mt-3">
+        <div class="d-flex justify-content-between mini-stat mb-1">
+          <span>${done}/${total} tasks done</span>
+          <span>${pct}%</span>
+        </div>
+        <div class="progress"><div class="progress-bar bg-success" style="width:${pct}%"></div></div>
+      </div>
+
+      <div class="d-flex flex-wrap gap-1 mt-2">
+        ${inProgress ? `<span class="badge badge-status-IN_PROGRESS">${inProgress} in progress</span>` : ''}
+        ${blocked ? `<span class="badge badge-status-BLOCKED">${blocked} blocked</span>` : ''}
+        ${overdue ? `<span class="badge bg-danger">${overdue} overdue</span>` : ''}
+        ${!inProgress && !blocked && !overdue && total === 0 ? '<span class="mini-stat">No tasks linked yet</span>' : ''}
+      </div>
+
+      ${nextMs ? `<div class="mini-stat mt-2"><i class="bi bi-flag me-1"></i>Next milestone: <strong>${esc(nextMs.name)}</strong>${nextMs.targetDate ? ` (${nextMs.targetDate})` : ''}</div>` : ''}
+
+      <div class="d-flex justify-content-between align-items-center mt-3">
+        <button class="btn btn-outline-secondary btn-sm" onclick="toggleDetail(${p.id})">
+          <i class="bi bi-chevron-${expanded ? 'up' : 'down'} me-1"></i>${expanded ? 'Hide' : 'Milestones & Tasks'}
+        </button>
+        <div>
+          <button class="btn btn-outline-primary btn-sm" onclick="openProjectModal(${p.id})" title="Edit"><i class="bi bi-pencil"></i></button>
+          <button class="btn btn-outline-danger btn-sm" onclick="confirmDeleteProject(${p.id}, '${escAttr(p.name)}')" title="Delete"><i class="bi bi-trash"></i></button>
+        </div>
+      </div>
+
+      <div class="detail-panel" style="display:${expanded ? 'block' : 'none'}">
+        <div class="d-flex justify-content-between align-items-center mb-1">
+          <strong class="small">Milestones</strong>
+          <button class="btn btn-link btn-sm p-0" onclick="openMilestoneModal(${p.id})">+ Add</button>
+        </div>
+        ${mss.length === 0 ? '<div class="mini-stat mb-2">No milestones yet</div>' : mss.map(m => milestoneItem(p.id, m)).join('')}
+
+        <strong class="small d-block mt-3 mb-1">Tasks (${total})</strong>
+        ${total === 0 ? '<div class="mini-stat">No tasks reference this project name yet</div>' : `
+        <div class="table-responsive">
+          <table class="table table-sm table-bordered bg-white mb-0">
+            <tbody>
+              ${tasks.slice(0, 25).map(t => `
+                <tr class="mini-task-row" style="cursor:pointer" onclick="location.href='task-form.html?id=${t.id}'">
+                  <td><span class="badge badge-status-${t.status}" style="font-size:0.65rem">${esc(t.status||'')}</span></td>
+                  <td>${esc(t.title)}</td>
+                  <td class="text-muted">${esc(t.assignee||'')}</td>
+                  <td class="${t.dueDate && new Date(t.dueDate) < today && t.status!=='DONE' && t.status!=='CANCELLED' ? 'overdue' : ''}">${t.dueDate ? new Date(t.dueDate).toLocaleDateString() : ''}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+          ${total > 25 ? `<div class="mini-stat mt-1">+${total-25} more — view in Tasks list</div>` : ''}
+        </div>`}
+      </div>
+    </div>
+  </div>`;
+}
+
+function milestoneItem(projectId, m) {
+  const overdue = m.targetDate && new Date(m.targetDate) < today && m.status !== 'COMPLETED';
+  return `<div class="milestone-item">
+    <div>
+      <span class="badge badge-mile-${m.status}" style="font-size:0.65rem">${esc(m.status.replace('_',' '))}</span>
+      <span class="fw-semibold ms-1">${esc(m.name)}</span>
+      ${m.targetDate ? `<span class="mini-stat ms-1 ${overdue ? 'overdue' : ''}">${m.targetDate}${overdue ? ' ⚠' : ''}</span>` : ''}
+    </div>
+    <div>
+      <button class="btn btn-link btn-sm p-0 me-2" onclick="openMilestoneModal(${projectId}, ${m.id})"><i class="bi bi-pencil"></i></button>
+      <button class="btn btn-link btn-sm p-0 text-danger" onclick="confirmDeleteMilestone(${projectId}, ${m.id}, '${escAttr(m.name)}')"><i class="bi bi-trash"></i></button>
+    </div>
+  </div>`;
+}
+
+function toggleDetail(id) {
+  if (expandedIds.has(id)) expandedIds.delete(id); else expandedIds.add(id);
+  render();
+}
+
+// ── Project CRUD ─────────────────────────────────────────────────────────────
+function openProjectModal(id) {
+  const p = id ? projects.find(x => x.id === id) : null;
+  document.getElementById('projectModalTitle').innerHTML = `<i class="bi bi-diagram-3 me-1"></i>${p ? 'Edit' : 'New'} Project`;
+  document.getElementById('pj-id').value = p ? p.id : '';
+  document.getElementById('pj-name').value = p ? p.name : '';
+  document.getElementById('pj-description').value = p ? (p.description||'') : '';
+  document.getElementById('pj-owner').value = p ? (p.owner||'') : '';
+  document.getElementById('pj-status').value = p ? p.status : 'PLANNING';
+  document.getElementById('pj-start').value = p && p.startDate ? p.startDate : '';
+  document.getElementById('pj-end').value = p && p.endDate ? p.endDate : '';
+  projectModal.show();
+}
+
+async function saveProject() {
+  const id = document.getElementById('pj-id').value;
+  const name = document.getElementById('pj-name').value.trim();
+  if (!name) { showToast('Name is required', 'warning'); return; }
+  const body = {
+    name,
+    description: document.getElementById('pj-description').value.trim() || null,
+    owner: document.getElementById('pj-owner').value.trim() || null,
+    status: document.getElementById('pj-status').value,
+    startDate: document.getElementById('pj-start').value || null,
+    endDate: document.getElementById('pj-end').value || null,
+  };
+  try {
+    const res = await fetch(id ? `/api/projects/${id}` : '/api/projects', {
+      method: id ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) { showToast('Error saving project', 'danger'); return; }
+    projectModal.hide();
+    showToast('Project saved', 'success');
+    await loadAll();
+  } catch (e) {
+    showToast('Error: ' + e.message, 'danger');
+  }
+}
+
+function confirmDeleteProject(id, name) {
+  pendingDelete = { type: 'project', projectId: id };
+  document.getElementById('deleteModalTitle').textContent = 'Delete Project';
+  document.getElementById('deleteModalBody').textContent = `Delete "${name}" and all its milestones? Tasks referencing this project name are not deleted.`;
+  deleteModal.show();
+}
+
+// ── Milestone CRUD ────────────────────────────────────────────────────────────
+function openMilestoneModal(projectId, milestoneId) {
+  const m = milestoneId ? allMilestones.find(x => x.id === milestoneId) : null;
+  document.getElementById('milestoneModalTitle').innerHTML = `<i class="bi bi-flag me-1"></i>${m ? 'Edit' : 'New'} Milestone`;
+  document.getElementById('ms-project-id').value = projectId;
+  document.getElementById('ms-id').value = m ? m.id : '';
+  document.getElementById('ms-name').value = m ? m.name : '';
+  document.getElementById('ms-description').value = m ? (m.description||'') : '';
+  document.getElementById('ms-target').value = m && m.targetDate ? m.targetDate : '';
+  document.getElementById('ms-status').value = m ? m.status : 'PENDING';
+  milestoneModal.show();
+}
+
+async function saveMilestone() {
+  const projectId = document.getElementById('ms-project-id').value;
+  const milestoneId = document.getElementById('ms-id').value;
+  const name = document.getElementById('ms-name').value.trim();
+  if (!name) { showToast('Name is required', 'warning'); return; }
+  const body = {
+    name,
+    description: document.getElementById('ms-description').value.trim() || null,
+    targetDate: document.getElementById('ms-target').value || null,
+    status: document.getElementById('ms-status').value,
+  };
+  try {
+    const url = milestoneId ? `/api/projects/${projectId}/milestones/${milestoneId}` : `/api/projects/${projectId}/milestones`;
+    const res = await fetch(url, {
+      method: milestoneId ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) { showToast('Error saving milestone', 'danger'); return; }
+    milestoneModal.hide();
+    showToast('Milestone saved', 'success');
+    expandedIds.add(Number(projectId));
+    await loadAll();
+  } catch (e) {
+    showToast('Error: ' + e.message, 'danger');
+  }
+}
+
+function confirmDeleteMilestone(projectId, milestoneId, name) {
+  pendingDelete = { type: 'milestone', projectId, milestoneId };
+  document.getElementById('deleteModalTitle').textContent = 'Delete Milestone';
+  document.getElementById('deleteModalBody').textContent = `Delete milestone "${name}"?`;
+  deleteModal.show();
+}
+
+document.getElementById('confirmDeleteBtn').addEventListener('click', async () => {
+  if (!pendingDelete) return;
+  try {
+    if (pendingDelete.type === 'project') {
+      await fetch(`/api/projects/${pendingDelete.projectId}`, { method: 'DELETE' });
+    } else {
+      await fetch(`/api/projects/${pendingDelete.projectId}/milestones/${pendingDelete.milestoneId}`, { method: 'DELETE' });
+      expandedIds.add(Number(pendingDelete.projectId));
+    }
+    deleteModal.hide();
+    showToast('Deleted', 'secondary');
+    pendingDelete = null;
+    await loadAll();
+  } catch (e) {
+    showToast('Error: ' + e.message, 'danger');
+  }
+});
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+function fmtRange(start, end) {
+  if (start && end) return `${start} → ${end}`;
+  if (start) return `from ${start}`;
+  if (end) return `due ${end}`;
+  return '';
+}
+
+function showToast(msg, type) {
+  const el = document.getElementById('toastEl');
+  el.className = `toast align-items-center text-bg-${type} border-0`;
+  document.getElementById('toastMsg').textContent = msg;
+  toast.show();
+}
+
+function esc(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function escAttr(s) {
+  return esc(s).replace(/'/g, '&#39;');
+}
+
+init();
+</script>
+</body>
+</html>

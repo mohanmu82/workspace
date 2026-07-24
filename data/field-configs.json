@@ -1,0 +1,40 @@
+{
+  "createdBy" : {
+    "fieldId" : "createdBy",
+    "fieldType" : "textbox",
+    "defaultValue" : "Mohan, Muthiah"
+  },
+  "status" : {
+    "fieldId" : "status",
+    "fieldType" : "select",
+    "source" : {
+      "type" : "static",
+      "staticOptions" : [ "TODO", "IN_PROGRESS", "REVIEW", "DONE", "BLOCKED", "CANCELLED" ]
+    }
+  },
+  "programme" : {
+    "fieldId" : "programme",
+    "fieldType" : "select",
+    "source" : {
+      "type" : "entity",
+      "entityType" : "programme"
+    }
+  },
+  "project" : {
+    "fieldId" : "project",
+    "fieldType" : "select",
+    "source" : {
+      "type" : "entity",
+      "entityType" : "project"
+    }
+  },
+  "category" : {
+    "fieldId" : "category",
+    "fieldType" : "select",
+    "defaultValue" : "DEVELOPMENT",
+    "source" : {
+      "type" : "static",
+      "staticOptions" : [ "SUPPORT", "FOLLOWUP", "RELEASE", "DEVELOPMENT", "TESTING" ]
+    }
+  }
+}

@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Admin – Field Configuration</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"/>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"/>
+  <style>
+    body { background: #f4f6f9; font-size: 0.875rem; }
+    .field-card { background: #fff; border: 1px solid #dee2e6; border-radius: 8px; padding: 1rem; margin-bottom: 0.75rem; }
+    .field-card.has-config { border-left: 3px solid #198754; }
+    .field-card.no-config  { border-left: 3px solid #dee2e6; }
+    .field-id   { font-size: 0.72rem; color: #adb5bd; font-family: monospace; }
+    .field-label { font-weight: 700; font-size: 0.9rem; color: #212529; }
+    .form-label { font-size: 0.76rem; font-weight: 600; color: #495057; margin-bottom: 2px; }
+    .form-control, .form-select { font-size: 0.82rem; }
+    .chip { display: inline-flex; align-items: center; gap: 4px; background: #e9ecef; color: #495057;
+            padding: 2px 8px; border-radius: 12px; font-size: 0.78rem; margin: 2px; }
+    .chip .chip-remove { background: none; border: none; padding: 0 0 0 2px; font-size: 0.85rem;
+                          color: #6c757d; cursor: pointer; line-height: 1; }
+    .chip .chip-remove:hover { color: #dc3545; }
+    .chips-wrap { border: 1px solid #ced4da; border-radius: 6px; padding: 4px 6px; min-height: 36px;
+                  display: flex; flex-wrap: wrap; align-items: center; gap: 2px; background: #fff; cursor: text; }
+    .chips-wrap input { border: none; outline: none; font-size: 0.82rem; flex: 1; min-width: 100px; padding: 2px 4px; }
+    .source-section { background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 6px; padding: 0.75rem; margin-top: 0.5rem; }
+    .nav-tabs .nav-link { font-size: 0.82rem; }
+    .toast-container { position: fixed; bottom: 1rem; right: 1rem; z-index: 9999; }
+    .type-fixed { font-style: italic; color: #6c757d; font-size: 0.78rem; }
+    .section-badge { font-size: 0.68rem; color: #6c757d; border: 1px solid #dee2e6; border-radius: 4px;
+                     padding: 1px 6px; margin-left: 6px; vertical-align: middle; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark bg-dark px-3">
+  <a class="navbar-brand fw-bold" href="index.html"><i class="bi bi-check2-square me-2"></i>Task Manager</a>
+  <div class="d-flex gap-2 align-items-center">
+    <a href="index.html" class="btn btn-outline-light btn-sm"><i class="bi bi-list-task me-1"></i>Tasks</a>
+    <a href="due-dates.html" class="btn btn-outline-light btn-sm"><i class="bi bi-calendar-event me-1"></i>Due Dates</a>
+    <a href="projects.html" class="btn btn-outline-light btn-sm"><i class="bi bi-diagram-3 me-1"></i>Projects</a>
+    <a href="programmes.html" class="btn btn-outline-light btn-sm"><i class="bi bi-diagram-2 me-1"></i>Programmes</a>
+    <a href="timeline.html" class="btn btn-outline-light btn-sm"><i class="bi bi-bar-chart-steps me-1"></i>Timeline</a>
+    <span class="text-light fw-semibold"><i class="bi bi-gear me-1"></i>Admin – Field Configuration</span>
+  </div>
+</nav>
+
+<div class="container-fluid" style="max-width:1100px; padding:1.5rem 1rem;">
+
+  <div class="mb-3">
+    <small class="text-muted">Configure display names, field types, default values, and dropdown sources for all task form fields.</small>
+  </div>
+
+  <!-- Section Tabs -->
+  <ul class="nav nav-tabs mb-3" id="adminTabs">
+    <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#secBasic">Basic Info</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#secAssignment">Assignment</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#secClassification">Classification</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#secExternal">External</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#secCustom">Custom Fields</button></li>
+  </ul>
+
+  <div class="tab-content">
+    <div class="tab-pane fade show active" id="secBasic"></div>
+    <div class="tab-pane fade" id="secAssignment"></div>
+    <div class="tab-pane fade" id="secClassification"></div>
+    <div class="tab-pane fade" id="secExternal"></div>
+    <div class="tab-pane fade" id="secCustom"></div>
+  </div>
+
+</div>
+
+<!-- Test Result Modal -->
+<div class="modal fade" id="testModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title"><i class="bi bi-plug me-1"></i>Test Result – <span id="testModalField"></span></h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0">
+        <div id="testModalBody" style="max-height:400px; overflow-y:auto;"></div>
+      </div>
+      <div class="modal-footer py-2">
+        <small id="testModalCount" class="text-muted me-auto"></small>
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast-container">
+  <div id="toastEl" class="toast align-items-center border-0" role="alert">
+    <div class="d-flex">
+      <div class="toast-body" id="toastMsg"></div>
+      <button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast"></button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// ── Field definitions ────────────────────────────────────────────────────────
+
+const SECTION_MAP = {
+  'secBasic':          ['title','description','status','priority','dueDate','tags','parentTaskId'],
+  'secAssignment':     ['assignee','createdBy','stakeholder','estimatedHours','actualHours'],
+  'secClassification': ['category','programme','project','assetClass','workingGroup'],
+  'secExternal':       ['jira','links'],
+  'secCustom':         Array.from({length:10}, (_,i) => `customField${i+1}`),
+};
+
+const FIELD_META = {
+  title:          { label:'Title',            fixedType:'textbox' },
+  description:    { label:'Description',      fixedType:'textarea' },
+  status:         { label:'Status',           defaultType:'select', defaultStatic:['TODO','IN_PROGRESS','REVIEW','DONE','BLOCKED','CANCELLED'] },
+  priority:       { label:'Priority',         defaultType:'select', defaultStatic:['LOW','MEDIUM','HIGH','CRITICAL'] },
+  dueDate:        { label:'Due Date',         fixedType:'date' },
+  tags:           { label:'Tags',             fixedType:'textbox' },
+  parentTaskId:   { label:'Parent Task ID',   fixedType:'number' },
+  assignee:       { label:'Assignee',         defaultType:'textbox' },
+  createdBy:      { label:'Created By',       defaultType:'textbox' },
+  stakeholder:    { label:'Stakeholder',      defaultType:'textbox' },
+  estimatedHours: { label:'Estimated Hours',  fixedType:'number' },
+  actualHours:    { label:'Actual Hours',     fixedType:'number' },
+  category:       { label:'Category',         defaultType:'textbox' },
+  programme:      { label:'Programme',        defaultType:'textbox' },
+  project:        { label:'Project',          defaultType:'textbox' },
+  assetClass:     { label:'Asset Class',      defaultType:'textbox' },
+  workingGroup:   { label:'Working Group',    defaultType:'textbox' },
+  jira:           { label:'Jira Ticket',      defaultType:'textbox' },
+  links:          { label:'Links / URLs',     defaultType:'textbox' },
+};
+for (let i=1; i<=10; i++) {
+  FIELD_META[`customField${i}`] = { label: `Custom Field ${i}`, defaultType: 'textbox' };
+}
+
+// ── State ────────────────────────────────────────────────────────────────────
+
+let savedConfigs = {};
+let toast = null;
+let testModal = null;
+const chipLists = {};   // fieldId → string[]
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+
+async function init() {
+  toast = new bootstrap.Toast(document.getElementById('toastEl'), { delay: 2500 });
+  testModal = new bootstrap.Modal(document.getElementById('testModal'));
+  savedConfigs = await fetch('/api/field-configs').then(r => r.json()).catch(() => ({}));
+  Object.entries(SECTION_MAP).forEach(([sectionId, fieldIds]) => {
+    const container = document.getElementById(sectionId);
+    if (container) container.innerHTML = fieldIds.map(fid => buildFieldCard(fid)).join('');
+  });
+}
+
+// ── Card builder ─────────────────────────────────────────────────────────────
+
+function buildFieldCard(fieldId) {
+  const meta   = FIELD_META[fieldId] || { label: fieldId, defaultType: 'textbox' };
+  const cfg    = savedConfigs[fieldId] || {};
+  const ftype  = meta.fixedType || cfg.fieldType || meta.defaultType || 'textbox';
+  const hasConfig = !!(cfg.displayName || cfg.fieldType || cfg.defaultValue || cfg.source);
+  const isFixed = !!meta.fixedType;
+
+  // Initialise chip list state
+  if (!chipLists[fieldId]) {
+    chipLists[fieldId] = (cfg.source?.staticOptions)
+      || (meta.defaultStatic ? [...meta.defaultStatic] : []);
+  }
+
+  const srcType = cfg.source?.type || (meta.defaultStatic ? 'static' : 'none');
+
+  return `
+  <div class="field-card ${hasConfig ? 'has-config' : 'no-config'}" id="card-${fieldId}">
+    <div class="d-flex justify-content-between align-items-start mb-2">
+      <div>
+        <span class="field-label">${meta.label}</span>
+        <span class="field-id ms-2">${fieldId}</span>
+        ${hasConfig ? '<span class="badge bg-success ms-2" style="font-size:0.65rem">Configured</span>' : ''}
+      </div>
+      <div class="d-flex gap-1">
+        <button class="btn btn-primary btn-sm" onclick="saveField('${fieldId}')"><i class="bi bi-save me-1"></i>Save</button>
+        ${hasConfig ? `<button class="btn btn-outline-secondary btn-sm" onclick="resetField('${fieldId}')"><i class="bi bi-arrow-counterclockwise"></i></button>` : ''}
+      </div>
+    </div>
+
+    <div class="row g-2">
+      <div class="col-md-3">
+        <label class="form-label">Display Name <span class="text-muted fw-normal">(optional)</span></label>
+        <input type="text" class="form-control" id="dn-${fieldId}"
+               placeholder="${esc(meta.label)}" value="${esc(cfg.displayName||'')}"/>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Field Type</label>
+        ${isFixed
+          ? `<div class="form-control bg-light type-fixed">${ftype}</div>`
+          : `<select class="form-select" id="ft-${fieldId}" onchange="onTypeChange('${fieldId}')">
+               <option value="textbox"  ${ftype==='textbox' ?'selected':''}>Text Box</option>
+               <option value="textarea" ${ftype==='textarea'?'selected':''}>Text Area</option>
+               <option value="select"   ${ftype==='select'  ?'selected':''}>Select / Dropdown</option>
+             </select>`
+        }
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Default Value</label>
+        <input type="text" class="form-control" id="dv-${fieldId}"
+               placeholder="leave blank for none" value="${esc(cfg.defaultValue||'')}"/>
+      </div>
+    </div>
+
+    <!-- Source section — only visible when type = select -->
+    <div id="src-${fieldId}" style="display:${(isFixed ? ftype : (cfg.fieldType||meta.defaultType||'textbox'))==='select'?'block':'none'}">
+      <div class="source-section mt-2">
+        <div class="mb-2 fw-semibold" style="font-size:0.78rem; color:#495057;">Dropdown Source</div>
+        <div class="btn-group btn-group-sm mb-2" role="group">
+          <input type="radio" class="btn-check" name="src-type-${fieldId}" id="st-none-${fieldId}"
+                 value="none" ${srcType==='none'?'checked':''} onchange="onSourceTypeChange('${fieldId}')"/>
+          <label class="btn btn-outline-secondary" for="st-none-${fieldId}">None</label>
+          <input type="radio" class="btn-check" name="src-type-${fieldId}" id="st-static-${fieldId}"
+                 value="static" ${srcType==='static'?'checked':''} onchange="onSourceTypeChange('${fieldId}')"/>
+          <label class="btn btn-outline-secondary" for="st-static-${fieldId}">Static List</label>
+          <input type="radio" class="btn-check" name="src-type-${fieldId}" id="st-http-${fieldId}"
+                 value="http" ${srcType==='http'?'checked':''} onchange="onSourceTypeChange('${fieldId}')"/>
+          <label class="btn btn-outline-secondary" for="st-http-${fieldId}">HTTP URL</label>
+          <input type="radio" class="btn-check" name="src-type-${fieldId}" id="st-file-${fieldId}"
+                 value="file" ${srcType==='file'?'checked':''} onchange="onSourceTypeChange('${fieldId}')"/>
+          <label class="btn btn-outline-secondary" for="st-file-${fieldId}">File</label>
+          <input type="radio" class="btn-check" name="src-type-${fieldId}" id="st-entity-${fieldId}"
+                 value="entity" ${srcType==='entity'?'checked':''} onchange="onSourceTypeChange('${fieldId}')"/>
+          <label class="btn btn-outline-secondary" for="st-entity-${fieldId}">Objects</label>
+        </div>
+
+        <!-- Static options editor -->
+        <div id="static-${fieldId}" style="display:${srcType==='static'?'block':'none'}">
+          <label class="form-label">Options <span class="text-muted fw-normal">(type and press Enter to add)</span></label>
+          <div class="chips-wrap" id="chips-${fieldId}" onclick="focusChipInput('${fieldId}')">
+            ${chipLists[fieldId].map(opt => chipHtml(fieldId, opt)).join('')}
+            <input type="text" id="chipinput-${fieldId}" placeholder="Add option..."
+                   onkeydown="onChipKeydown(event,'${fieldId}')"/>
+          </div>
+        </div>
+
+        <!-- HTTP source editor -->
+        <div id="http-${fieldId}" style="display:${srcType==='http'?'block':'none'}">
+          <div class="row g-2">
+            <div class="col-md-5">
+              <label class="form-label">URL</label>
+              <input type="text" class="form-control" id="url-${fieldId}"
+                     placeholder="https://api.example.com/users"
+                     value="${esc(cfg.source?.url||'')}"/>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">Array name</label>
+              <input type="text" class="form-control" id="arr-${fieldId}"
+                     placeholder="data" value="${esc(cfg.source?.arrayName||'')}"/>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">Display attr</label>
+              <input type="text" class="form-control" id="na-${fieldId}"
+                     placeholder="name" value="${esc(cfg.source?.nameAttribute||'')}"/>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">Value attr</label>
+              <input type="text" class="form-control" id="va-${fieldId}"
+                     placeholder="id" value="${esc(cfg.source?.valueAttribute||'')}"/>
+            </div>
+            <div class="col-md-1 d-flex align-items-end">
+              <button class="btn btn-outline-secondary btn-sm w-100" title="Test"
+                      onclick="testHttpField('${fieldId}','${esc(meta.label)}')">
+                <i class="bi bi-plug"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- File source editor -->
+        <div id="file-${fieldId}" style="display:${srcType==='file'?'block':'none'}">
+          <div class="row g-2">
+            <div class="col-md-9">
+              <label class="form-label">Classpath file name <span class="text-muted fw-normal">(key|value pipe-separated, one per line)</span></label>
+              <input type="text" class="form-control" id="fn-${fieldId}"
+                     placeholder="dropdowns/departments.txt"
+                     value="${esc(cfg.source?.fileName||'')}"/>
+            </div>
+            <div class="col-md-1 d-flex align-items-end">
+              <button class="btn btn-outline-secondary btn-sm w-100" title="Test"
+                      onclick="testFileField('${fieldId}','${esc(meta.label)}')">
+                <i class="bi bi-plug"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Entity (objects of a type) source editor -->
+        <div id="entity-${fieldId}" style="display:${srcType==='entity'?'block':'none'}">
+          <div class="row g-2">
+            <div class="col-md-9">
+              <label class="form-label">Object type <span class="text-muted fw-normal">(dropdown values come from saved Projects/Programmes)</span></label>
+              <select class="form-select" id="et-${fieldId}">
+                <option value="project"   ${cfg.source?.entityType==='project'  ?'selected':''}>Project</option>
+                <option value="programme" ${cfg.source?.entityType==='programme'?'selected':''}>Programme</option>
+              </select>
+            </div>
+            <div class="col-md-1 d-flex align-items-end">
+              <button class="btn btn-outline-secondary btn-sm w-100" title="Test"
+                      onclick="testEntityField('${fieldId}','${esc(meta.label)}')">
+                <i class="bi bi-plug"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function chipHtml(fieldId, opt) {
+  return `<span class="chip" data-val="${esc(opt)}">${esc(opt)}<button class="chip-remove" title="Remove"
+    onclick="removeChip('${fieldId}',this)">×</button></span>`;
+}
+
+// ── Event handlers ────────────────────────────────────────────────────────────
+
+function onTypeChange(fieldId) {
+  const ft = document.getElementById(`ft-${fieldId}`)?.value || 'textbox';
+  document.getElementById(`src-${fieldId}`).style.display = ft === 'select' ? 'block' : 'none';
+}
+
+function onSourceTypeChange(fieldId) {
+  const srcType = document.querySelector(`input[name="src-type-${fieldId}"]:checked`)?.value || 'none';
+  document.getElementById(`static-${fieldId}`).style.display = srcType === 'static' ? 'block' : 'none';
+  document.getElementById(`http-${fieldId}`).style.display   = srcType === 'http'   ? 'block' : 'none';
+  document.getElementById(`file-${fieldId}`).style.display   = srcType === 'file'   ? 'block' : 'none';
+  document.getElementById(`entity-${fieldId}`).style.display = srcType === 'entity' ? 'block' : 'none';
+}
+
+function focusChipInput(fieldId) {
+  document.getElementById(`chipinput-${fieldId}`)?.focus();
+}
+
+function onChipKeydown(e, fieldId) {
+  if (e.key === 'Enter' || e.key === ',') {
+    e.preventDefault();
+    addChip(fieldId);
+  } else if (e.key === 'Backspace' && e.target.value === '') {
+    const chips = chipLists[fieldId];
+    if (chips.length) {
+      chips.pop();
+      renderChips(fieldId);
+    }
+  }
+}
+
+function addChip(fieldId) {
+  const input = document.getElementById(`chipinput-${fieldId}`);
+  const val = input.value.trim();
+  if (!val) return;
+  if (!chipLists[fieldId].includes(val)) {
+    chipLists[fieldId].push(val);
+    renderChips(fieldId);
+  }
+  input.value = '';
+}
+
+function removeChip(fieldId, btn) {
+  const val = btn.closest('.chip').dataset.val;
+  chipLists[fieldId] = chipLists[fieldId].filter(v => v !== val);
+  renderChips(fieldId);
+}
+
+function renderChips(fieldId) {
+  const wrap = document.getElementById(`chips-${fieldId}`);
+  if (!wrap) return;
+  const inputEl = wrap.querySelector('input');
+  const inputHtml = inputEl ? inputEl.outerHTML : `<input type="text" id="chipinput-${fieldId}" placeholder="Add option..." onkeydown="onChipKeydown(event,'${fieldId}')"/>`;
+  wrap.innerHTML = chipLists[fieldId].map(o => chipHtml(fieldId, o)).join('') + inputHtml;
+}
+
+// ── Save / Reset ─────────────────────────────────────────────────────────────
+
+async function saveField(fieldId) {
+  const meta   = FIELD_META[fieldId] || {};
+  const isFixed = !!meta.fixedType;
+  const ftype  = isFixed ? meta.fixedType : (document.getElementById(`ft-${fieldId}`)?.value || 'textbox');
+  const dn     = document.getElementById(`dn-${fieldId}`)?.value.trim() || null;
+  const dv     = document.getElementById(`dv-${fieldId}`)?.value.trim() || null;
+
+  let source = null;
+  if (ftype === 'select') {
+    const srcType = document.querySelector(`input[name="src-type-${fieldId}"]:checked`)?.value || 'none';
+    if (srcType === 'static') {
+      source = { type: 'static', staticOptions: [...chipLists[fieldId]] };
+    } else if (srcType === 'http') {
+      const url = document.getElementById(`url-${fieldId}`)?.value.trim();
+      if (!url) { showToast('URL is required for HTTP source', 'warning'); return; }
+      source = {
+        type: 'http',
+        url,
+        arrayName:      document.getElementById(`arr-${fieldId}`)?.value.trim() || null,
+        nameAttribute:  document.getElementById(`na-${fieldId}`)?.value.trim()  || null,
+        valueAttribute: document.getElementById(`va-${fieldId}`)?.value.trim()  || null,
+      };
+    } else if (srcType === 'file') {
+      const fileName = document.getElementById(`fn-${fieldId}`)?.value.trim();
+      if (!fileName) { showToast('Classpath file name is required for File source', 'warning'); return; }
+      source = { type: 'file', fileName };
+    } else if (srcType === 'entity') {
+      const entityType = document.getElementById(`et-${fieldId}`)?.value || 'project';
+      source = { type: 'entity', entityType };
+    }
+  }
+
+  const config = { fieldType: ftype, displayName: dn, defaultValue: dv, source };
+
+  try {
+    const saved = await fetch(`/api/field-configs/${fieldId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config)
+    }).then(r => r.json());
+    savedConfigs[fieldId] = saved;
+    reRenderCard(fieldId);
+    showToast('Saved', 'success');
+  } catch (e) {
+    showToast('Error: ' + e.message, 'danger');
+  }
+}
+
+async function resetField(fieldId) {
+  await fetch(`/api/field-configs/${fieldId}`, { method: 'DELETE' });
+  delete savedConfigs[fieldId];
+  const meta = FIELD_META[fieldId] || {};
+  chipLists[fieldId] = meta.defaultStatic ? [...meta.defaultStatic] : [];
+  reRenderCard(fieldId);
+  showToast('Reset to default', 'secondary');
+}
+
+function reRenderCard(fieldId) {
+  const card = document.getElementById(`card-${fieldId}`);
+  if (!card) return;
+  const tmp = document.createElement('div');
+  tmp.innerHTML = buildFieldCard(fieldId);
+  card.parentNode.replaceChild(tmp.firstElementChild, card);
+}
+
+// ── HTTP Test ─────────────────────────────────────────────────────────────────
+
+async function testHttpField(fieldId, label) {
+  const source = {
+    type: 'http',
+    url:            document.getElementById(`url-${fieldId}`)?.value.trim(),
+    arrayName:      document.getElementById(`arr-${fieldId}`)?.value.trim() || null,
+    nameAttribute:  document.getElementById(`na-${fieldId}`)?.value.trim()  || null,
+    valueAttribute: document.getElementById(`va-${fieldId}`)?.value.trim()  || null,
+  };
+  if (!source.url) { showToast('Enter a URL first', 'warning'); return; }
+  await runSourceTest(label, source);
+}
+
+async function testFileField(fieldId, label) {
+  const fileName = document.getElementById(`fn-${fieldId}`)?.value.trim();
+  if (!fileName) { showToast('Enter a classpath file name first', 'warning'); return; }
+  await runSourceTest(label, { type: 'file', fileName });
+}
+
+async function testEntityField(fieldId, label) {
+  const entityType = document.getElementById(`et-${fieldId}`)?.value || 'project';
+  await runSourceTest(label, { type: 'entity', entityType });
+}
+
+async function runSourceTest(label, source) {
+  document.getElementById('testModalField').textContent = label;
+  document.getElementById('testModalBody').innerHTML =
+    '<div class="p-3 text-muted"><span class="spinner-border spinner-border-sm me-2"></span>Fetching…</div>';
+  document.getElementById('testModalCount').textContent = '';
+  testModal.show();
+
+  try {
+    const res = await fetch('/api/field-options/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(source)
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      document.getElementById('testModalBody').innerHTML =
+        `<div class="p-3 text-danger"><i class="bi bi-exclamation-triangle me-1"></i>${esc(data.error||'Error')}</div>`;
+      return;
+    }
+    document.getElementById('testModalCount').textContent = `${data.length} option(s)`;
+    document.getElementById('testModalBody').innerHTML = data.length === 0
+      ? '<div class="p-3 text-muted">No items returned. Check your configuration.</div>'
+      : `<table class="table table-sm table-hover mb-0">
+           <thead class="table-light sticky-top"><tr>
+             <th style="font-size:0.75rem">Display</th>
+             <th style="font-size:0.75rem">Value</th>
+           </tr></thead>
+           <tbody>
+             ${data.slice(0,100).map(o=>`<tr><td style="font-size:0.78rem">${esc(o.name)}</td><td style="font-size:0.78rem; color:#6c757d">${esc(o.value)}</td></tr>`).join('')}
+             ${data.length>100?`<tr><td colspan="2" class="text-muted text-center py-1">…${data.length-100} more</td></tr>`:''}
+           </tbody>
+         </table>`;
+  } catch (e) {
+    document.getElementById('testModalBody').innerHTML =
+      `<div class="p-3 text-danger"><i class="bi bi-exclamation-triangle me-1"></i>${esc(e.message)}</div>`;
+  }
+}
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+
+function showToast(msg, type) {
+  const el = document.getElementById('toastEl');
+  el.className = `toast align-items-center text-bg-${type} border-0`;
+  document.getElementById('toastMsg').textContent = msg;
+  toast.show();
+}
+
+function esc(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+init();
+</script>
+</body>
+</html>

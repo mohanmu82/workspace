@@ -101,6 +101,19 @@ button.xs  { padding: 2px 8px; font-size: 11px; }
 /* Empty state */
 .empty-hint { font-size: 13px; color: #a5adba; font-style: italic; padding: 8px 0; }
 
+/* Compact controls table */
+.ctrl-table-hdr{display:flex;align-items:center;gap:5px;padding:2px 6px;background:#f4f5f7;border:1px solid #dfe1e6;border-bottom:none;border-radius:4px 4px 0 0;font-size:10px;font-weight:700;color:#5e6c84;text-transform:uppercase;letter-spacing:0.4px}
+.ctrl-row-wrap{border-left:1px solid #dfe1e6;border-right:1px solid #dfe1e6;border-bottom:1px solid #dfe1e6;background:#fff}
+.ctrl-row-wrap:last-child{border-radius:0 0 4px 4px}
+.ctrl-row{display:flex;align-items:center;gap:5px;padding:3px 6px}
+.ctrl-row input,.ctrl-row select{padding:2px 5px;font-size:12px;border:1px solid #ccc;border-radius:3px;outline:none;height:24px}
+.ctrl-row input:focus,.ctrl-row select:focus{border-color:#4c9aff}
+.ctrl-badge{font-size:10px;font-weight:700;padding:1px 5px;border-radius:10px;white-space:nowrap;min-width:44px;text-align:center}
+.ctrl-badge.text{background:#dbeafe;color:#1e40af}
+.ctrl-badge.select{background:#ede9fe;color:#6d28d9}
+.ctrl-badge.button{background:#dcfce7;color:#166534}
+.ctrl-expand-body{padding:10px 12px;border-top:1px solid #f0f0f0;background:#fafbfc}
+
 /* Summary drag states */
 .item-card.dragging { opacity: 0.4; }
 .item-card.drag-over { box-shadow: 0 0 0 2px #0052cc; }
@@ -347,7 +360,11 @@ function buildControlJson(c) {
     if (c.binding) o.binding = c.binding;
     o.defaultValue = c.defaultValue;
   } else if (c.type === 'select') {
-    try { o.dataSource = JSON.parse(c.dataSource); } catch(e) { o.dataSource = c.dataSource || {}; }
+    const ds = { type: 'http', method: c.dsMethod || 'GET', url: c.dsUrl || '' };
+    if (c.dsArrayField) ds.arrayField = c.dsArrayField;
+    ds.valueField = c.dsValueField || '';
+    ds.labelField = c.dsLabelField || '';
+    o.dataSource = ds;
   } else if (c.type === 'button') {
     if (c.requiredControls && c.requiredControls.length > 0) o.requiredControls = c.requiredControls;
     try { o.onClick = JSON.parse(c.onClick); } catch(e) { o.onClick = c.onClick || []; }
@@ -549,8 +566,12 @@ const ACTION_SNIPPETS = {
   appendGridRow:       { action: 'appendGridRow', targetGrid: 'errorGrid', data: { source: '', message: '{{error.message}}' } }
 };
 
+const expandedCtrlIds = new Set();
+
 function addControl() {
-  controls.push({ _id: uid(), id: '', grid: '', type: 'text', label: '', binding: '', defaultValue: '', dataSource: DATASOURCE_TEMPLATE, onClick: ONCLICK_TEMPLATE, requiredControls: [] });
+  controls.push({ _id: uid(), id: '', grid: '', type: 'text', label: '', binding: '', defaultValue: '',
+    dsMethod: 'GET', dsUrl: '', dsArrayField: '', dsValueField: '', dsLabelField: '',
+    dataSource: DATASOURCE_TEMPLATE, onClick: ONCLICK_TEMPLATE, requiredControls: [] });
   renderControls();
 }
 
@@ -562,154 +583,156 @@ function removeControl(_id) {
 function renderControls() {
   const list = document.getElementById('controls-list');
   list.innerHTML = '';
-  if (!controls.length) { list.innerHTML = '<p class="empty-hint">No controls yet — click "+ Add Control" to begin.</p>'; }
+  if (!controls.length) {
+    list.innerHTML = '<p class="empty-hint">No controls yet — click "+ Add Control" to begin.</p>';
+    updateJson(); return;
+  }
   const gids = getGridIds();
+
+  const hdr = el('div', 'ctrl-table-hdr');
+  hdr.innerHTML = `<span style="width:46px"></span><span style="min-width:44px">Type</span><span style="flex:1">ID</span><span style="width:108px">Grid</span><span style="flex:1">Label</span><span style="width:54px"></span>`;
+  list.appendChild(hdr);
+
   controls.forEach((c, i) => {
-    const card = el('div', 'item-card');
+    const expanded = expandedCtrlIds.has(c._id);
+    const wrap = el('div', 'ctrl-row-wrap');
 
-    let typeSection = '';
-    if (c.type === 'text') {
-      typeSection = `
-        <div class="ctrl-type-fields">
-          <div class="form-row">
-            <div class="fg"><label>Binding</label><input data-bind="binding" type="text" value="${hq(c.binding)}" placeholder="filters.customerName"></div>
-            <div class="fg"><label>Default Value</label><input data-bind="defaultValue" type="text" value="${hq(c.defaultValue)}" placeholder=""></div>
-          </div>
-        </div>`;
-    } else if (c.type === 'select') {
-      typeSection = `
-        <div class="ctrl-type-fields">
-          <div class="fg wide">
-            <label>Data Source (JSON)</label>
-            <textarea data-bind="dataSource" rows="6">${hq(c.dataSource)}</textarea>
-          </div>
-        </div>`;
-    } else if (c.type === 'button') {
-      const rcChips = (c.requiredControls || []).map(rc =>
-        `<span class="req-ctrl-chip">${hq(rc)}<span class="rm-rc" data-rm-rc="${hq(rc)}" title="Remove">&#10005;</span></span>`
-      ).join('');
-      typeSection = `
-        <div class="ctrl-type-fields">
-          <div class="fg wide" style="margin-bottom:12px">
-            <label>Required Controls (must not be blank to execute)</label>
-            <div class="req-ctrl-chips">${rcChips || '<span class="hint" style="font-style:italic">None &mdash; action always runs</span>'}</div>
-            <div style="display:flex;gap:6px;margin-top:6px">
-              <input type="text" data-req-input placeholder="controlId e.g. dealid" style="flex:1;padding:5px 8px;font-size:12px;border:1px solid #ccc;border-radius:4px;outline:none">
-              <button class="secondary xs" data-add-req>+ Add</button>
-            </div>
-            <span class="hint">If any listed control is blank, the action is blocked and a warning is shown.</span>
-          </div>
-          <div class="fg wide">
-            <label>onClick Actions (JSON)</label>
-            <div class="action-chips">
-              <span class="action-chip" data-action="clearGrid">+ clearGrid</span>
-              <span class="action-chip" data-action="httpRequest">+ httpRequest</span>
-              <span class="action-chip" data-action="bindGridData">+ bindGridData</span>
-              <span class="action-chip" data-action="bindGridProperties">+ bindGridProperties</span>
-              <span class="action-chip" data-action="setState">+ setState</span>
-              <span class="action-chip" data-action="showNotification">+ showNotification</span>
-              <span class="action-chip" data-action="appendGridRow">+ appendGridRow</span>
-            </div>
-            <textarea data-bind="onClick" rows="14">${hq(c.onClick)}</textarea>
-          </div>
-        </div>`;
-    }
+    const gridOpts = `<option value="">—</option>` + gids.map(gid =>
+      `<option value="${hq(gid)}"${c.grid === gid ? ' selected' : ''}>${hq(gid)}</option>`
+    ).join('');
 
-    const gridOpts = gids.map(gid => `<option value="${hq(gid)}"${c.grid===gid?' selected':''}>${hq(gid)}</option>`).join('');
+    const row = el('div', 'ctrl-row');
+    row.innerHTML = `
+      <button class="xs" data-cup title="Move up"${i === 0 ? ' disabled' : ''} style="padding:1px 4px">↑</button>
+      <button class="xs" data-cdn title="Move down"${i === controls.length - 1 ? ' disabled' : ''} style="padding:1px 4px">↓</button>
+      <span class="ctrl-badge ${hq(c.type)}">${hq(c.type)}</span>
+      <input data-bind="id" type="text" value="${hq(c.id)}" placeholder="controlId" style="flex:1;min-width:70px">
+      <select data-ctrl-grid-sel data-bind="grid" style="width:108px">${gridOpts}</select>
+      <input data-bind="label" type="text" value="${hq(c.label)}" placeholder="Label" style="flex:1;min-width:70px">
+      <button class="xs${expanded ? ' primary' : ''}" data-toggle-exp title="Settings" style="padding:1px 7px">⚙</button>
+      <button class="danger xs" data-cid title="Remove" style="padding:1px 6px">✕</button>`;
+    wrap.appendChild(row);
 
-    card.innerHTML = `
-      <div class="item-card-header">
-        <span class="card-title">Control ${i+1}${c.id?' — '+hq(c.id):''} <span style="font-weight:400;color:#5e6c84">(${c.type})</span></span>
-        <button class="xs" title="Move up" data-cup="${c._id}"${i===0?' disabled':''} style="min-width:24px;padding:2px 6px">&#8679;</button>
-        <button class="xs" title="Move down" data-cdn="${c._id}"${i===controls.length-1?' disabled':''} style="min-width:24px;padding:2px 6px">&#8681;</button>
-        <button class="danger xs" data-cid="${c._id}">Remove</button>
-      </div>
-      <div class="item-card-body">
-        <div class="form-row">
-          <div class="fg"><label>ID</label><input data-bind="id" type="text" value="${hq(c.id)}" placeholder="searchButton"></div>
-          <div class="fg">
-            <label>Grid</label>
-            <select data-ctrl-grid-sel data-bind="grid">
-              <option value="">— select grid —</option>
-              ${gridOpts}
-            </select>
-          </div>
-          <div class="fg">
-            <label>Type</label>
-            <select data-bind="type">
-              <option value="text"${c.type==='text'?' selected':''}>text</option>
-              <option value="select"${c.type==='select'?' selected':''}>select</option>
-              <option value="button"${c.type==='button'?' selected':''}>button</option>
-            </select>
-          </div>
-          <div class="fg"><label>Label</label><input data-bind="label" type="text" value="${hq(c.label)}" placeholder="Search"></div>
-        </div>
-        ${typeSection}
+    if (expanded) {
+      const body = el('div', 'ctrl-expand-body');
+      let inner = `<div class="form-row" style="margin-bottom:8px">
+        <div class="fg"><label>Type</label><select data-bind="type">
+          <option value="text"${c.type === 'text' ? ' selected' : ''}>text</option>
+          <option value="select"${c.type === 'select' ? ' selected' : ''}>select</option>
+          <option value="button"${c.type === 'button' ? ' selected' : ''}>button</option>
+        </select></div>
       </div>`;
 
-    // Remove button
-    card.querySelector('[data-cid]').addEventListener('click', () => removeControl(c._id));
+      if (c.type === 'text') {
+        inner += `<div class="form-row">
+          <div class="fg"><label>Binding</label><input data-bind="binding" type="text" value="${hq(c.binding)}" placeholder="filters.customerName"></div>
+          <div class="fg"><label>Default Value</label><input data-bind="defaultValue" type="text" value="${hq(c.defaultValue)}" placeholder=""></div>
+        </div>`;
+      } else if (c.type === 'select') {
+        inner += `<div class="form-row">
+          <div class="fg" style="max-width:90px"><label>Method</label><select data-bind="dsMethod">
+            <option value="GET"${(c.dsMethod || 'GET') === 'GET' ? ' selected' : ''}>GET</option>
+            <option value="POST"${c.dsMethod === 'POST' ? ' selected' : ''}>POST</option>
+          </select></div>
+          <div class="fg"><label>URL</label><input data-bind="dsUrl" type="text" value="${hq(c.dsUrl || '')}" placeholder="/api/options"></div>
+        </div>
+        <div class="form-row">
+          <div class="fg"><label>Array Field</label><input data-bind="dsArrayField" type="text" value="${hq(c.dsArrayField || '')}" placeholder="data (optional)"><span class="hint">Array field in JSON response</span></div>
+          <div class="fg"><label>Value Field</label><input data-bind="dsValueField" type="text" value="${hq(c.dsValueField || '')}" placeholder="id"></div>
+          <div class="fg"><label>Label Field</label><input data-bind="dsLabelField" type="text" value="${hq(c.dsLabelField || '')}" placeholder="name"></div>
+        </div>`;
+      } else if (c.type === 'button') {
+        const rcChips = (c.requiredControls || []).map(rc =>
+          `<span class="req-ctrl-chip">${hq(rc)}<span class="rm-rc" data-rm-rc="${hq(rc)}" title="Remove">&#10005;</span></span>`
+        ).join('');
+        inner += `<div class="fg wide" style="margin-bottom:12px">
+          <label>Required Controls (must not be blank to execute)</label>
+          <div class="req-ctrl-chips">${rcChips || '<span class="hint" style="font-style:italic">None &mdash; action always runs</span>'}</div>
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <input type="text" data-req-input placeholder="controlId e.g. dealid" style="flex:1;padding:5px 8px;font-size:12px;border:1px solid #ccc;border-radius:4px;outline:none">
+            <button class="secondary xs" data-add-req>+ Add</button>
+          </div>
+          <span class="hint">If any listed control is blank, the action is blocked.</span>
+        </div>
+        <div class="fg wide">
+          <label>onClick Actions (JSON)</label>
+          <div class="action-chips">
+            <span class="action-chip" data-action="clearGrid">+ clearGrid</span>
+            <span class="action-chip" data-action="httpRequest">+ httpRequest</span>
+            <span class="action-chip" data-action="bindGridData">+ bindGridData</span>
+            <span class="action-chip" data-action="bindGridProperties">+ bindGridProperties</span>
+            <span class="action-chip" data-action="setState">+ setState</span>
+            <span class="action-chip" data-action="showNotification">+ showNotification</span>
+            <span class="action-chip" data-action="appendGridRow">+ appendGridRow</span>
+          </div>
+          <textarea data-bind="onClick" rows="12">${hq(c.onClick)}</textarea>
+        </div>`;
+      }
+      body.innerHTML = inner;
 
-    // Move up / down
-    card.querySelector('[data-cup]').addEventListener('click', () => {
-      if (i > 0) { [controls[i-1], controls[i]] = [controls[i], controls[i-1]]; renderControls(); }
-    });
-    card.querySelector('[data-cdn]').addEventListener('click', () => {
-      if (i < controls.length-1) { [controls[i], controls[i+1]] = [controls[i+1], controls[i]]; renderControls(); }
-    });
-
-    // Bound inputs / selects / textareas
-    card.querySelectorAll('[data-bind]').forEach(inp => {
-      inp.addEventListener('input', () => {
-        controls[i][inp.dataset.bind] = inp.value;
-        if (inp.dataset.bind === 'type') renderControls(); else updateJson();
-      });
-      inp.addEventListener('change', () => {
-        controls[i][inp.dataset.bind] = inp.value;
-        if (inp.dataset.bind === 'type') renderControls(); else updateJson();
-      });
-    });
-
-    // Action chip insertions for button onClick
-    if (c.type === 'button') {
-      const ta = card.querySelector('[data-bind="onClick"]');
-      card.querySelectorAll('.action-chip').forEach(chip => {
-        chip.addEventListener('click', () => {
-          let arr = [];
-          try { arr = JSON.parse(controls[i].onClick); } catch(e) { arr = []; }
-          arr.push(ACTION_SNIPPETS[chip.dataset.action]);
-          controls[i].onClick = JSON.stringify(arr, null, 2);
-          ta.value = controls[i].onClick;
-          updateJson();
+      body.querySelectorAll('[data-bind]').forEach(inp => {
+        const evt = inp.tagName === 'SELECT' ? 'change' : 'input';
+        inp.addEventListener(evt, () => {
+          controls[i][inp.dataset.bind] = inp.value;
+          if (inp.dataset.bind === 'type') renderControls(); else updateJson();
         });
       });
 
-      // Required controls: add
-      const reqInput = card.querySelector('[data-req-input]');
-      card.querySelector('[data-add-req]').addEventListener('click', () => {
-        const val = reqInput.value.trim();
-        if (!val) return;
-        if (!controls[i].requiredControls) controls[i].requiredControls = [];
-        if (!controls[i].requiredControls.includes(val)) {
-          controls[i].requiredControls.push(val);
-          renderControls();
-        }
-      });
-      reqInput.addEventListener('keydown', e => {
-        if (e.key === 'Enter') { e.preventDefault(); card.querySelector('[data-add-req]').click(); }
-      });
-
-      // Required controls: remove
-      card.querySelectorAll('.rm-rc').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const rc = btn.dataset.rmRc;
-          controls[i].requiredControls = (controls[i].requiredControls || []).filter(x => x !== rc);
-          renderControls();
+      if (c.type === 'button') {
+        const ta = body.querySelector('[data-bind="onClick"]');
+        body.querySelectorAll('.action-chip').forEach(chip => {
+          chip.addEventListener('click', () => {
+            let arr = [];
+            try { arr = JSON.parse(controls[i].onClick); } catch(e) { arr = []; }
+            arr.push(ACTION_SNIPPETS[chip.dataset.action]);
+            controls[i].onClick = JSON.stringify(arr, null, 2);
+            ta.value = controls[i].onClick;
+            updateJson();
+          });
         });
-      });
+        const reqInput = body.querySelector('[data-req-input]');
+        body.querySelector('[data-add-req]').addEventListener('click', () => {
+          const val = reqInput.value.trim();
+          if (!val) return;
+          if (!controls[i].requiredControls) controls[i].requiredControls = [];
+          if (!controls[i].requiredControls.includes(val)) {
+            controls[i].requiredControls.push(val);
+            renderControls();
+          }
+        });
+        reqInput.addEventListener('keydown', e => {
+          if (e.key === 'Enter') { e.preventDefault(); body.querySelector('[data-add-req]').click(); }
+        });
+        body.querySelectorAll('.rm-rc').forEach(btn => {
+          btn.addEventListener('click', () => {
+            controls[i].requiredControls = (controls[i].requiredControls || []).filter(x => x !== btn.dataset.rmRc);
+            renderControls();
+          });
+        });
+        ta.addEventListener('input', () => { controls[i].onClick = ta.value; updateJson(); });
+      }
+
+      wrap.appendChild(body);
     }
 
-    list.appendChild(card);
+    row.querySelector('[data-cid]').addEventListener('click', () => removeControl(c._id));
+    row.querySelector('[data-cup]').addEventListener('click', () => {
+      if (i > 0) { [controls[i - 1], controls[i]] = [controls[i], controls[i - 1]]; renderControls(); }
+    });
+    row.querySelector('[data-cdn]').addEventListener('click', () => {
+      if (i < controls.length - 1) { [controls[i], controls[i + 1]] = [controls[i + 1], controls[i]]; renderControls(); }
+    });
+    row.querySelector('[data-toggle-exp]').addEventListener('click', () => {
+      if (expandedCtrlIds.has(c._id)) expandedCtrlIds.delete(c._id);
+      else expandedCtrlIds.add(c._id);
+      renderControls();
+    });
+    row.querySelectorAll('[data-bind]').forEach(inp => {
+      const evt = inp.tagName === 'SELECT' ? 'change' : 'input';
+      inp.addEventListener(evt, () => { controls[i][inp.dataset.bind] = inp.value; updateJson(); });
+    });
+
+    list.appendChild(wrap);
   });
   updateJson();
 }
@@ -1114,7 +1137,12 @@ function importPageData(pg, name) {
     let dataSource = DATASOURCE_TEMPLATE, onClick = ONCLICK_TEMPLATE;
     if (c.dataSource) try { dataSource = JSON.stringify(c.dataSource, null, 2); } catch(e) {}
     if (c.onClick)    try { onClick    = JSON.stringify(c.onClick,    null, 2); } catch(e) {}
-    controls.push({ _id: uid(), id: c.id||'', grid: c.grid||'', type: c.type||'text', label: c.label||'', binding: c.binding||'', defaultValue: c.defaultValue !== undefined ? String(c.defaultValue) : '', dataSource, onClick, requiredControls: c.requiredControls || [] });
+    const ds = (c.dataSource && typeof c.dataSource === 'object') ? c.dataSource : {};
+    controls.push({ _id: uid(), id: c.id||'', grid: c.grid||'', type: c.type||'text', label: c.label||'',
+      binding: c.binding||'', defaultValue: c.defaultValue !== undefined ? String(c.defaultValue) : '',
+      dsMethod: ds.method || 'GET', dsUrl: ds.url || '', dsArrayField: ds.arrayField || '',
+      dsValueField: ds.valueField || '', dsLabelField: ds.labelField || '',
+      dataSource, onClick, requiredControls: c.requiredControls || [] });
   });
 
   (pg.dataGrids || []).forEach(dg => {

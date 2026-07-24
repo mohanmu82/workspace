@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gateway Router</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #f4f6f9;
+      color: #222;
+      padding: 28px 28px 48px;
+    }
+
+    header { margin-bottom: 28px; }
+    header h1 { font-size: 1.3rem; font-weight: 700; }
+    header p  { font-size: 0.82rem; color: #666; margin-top: 4px; }
+    .back     { font-size: 0.8rem; color: #0078d4; text-decoration: none; }
+    .back:hover { text-decoration: underline; }
+
+    .card {
+      background: #fff;
+      border: 1px solid #dde1e7;
+      border-radius: 8px;
+      padding: 20px 22px;
+      margin-bottom: 22px;
+    }
+
+    .card-title {
+      font-size: 0.95rem;
+      font-weight: 700;
+      margin-bottom: 14px;
+      color: #111;
+    }
+
+    .card-desc {
+      font-size: 0.8rem;
+      color: #666;
+      margin: -8px 0 14px;
+    }
+
+    .input-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 12px; }
+
+    .field { display: flex; flex-direction: column; gap: 4px; }
+    .field label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+    input[type=text] {
+      padding: 7px 10px;
+      font-size: 0.85rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      min-width: 220px;
+    }
+    input[type=text]:focus { outline: none; border-color: #0078d4; }
+
+    .checkbox-field { display: flex; flex-direction: row; align-items: center; gap: 6px; }
+    .checkbox-field label { font-size: 0.82rem; color: #333; text-transform: none; font-weight: 600; }
+    input[type=checkbox] { width: 16px; height: 16px; }
+
+    button {
+      padding: 7px 18px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      background: #0078d4;
+      color: #fff;
+      white-space: nowrap;
+    }
+    button:hover:not(:disabled) { background: #005fa3; }
+    button:disabled { background: #9ec5e8; cursor: not-allowed; }
+    button.danger  { background: #c0392b; }
+    button.danger:hover { background: #a93226; }
+    button.secondary { background: #6c757d; }
+    button.secondary:hover { background: #545b62; }
+
+    .status-msg { font-size: 0.82rem; margin-top: 8px; }
+    .status-ok  { color: #0a5c36; }
+    .status-err { color: #842029; }
+
+    .tbl-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.81rem; }
+    th {
+      background: #f0f2f5;
+      border: 1px solid #dde1e7;
+      padding: 7px 12px;
+      text-align: left;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    td { border: 1px solid #dde1e7; padding: 6px 12px; vertical-align: middle; }
+    tr:nth-child(even) td { background: #fafbfc; }
+
+    .mono { font-family: monospace; font-size: 0.82rem; }
+    .arrow { color: #999; padding: 0 6px; }
+
+    .badge { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 0.72rem; font-weight: 700; }
+    .badge-on  { background: #d1e7dd; color: #0a5c36; }
+    .badge-off { background: #f1f1f1; color: #888; }
+
+    .row-actions { display: flex; gap: 6px; }
+    .row-actions button { padding: 4px 10px; font-size: 0.75rem; }
+
+    .empty-msg { font-size: 0.82rem; color: #888; padding: 10px 0; }
+
+    .result-box {
+      margin-top: 12px;
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 0.82rem;
+      background: #f8f9fb;
+      border: 1px solid #dde1e7;
+      display: none;
+    }
+    .result-box.show { display: block; }
+    .result-box.hit  { border-color: #a8d5bd; background: #eef8f1; }
+    .result-box.miss { border-color: #e6b3ac; background: #fbeeec; }
+  </style>
+</head>
+<body>
+
+<header>
+  <a class="back" href="index.html">&#8592; Home</a>
+  <h1>Gateway Router</h1>
+  <p>Define runtime routes under <span class="mono">/gateway/**</span> that forward matching requests to backend URLs — no restart required.</p>
+</header>
+
+<!-- ===== Add / Edit route ===== -->
+<div class="card">
+  <div class="card-title" id="formTitle">Add Route</div>
+  <div class="card-desc">
+    Requests to <span class="mono">Prefix</span> (and anything below it) are forwarded to <span class="mono">Target URL</span>,
+    with the remainder of the path appended. E.g. prefix <span class="mono">/gateway/icex/icet</span> &rarr; target
+    <span class="mono">http://localhost:8090/icet</span> forwards <span class="mono">/gateway/icex/icet/foo</span> to
+    <span class="mono">http://localhost:8090/icet/foo</span>.
+  </div>
+  <div class="input-row">
+    <div class="field" style="flex:1">
+      <label>Prefix</label>
+      <input type="text" id="fPrefix" placeholder="/gateway/icex/icet" style="width:100%">
+    </div>
+    <div class="field" style="flex:1">
+      <label>Target URL</label>
+      <input type="text" id="fTarget" placeholder="http://localhost:8090/icet" style="width:100%">
+    </div>
+  </div>
+  <div class="input-row">
+    <div class="field" style="flex:1">
+      <label>Description (optional)</label>
+      <input type="text" id="fDesc" placeholder="What this route is for" style="width:100%">
+    </div>
+    <div class="field checkbox-field">
+      <input type="checkbox" id="fEnabled" checked>
+      <label for="fEnabled">Enabled</label>
+    </div>
+    <div class="field" style="flex-direction:row;gap:8px">
+      <button id="saveBtn" onclick="saveRoute()">Add Route</button>
+      <button id="cancelBtn" class="secondary" onclick="resetForm()" style="display:none">Cancel</button>
+    </div>
+  </div>
+  <div id="formStatus" class="status-msg"></div>
+</div>
+
+<!-- ===== Routes table ===== -->
+<div class="card">
+  <div class="card-title">Routes</div>
+  <div class="tbl-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Status</th>
+          <th>Prefix</th>
+          <th></th>
+          <th>Target URL</th>
+          <th>Description</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="routeBody"></tbody>
+    </table>
+  </div>
+  <div id="emptyMsg" class="empty-msg" style="display:none">No routes defined yet — add one above.</div>
+</div>
+
+<!-- ===== Route tester ===== -->
+<div class="card">
+  <div class="card-title">Test a Path</div>
+  <div class="card-desc">Check which route (if any) a given <span class="mono">/gateway/...</span> path would match, and the URL it resolves to.</div>
+  <div class="input-row">
+    <div class="field" style="flex:1">
+      <label>Path</label>
+      <input type="text" id="testPath" placeholder="/gateway/icex/icet/some/resource" style="width:100%">
+    </div>
+    <div class="field" style="flex-direction:row;gap:8px">
+      <button onclick="testMatch()">Test Match</button>
+      <button class="secondary" onclick="openLive()">Open in Browser</button>
+    </div>
+  </div>
+  <div id="testResult" class="result-box"></div>
+</div>
+
+<script>
+  let routes = [];
+  let editingId = null;
+
+  document.addEventListener('DOMContentLoaded', loadRoutes);
+
+  // =====================================================================
+  // Load / render
+  // =====================================================================
+
+  async function loadRoutes() {
+    try {
+      const res = await fetch('/gatewayrouter/routes');
+      routes = await res.json();
+      renderRoutes();
+    } catch (e) {
+      setFormStatus('Failed to load routes: ' + e.message, true);
+    }
+  }
+
+  function renderRoutes() {
+    const tbody = document.getElementById('routeBody');
+    tbody.innerHTML = '';
+    document.getElementById('emptyMsg').style.display = routes.length ? 'none' : '';
+    routes.forEach(r => tbody.appendChild(buildRow(r)));
+  }
+
+  function buildRow(r) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><span class="badge ${r.enabled ? 'badge-on' : 'badge-off'}">${r.enabled ? 'ON' : 'OFF'}</span></td>
+      <td class="mono">${escHtml(r.prefix)}</td>
+      <td class="arrow">&#8594;</td>
+      <td class="mono">${escHtml(r.targetUri)}</td>
+      <td>${escHtml(r.description || '')}</td>
+      <td class="row-actions">
+        <button class="secondary" onclick="editRoute('${escAttr(r.id)}')">Edit</button>
+        <button class="danger" onclick="deleteRoute('${escAttr(r.id)}')">Delete</button>
+      </td>`;
+    return tr;
+  }
+
+  // =====================================================================
+  // Form
+  // =====================================================================
+
+  function editRoute(id) {
+    const r = routes.find(x => x.id === id);
+    if (!r) return;
+    editingId = id;
+    document.getElementById('fPrefix').value  = r.prefix;
+    document.getElementById('fTarget').value  = r.targetUri;
+    document.getElementById('fDesc').value    = r.description || '';
+    document.getElementById('fEnabled').checked = r.enabled;
+    document.getElementById('formTitle').textContent = 'Edit Route';
+    document.getElementById('saveBtn').textContent = 'Save Changes';
+    document.getElementById('cancelBtn').style.display = '';
+    setFormStatus('');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function resetForm() {
+    editingId = null;
+    document.getElementById('fPrefix').value  = '';
+    document.getElementById('fTarget').value  = '';
+    document.getElementById('fDesc').value    = '';
+    document.getElementById('fEnabled').checked = true;
+    document.getElementById('formTitle').textContent = 'Add Route';
+    document.getElementById('saveBtn').textContent = 'Add Route';
+    document.getElementById('cancelBtn').style.display = 'none';
+    setFormStatus('');
+  }
+
+  async function saveRoute() {
+    const prefix   = document.getElementById('fPrefix').value.trim();
+    const target   = document.getElementById('fTarget').value.trim();
+    const desc     = document.getElementById('fDesc').value.trim();
+    const enabled  = document.getElementById('fEnabled').checked;
+
+    if (!prefix)  { setFormStatus('Prefix is required.', true); return; }
+    if (!target)  { setFormStatus('Target URL is required.', true); return; }
+
+    const body = { prefix, targetUri: target, description: desc, enabled };
+    if (editingId) body.id = editingId;
+
+    try {
+      const res = await fetch('/gatewayrouter/routes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      if (!res.ok) { setFormStatus(data.error || 'Save failed.', true); return; }
+      setFormStatus((editingId ? 'Route updated.' : 'Route added.'), false);
+      resetForm();
+      await loadRoutes();
+    } catch (e) {
+      setFormStatus('Save failed: ' + e.message, true);
+    }
+  }
+
+  async function deleteRoute(id) {
+    if (!confirm('Delete route "' + id + '"?')) return;
+    try {
+      const res = await fetch('/gatewayrouter/routes/' + encodeURIComponent(id), { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) { alert(data.error || 'Delete failed.'); return; }
+      await loadRoutes();
+    } catch (e) {
+      alert('Delete failed: ' + e.message);
+    }
+  }
+
+  function setFormStatus(msg, isErr) {
+    const el = document.getElementById('formStatus');
+    el.textContent = msg || '';
+    el.className = 'status-msg' + (isErr ? ' status-err' : msg ? ' status-ok' : '');
+  }
+
+  // =====================================================================
+  // Tester
+  // =====================================================================
+
+  async function testMatch() {
+    const path = document.getElementById('testPath').value.trim();
+    const box  = document.getElementById('testResult');
+    if (!path) { box.className = 'result-box show miss'; box.textContent = 'Enter a path to test.'; return; }
+    try {
+      const res = await fetch('/gatewayrouter/match?path=' + encodeURIComponent(path));
+      const data = await res.json();
+      if (data.matched) {
+        box.className = 'result-box show hit';
+        box.innerHTML = 'Matched route <b>' + escHtml(data.id) + '</b> (prefix <span class="mono">' + escHtml(data.prefix) + '</span>)'
+          + '<br>Resolves to: <span class="mono">' + escHtml(data.resolvedUrl) + '</span>';
+      } else {
+        box.className = 'result-box show miss';
+        box.textContent = 'No route matches this path.';
+      }
+    } catch (e) {
+      box.className = 'result-box show miss';
+      box.textContent = 'Test failed: ' + e.message;
+    }
+  }
+
+  function openLive() {
+    const path = document.getElementById('testPath').value.trim();
+    if (!path) return;
+    window.open(path, '_blank');
+  }
+
+  // =====================================================================
+  // Utilities
+  // =====================================================================
+
+  function escHtml(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+  function escAttr(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/'/g,'&#39;');
+  }
+</script>
+</body>
+</html>
