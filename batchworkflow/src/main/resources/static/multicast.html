@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Multicast Client</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #f4f6f9;
+      color: #222;
+      padding: 28px 28px 48px;
+    }
+
+    header { margin-bottom: 24px; }
+    header h1 { font-size: 1.3rem; font-weight: 700; }
+    header p  { font-size: 0.82rem; color: #666; margin-top: 4px; }
+    .back { font-size: 0.8rem; color: #0078d4; text-decoration: none; }
+    .back:hover { text-decoration: underline; }
+
+    .card {
+      background: #fff;
+      border: 1px solid #dde1e7;
+      border-radius: 8px;
+      padding: 18px 22px;
+      margin-bottom: 18px;
+    }
+
+    .card-title {
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: #111;
+      margin-bottom: 14px;
+    }
+
+    .input-row {
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+      flex-wrap: wrap;
+    }
+
+    .field { display: flex; flex-direction: column; gap: 4px; }
+    .field label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+    input[type=text], input[type=number], select {
+      padding: 7px 10px;
+      font-size: 0.85rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-family: inherit;
+      background: #fff;
+    }
+    input[type=text] { min-width: 180px; }
+    input[type=number] { width: 100px; }
+    select { min-width: 200px; }
+    input:focus, select:focus { outline: none; border-color: #0078d4; }
+
+    textarea {
+      width: 100%;
+      min-height: 60px;
+      padding: 8px 10px;
+      font-size: 0.82rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-family: "Cascadia Code","Fira Code",Consolas,monospace;
+      resize: vertical;
+    }
+    textarea:focus { outline: none; border-color: #0078d4; }
+
+    button {
+      padding: 7px 18px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      background: #0078d4;
+      color: #fff;
+      white-space: nowrap;
+    }
+    button:hover:not(:disabled) { background: #005fa3; }
+    button:disabled { background: #9ec5e8; cursor: not-allowed; }
+    button.danger  { background: #c0392b; }
+    button.danger:hover { background: #a93226; }
+    button.secondary { background: #6c757d; }
+    button.secondary:hover { background: #545b62; }
+
+    .tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+    .tab-btn {
+      background: #eef1f5; color: #444; padding: 7px 16px; border-radius: 6px 6px 0 0;
+      font-size: 0.82rem; font-weight: 600;
+    }
+    .tab-btn:hover:not(:disabled) { background: #e2e6ec; }
+    .tab-btn.active { background: #0078d4; color: #fff; }
+
+    .status-msg { font-size: 0.82rem; margin-top: 8px; }
+    .status-err { color: #842029; }
+    .status-ok  { color: #0a5c36; }
+
+    .listening {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 0.82rem; color: #0078d4; margin-top: 10px;
+    }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%; background: #0078d4;
+      animation: pulse 1s infinite ease-in-out;
+    }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+
+    .tbl-wrap { overflow-x: auto; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.81rem;
+    }
+    th {
+      background: #f0f2f5;
+      border: 1px solid #dde1e7;
+      padding: 7px 12px;
+      text-align: left;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    td {
+      border: 1px solid #dde1e7;
+      padding: 6px 12px;
+      vertical-align: top;
+    }
+    tr:nth-child(even) td { background: #fafbfc; }
+
+    .host-cell {
+      font-family: monospace;
+      font-weight: 700;
+      color: #0078d4;
+      white-space: nowrap;
+    }
+
+    .payload-cell {
+      font-family: monospace;
+      font-size: 0.76rem;
+      color: #444;
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-width: 480px;
+    }
+
+    .parsed-grid { display: flex; flex-direction: column; gap: 2px; }
+    .parsed-kv { font-size: 0.76rem; }
+    .parsed-kv .k { color: #888; }
+    .parsed-kv .v { color: #222; font-weight: 600; }
+
+    .toolbar {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    .result-count { font-size: 0.8rem; color: #666; margin-left: auto; }
+
+    .summary-grid { display: flex; gap: 20px; flex-wrap: wrap; }
+    .summary-cell {
+      background: #f8f9fb;
+      border: 1px solid #dde1e7;
+      border-radius: 6px;
+      padding: 10px 18px;
+      min-width: 130px;
+    }
+    .summary-cell .lbl { font-size: 0.72rem; font-weight: 700; color: #888; text-transform: uppercase; }
+    .summary-cell .val { font-size: 1.3rem; font-weight: 700; color: #111; margin-top: 2px; }
+
+    .hint { font-size: 0.76rem; color: #888; margin-top: 8px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <a class="back" href="index.html">&#8592; Home</a>
+  <h1>Multicast Client</h1>
+  <p>Send a UDP multicast request and collect every reply that comes back within a time window &mdash; e.g. discover all Jolokia agents running across a fleet of servers.</p>
+</header>
+
+<div class="tabs">
+  <button class="tab-btn active" id="tabJolokia" onclick="switchTab('jolokia')">Jolokia Discovery</button>
+  <button class="tab-btn" id="tabGeneric" onclick="switchTab('generic')">Generic Multicast</button>
+</div>
+
+<!-- ===== Jolokia preset ===== -->
+<div class="card" id="jolokiaPanel">
+  <div class="card-title">Jolokia Agent Discovery</div>
+  <div class="input-row">
+    <div class="field">
+      <label>Multicast Group</label>
+      <input type="text" id="jGroup" value="239.192.48.84">
+    </div>
+    <div class="field">
+      <label>Port</label>
+      <input type="number" id="jPort" value="24884" min="1" max="65535">
+    </div>
+    <div class="field">
+      <label>Wait (ms)</label>
+      <input type="number" id="jWait" value="3000" min="200" max="30000" step="500">
+    </div>
+    <div class="field">
+      <label>TTL</label>
+      <input type="number" id="jTtl" value="8" min="1" max="64">
+    </div>
+    <div class="field">
+      <label>Interface (optional)</label>
+      <select id="jIface"><option value="">Default route</option></select>
+    </div>
+    <div class="field" style="justify-content:flex-end">
+      <div style="display:flex;gap:8px">
+        <button id="jScanBtn" onclick="startScan('jolokia')">Discover</button>
+        <button id="jStopBtn" class="danger" onclick="stopScan()" style="display:none">Stop</button>
+      </div>
+    </div>
+  </div>
+  <p class="hint">Sends <code>{"type":"query"}</code> to the standard Jolokia discovery multicast address and collects every agent's JSON reply (url, agent_id, agent_version, server info, etc.).</p>
+  <div id="jListening" class="listening" style="display:none"><span class="dot"></span> Listening for replies&hellip;</div>
+  <div id="jStatusMsg" class="status-msg"></div>
+</div>
+
+<!-- ===== Generic multicast ===== -->
+<div class="card" id="genericPanel" style="display:none">
+  <div class="card-title">Generic Multicast Request</div>
+  <div class="input-row">
+    <div class="field">
+      <label>Multicast Group</label>
+      <input type="text" id="gGroup" placeholder="239.255.255.250" value="239.255.255.250">
+    </div>
+    <div class="field">
+      <label>Port</label>
+      <input type="number" id="gPort" value="1900" min="1" max="65535">
+    </div>
+    <div class="field">
+      <label>Wait (ms)</label>
+      <input type="number" id="gWait" value="3000" min="200" max="30000" step="500">
+    </div>
+    <div class="field">
+      <label>TTL</label>
+      <input type="number" id="gTtl" value="1" min="1" max="64">
+    </div>
+    <div class="field">
+      <label>Interface (optional)</label>
+      <select id="gIface"><option value="">Default route</option></select>
+    </div>
+  </div>
+  <div class="field" style="margin-top:10px">
+    <label>Message to send</label>
+    <textarea id="gMessage" placeholder="Raw payload sent as the multicast datagram body"></textarea>
+  </div>
+  <div style="margin-top:12px;display:flex;gap:8px">
+    <button id="gScanBtn" onclick="startScan('generic')">Send &amp; Listen</button>
+    <button id="gStopBtn" class="danger" onclick="stopScan()" style="display:none">Stop</button>
+  </div>
+  <div id="gListening" class="listening" style="display:none"><span class="dot"></span> Listening for replies&hellip;</div>
+  <div id="gStatusMsg" class="status-msg"></div>
+</div>
+
+<!-- ===== Results ===== -->
+<div class="card" id="resultsCard" style="display:none">
+  <div class="card-title">Responses</div>
+  <div class="toolbar">
+    <input type="text" id="filterInput" placeholder="Filter by host, payload…" oninput="filterRows()">
+    <button class="secondary" style="padding:6px 14px" onclick="exportCsv()">Export CSV</button>
+    <span class="result-count" id="resultCount"></span>
+  </div>
+  <div class="tbl-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Host</th>
+          <th>Source Port</th>
+          <th>Received (ms)</th>
+          <th id="payloadHeader">Payload</th>
+        </tr>
+      </thead>
+      <tbody id="resultBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ===== Summary ===== -->
+<div class="card" id="summaryCard" style="display:none">
+  <div class="card-title">Scan Summary</div>
+  <div class="summary-grid">
+    <div class="summary-cell"><div class="lbl">Responses</div><div class="val" id="sumResponses" style="color:#0a5c36">—</div></div>
+    <div class="summary-cell"><div class="lbl">Duration</div><div class="val" id="sumDuration">—</div></div>
+    <div class="summary-cell"><div class="lbl">Group</div><div class="val" id="sumGroup" style="font-size:1rem">—</div></div>
+  </div>
+</div>
+
+<script>
+  let evtSource   = null;
+  let allRows     = [];
+  let currentMode = 'jolokia';
+
+  // =====================================================================
+  // Tabs
+  // =====================================================================
+
+  function switchTab(mode) {
+    currentMode = mode;
+    document.getElementById('tabJolokia').classList.toggle('active', mode === 'jolokia');
+    document.getElementById('tabGeneric').classList.toggle('active', mode === 'generic');
+    document.getElementById('jolokiaPanel').style.display = mode === 'jolokia' ? '' : 'none';
+    document.getElementById('genericPanel').style.display = mode === 'generic' ? '' : 'none';
+    document.getElementById('payloadHeader').textContent = mode === 'jolokia' ? 'Parsed / Payload' : 'Payload';
+  }
+
+  // =====================================================================
+  // Interfaces
+  // =====================================================================
+
+  async function loadInterfaces() {
+    try {
+      const res = await fetch('/multicast/interfaces');
+      if (!res.ok) return;
+      const ifaces = await res.json();
+      ['jIface', 'gIface'].forEach(id => {
+        const sel = document.getElementById(id);
+        ifaces.forEach(ni => {
+          const opt = document.createElement('option');
+          opt.value = ni.name;
+          opt.textContent = ni.name + ' (' + ni.addresses.join(', ') + ')';
+          sel.appendChild(opt);
+        });
+      });
+    } catch (_) { /* interface listing is a convenience, not required */ }
+  }
+  loadInterfaces();
+
+  // =====================================================================
+  // Scan
+  // =====================================================================
+
+  function startScan(mode) {
+    let group, port, waitMs, ttl, iface, url, scanBtnId, stopBtnId, listeningId, statusId;
+
+    if (mode === 'jolokia') {
+      group = document.getElementById('jGroup').value.trim();
+      port  = parseInt(document.getElementById('jPort').value, 10);
+      waitMs = parseInt(document.getElementById('jWait').value, 10) || 3000;
+      ttl   = parseInt(document.getElementById('jTtl').value, 10) || 8;
+      iface = document.getElementById('jIface').value;
+      scanBtnId = 'jScanBtn'; stopBtnId = 'jStopBtn'; listeningId = 'jListening'; statusId = 'jStatusMsg';
+
+      url = '/multicast/jolokia?group=' + encodeURIComponent(group)
+          + '&port=' + port + '&waitMs=' + waitMs + '&ttl=' + ttl
+          + (iface ? '&iface=' + encodeURIComponent(iface) : '');
+    } else {
+      group = document.getElementById('gGroup').value.trim();
+      port  = parseInt(document.getElementById('gPort').value, 10);
+      waitMs = parseInt(document.getElementById('gWait').value, 10) || 3000;
+      ttl   = parseInt(document.getElementById('gTtl').value, 10) || 1;
+      iface = document.getElementById('gIface').value;
+      const message = document.getElementById('gMessage').value;
+      scanBtnId = 'gScanBtn'; stopBtnId = 'gStopBtn'; listeningId = 'gListening'; statusId = 'gStatusMsg';
+
+      url = '/multicast/scan?group=' + encodeURIComponent(group)
+          + '&port=' + port + '&waitMs=' + waitMs + '&ttl=' + ttl
+          + '&message=' + encodeURIComponent(message)
+          + (iface ? '&iface=' + encodeURIComponent(iface) : '');
+    }
+
+    if (!group) { setStatus(statusId, 'Multicast group is required.', true); return; }
+    if (isNaN(port) || port < 1 || port > 65535) { setStatus(statusId, 'Port must be 1-65535.', true); return; }
+
+    stopScan();
+    allRows = [];
+    document.getElementById('resultBody').innerHTML = '';
+    document.getElementById('resultsCard').style.display = 'none';
+    document.getElementById('summaryCard').style.display = 'none';
+    setStatus(statusId, '');
+    updateResultCount();
+
+    document.getElementById(scanBtnId).disabled = true;
+    document.getElementById(stopBtnId).style.display = '';
+    document.getElementById(listeningId).style.display = '';
+    document.getElementById('sumGroup').textContent = group + ':' + port;
+
+    evtSource = new EventSource(url);
+
+    evtSource.addEventListener('response', e => {
+      const d = JSON.parse(e.data);
+      addRow(d);
+      document.getElementById('resultsCard').style.display = '';
+    });
+
+    evtSource.addEventListener('done', e => {
+      const d = JSON.parse(e.data);
+      showSummary(d);
+      scanDone();
+    });
+
+    evtSource.addEventListener('error', e => {
+      try {
+        const d = JSON.parse(e.data);
+        setStatus(statusId, d.error || 'Unknown error', true);
+      } catch (_) {
+        if (evtSource.readyState === EventSource.CLOSED) {
+          setStatus(statusId, 'Connection closed.', false);
+        }
+      }
+      scanDone();
+    });
+
+    evtSource.onerror = () => {
+      if (evtSource && evtSource.readyState === EventSource.CLOSED) scanDone();
+    };
+  }
+
+  function stopScan() {
+    if (evtSource) { evtSource.close(); evtSource = null; }
+    ['jScanBtn', 'gScanBtn'].forEach(id => document.getElementById(id).disabled = false);
+    ['jStopBtn', 'gStopBtn'].forEach(id => document.getElementById(id).style.display = 'none');
+    ['jListening', 'gListening'].forEach(id => document.getElementById(id).style.display = 'none');
+  }
+
+  function scanDone() {
+    if (evtSource) { evtSource.close(); evtSource = null; }
+    ['jScanBtn', 'gScanBtn'].forEach(id => document.getElementById(id).disabled = false);
+    ['jStopBtn', 'gStopBtn'].forEach(id => document.getElementById(id).style.display = 'none');
+    ['jListening', 'gListening'].forEach(id => document.getElementById(id).style.display = 'none');
+  }
+
+  // =====================================================================
+  // Table
+  // =====================================================================
+
+  function addRow(d) {
+    allRows.push(d);
+    const tbody = document.getElementById('resultBody');
+    tbody.appendChild(buildRow(d));
+    updateResultCount();
+  }
+
+  function buildRow(d) {
+    const tr = document.createElement('tr');
+
+    let payloadHtml;
+    if (d.parsed) {
+      const rows = Object.keys(d.parsed).map(k =>
+        `<div class="parsed-kv"><span class="k">${escHtml(k)}:</span> <span class="v">${escHtml(String(d.parsed[k]))}</span></div>`
+      ).join('');
+      payloadHtml = `<div class="parsed-grid">${rows}</div>`;
+    } else {
+      payloadHtml = `<span class="payload-cell">${escHtml(d.payload || '')}</span>`;
+    }
+
+    tr.innerHTML = `
+      <td><span class="host-cell">${escHtml(d.host)}</span></td>
+      <td>${d.port}</td>
+      <td>${d.receivedAtMs} ms</td>
+      <td>${payloadHtml}</td>`;
+    return tr;
+  }
+
+  function filterRows() {
+    const q = document.getElementById('filterInput').value.toLowerCase();
+    const tbody = document.getElementById('resultBody');
+    tbody.innerHTML = '';
+    const filtered = q
+      ? allRows.filter(r =>
+          (r.host || '').toLowerCase().includes(q) ||
+          (r.payload || '').toLowerCase().includes(q))
+      : allRows;
+    filtered.forEach(r => tbody.appendChild(buildRow(r)));
+    updateResultCount(filtered.length);
+  }
+
+  function updateResultCount(shown) {
+    const n = shown !== undefined ? shown : allRows.length;
+    const el = document.getElementById('resultCount');
+    el.textContent = n === allRows.length
+        ? allRows.length + ' response' + (allRows.length !== 1 ? 's' : '')
+        : n + ' of ' + allRows.length + ' shown';
+  }
+
+  // =====================================================================
+  // Summary
+  // =====================================================================
+
+  function showSummary(d) {
+    document.getElementById('sumResponses').textContent = d.responses;
+    document.getElementById('sumDuration').textContent  = formatDuration(d.durationMs);
+    document.getElementById('summaryCard').style.display = '';
+  }
+
+  function formatDuration(ms) {
+    if (ms < 1000) return ms + ' ms';
+    if (ms < 60000) return (ms / 1000).toFixed(1) + ' s';
+    return Math.floor(ms / 60000) + 'm ' + Math.round((ms % 60000) / 1000) + 's';
+  }
+
+  // =====================================================================
+  // Export
+  // =====================================================================
+
+  function exportCsv() {
+    const lines = ['Host,Port,ReceivedMs,Payload'];
+    allRows.forEach(r => {
+      lines.push([csvCell(r.host), r.port, r.receivedAtMs, csvCell(r.payload || '')].join(','));
+    });
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const a    = document.createElement('a');
+    a.href     = URL.createObjectURL(blob);
+    a.download = 'multicast-' + currentMode + '-' + new Date().toISOString().slice(0,10) + '.csv';
+    a.click();
+  }
+
+  function csvCell(s) {
+    return '"' + String(s).replace(/"/g, '""') + '"';
+  }
+
+  // =====================================================================
+  // Utilities
+  // =====================================================================
+
+  function setStatus(id, msg, isErr) {
+    const el = document.getElementById(id);
+    el.textContent = msg || '';
+    el.className   = 'status-msg' + (isErr ? ' status-err' : '');
+  }
+
+  function escHtml(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+</script>
+</body>
+</html>

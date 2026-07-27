@@ -1,0 +1,991 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AutoSys Dashboard</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', sans-serif;
+    background: #f4f6f9;
+    color: #222;
+    padding: 28px 28px 48px;
+  }
+  header { margin-bottom: 22px; }
+  header h1 { font-size: 1.3rem; font-weight: 700; }
+  header p  { font-size: 0.82rem; color: #666; margin-top: 4px; }
+  .back     { font-size: 0.8rem; color: #0078d4; text-decoration: none; }
+  .back:hover { text-decoration: underline; }
+
+  .card {
+    background: #fff;
+    border: 1px solid #dde1e7;
+    border-radius: 8px;
+    padding: 20px 22px;
+    margin-bottom: 20px;
+  }
+  .card-title { font-size: 0.95rem; font-weight: 700; margin-bottom: 12px; color: #111; }
+  .card-desc  { font-size: 0.8rem; color: #666; margin: -6px 0 14px; }
+
+  .input-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 10px; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label {
+    font-size: 0.72rem; font-weight: 700; color: #666;
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  input[type=text], input[type=password], select {
+    padding: 7px 10px; font-size: 0.85rem; border: 1px solid #ccc; border-radius: 4px; min-width: 180px;
+    font-family: inherit; background: #fff;
+  }
+  input:focus, select:focus { outline: none; border-color: #0078d4; }
+
+  button {
+    padding: 7px 18px; font-size: 0.85rem; font-weight: 600; border: none;
+    border-radius: 4px; cursor: pointer; background: #0078d4; color: #fff; white-space: nowrap;
+  }
+  button:hover:not(:disabled) { background: #005fa3; }
+  button:disabled { background: #9ec5e8; cursor: not-allowed; }
+  button.secondary { background: #6c757d; }
+  button.secondary:hover { background: #545b62; }
+  button.tiny { padding: 3px 10px; font-size: 0.72rem; }
+
+  .status-msg { font-size: 0.82rem; margin-top: 8px; }
+  .status-ok  { color: #0a5c36; }
+  .status-err { color: #842029; }
+
+  .mono { font-family: Consolas, monospace; font-size: 0.8rem; }
+
+  details.mapping summary { cursor: pointer; font-size: 0.82rem; font-weight: 600; color: #0078d4; margin-bottom: 10px; }
+  .mapping-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; margin-top: 10px; }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid #dde1e7; }
+  .tab-btn {
+    background: none; border: none; padding: 9px 16px; font-size: 0.85rem; font-weight: 600;
+    color: #666; border-bottom: 2px solid transparent; border-radius: 0;
+  }
+  .tab-btn.active { color: #0078d4; border-bottom-color: #0078d4; }
+  .tab-btn:hover:not(.active) { background: #eef1f5; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* Stat tiles */
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .stat-tile {
+    background: #fff; border: 1px solid #dde1e7; border-radius: 8px; padding: 14px 16px;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .stat-tile .val { font-size: 1.5rem; font-weight: 700; }
+  .stat-tile .lbl { font-size: 0.72rem; color: #666; text-transform: uppercase; letter-spacing: .03em; }
+  .stat-tile.success .val { color: #0a5c36; }
+  .stat-tile.failure .val { color: #842029; }
+  .stat-tile.running .val { color: #0078d4; }
+  .stat-tile.overdue .val { color: #b8860b; }
+  .stat-tile.onice .val { color: #6c757d; }
+
+  /* Table */
+  .tbl-wrap { overflow-x: auto; max-height: 560px; overflow-y: auto; border: 1px solid #dde1e7; border-radius: 6px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+  th {
+    background: #f0f2f5; border-bottom: 1px solid #dde1e7; padding: 7px 12px; text-align: left;
+    font-weight: 600; white-space: nowrap; position: sticky; top: 0; cursor: pointer; user-select: none;
+  }
+  th:hover { background: #e4e8ee; }
+  td { border-bottom: 1px solid #eef0f3; padding: 6px 12px; vertical-align: middle; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  tr:nth-child(even) td { background: #fafbfc; }
+  tr.job-row:hover td { background: #eef6ff; cursor: pointer; }
+
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 0.72rem; font-weight: 700; white-space: nowrap; }
+  .badge-SUCCESS  { background: #d1e7dd; color: #0a5c36; }
+  .badge-FAILURE  { background: #f8d7da; color: #842029; }
+  .badge-RUNNING  { background: #cfe2ff; color: #084298; }
+  .badge-TERMINATED { background: #e2e3e5; color: #41464b; }
+  .badge-ONHOLD, .badge-ON_HOLD   { background: #fff3cd; color: #664d03; }
+  .badge-ON_ICE   { background: #e0cffc; color: #4b2e83; }
+  .badge-QUEUED   { background: #d3f9d8; color: #2b8a3e; }
+  .badge-INACTIVE { background: #f1f1f1; color: #888; }
+  .badge-OTHER    { background: #eee; color: #555; }
+  .badge-overdue::after { content: ' \26A0'; }
+
+  .empty-msg { font-size: 0.82rem; color: #888; padding: 14px; text-align: center; }
+
+  /* Graph */
+  .graph-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+  .graph-wrap {
+    border: 1px solid #dde1e7; border-radius: 6px; background: #fff;
+    height: 620px; overflow: hidden; position: relative; cursor: grab;
+  }
+  .graph-wrap.dragging { cursor: grabbing; }
+  .graph-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 0.75rem; color: #555; margin-bottom: 8px; }
+  .legend-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+
+  .node-rect { stroke: #999; stroke-width: 1; }
+  .node-rect.sel { stroke: #0078d4; stroke-width: 2.5; }
+  .node-rect.pred { stroke: #b8860b; stroke-width: 2; }
+  .node-rect.succ { stroke: #0a5c36; stroke-width: 2; }
+  .node-rect.dim { opacity: 0.25; }
+  .node-label { font-size: 10px; fill: #222; pointer-events: none; }
+  .node-label.dim { opacity: 0.25; }
+  .edge-path { fill: none; stroke: #bbb; stroke-width: 1.2; }
+  .edge-path.hl { stroke: #0078d4; stroke-width: 2; }
+  .edge-path.dim { opacity: 0.15; }
+  .stub-node { fill: #fafafa; stroke-dasharray: 3,2; }
+
+  .graph-empty { display:flex; align-items:center; justify-content:center; height:100%; color:#888; font-size:0.85rem; text-align:center; padding: 20px; }
+
+  /* Detail panel (slide-over) */
+  .detail-overlay {
+    position: fixed; top: 0; right: 0; bottom: 0; width: 420px; max-width: 92vw;
+    background: #fff; box-shadow: -4px 0 18px rgba(0,0,0,0.15); z-index: 50;
+    transform: translateX(100%); transition: transform 0.18s ease; overflow-y: auto;
+    padding: 20px;
+  }
+  .detail-overlay.show { transform: translateX(0); }
+  .detail-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.15); z-index: 49; display: none;
+  }
+  .detail-backdrop.show { display: block; }
+  .detail-close { float: right; background: none; color: #666; padding: 2px 8px; }
+  .detail-close:hover { background: #eee; color: #222; }
+  .detail-title { font-size: 1.05rem; font-weight: 700; margin-bottom: 4px; word-break: break-all; }
+  .detail-section { margin-top: 16px; }
+  .detail-section h4 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: .04em; color: #888; margin-bottom: 6px; }
+  .kv-row { display: flex; justify-content: space-between; gap: 10px; font-size: 0.82rem; padding: 3px 0; border-bottom: 1px solid #f2f2f2; }
+  .kv-row .k { color: #666; }
+  .kv-row .v { text-align: right; word-break: break-all; }
+  .chip-list { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { background: #eef1f5; border: 1px solid #dde1e7; border-radius: 12px; padding: 3px 10px; font-size: 0.75rem; cursor: pointer; }
+  .chip:hover { background: #e0e8f0; }
+  .chip.stub { background: #fafafa; border-style: dashed; cursor: default; }
+  pre.raw-json { background: #1e1e1e; color: #d4d4d4; font-size: 0.72rem; padding: 10px; border-radius: 6px; overflow-x: auto; max-height: 260px; }
+</style>
+</head>
+<body>
+
+<header>
+  <a class="back" href="index.html">&#8592; Home</a>
+  <h1>AutoSys Dashboard</h1>
+  <p>Point at a jobs REST endpoint to see status, runtimes, and dependency chains at a glance.</p>
+</header>
+
+<!-- ===== Connection ===== -->
+<div class="card">
+  <div class="card-title">Connect</div>
+  <div class="input-row">
+    <div class="field" style="flex:2">
+      <label>Jobs API URL</label>
+      <input type="text" id="apiUrl" placeholder="http://autosys-host:port/api/jobs" style="width:100%">
+    </div>
+    <div class="field">
+      <label>Auth</label>
+      <select id="authType" onchange="renderAuthFields()">
+        <option value="none">None</option>
+        <option value="basic">Basic (user/pass)</option>
+        <option value="token">Bearer token</option>
+      </select>
+    </div>
+    <div id="authFieldsBasic" class="input-row" style="display:none;margin:0">
+      <div class="field"><label>Username</label><input type="text" id="authUser"></div>
+      <div class="field"><label>Password</label><input type="password" id="authPass"></div>
+    </div>
+    <div id="authFieldsToken" class="input-row" style="display:none;margin:0">
+      <div class="field" style="flex:1"><label>Token</label><input type="text" id="authToken" style="width:100%"></div>
+    </div>
+    <div class="field">
+      <label>&nbsp;</label>
+      <button id="loadBtn" onclick="loadJobs()">Load Jobs</button>
+    </div>
+  </div>
+  <div id="connStatus" class="status-msg"></div>
+
+  <details class="mapping" id="mappingDetails">
+    <summary>Field mapping (auto-detected — adjust if a column looks wrong)</summary>
+    <div class="card-desc" style="margin-top:8px">
+      The dashboard guesses which JSON field holds each concept below from the first jobs returned. Override any that guessed wrong.
+    </div>
+    <div class="mapping-grid" id="mappingGrid"></div>
+  </details>
+</div>
+
+<!-- ===== Stat tiles ===== -->
+<div id="statGrid" class="stat-grid" style="display:none"></div>
+
+<!-- ===== Tabs ===== -->
+<div id="dataArea" style="display:none">
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="overview" onclick="switchTab('overview')">Job List</button>
+    <button class="tab-btn" data-tab="graph" onclick="switchTab('graph')">Dependency Graph</button>
+  </div>
+
+  <div class="tab-panel active" id="tab-overview">
+    <div class="card">
+      <div class="input-row">
+        <div class="field" style="flex:1">
+          <label>Search</label>
+          <input type="text" id="jobFilter" placeholder="Filter by name, machine, box, status, command..." style="width:100%" oninput="renderTable()">
+        </div>
+        <div class="field">
+          <label>Status</label>
+          <select id="statusFilter" onchange="renderTable()"><option value="">All</option></select>
+        </div>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr id="tableHead"></tr>
+          </thead>
+          <tbody id="jobBody"></tbody>
+        </table>
+      </div>
+      <div id="tableEmpty" class="empty-msg" style="display:none">No jobs match your filter.</div>
+      <div id="tableCount" class="status-msg"></div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="tab-graph">
+    <div class="card">
+      <div class="graph-legend">
+        <span><span class="legend-swatch" style="background:#a8d5bd"></span>Success</span>
+        <span><span class="legend-swatch" style="background:#f5b7bb"></span>Failure</span>
+        <span><span class="legend-swatch" style="background:#a9c9f5"></span>Running</span>
+        <span><span class="legend-swatch" style="background:#e5c07b"></span>On Ice/Hold</span>
+        <span><span class="legend-swatch" style="background:#d6d8db"></span>Other/Inactive</span>
+        <span><span class="legend-swatch" style="background:#fafafa;border:1px dashed #999"></span>External (not in job list)</span>
+      </div>
+      <div class="graph-toolbar">
+        <div class="field" style="flex:1">
+          <label>Filter graph (name/machine/box/status)</label>
+          <input type="text" id="graphFilter" placeholder="Leave blank to show everything (capped)" style="width:100%" oninput="renderGraph()">
+        </div>
+        <div class="field" style="flex-direction:row;align-items:center;gap:6px">
+          <input type="checkbox" id="graphShowAll" onchange="renderGraph()">
+          <label style="text-transform:none;font-weight:600;font-size:0.8rem" for="graphShowAll">Show full graph (may be slow for 1000s of jobs)</label>
+        </div>
+        <div class="field">
+          <label>&nbsp;</label>
+          <button class="secondary" onclick="resetGraphView()">Reset View</button>
+        </div>
+      </div>
+      <div id="graphWrap" class="graph-wrap">
+        <svg id="graphSvg" width="100%" height="100%"></svg>
+        <div id="graphEmpty" class="graph-empty" style="display:none"></div>
+      </div>
+      <div id="graphNote" class="status-msg"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Detail slide-over ===== -->
+<div class="detail-backdrop" id="detailBackdrop" onclick="closeDetail()"></div>
+<div class="detail-overlay" id="detailOverlay">
+  <button class="detail-close" onclick="closeDetail()">&times; Close</button>
+  <div class="detail-title" id="detailTitle"></div>
+  <div id="detailBadge"></div>
+  <div class="detail-section">
+    <h4>Details</h4>
+    <div id="detailKv"></div>
+  </div>
+  <div class="detail-section">
+    <h4>Depends on (predecessors)</h4>
+    <div class="chip-list" id="detailPreds"></div>
+  </div>
+  <div class="detail-section">
+    <h4>Depended on by (successors)</h4>
+    <div class="chip-list" id="detailSuccs"></div>
+  </div>
+  <div class="detail-section">
+    <h4>Raw job JSON</h4>
+    <pre class="raw-json" id="detailRaw"></pre>
+  </div>
+</div>
+
+<script>
+  // =====================================================================
+  // State
+  // =====================================================================
+  let rawJobs = [];          // extracted array of job objects
+  let sampleKeys = [];       // union of keys sampled from rawJobs
+  let fieldMap = {};         // concept -> actual json key (or '' if none)
+  let normJobs = [];         // normalized view: { raw, id, name, status, statusRaw, machine, box, lastStart, lastEnd, maxRunMinutes, durationMinutes, overdue, command, depNames }
+  let jobById = {};          // name -> normJob
+  let predMap = {};          // name -> [predecessor names]
+  let succMap = {};          // name -> [successor names]
+  let sortState = { key: 'name', dir: 1 };
+  let selectedJob = null;
+
+  const CONCEPTS = [
+    { key: 'name',       label: 'Job Name',    aliases: ['job_name','jobname','name','job','jobid','job_id'] },
+    { key: 'status',     label: 'Status',      aliases: ['status','currentstatus','current_status','state','job_status'] },
+    { key: 'machine',    label: 'Machine',     aliases: ['machine','host','server','node','run_machine'] },
+    { key: 'box',        label: 'Box/Group',   aliases: ['box_name','boxname','box','parent','parent_box'] },
+    { key: 'lastStart',  label: 'Last Start',  aliases: ['last_start','laststart','start_time','starttime','last_start_time'] },
+    { key: 'lastEnd',    label: 'Last End',    aliases: ['last_end','lastend','end_time','endtime','last_end_time','finish_time'] },
+    { key: 'maxRun',     label: 'Max Runtime', aliases: ['max_run_alarm','maxrunalarm','term_run_time','max_run_time','maxruntime','sla_minutes'] },
+    { key: 'dependency', label: 'Dependencies',aliases: ['condition','dependency','dependencies','predecessor','predecessors'] },
+    { key: 'command',    label: 'Command',     aliases: ['command','cmd','job_command','insert_job'] },
+    { key: 'jobType',    label: 'Job Type',    aliases: ['job_type','jobtype','type'] },
+    { key: 'description',label: 'Description', aliases: ['description','desc','comment','comments'] },
+  ];
+
+  document.addEventListener('DOMContentLoaded', () => {
+    const savedUrl = localStorage.getItem('autosys.lastUrl');
+    if (savedUrl) document.getElementById('apiUrl').value = savedUrl;
+    renderAuthFields();
+  });
+
+  function renderAuthFields() {
+    const t = document.getElementById('authType').value;
+    document.getElementById('authFieldsBasic').style.display = t === 'basic' ? '' : 'none';
+    document.getElementById('authFieldsToken').style.display = t === 'token' ? '' : 'none';
+  }
+
+  // =====================================================================
+  // Load
+  // =====================================================================
+
+  async function loadJobs() {
+    const url = document.getElementById('apiUrl').value.trim();
+    const status = document.getElementById('connStatus');
+    if (!url) { status.className = 'status-msg status-err'; status.textContent = 'Enter a URL.'; return; }
+
+    localStorage.setItem('autosys.lastUrl', url);
+
+    const btn = document.getElementById('loadBtn');
+    btn.disabled = true;
+    status.className = 'status-msg'; status.textContent = 'Loading…';
+
+    const body = { url };
+    const authType = document.getElementById('authType').value;
+    if (authType === 'basic') {
+      body.username = document.getElementById('authUser').value;
+      body.password = document.getElementById('authPass').value;
+    } else if (authType === 'token') {
+      body.token = document.getElementById('authToken').value;
+    }
+
+    try {
+      const res = await fetch('/autosys/fetch', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      });
+      const result = await res.json();
+      if (!result.ok) {
+        status.className = 'status-msg status-err';
+        status.textContent = 'Load failed: ' + (result.error || 'unknown error') + (result.rawPreview ? ' — ' + result.rawPreview : '');
+        return;
+      }
+      const extracted = extractJobsArray(result.data);
+      if (!extracted.length) {
+        status.className = 'status-msg status-err';
+        status.textContent = 'Could not find a list of jobs in the response. Check the URL returns a JSON array (or an object containing one).';
+        return;
+      }
+      rawJobs = extracted;
+      sampleKeys = collectKeys(rawJobs);
+      autoDetectMapping(url);
+      renderMappingGrid();
+      applyMappingAndRender();
+      status.className = 'status-msg status-ok';
+      status.textContent = `Loaded ${rawJobs.length} job(s) in ${result.latencyMs}ms.`;
+    } catch (e) {
+      status.className = 'status-msg status-err';
+      status.textContent = 'Load failed: ' + e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function extractJobsArray(data) {
+    if (Array.isArray(data)) return data.filter(x => x && typeof x === 'object');
+    if (data && typeof data === 'object') {
+      const preferredKeys = ['jobs','data','items','results','records','value','content','autoJobs','list'];
+      for (const k of preferredKeys) {
+        if (Array.isArray(data[k])) return data[k].filter(x => x && typeof x === 'object');
+      }
+      // fall back: largest array-of-objects property anywhere at top level
+      let best = null;
+      for (const k of Object.keys(data)) {
+        const v = data[k];
+        if (Array.isArray(v) && v.length && typeof v[0] === 'object') {
+          if (!best || v.length > best.length) best = v;
+        }
+      }
+      if (best) return best;
+    }
+    return [];
+  }
+
+  function collectKeys(jobs) {
+    const keys = new Set();
+    const n = Math.min(jobs.length, 50);
+    for (let i = 0; i < n; i++) {
+      if (jobs[i] && typeof jobs[i] === 'object') Object.keys(jobs[i]).forEach(k => keys.add(k));
+    }
+    return [...keys];
+  }
+
+  // =====================================================================
+  // Field mapping (auto-detect + manual override, persisted per URL)
+  // =====================================================================
+
+  function autoDetectMapping(url) {
+    const saved = JSON.parse(localStorage.getItem('autosys.mapping:' + url) || 'null');
+    const used = new Set();
+    fieldMap = {};
+    for (const c of CONCEPTS) {
+      if (saved && saved[c.key] !== undefined && (saved[c.key] === '' || sampleKeys.includes(saved[c.key]))) {
+        fieldMap[c.key] = saved[c.key];
+        if (saved[c.key]) used.add(saved[c.key]);
+        continue;
+      }
+      fieldMap[c.key] = detectKey(c.aliases, used);
+      if (fieldMap[c.key]) used.add(fieldMap[c.key]);
+    }
+  }
+
+  function detectKey(aliases, used) {
+    let best = null, bestScore = 0;
+    for (const key of sampleKeys) {
+      if (used.has(key)) continue;
+      const lk = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+      let score = 0;
+      for (const a of aliases) {
+        const la = a.toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (lk === la) { score = Math.max(score, 100); }
+        else if (lk.includes(la) || la.includes(lk)) { score = Math.max(score, 50 - Math.abs(lk.length - la.length)); }
+      }
+      if (score > bestScore) { bestScore = score; best = key; }
+    }
+    return bestScore > 0 ? best : '';
+  }
+
+  function renderMappingGrid() {
+    const grid = document.getElementById('mappingGrid');
+    grid.innerHTML = '';
+    for (const c of CONCEPTS) {
+      const wrap = document.createElement('div');
+      wrap.className = 'field';
+      const label = document.createElement('label');
+      label.textContent = c.label;
+      const select = document.createElement('select');
+      select.id = 'map_' + c.key;
+      const noneOpt = document.createElement('option');
+      noneOpt.value = ''; noneOpt.textContent = '(none)';
+      select.appendChild(noneOpt);
+      for (const k of sampleKeys) {
+        const opt = document.createElement('option');
+        opt.value = k; opt.textContent = k;
+        if (fieldMap[c.key] === k) opt.selected = true;
+        select.appendChild(opt);
+      }
+      select.onchange = () => { fieldMap[c.key] = select.value; saveMapping(); applyMappingAndRender(); };
+      wrap.appendChild(label); wrap.appendChild(select);
+      grid.appendChild(wrap);
+    }
+  }
+
+  function saveMapping() {
+    const url = document.getElementById('apiUrl').value.trim();
+    localStorage.setItem('autosys.mapping:' + url, JSON.stringify(fieldMap));
+  }
+
+  // =====================================================================
+  // Normalize
+  // =====================================================================
+
+  function get(obj, key) {
+    if (!key) return undefined;
+    return obj ? obj[key] : undefined;
+  }
+
+  function normalizeStatus(raw) {
+    if (raw === undefined || raw === null || raw === '') return 'OTHER';
+    const s = String(raw).toUpperCase().replace(/[\s-]/g, '_');
+    if (s.includes('SUCCESS')) return 'SUCCESS';
+    if (s.includes('FAIL')) return 'FAILURE';
+    if (s.includes('RUNNING') || s === 'ACTIVATED' || s.includes('STARTING')) return 'RUNNING';
+    if (s.includes('TERMINAT')) return 'TERMINATED';
+    if (s.includes('ON_ICE') || s.includes('ONICE')) return 'ON_ICE';
+    if (s.includes('ON_HOLD') || s.includes('ONHOLD')) return 'ON_HOLD';
+    if (s.includes('QUEUE')) return 'QUEUED';
+    if (s.includes('INACTIVE')) return 'INACTIVE';
+    return 'OTHER';
+  }
+
+  function parseWhen(v) {
+    if (v === undefined || v === null || v === '') return null;
+    if (typeof v === 'number') {
+      // heuristic: seconds vs ms epoch
+      const ms = v > 1e12 ? v : v * 1000;
+      const d = new Date(ms);
+      return isNaN(d.getTime()) ? null : d;
+    }
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  function parseMinutes(v) {
+    if (v === undefined || v === null || v === '') return null;
+    const n = parseFloat(String(v).replace(/[^0-9.]/g, ''));
+    return isNaN(n) ? null : n;
+  }
+
+  function parseDependencies(v) {
+    if (v === undefined || v === null || v === '') return [];
+    if (Array.isArray(v)) return v.map(x => String(x).trim()).filter(Boolean);
+    const s = String(v);
+    const names = [];
+    const parenRe = /[a-zA-Z]{0,3}\(\s*([^()\s,][^()]*?)\s*\)/g;
+    let m;
+    while ((m = parenRe.exec(s)) !== null) names.push(m[1].trim());
+    if (names.length) return [...new Set(names)];
+    // fallback: split on AutoSys boolean operators / commas
+    return [...new Set(s.split(/&|\||,|\band\b|\bor\b/i).map(x => x.trim()).filter(x => x && x.length < 80))];
+  }
+
+  function applyMappingAndRender() {
+    normJobs = rawJobs.map((job, idx) => {
+      const name = String(get(job, fieldMap.name) ?? ('job_' + idx));
+      const statusRaw = get(job, fieldMap.status);
+      const lastStart = parseWhen(get(job, fieldMap.lastStart));
+      const lastEnd = parseWhen(get(job, fieldMap.lastEnd));
+      const maxRunMinutes = parseMinutes(get(job, fieldMap.maxRun));
+      let durationMinutes = null;
+      if (lastStart) {
+        const endRef = lastEnd || (normalizeStatus(statusRaw) === 'RUNNING' ? new Date() : null);
+        if (endRef) durationMinutes = (endRef - lastStart) / 60000;
+      }
+      const status = normalizeStatus(statusRaw);
+      const overdue = status === 'RUNNING' && maxRunMinutes != null && durationMinutes != null && durationMinutes > maxRunMinutes;
+      return {
+        raw: job,
+        name,
+        status,
+        statusRaw: statusRaw ?? '(unknown)',
+        machine: get(job, fieldMap.machine) ?? '',
+        box: get(job, fieldMap.box) ?? '',
+        lastStart, lastEnd, maxRunMinutes, durationMinutes, overdue,
+        command: get(job, fieldMap.command) ?? '',
+        jobType: get(job, fieldMap.jobType) ?? '',
+        description: get(job, fieldMap.description) ?? '',
+        depNames: parseDependencies(get(job, fieldMap.dependency)),
+      };
+    });
+
+    jobById = {};
+    normJobs.forEach(j => { jobById[j.name] = j; });
+
+    // dependency edges: predecessor -> job
+    predMap = {}; succMap = {};
+    normJobs.forEach(j => {
+      predMap[j.name] = predMap[j.name] || [];
+      j.depNames.forEach(dep => {
+        predMap[j.name].push(dep);
+        succMap[dep] = succMap[dep] || [];
+        succMap[dep].push(j.name);
+      });
+    });
+
+    document.getElementById('statGrid').style.display = '';
+    document.getElementById('dataArea').style.display = '';
+    populateStatusFilter();
+    renderStats();
+    renderTable();
+    renderGraph();
+  }
+
+  // =====================================================================
+  // Tabs
+  // =====================================================================
+
+  function switchTab(tab) {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    document.getElementById('tab-overview').classList.toggle('active', tab === 'overview');
+    document.getElementById('tab-graph').classList.toggle('active', tab === 'graph');
+    if (tab === 'graph') renderGraph();
+  }
+
+  // =====================================================================
+  // Stat tiles
+  // =====================================================================
+
+  function renderStats() {
+    const counts = { SUCCESS:0, FAILURE:0, RUNNING:0, TERMINATED:0, ON_ICE:0, ON_HOLD:0, QUEUED:0, INACTIVE:0, OTHER:0 };
+    let overdue = 0;
+    normJobs.forEach(j => { counts[j.status] = (counts[j.status]||0)+1; if (j.overdue) overdue++; });
+
+    const tiles = [
+      { lbl: 'Total Jobs', val: normJobs.length, cls: '' },
+      { lbl: 'Running', val: counts.RUNNING, cls: 'running' },
+      { lbl: 'Success', val: counts.SUCCESS, cls: 'success' },
+      { lbl: 'Failure', val: counts.FAILURE, cls: 'failure' },
+      { lbl: 'Overdue (past max runtime)', val: overdue, cls: 'overdue' },
+      { lbl: 'On Ice / Hold', val: counts.ON_ICE + counts.ON_HOLD, cls: 'onice' },
+      { lbl: 'Queued', val: counts.QUEUED, cls: '' },
+      { lbl: 'Other/Inactive', val: counts.OTHER + counts.INACTIVE, cls: '' },
+    ];
+    const grid = document.getElementById('statGrid');
+    grid.innerHTML = tiles.map(t => `
+      <div class="stat-tile ${t.cls}">
+        <div class="val">${t.val}</div>
+        <div class="lbl">${t.lbl}</div>
+      </div>`).join('');
+  }
+
+  function populateStatusFilter() {
+    const sel = document.getElementById('statusFilter');
+    const cur = sel.value;
+    const statuses = [...new Set(normJobs.map(j => j.status))].sort();
+    sel.innerHTML = '<option value="">All</option>' + statuses.map(s => `<option value="${s}">${s}</option>`).join('');
+    sel.value = statuses.includes(cur) ? cur : '';
+  }
+
+  // =====================================================================
+  // Table
+  // =====================================================================
+
+  const COLUMNS = [
+    { key: 'status', label: 'Status' },
+    { key: 'name', label: 'Job Name' },
+    { key: 'machine', label: 'Machine' },
+    { key: 'box', label: 'Box' },
+    { key: 'lastStart', label: 'Last Start' },
+    { key: 'lastEnd', label: 'Last End' },
+    { key: 'durationMinutes', label: 'Duration (min)' },
+    { key: 'maxRunMinutes', label: 'Max Run (min)' },
+    { key: 'depNames', label: 'Depends On' },
+    { key: 'command', label: 'Command' },
+  ];
+
+  function buildTableHead() {
+    const tr = document.getElementById('tableHead');
+    tr.innerHTML = COLUMNS.map(c =>
+      `<th onclick="sortBy('${c.key}')">${c.label}${sortState.key === c.key ? (sortState.dir === 1 ? ' ▲' : ' ▼') : ''}</th>`
+    ).join('');
+  }
+
+  function sortBy(key) {
+    if (sortState.key === key) sortState.dir *= -1; else { sortState.key = key; sortState.dir = 1; }
+    renderTable();
+  }
+
+  function filteredJobs() {
+    const q = document.getElementById('jobFilter').value.trim().toLowerCase();
+    const statusF = document.getElementById('statusFilter').value;
+    return normJobs.filter(j => {
+      if (statusF && j.status !== statusF) return false;
+      if (!q) return true;
+      return [j.name, j.machine, j.box, j.statusRaw, j.command].some(v => String(v||'').toLowerCase().includes(q));
+    });
+  }
+
+  function sortJobs(jobs) {
+    const { key, dir } = sortState;
+    return [...jobs].sort((a, b) => {
+      let av = a[key], bv = b[key];
+      if (av instanceof Date) av = av.getTime(); if (bv instanceof Date) bv = bv.getTime();
+      if (Array.isArray(av)) av = av.length; if (Array.isArray(bv)) bv = bv.length;
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1; if (bv == null) return -1;
+      if (typeof av === 'string') return av.localeCompare(bv) * dir;
+      return (av - bv) * dir;
+    });
+  }
+
+  function renderTable() {
+    buildTableHead();
+    const list = sortJobs(filteredJobs());
+    const tbody = document.getElementById('jobBody');
+    document.getElementById('tableEmpty').style.display = list.length ? 'none' : '';
+    document.getElementById('tableCount').textContent = `Showing ${list.length} of ${normJobs.length} job(s).`;
+    tbody.innerHTML = list.map(j => `
+      <tr class="job-row" onclick="openDetail(${JSON.stringify(j.name).replace(/"/g, '&quot;')})">
+        <td><span class="badge badge-${j.status} ${j.overdue ? 'badge-overdue' : ''}">${escHtml(j.statusRaw)}</span></td>
+        <td class="mono" title="${escAttr(j.name)}">${escHtml(j.name)}</td>
+        <td title="${escAttr(j.machine)}">${escHtml(j.machine)}</td>
+        <td title="${escAttr(j.box)}">${escHtml(j.box)}</td>
+        <td>${fmtDate(j.lastStart)}</td>
+        <td>${fmtDate(j.lastEnd)}</td>
+        <td>${j.durationMinutes != null ? j.durationMinutes.toFixed(1) : ''}</td>
+        <td>${j.maxRunMinutes != null ? j.maxRunMinutes : ''}</td>
+        <td title="${escAttr(j.depNames.join(', '))}">${j.depNames.length ? j.depNames.length + ' job(s)' : ''}</td>
+        <td class="mono" title="${escAttr(j.command)}">${escHtml(j.command)}</td>
+      </tr>`).join('');
+  }
+
+  function fmtDate(d) {
+    if (!d) return '';
+    return d.toLocaleString();
+  }
+
+  // =====================================================================
+  // Dependency graph (layered SVG DAG, pan/zoom)
+  // =====================================================================
+
+  const GRAPH_NODE_CAP = 350;
+  let graphTransform = { x: 20, y: 20, scale: 1 };
+  let panState = null;
+
+  function renderGraph() {
+    const svg = document.getElementById('graphSvg');
+    const emptyEl = document.getElementById('graphEmpty');
+    const note = document.getElementById('graphNote');
+    svg.innerHTML = '';
+
+    if (!normJobs.length) { emptyEl.style.display = ''; emptyEl.textContent = 'Load jobs to see the dependency graph.'; return; }
+
+    const q = document.getElementById('graphFilter').value.trim().toLowerCase();
+    const showAll = document.getElementById('graphShowAll').checked;
+
+    let names;
+    if (q) {
+      const matched = normJobs.filter(j => [j.name, j.machine, j.box, j.statusRaw].some(v => String(v||'').toLowerCase().includes(q))).map(j => j.name);
+      const set = new Set(matched);
+      matched.forEach(n => {
+        (predMap[n]||[]).forEach(p => set.add(p));
+        (succMap[n]||[]).forEach(s => set.add(s));
+      });
+      names = [...set];
+    } else {
+      names = normJobs.map(j => j.name);
+    }
+
+    let truncated = false;
+    if (!showAll && names.length > GRAPH_NODE_CAP) { names = names.slice(0, GRAPH_NODE_CAP); truncated = true; }
+
+    if (!names.length) { emptyEl.style.display = ''; emptyEl.textContent = 'No jobs match this filter.'; note.textContent=''; return; }
+    emptyEl.style.display = 'none';
+
+    const nodeSet = new Set(names);
+    // include external stub predecessors referenced by visible nodes
+    const stubs = new Set();
+    names.forEach(n => (predMap[n]||[]).forEach(p => { if (!jobById[p]) stubs.add(p); }));
+
+    const allNodeIds = [...names, ...stubs];
+
+    // compute layers via longest-path from sources (internal edges only; stub->node edge contributes)
+    const layer = {};
+    const visiting = new Set();
+    function computeLayer(id) {
+      if (layer[id] !== undefined) return layer[id];
+      if (visiting.has(id)) return layer[id] = 0; // cycle guard
+      visiting.add(id);
+      const preds = (predMap[id] || []).filter(p => allNodeIds.includes(p));
+      let l = 0;
+      preds.forEach(p => { l = Math.max(l, computeLayer(p) + 1); });
+      visiting.delete(id);
+      return layer[id] = l;
+    }
+    allNodeIds.forEach(computeLayer);
+
+    const byLayer = {};
+    allNodeIds.forEach(id => { (byLayer[layer[id]] = byLayer[layer[id]] || []).push(id); });
+    const maxLayer = Math.max(...Object.keys(byLayer).map(Number));
+
+    const colWidth = 190, rowHeight = 46, nodeW = 160, nodeH = 30;
+    const pos = {};
+    for (let l = 0; l <= maxLayer; l++) {
+      const ids = (byLayer[l] || []).sort();
+      ids.forEach((id, i) => { pos[id] = { x: l * colWidth + 20, y: i * rowHeight + 20 }; });
+    }
+    const maxRows = Math.max(...Object.values(byLayer).map(a => a.length));
+    const width = (maxLayer + 1) * colWidth + 200;
+    const height = Math.max(maxRows * rowHeight + 60, 400);
+
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+    defs.innerHTML = `<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#bbb"></path></marker>`;
+    svg.appendChild(defs);
+
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('id', 'graphG');
+    svg.appendChild(g);
+
+    // edges
+    names.forEach(n => {
+      (predMap[n] || []).forEach(p => {
+        if (!allNodeIds.includes(p)) return;
+        const a = pos[p], b = pos[n];
+        if (!a || !b) return;
+        const x1 = a.x + nodeW, y1 = a.y + nodeH/2, x2 = b.x, y2 = b.y + nodeH/2;
+        const mx = (x1 + x2) / 2;
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`);
+        path.setAttribute('class', 'edge-path');
+        path.setAttribute('marker-end', 'url(#arrow)');
+        path.dataset.from = p; path.dataset.to = n;
+        g.appendChild(path);
+      });
+    });
+
+    // nodes
+    allNodeIds.forEach(id => {
+      const p = pos[id]; if (!p) return;
+      const job = jobById[id];
+      const isStub = !job;
+      const grp = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      grp.setAttribute('transform', `translate(${p.x},${p.y})`);
+      grp.style.cursor = 'pointer';
+      grp.dataset.id = id;
+
+      const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      rect.setAttribute('width', nodeW); rect.setAttribute('height', nodeH); rect.setAttribute('rx', 5);
+      rect.setAttribute('class', 'node-rect' + (isStub ? ' stub-node' : ''));
+      rect.setAttribute('fill', isStub ? '#fafafa' : statusColor(job.status));
+      grp.appendChild(rect);
+
+      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      text.setAttribute('x', 8); text.setAttribute('y', nodeH/2 + 4);
+      text.setAttribute('class', 'node-label');
+      text.textContent = truncateText(id, 22);
+      grp.appendChild(text);
+
+      grp.addEventListener('click', () => {
+        if (isStub) { highlightGraph(id); return; }
+        openDetail(id);
+      });
+      g.appendChild(grp);
+    });
+
+    graphTransform = { x: 20, y: 20, scale: Math.min(1, 900 / width) };
+    applyGraphTransform();
+    setupGraphPanZoom();
+
+    note.textContent = truncated
+      ? `Showing ${names.length} of the matching jobs (capped at ${GRAPH_NODE_CAP} — refine the filter or check "show full graph" to see all).`
+      : `Showing ${names.length} job(s), ${stubs.size} external dependency stub(s).`;
+
+    if (selectedJob) highlightGraph(selectedJob);
+  }
+
+  function statusColor(status) {
+    return ({
+      SUCCESS: '#c9e9d6', FAILURE: '#f6cdd0', RUNNING: '#c9dcf7', TERMINATED: '#e2e3e5',
+      ON_ICE: '#e3d3f8', ON_HOLD: '#fbeeba', QUEUED: '#d6f5db', INACTIVE: '#eee', OTHER: '#eee'
+    })[status] || '#eee';
+  }
+
+  function truncateText(s, n) { return s.length > n ? s.slice(0, n - 1) + '…' : s; }
+
+  function highlightGraph(name) {
+    const preds = new Set(predMap[name] || []);
+    const succs = new Set(succMap[name] || []);
+    document.querySelectorAll('#graphG > g[data-id]').forEach(node => {
+      const id = node.dataset.id;
+      const rect = node.querySelector('rect');
+      rect.classList.remove('sel', 'pred', 'succ', 'dim');
+      node.querySelector('text').classList.remove('dim');
+      if (id === name) rect.classList.add('sel');
+      else if (preds.has(id)) rect.classList.add('pred');
+      else if (succs.has(id)) rect.classList.add('succ');
+      else { rect.classList.add('dim'); node.querySelector('text').classList.add('dim'); }
+    });
+    document.querySelectorAll('#graphG path.edge-path').forEach(p => {
+      const hl = p.dataset.to === name || p.dataset.from === name;
+      p.classList.toggle('hl', hl);
+      p.classList.toggle('dim', !hl);
+    });
+  }
+
+  function applyGraphTransform() {
+    const g = document.getElementById('graphG');
+    if (g) g.setAttribute('transform', `translate(${graphTransform.x},${graphTransform.y}) scale(${graphTransform.scale})`);
+  }
+
+  function setupGraphPanZoom() {
+    const wrap = document.getElementById('graphWrap');
+    const svg = document.getElementById('graphSvg');
+    if (wrap.dataset.wired) return;
+    wrap.dataset.wired = '1';
+
+    wrap.addEventListener('mousedown', e => {
+      panState = { startX: e.clientX, startY: e.clientY, ox: graphTransform.x, oy: graphTransform.y };
+      wrap.classList.add('dragging');
+    });
+    window.addEventListener('mousemove', e => {
+      if (!panState) return;
+      graphTransform.x = panState.ox + (e.clientX - panState.startX);
+      graphTransform.y = panState.oy + (e.clientY - panState.startY);
+      applyGraphTransform();
+    });
+    window.addEventListener('mouseup', () => { panState = null; wrap.classList.remove('dragging'); });
+
+    wrap.addEventListener('wheel', e => {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? 0.9 : 1.1;
+      graphTransform.scale = Math.max(0.15, Math.min(3, graphTransform.scale * delta));
+      applyGraphTransform();
+    }, { passive: false });
+  }
+
+  function resetGraphView() {
+    document.getElementById('graphFilter').value = '';
+    document.getElementById('graphShowAll').checked = false;
+    renderGraph();
+  }
+
+  // =====================================================================
+  // Detail slide-over
+  // =====================================================================
+
+  function openDetail(name) {
+    const j = jobById[name];
+    if (!j) return;
+    selectedJob = name;
+    document.getElementById('detailTitle').textContent = j.name;
+    document.getElementById('detailBadge').innerHTML = `<span class="badge badge-${j.status} ${j.overdue ? 'badge-overdue' : ''}">${escHtml(j.statusRaw)}</span>`;
+
+    const kv = [
+      ['Machine', j.machine || '—'],
+      ['Box/Group', j.box || '—'],
+      ['Job Type', j.jobType || '—'],
+      ['Last Start', fmtDate(j.lastStart) || '—'],
+      ['Last End', fmtDate(j.lastEnd) || '—'],
+      ['Duration', j.durationMinutes != null ? j.durationMinutes.toFixed(1) + ' min' : '—'],
+      ['Max Runtime', j.maxRunMinutes != null ? j.maxRunMinutes + ' min' : '—'],
+      ['Command', j.command || '—'],
+      ['Description', j.description || '—'],
+    ];
+    document.getElementById('detailKv').innerHTML = kv.map(([k,v]) =>
+      `<div class="kv-row"><span class="k">${escHtml(k)}</span><span class="v mono">${escHtml(String(v))}</span></div>`).join('');
+
+    const preds = predMap[name] || [];
+    const succs = succMap[name] || [];
+    document.getElementById('detailPreds').innerHTML = preds.length
+      ? preds.map(p => jobById[p]
+          ? `<span class="chip" onclick="openDetail('${escAttr(p)}')">${escHtml(p)}</span>`
+          : `<span class="chip stub" title="Not present in loaded job list">${escHtml(p)} (external)</span>`).join('')
+      : '<span class="empty-msg" style="padding:0">None</span>';
+    document.getElementById('detailSuccs').innerHTML = succs.length
+      ? succs.map(s => `<span class="chip" onclick="openDetail('${escAttr(s)}')">${escHtml(s)}</span>`).join('')
+      : '<span class="empty-msg" style="padding:0">None</span>';
+
+    document.getElementById('detailRaw').textContent = JSON.stringify(j.raw, null, 2);
+
+    document.getElementById('detailOverlay').classList.add('show');
+    document.getElementById('detailBackdrop').classList.add('show');
+    highlightGraph(name);
+  }
+
+  function closeDetail() {
+    document.getElementById('detailOverlay').classList.remove('show');
+    document.getElementById('detailBackdrop').classList.remove('show');
+  }
+
+  // =====================================================================
+  // Utilities
+  // =====================================================================
+
+  function escHtml(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+  function escAttr(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/'/g,'&#39;').replace(/"/g,'&quot;');
+  }
+</script>
+</body>
+</html>

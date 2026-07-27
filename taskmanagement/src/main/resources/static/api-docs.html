@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>API Reference</title>
+<script>document.documentElement.setAttribute('data-bs-theme', localStorage.getItem('theme') || 'light');</script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"/>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"/>
+<link rel="stylesheet" href="theme.css"/>
+<style>
+  body { background: #f4f6f9; font-size: 0.875rem; }
+  .col-toc { width: 280px; flex-shrink: 0; background: #fff; border-right: 1px solid #dee2e6; height: calc(100vh - 56px); overflow-y: auto; position: sticky; top: 56px; padding: 1rem 0.75rem; }
+  .col-content { flex: 1; min-width: 0; padding: 1.5rem 2rem 4rem; max-width: 980px; }
+  .main-wrap { display: flex; }
+  .toc-group-title { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #6c757d; margin: 0.9rem 0 0.3rem; padding: 0 0.4rem; }
+  .toc-link { display: flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 5px; font-size: 0.8rem; color: #343a40; text-decoration: none; }
+  .toc-link:hover { background: #eef1f5; color: #212529; }
+  .toc-link.active { background: #e7f1ff; color: #0d6efd; font-weight: 600; }
+  .toc-method { font-size: 0.6rem; font-weight: 700; padding: 1px 5px; border-radius: 4px; color: #fff; min-width: 40px; text-align: center; flex-shrink: 0; }
+  .m-GET    { background: #0d6efd; }
+  .m-POST   { background: #198754; }
+  .m-PUT    { background: #fd7e14; }
+  .m-PATCH  { background: #6f42c1; }
+  .m-DELETE { background: #dc3545; }
+  .m-WS     { background: #20c997; }
+  .endpoint-card { background: #fff; border: 1px solid #dee2e6; border-radius: 10px; padding: 1.25rem; margin-bottom: 1.5rem; scroll-margin-top: 70px; }
+  .endpoint-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 0.4rem; }
+  .endpoint-path { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 0.95rem; font-weight: 600; }
+  .endpoint-summary { color: #495057; margin-bottom: 0.9rem; }
+  .method-badge { font-size: 0.7rem; font-weight: 700; padding: 3px 9px; border-radius: 5px; color: #fff; }
+  .subhead { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #6c757d; margin: 0.9rem 0 0.4rem; }
+  .param-table { font-size: 0.78rem; }
+  .param-table code { font-size: 0.76rem; }
+  .code-block { position: relative; }
+  .code-block pre { background: #1c2027; color: #d7dadf; border-radius: 8px; padding: 0.85rem 0.9rem; font-size: 0.78rem; overflow-x: auto; margin: 0; }
+  .code-block .copy-btn { position: absolute; top: 6px; right: 6px; font-size: 0.7rem; padding: 2px 7px; }
+  .status-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 0.76rem; background: #f1f3f5; border-radius: 6px; padding: 2px 8px; margin: 2px 4px 2px 0; }
+  .status-chip .code { font-weight: 700; font-family: monospace; }
+  .status-2xx .code { color: #198754; }
+  .status-4xx .code { color: #dc3545; }
+  .status-5xx .code { color: #dc3545; }
+  .page-header { margin-bottom: 1.5rem; }
+  .badge-soft { background: #eef1f5; color: #495057; font-weight: 500; }
+  #searchInput { font-size: 0.8rem; }
+  .no-match { display: none !important; }
+  .field-ref-table th, .field-ref-table td { font-size: 0.76rem; vertical-align: top; }
+  .base-url-box { background: #eef1f5; border-radius: 8px; padding: 0.6rem 0.9rem; font-family: monospace; font-size: 0.82rem; display: inline-block; }
+</style>
+<style>
+  html[data-bs-theme="dark"] .col-toc,
+  html[data-bs-theme="dark"] .endpoint-card { background: #1c2027 !important; border-color: #333a45 !important; }
+  html[data-bs-theme="dark"] .toc-link { color: #c3c8d1; }
+  html[data-bs-theme="dark"] .toc-link:hover { background: #232a35; color: #fff; }
+  html[data-bs-theme="dark"] .toc-link.active { background: #1d2f4d; color: #7db2ff; }
+  html[data-bs-theme="dark"] .endpoint-summary { color: #a9b0bb; }
+  html[data-bs-theme="dark"] .status-chip, html[data-bs-theme="dark"] .badge-soft, html[data-bs-theme="dark"] .base-url-box { background: #232830; color: #c3c8d1; }
+  html[data-bs-theme="dark"] body { background: #14171c; }
+</style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark bg-dark px-3">
+  <a class="navbar-brand fw-bold" href="index.html"><i class="bi bi-check2-square me-2"></i>Task Manager</a>
+  <div class="d-flex gap-2 align-items-center">
+    <a href="index.html" class="btn btn-outline-light btn-sm"><i class="bi bi-list-task me-1"></i>Tasks</a>
+    <a href="admin.html" class="btn btn-outline-light btn-sm"><i class="bi bi-gear me-1"></i>Admin</a>
+    <span class="text-light fw-semibold"><i class="bi bi-code-slash me-1"></i>API Docs</span>
+    <button class="btn btn-outline-light btn-sm" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle dark mode"><i class="bi bi-moon-stars" id="themeIcon"></i></button>
+  </div>
+</nav>
+
+<div class="main-wrap">
+  <div class="col-toc" id="tocCol">
+    <input type="text" id="searchInput" class="form-control form-control-sm mb-2" placeholder="&#128269; Filter endpoints..." oninput="onFilter()"/>
+    <div id="tocList"></div>
+  </div>
+
+  <div class="col-content">
+    <div class="page-header">
+      <h4 class="mb-1"><i class="bi bi-code-slash me-2"></i>REST API Reference</h4>
+      <p class="text-muted mb-2">Every HTTP endpoint exposed by the Task Management service, with required inputs and sample request/response payloads. Generated from the current controllers — if you add or change an endpoint, update this page too.</p>
+      <div class="base-url-box"><strong>Base URL:</strong> http://localhost:8080</div>
+      <div class="mt-2 small text-muted">
+        No authentication is implemented — every endpoint below is open. All request/response bodies are JSON (<code>Content-Type: application/json</code>) unless noted otherwise (CSV import uses <code>multipart/form-data</code>).
+        Errors share one shape — see <a href="#errors">Error Responses</a>.
+      </div>
+    </div>
+
+    <div id="endpointsRoot"></div>
+
+    <section id="errors" class="endpoint-card">
+      <h5><i class="bi bi-exclamation-triangle me-2"></i>Error Responses</h5>
+      <p class="endpoint-summary">Every failure — validation, not-found, bad input, unexpected exception — is returned as JSON with a matching HTTP status, via a global exception handler.</p>
+
+      <div class="subhead">Not found / bad request (e.g. GET /api/tasks/9999)</div>
+      <div class="code-block">
+        <button class="btn btn-outline-light copy-btn" onclick="copyBlock(this)"><i class="bi bi-clipboard"></i></button>
+        <pre>{
+  "timestamp": "2026-07-26T12:00:00Z",
+  "status": 404,
+  "error": "Not Found",
+  "message": "Task not found: 9999"
+}</pre>
+      </div>
+
+      <div class="subhead">Validation failure (e.g. POST /api/tasks with no title)</div>
+      <div class="code-block">
+        <button class="btn btn-outline-light copy-btn" onclick="copyBlock(this)"><i class="bi bi-clipboard"></i></button>
+        <pre>{
+  "timestamp": "2026-07-26T12:00:00Z",
+  "status": 400,
+  "error": "Bad Request",
+  "message": "Validation failed",
+  "fieldErrors": {
+    "title": "must not be blank"
+  }
+}</pre>
+      </div>
+
+      <div class="subhead">Status codes used across this API</div>
+      <span class="status-chip status-2xx"><span class="code">200</span> OK</span>
+      <span class="status-chip status-2xx"><span class="code">204</span> No Content (successful DELETE)</span>
+      <span class="status-chip status-4xx"><span class="code">400</span> Bad Request (validation / illegal argument)</span>
+      <span class="status-chip status-4xx"><span class="code">404</span> Not Found</span>
+      <span class="status-chip status-4xx"><span class="code">409</span> Conflict (duplicate/circular dependency)</span>
+      <span class="status-chip status-5xx"><span class="code">500</span> Internal Server Error (unexpected)</span>
+    </section>
+
+    <section id="websocket" class="endpoint-card">
+      <h5><span class="method-badge m-WS me-2">WS</span>/ws/tasks</h5>
+      <p class="endpoint-summary">Persistent WebSocket connection used by the UI to run task searches and receive live create/update/delete notifications without polling. All messages are JSON text frames.</p>
+
+      <div class="subhead">Client &rarr; server messages</div>
+      <div class="code-block">
+        <button class="btn btn-outline-light copy-btn" onclick="copyBlock(this)"><i class="bi bi-clipboard"></i></button>
+        <pre>{"type":"search",         "requestId":"r1", "payload": { "sortBy":"dueDate", "sortDir":"asc", "size":500 } }
+{"type":"filter-options", "requestId":"r2" }
+{"type":"ping",           "requestId":"r3" }</pre>
+      </div>
+      <p class="small text-muted">The <code>payload</code> for <code>search</code> is the same shape as the <a href="#get-tasks">GET /api/tasks</a> query parameters (as a JSON object instead of a query string).</p>
+
+      <div class="subhead">Server &rarr; client messages</div>
+      <div class="code-block">
+        <button class="btn btn-outline-light copy-btn" onclick="copyBlock(this)"><i class="bi bi-clipboard"></i></button>
+        <pre>{"type":"connected"}
+{"type":"search-result",         "requestId":"r1", "data": { "tasks":[...], "total":42, "page":0, "size":500 } }
+{"type":"filter-options-result",  "requestId":"r2", "data": { "categories":[...], "programmes":[...] } }
+{"type":"pong",                   "requestId":"r3" }
+{"type":"error",                  "requestId":"r1", "message":"Invalid message: ..." }
+{"type":"task-changed", "changeType":"created", "taskId":42, "task": { ... } }</pre>
+      </div>
+      <p class="small text-muted mb-0"><code>task-changed</code> is broadcast to every connected browser (unsolicited, no <code>requestId</code>) whenever any client creates, updates, or deletes a task via the REST API. <code>changeType</code> is one of <code>created</code>, <code>updated</code>, <code>deleted</code>.</p>
+    </section>
+  </div>
+</div>
+
+<script src="theme.js"></script>
+<script>
+// ── Task field reference (used inline in the Tasks section) ───────────────────
+const TASK_FIELDS_TABLE = `
+<div class="table-responsive">
+<table class="table table-sm table-bordered field-ref-table mb-0">
+<thead class="table-light"><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><code>id</code></td><td>number</td><td>Read-only, assigned on create</td></tr>
+<tr><td><code>title</code></td><td>string</td><td><strong>Required</strong>, max 255 chars</td></tr>
+<tr><td><code>description</code></td><td>string</td><td>&nbsp;</td></tr>
+<tr><td><code>status</code></td><td>string</td><td>BACKLOG | TODO | IN_PROGRESS | REVIEW | DONE | BLOCKED | CANCELLED (default TODO)</td></tr>
+<tr><td><code>priority</code></td><td>string</td><td>LOW | MEDIUM | HIGH | CRITICAL (default MEDIUM)</td></tr>
+<tr><td><code>assignee</code></td><td>string</td><td>&nbsp;</td></tr>
+<tr><td><code>createdBy</code></td><td>string</td><td>&nbsp;</td></tr>
+<tr><td><code>dueDate</code></td><td>string (ISO date-time)</td><td>e.g. <code>2026-08-15T09:00:00</code></td></tr>
+<tr><td><code>createdAt</code> / <code>updatedAt</code></td><td>string (ISO date-time)</td><td>Read-only, server-set</td></tr>
+<tr><td><code>category</code></td><td>string</td><td>&nbsp;</td></tr>
+<tr><td><code>tags</code></td><td>string[]</td><td>&nbsp;</td></tr>
+<tr><td><code>estimatedHours</code> / <code>actualHours</code></td><td>number</td><td>&nbsp;</td></tr>
+<tr><td><code>programme</code> / <code>project</code></td><td>string</td><td>Free text; matched against <a href="#programmes">Programmes</a> / <a href="#projects">Projects</a> by name</td></tr>
+<tr><td><code>assetClass</code> / <code>workingGroup</code> / <code>stakeholder</code> / <code>jira</code> / <code>links</code></td><td>string</td><td>&nbsp;</td></tr>
+<tr><td><code>parentTaskId</code></td><td>number</td><td>Marks this task as a subtask</td></tr>
+<tr><td><code>customField1</code> … <code>customField10</code></td><td>string</td><td>Configurable via <a href="#field-configs">Admin field config</a></td></tr>
+</tbody>
+</table>
+</div>`;
+
+// ── Endpoint data (single source of truth for the TOC + content) ──────────────
+const GROUPS = [
+{ id: 'tasks', title: 'Tasks', base: '/api/tasks', endpoints: [
+  { id: 'get-tasks', method: 'GET', path: '/api/tasks', summary: 'Search / list tasks with filtering, sorting, and pagination.',
+    query: [
+      ['q','string','Free-text search across title, description, assignee, category, programme, project, stakeholder, tags'],
+      ['status','string, repeatable','e.g. ?status=TODO&status=IN_PROGRESS'],
+      ['priority','string, repeatable','&nbsp;'],
+      ['assignee','string','Substring match'],
+      ['dueFrom / dueTo','date (yyyy-MM-dd)','Inclusive due-date range'],
+      ['category / programme / project / workingGroup / assetClass / stakeholder / jira','string','Substring match'],
+      ['tags','string, repeatable','Matches if a task has any of the given tags'],
+      ['groupBy','string','Client-side hint only; grouping itself happens in the UI'],
+      ['page','number','Default 0'],
+      ['size','number','Default 200, max 500'],
+      ['sortBy','string','id, title, status, priority, assignee, createdBy, dueDate, createdAt, updatedAt, category, programme, project, assetClass, workingGroup, stakeholder, jira, estimatedHours, actualHours (default dueDate)'],
+      ['sortDir','string','asc | desc (default asc)'],
+    ],
+    response: `{
+  "tasks": [
+    {
+      "id": 42,
+      "title": "Fix login page bug",
+      "status": "TODO",
+      "priority": "HIGH",
+      "assignee": "jane.doe",
+      "dueDate": "2026-08-15T09:00:00",
+      "createdAt": "2026-07-20T10:03:11.123",
+      "updatedAt": "2026-07-20T10:03:11.123",
+      "tags": ["backend", "urgent"],
+      "programme": "IceX",
+      "project": "Test Project"
+    }
+  ],
+  "total": 1,
+  "page": 0,
+  "size": 200
+}`,
+    statuses: [['200','List returned (possibly empty)']] },
+
+  { id: 'get-task', method: 'GET', path: '/api/tasks/{id}', summary: 'Fetch a single task by id.',
+    pathParams: [['id','number','Task id']],
+    response: `{
+  "id": 42,
+  "title": "Fix login page bug",
+  "description": "Null pointer on login form submit",
+  "status": "TODO",
+  "priority": "HIGH",
+  "assignee": "jane.doe",
+  "dueDate": "2026-08-15T09:00:00",
+  "createdAt": "2026-07-20T10:03:11.123",
+  "updatedAt": "2026-07-20T10:03:11.123",
+  "tags": ["backend", "urgent"],
+  "programme": "IceX",
+  "project": "Test Project"
+}`,
+    statuses: [['200','Found'], ['404','No task with that id']] },
+
+  { id: 'post-task', method: 'POST', path: '/api/tasks', summary: 'Create a task.',
+    request: `{
+  "title": "Fix login page bug",
+  "description": "Null pointer on login form submit",
+  "status": "TODO",
+  "priority": "HIGH",
+  "assignee": "jane.doe",
+  "dueDate": "2026-08-15T09:00:00",
+  "category": "Development",
+  "programme": "IceX",
+  "project": "Test Project",
+  "tags": ["backend", "urgent"],
+  "estimatedHours": 4
+}`,
+    response: `{
+  "id": 43,
+  "title": "Fix login page bug",
+  "status": "TODO",
+  "priority": "HIGH",
+  "assignee": "jane.doe",
+  "dueDate": "2026-08-15T09:00:00",
+  "createdAt": "2026-07-26T21:32:02.505",
+  "updatedAt": "2026-07-26T21:32:02.505",
+  "tags": ["backend", "urgent"],
+  "category": "Development",
+  "programme": "IceX",
+  "project": "Test Project",
+  "estimatedHours": 4
+}`,
+    notes: 'Only <code>title</code> is required — every other field on the <a href="#tasks">Task object</a> is optional. All fields default to <code>null</code> except <code>status</code> (TODO) and <code>priority</code> (MEDIUM).',
+    statuses: [['200','Created'], ['400','Validation failed (missing title)']] },
+
+  { id: 'put-task', method: 'PUT', path: '/api/tasks/{id}', summary: 'Full update of a task. Every field changed is recorded in the task\'s history.',
+    pathParams: [['id','number','Task id']],
+    headers: [['X-Changed-By','string, optional','Attributed as the author of the history entries; defaults to "system"']],
+    request: `{
+  "title": "Fix login page bug",
+  "description": "Null pointer on login form submit",
+  "status": "DONE",
+  "priority": "HIGH",
+  "assignee": "jane.doe",
+  "dueDate": "2026-08-15T09:00:00",
+  "category": "Development",
+  "programme": "IceX",
+  "project": "Test Project",
+  "tags": ["backend", "urgent"],
+  "estimatedHours": 4,
+  "actualHours": 5
+}`,
+    response: `{
+  "id": 42,
+  "title": "Fix login page bug",
+  "status": "DONE",
+  "priority": "HIGH",
+  "assignee": "jane.doe",
+  "updatedAt": "2026-07-26T21:40:00.000",
+  "actualHours": 5
+}`,
+    notes: 'This is a full replace, not a partial patch — fields omitted from the body are cleared. Use the dedicated <a href="#patch-status">status</a>, <a href="#patch-board">board</a>, or <a href="#patch-due-date">due-date</a> endpoints for single-field updates.',
+    statuses: [['200','Updated'], ['400','Validation failed'], ['404','No task with that id']] },
+
+  { id: 'patch-status', method: 'PATCH', path: '/api/tasks/{id}/status', summary: 'Update only the status field (e.g. a one-click "close").',
+    pathParams: [['id','number','Task id']],
+    headers: [['X-Changed-By','string, optional','Defaults to "system"']],
+    request: `{ "status": "DONE" }`,
+    response: `{
+  "id": 42,
+  "title": "Fix login page bug",
+  "status": "DONE",
+  "updatedAt": "2026-07-26T21:40:00.000"
+}`,
+    statuses: [['200','Updated'], ['400','status missing/blank'], ['404','No task with that id']] },
+
+  { id: 'patch-board', method: 'PATCH', path: '/api/tasks/{id}/board', summary: 'Update status/project/programme/assignee together — used when dragging a card between Kanban/swimlane columns.',
+    pathParams: [['id','number','Task id']],
+    headers: [['X-Changed-By','string, optional','Defaults to "system"']],
+    request: `{
+  "status": "IN_PROGRESS",
+  "project": "Test Project",
+  "programme": "IceX",
+  "assignee": "jane.doe"
+}`,
+    response: `{
+  "id": 42,
+  "status": "IN_PROGRESS",
+  "project": "Test Project",
+  "programme": "IceX",
+  "assignee": "jane.doe",
+  "updatedAt": "2026-07-26T21:40:00.000"
+}`,
+    notes: 'Every field in the body is optional and independent — send only the ones that changed. An empty string clears that field; an omitted key leaves it untouched.',
+    statuses: [['200','Updated'], ['404','No task with that id']] },
+
+  { id: 'patch-due-date', method: 'PATCH', path: '/api/tasks/{id}/due-date', summary: 'Update only the due date (e.g. dragging a card on the calendar view).',
+    pathParams: [['id','number','Task id']],
+    headers: [['X-Changed-By','string, optional','Defaults to "system"']],
+    request: `{ "dueDate": "2026-08-20T09:00:00" }`,
+    notes: 'Send <code>{ "dueDate": null }</code> (or omit the value) to clear the due date.',
+    response: `{
+  "id": 42,
+  "dueDate": "2026-08-20T09:00:00",
+  "updatedAt": "2026-07-26T21:40:00.000"
+}`,
+    statuses: [['200','Updated'], ['404','No task with that id']] },
+
+  { id: 'post-bulk', method: 'POST', path: '/api/tasks/bulk', summary: 'Create several tasks at once from a list of titles, all sharing one project/programme.',
+    request: `{
+  "programme": "IceX",
+  "project": "Test Project",
+  "titles": [
+    "Draft release notes",
+    "Notify stakeholders",
+    "Archive old branch"
+  ]
+}`,
+    response: `[
+  { "id": 44, "title": "Draft release notes",  "status": "TODO", "priority": "MEDIUM", "programme": "IceX", "project": "Test Project" },
+  { "id": 45, "title": "Notify stakeholders",   "status": "TODO", "priority": "MEDIUM", "programme": "IceX", "project": "Test Project" },
+  { "id": 46, "title": "Archive old branch",    "status": "TODO", "priority": "MEDIUM", "programme": "IceX", "project": "Test Project" }
+]`,
+    notes: 'Blank titles are silently skipped. Used by the "Bulk Add" modal.',
+    statuses: [['200','Tasks created (may be an empty array)']] },
+
+  { id: 'post-import', method: 'POST', path: '/api/tasks/import', summary: 'Bulk-create tasks from an uploaded CSV file.', contentType: 'multipart/form-data',
+    request: `Content-Type: multipart/form-data
+
+file: task-import-template.csv
+
+--- CSV content ---
+title,description,status,priority,assignee,dueDate,category,programme,project,assetClass,workingGroup,stakeholder,jira,tags,estimatedHours
+Fix login page bug,Investigate null pointer,TODO,HIGH,jane.doe,2026-08-15T09:00,Development,IceX,Test Project,Equities,Platform Team,CFO Office,PROJ-123,backend;urgent,4`,
+    response: `{ "created": 1, "skipped": 0 }`,
+    notes: 'Header row is case-insensitive, any subset, any order — only <code>title</code> is required (rows without one are skipped and counted in <code>skipped</code>). <code>tags</code> is semicolon-separated within the cell. A ready-to-fill sample is downloadable from the Tasks page ("Template" button next to Import).',
+    statuses: [['200','Import processed (see created/skipped counts)']] },
+
+  { id: 'delete-task', method: 'DELETE', path: '/api/tasks/{id}', summary: 'Delete a task and its comments, history, and dependency links.',
+    pathParams: [['id','number','Task id']],
+    statuses: [['204','Deleted'], ['404','No task with that id']] },
+
+  { id: 'get-comments', method: 'GET', path: '/api/tasks/{id}/comments', summary: 'List comments on a task, oldest first.',
+    pathParams: [['id','number','Task id']],
+    response: `[
+  { "id": 5, "taskId": 42, "content": "Repro'd on staging", "author": "jane.doe", "createdAt": "2026-07-21T09:00:00" }
+]`,
+    statuses: [['200','List returned (possibly empty)']] },
+
+  { id: 'post-comment', method: 'POST', path: '/api/tasks/{id}/comments', summary: 'Add a comment to a task.',
+    pathParams: [['id','number','Task id']],
+    request: `{ "content": "Repro'd on staging", "author": "jane.doe" }`,
+    response: `{ "id": 6, "taskId": 42, "content": "Repro'd on staging", "author": "jane.doe", "createdAt": "2026-07-26T21:45:00" }`,
+    statuses: [['200','Added'], ['400','content missing/blank'], ['404','No task with that id']] },
+
+  { id: 'get-history', method: 'GET', path: '/api/tasks/{id}/history', summary: 'List field-change history for a task, most recent first.',
+    pathParams: [['id','number','Task id']],
+    response: `[
+  { "id": 40, "taskId": 42, "fieldName": "status", "oldValue": "TODO", "newValue": "DONE", "changedBy": "jane.doe", "changedAt": "2026-07-26T21:40:00" }
+]`,
+    statuses: [['200','List returned (possibly empty)']] },
+
+  { id: 'get-filter-options', method: 'GET', path: '/api/tasks/filter-options', summary: 'Distinct values currently in use, to populate filter dropdowns.',
+    response: `{
+  "categories": ["Development", "Testing"],
+  "programmes": ["IceX"],
+  "projects": ["Test Project"],
+  "assignees": ["jane.doe"],
+  "workingGroups": ["Platform Team"],
+  "assetClasses": ["Equities"]
+}`,
+    statuses: [['200','OK']] },
+
+  { id: 'get-dep-graph', method: 'GET', path: '/api/tasks/dependencies/graph', summary: 'All tasks plus all dependency edges, for the dependency graph view.',
+    response: `{
+  "tasks": [ { "id": 42, "title": "Fix login page bug", "status": "TODO" } ],
+  "dependencies": [ { "id": 3, "taskId": 42, "dependsOnTaskId": 40, "createdAt": "2026-07-20T00:00:00" } ]
+}`,
+    statuses: [['200','OK']] },
+
+  { id: 'get-dependencies', method: 'GET', path: '/api/tasks/{id}/dependencies', summary: 'Tasks that must finish before this task can be considered done.',
+    pathParams: [['id','number','Task id']],
+    response: `[ { "id": 40, "title": "Provision staging DB", "status": "DONE" } ]`,
+    statuses: [['200','List returned (possibly empty)'], ['404','No task with that id']] },
+
+  { id: 'get-dependents', method: 'GET', path: '/api/tasks/{id}/dependents', summary: 'Tasks that depend on this task (the reverse direction).',
+    pathParams: [['id','number','Task id']],
+    response: `[ { "id": 45, "title": "Deploy to production", "status": "TODO" } ]`,
+    statuses: [['200','List returned (possibly empty)'], ['404','No task with that id']] },
+
+  { id: 'post-dependency', method: 'POST', path: '/api/tasks/{id}/dependencies', summary: 'Add a dependency: this task cannot be done until dependsOnTaskId is done.',
+    pathParams: [['id','number','Task id']],
+    request: `{ "dependsOnTaskId": 40 }`,
+    response: `{ "id": 3, "taskId": 42, "dependsOnTaskId": 40, "createdAt": "2026-07-26T21:50:00" }`,
+    notes: 'Rejects a task depending on itself, a duplicate edge, or an edge that would create a cycle.',
+    statuses: [['200','Added'], ['400','dependsOnTaskId missing / self-dependency'], ['404','Either task not found'], ['409','Duplicate or would create a circular dependency']] },
+
+  { id: 'delete-dependency', method: 'DELETE', path: '/api/tasks/{id}/dependencies/{dependsOnTaskId}', summary: 'Remove a dependency edge.',
+    pathParams: [['id','number','Task id'], ['dependsOnTaskId','number','The prerequisite task id to unlink']],
+    statuses: [['204','Removed (or was already absent)']] },
+]},
+
+{ id: 'task-templates', title: 'Task Templates', base: '/api/task-templates', endpoints: [
+  { id: 'get-templates', method: 'GET', path: '/api/task-templates', summary: 'List reusable task templates (pre-fills the New Task form; does not create a task).',
+    response: `[ { "id": 1, "name": "Bug report", "title": "", "priority": "HIGH", "category": "Development" } ]`,
+    statuses: [['200','List returned (possibly empty)']] },
+  { id: 'get-template', method: 'GET', path: '/api/task-templates/{id}', summary: 'Fetch a single template.',
+    pathParams: [['id','number','Template id']],
+    response: `{ "id": 1, "name": "Bug report", "title": "", "description": "", "priority": "HIGH", "category": "Development", "tags": ["bug"], "estimatedHours": 2 }`,
+    statuses: [['200','Found'], ['404','No template with that id']] },
+  { id: 'post-template', method: 'POST', path: '/api/task-templates', summary: 'Create a template.',
+    request: `{
+  "name": "Bug report",
+  "title": "",
+  "priority": "HIGH",
+  "category": "Development",
+  "tags": ["bug"],
+  "estimatedHours": 2,
+  "programme": "IceX",
+  "project": "Test Project"
+}`,
+    response: `{ "id": 2, "name": "Bug report", "priority": "HIGH", "category": "Development" }`,
+    notes: '<code>name</code> and <code>title</code> are required; <code>name</code> must be unique.',
+    statuses: [['200','Created'], ['400','Validation failed']] },
+  { id: 'put-template', method: 'PUT', path: '/api/task-templates/{id}', summary: 'Update a template.',
+    pathParams: [['id','number','Template id']],
+    request: `{ "name": "Bug report", "title": "", "priority": "CRITICAL", "category": "Development" }`,
+    response: `{ "id": 2, "name": "Bug report", "priority": "CRITICAL" }`,
+    statuses: [['200','Updated'], ['400','Validation failed'], ['404','No template with that id']] },
+  { id: 'delete-template', method: 'DELETE', path: '/api/task-templates/{id}', summary: 'Delete a template.',
+    pathParams: [['id','number','Template id']],
+    statuses: [['204','Deleted'], ['404','No template with that id']] },
+]},
+
+{ id: 'projects', title: 'Projects', base: '/api/projects', endpoints: [
+  { id: 'get-projects', method: 'GET', path: '/api/projects', summary: 'List all projects.',
+    response: `[ { "id": 1, "name": "Test Project", "owner": "jane.doe", "status": "ACTIVE", "startDate": "2026-01-01", "endDate": "2026-12-31" } ]`,
+    statuses: [['200','List returned (possibly empty)']] },
+  { id: 'get-all-milestones', method: 'GET', path: '/api/projects/all-milestones', summary: 'Milestones across every project, for the timeline view.',
+    response: `[ { "id": 1, "projectId": 1, "name": "Beta release", "targetDate": "2026-09-01", "status": "PENDING" } ]`,
+    statuses: [['200','List returned (possibly empty)']] },
+  { id: 'get-project', method: 'GET', path: '/api/projects/{id}', summary: 'Fetch a single project.',
+    pathParams: [['id','number','Project id']],
+    response: `{ "id": 1, "name": "Test Project", "description": "", "owner": "jane.doe", "status": "ACTIVE", "startDate": "2026-01-01", "endDate": "2026-12-31" }`,
+    statuses: [['200','Found'], ['404','No project with that id']] },
+  { id: 'post-project', method: 'POST', path: '/api/projects', summary: 'Create a project.',
+    request: `{ "name": "Test Project", "owner": "jane.doe", "status": "PLANNING", "startDate": "2026-01-01", "endDate": "2026-12-31" }`,
+    response: `{ "id": 1, "name": "Test Project", "status": "PLANNING" }`,
+    notes: '<code>name</code> is required and must be unique. <code>status</code> defaults to PLANNING (PLANNING | ACTIVE | ON_HOLD | COMPLETED | CANCELLED).',
+    statuses: [['200','Created'], ['400','Validation failed']] },
+  { id: 'put-project', method: 'PUT', path: '/api/projects/{id}', summary: 'Update a project.',
+    pathParams: [['id','number','Project id']],
+    request: `{ "name": "Test Project", "owner": "jane.doe", "status": "ACTIVE", "startDate": "2026-01-01", "endDate": "2026-12-31" }`,
+    response: `{ "id": 1, "name": "Test Project", "status": "ACTIVE" }`,
+    statuses: [['200','Updated'], ['400','Validation failed'], ['404','No project with that id']] },
+  { id: 'delete-project', method: 'DELETE', path: '/api/projects/{id}', summary: 'Delete a project.',
+    pathParams: [['id','number','Project id']],
+    statuses: [['204','Deleted'], ['404','No project with that id']] },
+  { id: 'get-milestones', method: 'GET', path: '/api/projects/{id}/milestones', summary: 'List milestones for one project.',
+    pathParams: [['id','number','Project id']],
+    response: `[ { "id": 1, "projectId": 1, "name": "Beta release", "targetDate": "2026-09-01", "status": "PENDING" } ]`,
+    statuses: [['200','List returned (possibly empty)'], ['404','No project with that id']] },
+  { id: 'post-milestone', method: 'POST', path: '/api/projects/{id}/milestones', summary: 'Add a milestone to a project.',
+    pathParams: [['id','number','Project id']],
+    request: `{ "name": "Beta release", "targetDate": "2026-09-01", "status": "PENDING" }`,
+    response: `{ "id": 2, "projectId": 1, "name": "Beta release", "targetDate": "2026-09-01", "status": "PENDING" }`,
+    statuses: [['200','Created'], ['400','Validation failed'], ['404','No project with that id']] },
+  { id: 'put-milestone', method: 'PUT', path: '/api/projects/{id}/milestones/{milestoneId}', summary: 'Update a milestone.',
+    pathParams: [['id','number','Project id'], ['milestoneId','number','Milestone id']],
+    request: `{ "name": "Beta release", "targetDate": "2026-09-15", "status": "COMPLETED" }`,
+    response: `{ "id": 2, "projectId": 1, "name": "Beta release", "targetDate": "2026-09-15", "status": "COMPLETED" }`,
+    statuses: [['200','Updated'], ['400','Validation failed'], ['404','No project/milestone with that id']] },
+  { id: 'delete-milestone', method: 'DELETE', path: '/api/projects/{id}/milestones/{milestoneId}', summary: 'Delete a milestone.',
+    pathParams: [['id','number','Project id'], ['milestoneId','number','Milestone id']],
+    statuses: [['204','Deleted'], ['404','No project/milestone with that id']] },
+]},
+
+{ id: 'programmes', title: 'Programmes', base: '/api/programmes', endpoints: [
+  { id: 'get-programmes', method: 'GET', path: '/api/programmes', summary: 'List all programmes.',
+    response: `[ { "id": 1, "name": "IceX", "owner": "jane.doe", "status": "ACTIVE", "startDate": "2026-01-01", "endDate": "2026-12-31" } ]`,
+    statuses: [['200','List returned (possibly empty)']] },
+  { id: 'get-programme', method: 'GET', path: '/api/programmes/{id}', summary: 'Fetch a single programme.',
+    pathParams: [['id','number','Programme id']],
+    response: `{ "id": 1, "name": "IceX", "description": "", "owner": "jane.doe", "status": "ACTIVE" }`,
+    statuses: [['200','Found'], ['404','No programme with that id']] },
+  { id: 'post-programme', method: 'POST', path: '/api/programmes', summary: 'Create a programme.',
+    request: `{ "name": "IceX", "owner": "jane.doe", "status": "PLANNING", "startDate": "2026-01-01", "endDate": "2026-12-31" }`,
+    response: `{ "id": 1, "name": "IceX", "status": "PLANNING" }`,
+    notes: '<code>name</code> is required and must be unique. <code>status</code> defaults to PLANNING (PLANNING | ACTIVE | ON_HOLD | COMPLETED | CANCELLED).',
+    statuses: [['200','Created'], ['400','Validation failed']] },
+  { id: 'put-programme', method: 'PUT', path: '/api/programmes/{id}', summary: 'Update a programme.',
+    pathParams: [['id','number','Programme id']],
+    request: `{ "name": "IceX", "owner": "jane.doe", "status": "ACTIVE" }`,
+    response: `{ "id": 1, "name": "IceX", "status": "ACTIVE" }`,
+    statuses: [['200','Updated'], ['400','Validation failed'], ['404','No programme with that id']] },
+  { id: 'delete-programme', method: 'DELETE', path: '/api/programmes/{id}', summary: 'Delete a programme.',
+    pathParams: [['id','number','Programme id']],
+    statuses: [['204','Deleted'], ['404','No programme with that id']] },
+]},
+
+{ id: 'field-configs', title: 'Field Configuration (Admin)', base: '/api/field-configs', endpoints: [
+  { id: 'get-field-configs', method: 'GET', path: '/api/field-configs', summary: 'All configured task-field overrides (display name, type, default value, dropdown source), keyed by field id.',
+    response: `{
+  "status": {
+    "fieldId": "status",
+    "fieldType": "select",
+    "source": { "type": "static", "staticOptions": ["TODO","IN_PROGRESS","REVIEW","DONE","BLOCKED","CANCELLED"] }
+  },
+  "programme": {
+    "fieldId": "programme",
+    "fieldType": "select",
+    "source": { "type": "entity", "entityType": "programme" }
+  }
+}`,
+    statuses: [['200','OK (empty object if nothing configured)']] },
+  { id: 'put-field-config', method: 'PUT', path: '/api/field-configs/{fieldId}', summary: 'Create or replace the configuration for one task field.',
+    pathParams: [['fieldId','string','Task field name, e.g. status, category, customField1']],
+    request: `{
+  "fieldId": "category",
+  "displayName": "Category",
+  "fieldType": "select",
+  "defaultValue": "Development",
+  "source": { "type": "static", "staticOptions": ["Development","Testing","Support"] }
+}`,
+    response: `{ "fieldId": "category", "displayName": "Category", "fieldType": "select", "defaultValue": "Development" }`,
+    notes: '<code>fieldType</code> is textbox | textarea | select. When <code>fieldType</code> is select, <code>source.type</code> is static (inline list), http (remote JSON), file (classpath key|value file), or entity (backed by Projects/Programmes).',
+    statuses: [['200','Saved']] },
+  { id: 'delete-field-config', method: 'DELETE', path: '/api/field-configs/{fieldId}', summary: 'Remove a field\'s configuration (reverts to the default textbox).',
+    pathParams: [['fieldId','string','Task field name']],
+    statuses: [['204','Deleted']] },
+  { id: 'get-field-options', method: 'GET', path: '/api/field-options/{fieldId}', summary: 'Resolve the dropdown options for a configured select field (evaluates its source).',
+    pathParams: [['fieldId','string','Task field name']],
+    response: `[ { "name": "Development", "value": "Development" }, { "name": "Testing", "value": "Testing" } ]`,
+    statuses: [['200','Options resolved'], ['400','Source could not be resolved (error body: { "error": "..." })']] },
+  { id: 'post-field-options-test', method: 'POST', path: '/api/field-options/test', summary: 'Dry-run an HTTP dropdown source from the Admin UI before saving it.',
+    request: `{
+  "type": "http",
+  "url": "https://example.com/api/statuses",
+  "arrayName": "items",
+  "nameAttribute": "label",
+  "valueAttribute": "code"
+}`,
+    response: `[ { "name": "Open", "value": "OPEN" }, { "name": "Closed", "value": "CLOSED" } ]`,
+    statuses: [['200','Options resolved'], ['400','Request failed (error body: { "error": "..." })']] },
+]},
+];
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function methodBadge(m) { return `<span class="toc-method m-${m}">${m}</span>`; }
+
+function paramTable(rows, headerLabel) {
+  if (!rows || !rows.length) return '';
+  return `<div class="table-responsive"><table class="table table-sm table-bordered param-table mb-0">
+    <thead class="table-light"><tr><th style="width:26%">${headerLabel}</th><th style="width:20%">Type</th><th>Notes</th></tr></thead>
+    <tbody>${rows.map(r => `<tr><td><code>${r[0]}</code></td><td>${r[1]}</td><td>${r[2]}</td></tr>`).join('')}</tbody>
+  </table></div>`;
+}
+
+function codeBlock(content) {
+  if (!content) return '';
+  return `<div class="code-block"><button class="btn btn-outline-light copy-btn" onclick="copyBlock(this)"><i class="bi bi-clipboard"></i></button><pre>${esc(content)}</pre></div>`;
+}
+
+function statusChips(rows) {
+  if (!rows || !rows.length) return '';
+  return rows.map(r => {
+    const cls = r[0].startsWith('2') ? 'status-2xx' : (r[0].startsWith('4') ? 'status-4xx' : 'status-5xx');
+    return `<span class="status-chip ${cls}"><span class="code">${r[0]}</span> ${r[1]}</span>`;
+  }).join('');
+}
+
+function renderEndpoint(ep) {
+  return `
+  <div class="endpoint-card" id="${ep.id}" data-search="${esc((ep.method + ' ' + ep.path + ' ' + ep.summary).toLowerCase())}">
+    <div class="endpoint-head">
+      <span class="method-badge m-${ep.method}">${ep.method}</span>
+      <span class="endpoint-path">${ep.path}</span>
+      ${ep.contentType ? `<span class="badge badge-soft">${ep.contentType}</span>` : ''}
+    </div>
+    <div class="endpoint-summary">${ep.summary}</div>
+    ${ep.pathParams ? `<div class="subhead">Path parameters</div>${paramTable(ep.pathParams, 'Param')}` : ''}
+    ${ep.query ? `<div class="subhead">Query parameters</div>${paramTable(ep.query, 'Param')}` : ''}
+    ${ep.headers ? `<div class="subhead">Headers</div>${paramTable(ep.headers, 'Header')}` : ''}
+    ${ep.request ? `<div class="subhead">Request body</div>${codeBlock(ep.request)}` : ''}
+    ${ep.response ? `<div class="subhead">Sample response</div>${codeBlock(ep.response)}` : ''}
+    ${ep.notes ? `<div class="mt-2 small text-muted">${ep.notes}</div>` : ''}
+    ${ep.statuses ? `<div class="subhead">Status codes</div><div>${statusChips(ep.statuses)}</div>` : ''}
+  </div>`;
+}
+
+function renderAll() {
+  const root = document.getElementById('endpointsRoot');
+  const toc = document.getElementById('tocList');
+  let rootHtml = '';
+  let tocHtml = '';
+
+  GROUPS.forEach(g => {
+    rootHtml += `<h5 id="${g.id}" class="mt-4 mb-2">${g.title} <span class="badge badge-soft">${g.base}</span></h5>`;
+    if (g.id === 'tasks') {
+      rootHtml += `<div class="endpoint-card"><div class="subhead mt-0">Task object reference</div>${TASK_FIELDS_TABLE}</div>`;
+    }
+    rootHtml += g.endpoints.map(renderEndpoint).join('');
+
+    tocHtml += `<div class="toc-group-title">${g.title}</div>`;
+    tocHtml += g.endpoints.map(ep => `<a href="#${ep.id}" class="toc-link" data-target="${ep.id}" data-search="${esc((ep.method + ' ' + ep.path + ' ' + ep.summary).toLowerCase())}">${methodBadge(ep.method)}<span class="text-truncate">${ep.path}</span></a>`).join('');
+  });
+
+  tocHtml += `<div class="toc-group-title">Reference</div>
+    <a href="#errors" class="toc-link" data-target="errors" data-search="errors error responses status codes"><span class="toc-method" style="background:#6c757d">DOC</span><span>Error Responses</span></a>
+    <a href="#websocket" class="toc-link" data-target="websocket" data-search="websocket ws tasks live updates"><span class="toc-method m-WS">WS</span><span>/ws/tasks</span></a>`;
+
+  root.innerHTML = rootHtml;
+  toc.innerHTML = tocHtml;
+}
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function copyBlock(btn) {
+  const text = btn.parentElement.querySelector('pre').textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const icon = btn.querySelector('i');
+    icon.className = 'bi bi-check-lg';
+    setTimeout(() => { icon.className = 'bi bi-clipboard'; }, 1200);
+  });
+}
+
+function onFilter() {
+  const q = document.getElementById('searchInput').value.trim().toLowerCase();
+  document.querySelectorAll('.toc-link[data-search]').forEach(a => {
+    a.classList.toggle('no-match', q && !a.dataset.search.includes(q));
+  });
+  document.querySelectorAll('.endpoint-card[data-search]').forEach(card => {
+    card.classList.toggle('no-match', q && !card.dataset.search.includes(q));
+  });
+}
+
+// Highlight the active TOC entry as the user scrolls.
+function setupScrollSpy() {
+  const links = Array.from(document.querySelectorAll('.toc-link[data-target]'));
+  const sections = links.map(a => document.getElementById(a.dataset.target)).filter(Boolean);
+  window.addEventListener('scroll', () => {
+    let current = null;
+    for (const sec of sections) {
+      if (sec.getBoundingClientRect().top - 90 <= 0) current = sec.id;
+    }
+    links.forEach(a => a.classList.toggle('active', a.dataset.target === current));
+  }, { passive: true });
+}
+
+renderAll();
+setupScrollSpy();
+</script>
+</body>
+</html>

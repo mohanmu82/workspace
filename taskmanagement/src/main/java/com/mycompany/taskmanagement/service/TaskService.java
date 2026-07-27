@@ -1,30 +1,64 @@
 package com.mycompany.taskmanagement.service;
 
 import com.mycompany.taskmanagement.dto.TaskBulkCreateRequest;
+import com.mycompany.taskmanagement.dto.TaskDependencyGraphResponse;
 import com.mycompany.taskmanagement.dto.TaskListResponse;
 import com.mycompany.taskmanagement.dto.TaskSearchRequest;
+import com.mycompany.taskmanagement.event.TaskChangedEvent;
 import com.mycompany.taskmanagement.model.Task;
 import com.mycompany.taskmanagement.model.TaskComment;
+import com.mycompany.taskmanagement.model.TaskDependency;
 import com.mycompany.taskmanagement.model.TaskHistory;
 import com.mycompany.taskmanagement.store.TaskDataStore;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class TaskService {
 
+    private static final int MAX_PAGE_SIZE = 500;
+
+    private static final Set<String> SORTABLE_FIELDS = Set.of(
+            "id", "title", "status", "priority", "assignee", "createdBy", "dueDate",
+            "createdAt", "updatedAt", "category", "programme", "project", "assetClass",
+            "workingGroup", "stakeholder", "jira", "estimatedHours", "actualHours");
+
     private final TaskDataStore dataStore;
+    private final ApplicationEventPublisher eventPublisher;
 
     public TaskListResponse search(TaskSearchRequest req) {
+        if (req.getPage() < 0) {
+            req.setPage(0);
+        }
+        if (req.getSize() < 1) {
+            req.setSize(1);
+        } else if (req.getSize() > MAX_PAGE_SIZE) {
+            req.setSize(MAX_PAGE_SIZE);
+        }
+        if (req.getSortBy() == null || !SORTABLE_FIELDS.contains(req.getSortBy())) {
+            req.setSortBy("dueDate");
+        }
+        if (req.getSortDir() == null
+                || !(req.getSortDir().equalsIgnoreCase("asc") || req.getSortDir().equalsIgnoreCase("desc"))) {
+            req.setSortDir("asc");
+        }
         Page<Task> page = dataStore.search(req);
         return new TaskListResponse(page.getContent(), page.getTotalElements(),
                 req.getPage(), req.getSize());
@@ -32,12 +66,14 @@ public class TaskService {
 
     public Task getById(Long id) {
         return dataStore.findById(id)
-                .orElseThrow(() -> new RuntimeException("Task not found: " + id));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Task not found: " + id));
     }
 
     @Transactional
     public Task create(Task task) {
-        return dataStore.save(task);
+        Task saved = dataStore.save(task);
+        eventPublisher.publishEvent(TaskChangedEvent.created(saved));
+        return saved;
     }
 
     @Transactional
@@ -108,11 +144,16 @@ public class TaskService {
         if (!histories.isEmpty()) {
             dataStore.saveAllHistory(histories);
         }
-        return dataStore.save(existing);
+        Task saved = dataStore.save(existing);
+        eventPublisher.publishEvent(TaskChangedEvent.updated(saved));
+        return saved;
     }
 
     @Transactional
     public Task updateStatus(Long id, String status, String changedBy) {
+        if (status == null || status.isBlank()) {
+            throw new IllegalArgumentException("status must not be blank");
+        }
         Task existing = getById(id);
         List<TaskHistory> histories = new ArrayList<>();
         record(histories, id, "status", existing.getStatus(), status, changedBy);
@@ -120,7 +161,9 @@ public class TaskService {
         if (!histories.isEmpty()) {
             dataStore.saveAllHistory(histories);
         }
-        return dataStore.save(existing);
+        Task saved = dataStore.save(existing);
+        eventPublisher.publishEvent(TaskChangedEvent.updated(saved));
+        return saved;
     }
 
     @Transactional
@@ -149,7 +192,38 @@ public class TaskService {
         if (!histories.isEmpty()) {
             dataStore.saveAllHistory(histories);
         }
-        return dataStore.save(existing);
+        Task saved = dataStore.save(existing);
+        eventPublisher.publishEvent(TaskChangedEvent.updated(saved));
+        return saved;
+    }
+
+    @Transactional
+    public Task updateDueDate(Long id, LocalDateTime dueDate, String changedBy) {
+        Task existing = getById(id);
+        List<TaskHistory> histories = new ArrayList<>();
+        record(histories, id, "dueDate", existing.getDueDate(), dueDate, changedBy);
+        existing.setDueDate(dueDate);
+        if (!histories.isEmpty()) {
+            dataStore.saveAllHistory(histories);
+        }
+        Task saved = dataStore.save(existing);
+        eventPublisher.publishEvent(TaskChangedEvent.updated(saved));
+        return saved;
+    }
+
+    @Transactional
+    public Task updatePhase(Long id, String phase, String changedBy) {
+        Task existing = getById(id);
+        List<TaskHistory> histories = new ArrayList<>();
+        String newPhase = (phase == null || phase.isBlank()) ? null : phase;
+        record(histories, id, "customField1", existing.getCustomField1(), newPhase, changedBy);
+        existing.setCustomField1(newPhase);
+        if (!histories.isEmpty()) {
+            dataStore.saveAllHistory(histories);
+        }
+        Task saved = dataStore.save(existing);
+        eventPublisher.publishEvent(TaskChangedEvent.updated(saved));
+        return saved;
     }
 
     @Transactional
@@ -166,16 +240,35 @@ public class TaskService {
             task.setTitle(rawTitle.trim());
             task.setProject(req.getProject());
             task.setProgramme(req.getProgramme());
-            created.add(dataStore.save(task));
+            Task saved = dataStore.save(task);
+            created.add(saved);
+            eventPublisher.publishEvent(TaskChangedEvent.created(saved));
+        }
+        return created;
+    }
+
+    @Transactional
+    public List<Task> bulkImport(List<Task> tasks) {
+        List<Task> created = new ArrayList<>();
+        for (Task task : tasks) {
+            if (task.getTitle() == null || task.getTitle().isBlank()) {
+                continue;
+            }
+            Task saved = dataStore.save(task);
+            created.add(saved);
+            eventPublisher.publishEvent(TaskChangedEvent.created(saved));
         }
         return created;
     }
 
     @Transactional
     public void delete(Long id) {
+        getById(id); // throws 404 if the task doesn't exist
         dataStore.deleteCommentsByTaskId(id);
         dataStore.deleteHistoryByTaskId(id);
+        dataStore.deleteDependenciesForTask(id);
         dataStore.deleteById(id);
+        eventPublisher.publishEvent(TaskChangedEvent.deleted(id));
     }
 
     public List<TaskComment> getComments(Long taskId) {
@@ -184,6 +277,10 @@ public class TaskService {
 
     @Transactional
     public TaskComment addComment(Long taskId, String content, String author) {
+        if (content == null || content.isBlank()) {
+            throw new IllegalArgumentException("content must not be blank");
+        }
+        getById(taskId); // throws 404 if the task doesn't exist
         TaskComment comment = new TaskComment();
         comment.setTaskId(taskId);
         comment.setContent(content);
@@ -193,6 +290,84 @@ public class TaskService {
 
     public List<TaskHistory> getHistory(Long taskId) {
         return dataStore.findHistoryByTaskId(taskId);
+    }
+
+    public TaskDependencyGraphResponse getDependencyGraph() {
+        TaskSearchRequest req = new TaskSearchRequest();
+        req.setSortBy("id");
+        req.setSortDir("asc");
+        req.setSize(10000);
+        List<Task> tasks = search(req).getTasks();
+        return new TaskDependencyGraphResponse(tasks, dataStore.findAllDependencies());
+    }
+
+    public List<Task> getDependencies(Long taskId) {
+        getById(taskId); // throws 404 if the task doesn't exist
+        return dataStore.findDependenciesByTaskId(taskId).stream()
+                .map(d -> dataStore.findById(d.getDependsOnTaskId()).orElse(null))
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+    }
+
+    public List<Task> getDependents(Long taskId) {
+        getById(taskId); // throws 404 if the task doesn't exist
+        return dataStore.findDependentsByTaskId(taskId).stream()
+                .map(d -> dataStore.findById(d.getTaskId()).orElse(null))
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+    }
+
+    @Transactional
+    public TaskDependency addDependency(Long taskId, Long dependsOnTaskId) {
+        if (dependsOnTaskId == null) {
+            throw new IllegalArgumentException("dependsOnTaskId must not be null");
+        }
+        if (taskId.equals(dependsOnTaskId)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A task cannot depend on itself");
+        }
+        getById(taskId); // throws 404 if either task doesn't exist
+        getById(dependsOnTaskId);
+
+        boolean alreadyExists = dataStore.findDependenciesByTaskId(taskId).stream()
+                .anyMatch(d -> d.getDependsOnTaskId().equals(dependsOnTaskId));
+        if (alreadyExists) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Dependency already exists");
+        }
+        if (createsCycle(taskId, dependsOnTaskId)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Adding this dependency would create a circular dependency");
+        }
+
+        TaskDependency dependency = new TaskDependency();
+        dependency.setTaskId(taskId);
+        dependency.setDependsOnTaskId(dependsOnTaskId);
+        return dataStore.saveDependency(dependency);
+    }
+
+    @Transactional
+    public void removeDependency(Long taskId, Long dependsOnTaskId) {
+        dataStore.deleteDependency(taskId, dependsOnTaskId);
+    }
+
+    // Would linking taskId -> dependsOnTaskId create a cycle? True if dependsOnTaskId
+    // can already reach taskId by following existing "depends on" edges.
+    private boolean createsCycle(Long taskId, Long dependsOnTaskId) {
+        Deque<Long> queue = new ArrayDeque<>();
+        Set<Long> visited = new HashSet<>();
+        queue.add(dependsOnTaskId);
+        visited.add(dependsOnTaskId);
+        while (!queue.isEmpty()) {
+            Long current = queue.poll();
+            if (current.equals(taskId)) {
+                return true;
+            }
+            for (TaskDependency d : dataStore.findDependenciesByTaskId(current)) {
+                if (visited.add(d.getDependsOnTaskId())) {
+                    queue.add(d.getDependsOnTaskId());
+                }
+            }
+        }
+        return false;
     }
 
     public Map<String, List<String>> getFilterOptions() {

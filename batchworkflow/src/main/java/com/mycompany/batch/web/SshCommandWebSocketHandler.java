@@ -6,6 +6,7 @@ import com.jcraft.jsch.Channel;
 import com.jcraft.jsch.ChannelExec;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.Session;
+import com.mycompany.batch.util.Threads;
 import org.springframework.lang.NonNull;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
@@ -116,8 +117,7 @@ public class SshCommandWebSocketHandler extends TextWebSocketHandler {
             send(ws, "connected", "Connected to " + hostname + " as " + username);
 
             // Dedicated reader thread streams shell output back to the client
-            Thread.ofVirtual().name("ssh-reader-" + ws.getId())
-                    .start(() -> readShellOutput(ws, stdout));
+            Threads.startDaemon("ssh-reader-" + ws.getId(), () -> readShellOutput(ws, stdout));
 
         } catch (Exception e) {
             sendError(ws, e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());

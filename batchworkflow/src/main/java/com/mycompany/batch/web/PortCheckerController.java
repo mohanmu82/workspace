@@ -1,6 +1,7 @@
 package com.mycompany.batch.web;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mycompany.batch.util.Threads;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -66,7 +67,7 @@ public class PortCheckerController {
         emitter.onError(e -> shutdown.run());
         emitter.onTimeout(shutdown);
 
-        Thread.ofVirtual().start(() -> {
+        Threads.startDaemon(() -> {
             long scanStart = System.currentTimeMillis();
             CompletionService<PortResult> cs = new ExecutorCompletionService<>(pool);
 

@@ -3,6 +3,7 @@ package com.mycompany.taskmanagement.store;
 import com.mycompany.taskmanagement.dto.TaskSearchRequest;
 import com.mycompany.taskmanagement.model.Task;
 import com.mycompany.taskmanagement.model.TaskComment;
+import com.mycompany.taskmanagement.model.TaskDependency;
 import com.mycompany.taskmanagement.model.TaskHistory;
 import org.springframework.data.domain.Page;
 
@@ -29,4 +30,11 @@ public interface TaskDataStore {
     List<String> findDistinctAssignees();
     List<String> findDistinctWorkingGroups();
     List<String> findDistinctAssetClasses();
+
+    List<TaskDependency> findAllDependencies();
+    List<TaskDependency> findDependenciesByTaskId(Long taskId);
+    List<TaskDependency> findDependentsByTaskId(Long taskId);
+    TaskDependency saveDependency(TaskDependency dependency);
+    void deleteDependency(Long taskId, Long dependsOnTaskId);
+    void deleteDependenciesForTask(Long taskId);
 }

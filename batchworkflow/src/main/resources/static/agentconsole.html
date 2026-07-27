@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent Console</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+               background: #f4f5f7; color: #172b4d; padding: 24px; }
+        .nav { margin-bottom: 18px; }
+        .nav a { font-size: 13px; color: #0052cc; text-decoration: none; }
+        .nav a:hover { text-decoration: underline; }
+        h1 { font-size: 20px; font-weight: 600; margin-bottom: 16px; }
+
+        .panel { background: #fff; border: 1px solid #dfe1e6; border-radius: 6px;
+                 padding: 16px; margin-bottom: 14px; }
+        .panel-title { font-size: 12px; font-weight: 700; text-transform: uppercase;
+                       letter-spacing: .5px; margin-bottom: 12px; color: #5e6c84;
+                       display: flex; align-items: center; justify-content: space-between; }
+
+        .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        button { padding: 7px 16px; font-size: 13px; font-weight: 500; border: none;
+                 border-radius: 4px; cursor: pointer; white-space: nowrap; }
+        button.primary   { background: #0052cc; color: #fff; }
+        button.primary:hover  { background: #0065ff; }
+        button.secondary { background: #fff; color: #0052cc; border: 1px solid #0052cc; }
+        button.secondary:hover { background: #e9f0ff; }
+        button.tool-btn  { background: #f4f5f7; color: #172b4d; border: 1px solid #dfe1e6;
+                           padding: 5px 12px; font-size: 12px; }
+        button.tool-btn:hover { background: #ebecf0; }
+        button:disabled  { opacity: .45; cursor: not-allowed; }
+
+        select, input[type=number] { padding: 7px 10px; font-size: 13px; border: 1px solid #ccc;
+                            border-radius: 4px; outline: none; font-family: inherit; }
+        select:focus, input:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.25); }
+
+        .status-bar { font-size: 13px; color: #5e6c84; min-height: 20px; margin-top: 10px; }
+        .status-bar.ok      { color: #006644; }
+        .status-bar.error   { color: #de350b; }
+        .status-bar.warning { color: #7a4600; }
+
+        .ws-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+                  background: #a5adba; margin-right: 6px; vertical-align: middle; }
+        .ws-dot.connected    { background: #57d9a3; }
+        .ws-dot.connecting   { background: #ffab00; }
+        .ws-dot.disconnected { background: #de350b; }
+
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #f0f1f3; }
+        th { color: #5e6c84; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+        .empty-row td { color: #97a0af; font-style: italic; }
+        .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+        .pill.yes { background: #e3fcef; color: #006644; }
+        .pill.no  { background: #ffebe6; color: #bf2600; }
+
+        textarea.cmd-input {
+            width: 100%;
+            padding: 8px 10px;
+            font-family: "Cascadia Code", "Fira Code", Consolas, "Courier New", monospace;
+            font-size: 13px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            outline: none;
+            resize: vertical;
+            min-height: 80px;
+        }
+        textarea.cmd-input:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.25); }
+
+        #outputBox {
+            background: #0d1117;
+            color: #c9d1d9;
+            font-family: "Cascadia Code", "Fira Code", Consolas, "Courier New", monospace;
+            font-size: 12px;
+            line-height: 1.55;
+            padding: 12px 14px;
+            border-radius: 6px;
+            border: 1px solid #21262d;
+            height: 420px;
+            overflow-y: auto;
+            overflow-x: auto;
+            white-space: pre;
+            word-break: normal;
+        }
+
+        .out-line         { display: block; padding: 1px 0; color: #c9d1d9; }
+        .out-line.system  { color: #8b949e; font-style: italic; }
+        .out-line.done-ok { color: #3fb950; }
+        .out-line.done-err{ color: #ff7b72; }
+        .out-line.stderr  { color: #ff7b72; }
+
+        .output-controls { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+        .form-row { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+        .form-group { display: flex; flex-direction: column; gap: 4px; }
+        .form-group label { font-size: 11px; font-weight: 600; color: #5e6c84;
+                            text-transform: uppercase; letter-spacing: .4px; }
+    </style>
+</head>
+<body>
+<div class="nav"><a href="/">&larr; Batch Runner</a></div>
+<h1>Agent Console</h1>
+
+<div class="panel">
+    <div class="panel-title">
+        <span><span class="ws-dot" id="wsDot"></span>Connected Agents</span>
+        <div class="toolbar">
+            <button class="tool-btn" onclick="refreshAgents()">Refresh</button>
+            <button class="tool-btn" onclick="discoverAgents()">Discover on LAN</button>
+        </div>
+    </div>
+    <table>
+        <thead><tr><th>Agent ID</th><th>Hostname</th><th>Connected Since</th><th>Last Seen</th></tr></thead>
+        <tbody id="agentsBody"><tr class="empty-row"><td colspan="4">No agents connected</td></tr></tbody>
+    </table>
+    <div id="statusBar" class="status-bar">Connecting to console channel…</div>
+</div>
+
+<div class="panel" id="discoveryPanel" style="display:none">
+    <div class="panel-title"><span>Discovered on LAN (multicast probe)</span></div>
+    <table>
+        <thead><tr><th>Agent ID</th><th>Hostname</th><th>Remote Address</th><th>Connected to Server</th><th>Uptime</th></tr></thead>
+        <tbody id="discoveryBody"></tbody>
+    </table>
+</div>
+
+<div class="panel">
+    <div class="panel-title">Command</div>
+    <div class="form-row">
+        <div class="form-group">
+            <label>Target Agent</label>
+            <select id="agentSelect" style="min-width:220px"></select>
+        </div>
+    </div>
+    <div style="margin-bottom:10px">
+        <textarea class="cmd-input" id="commandInput" placeholder="Enter command to execute on the selected agent…&#10;e.g.: uptime"></textarea>
+    </div>
+    <div class="toolbar">
+        <button class="primary"   id="btnExec" onclick="execCommand()">Execute</button>
+        <button class="secondary" onclick="clearOutput()">Clear Output</button>
+        <button class="tool-btn"  onclick="copyOutput()">Copy Output</button>
+    </div>
+</div>
+
+<div class="panel">
+    <div class="panel-title">Output</div>
+    <div id="outputBox"></div>
+</div>
+
+<script>
+    let ws = null;
+    let agents = [];
+
+    // -------------------------------------------------------------------------
+    // Console WebSocket (/agentconsole/ws)
+    // -------------------------------------------------------------------------
+
+    function connectConsole() {
+        const wsUrl = (location.protocol === 'https:' ? 'wss' : 'ws') +
+                      '://' + location.host + '/agentconsole/ws';
+        setDot('connecting');
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+            setDot('connected');
+            setStatus('Connected — loading agents…', 'ok');
+            ws.send(JSON.stringify({ type: 'list' }));
+        };
+
+        ws.onmessage = e => {
+            const msg = JSON.parse(e.data);
+            switch (msg.type) {
+                case 'agents':
+                    agents = msg.agents || [];
+                    renderAgents();
+                    setStatus(agents.length + ' agent(s) connected', 'ok');
+                    break;
+                case 'started':
+                    appendPrompt(msg.agentId, currentCommand);
+                    break;
+                case 'line':
+                    appendLine(msg.text);
+                    break;
+                case 'done':
+                    appendDone(msg.exitCode);
+                    break;
+                case 'error':
+                    setStatus('Error: ' + msg.message, 'error');
+                    appendError(msg.message);
+                    break;
+            }
+        };
+
+        ws.onclose = () => {
+            setDot('disconnected');
+            setStatus('Console channel disconnected — retrying…', 'warning');
+            setTimeout(connectConsole, 3000);
+        };
+
+        ws.onerror = () => {
+            setStatus('WebSocket error — check server', 'error');
+        };
+    }
+
+    function refreshAgents() {
+        if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'list' }));
+    }
+
+    // -------------------------------------------------------------------------
+    // Agent table / selector
+    // -------------------------------------------------------------------------
+
+    function renderAgents() {
+        const body = document.getElementById('agentsBody');
+        const select = document.getElementById('agentSelect');
+        const previouslySelected = select.value;
+        body.innerHTML = '';
+        select.innerHTML = '';
+
+        if (!agents.length) {
+            body.innerHTML = '<tr class="empty-row"><td colspan="4">No agents connected</td></tr>';
+            select.innerHTML = '<option value="">— none connected —</option>';
+            return;
+        }
+
+        agents.forEach(a => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `<td>${esc(a.agentId)}</td><td>${esc(a.hostname)}</td>` +
+                            `<td>${esc(a.connectedAt)}</td><td>${esc(a.lastSeen)}</td>`;
+            body.appendChild(tr);
+
+            const opt = document.createElement('option');
+            opt.value = a.agentId;
+            opt.textContent = a.agentId + (a.hostname && a.hostname !== a.agentId ? ' (' + a.hostname + ')' : '');
+            select.appendChild(opt);
+        });
+
+        if (agents.some(a => a.agentId === previouslySelected)) select.value = previouslySelected;
+    }
+
+    // -------------------------------------------------------------------------
+    // LAN discovery (REST, independent of the control-channel connection)
+    // -------------------------------------------------------------------------
+
+    async function discoverAgents() {
+        const panel = document.getElementById('discoveryPanel');
+        const body  = document.getElementById('discoveryBody');
+        panel.style.display = 'block';
+        body.innerHTML = '<tr class="empty-row"><td colspan="5">Probing…</td></tr>';
+        try {
+            const res = await fetch('/agents/discover?timeoutMs=1500', { method: 'POST' });
+            const results = await res.json();
+            body.innerHTML = '';
+            if (!results.length) {
+                body.innerHTML = '<tr class="empty-row"><td colspan="5">No replies received</td></tr>';
+                return;
+            }
+            results.forEach(r => {
+                const tr = document.createElement('tr');
+                const connected = !!r.connectedToServer;
+                tr.innerHTML = `<td>${esc(r.agentId)}</td><td>${esc(r.hostname)}</td>` +
+                                `<td>${esc(r.remoteAddress)}</td>` +
+                                `<td><span class="pill ${connected ? 'yes' : 'no'}">${connected ? 'yes' : 'no'}</span></td>` +
+                                `<td>${esc(r.uptimeSeconds)}s</td>`;
+                body.appendChild(tr);
+            });
+        } catch (e) {
+            body.innerHTML = '<tr class="empty-row"><td colspan="5">Discovery failed: ' + esc(e.message) + '</td></tr>';
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Exec
+    // -------------------------------------------------------------------------
+
+    let currentCommand = '';
+
+    function execCommand() {
+        const agentId = document.getElementById('agentSelect').value;
+        const command = document.getElementById('commandInput').value.trim();
+        if (!agentId) { setStatus('Select a target agent first', 'error'); return; }
+        if (!command) { setStatus('Enter a command first', 'error'); return; }
+        if (!ws || ws.readyState !== WebSocket.OPEN) { setStatus('Console channel not connected', 'error'); return; }
+
+        currentCommand = command;
+        ws.send(JSON.stringify({ type: 'exec', agentId, command }));
+        document.getElementById('commandInput').value = '';
+    }
+
+    // -------------------------------------------------------------------------
+    // Output helpers
+    // -------------------------------------------------------------------------
+
+    function appendLine(text) {
+        const box  = document.getElementById('outputBox');
+        const span = document.createElement('span');
+        span.className   = 'out-line';
+        span.textContent = text;
+        box.appendChild(span);
+        box.scrollTop = box.scrollHeight;
+    }
+
+    function appendDone(exitCode) {
+        const box  = document.getElementById('outputBox');
+        const done = document.createElement('span');
+        done.className   = exitCode === 0 ? 'out-line done-ok' : 'out-line done-err';
+        done.textContent = `[exit ${exitCode}]`;
+        box.appendChild(done);
+        box.scrollTop = box.scrollHeight;
+    }
+
+    function appendPrompt(agentId, cmd) {
+        const box  = document.getElementById('outputBox');
+        const span = document.createElement('span');
+        span.className   = 'out-line system';
+        span.textContent = `[${agentId}]$ ` + cmd;
+        box.appendChild(span);
+        box.scrollTop = box.scrollHeight;
+    }
+
+    function appendError(msg) {
+        const box  = document.getElementById('outputBox');
+        const span = document.createElement('span');
+        span.className   = 'out-line stderr';
+        span.textContent = '[error] ' + msg;
+        box.appendChild(span);
+        box.scrollTop = box.scrollHeight;
+    }
+
+    function clearOutput() {
+        document.getElementById('outputBox').innerHTML = '';
+    }
+
+    function copyOutput() {
+        const lines = [...document.querySelectorAll('#outputBox .out-line')]
+            .map(el => el.textContent).join('\n');
+        navigator.clipboard.writeText(lines).catch(() => {});
+    }
+
+    // -------------------------------------------------------------------------
+    // UI helpers
+    // -------------------------------------------------------------------------
+
+    function setStatus(msg, type) {
+        const bar = document.getElementById('statusBar');
+        bar.textContent = msg;
+        bar.className = 'status-bar ' + (type || '');
+    }
+
+    function setDot(state) {
+        document.getElementById('wsDot').className = 'ws-dot ' + state;
+    }
+
+    function esc(v) {
+        return String(v === undefined || v === null ? '' : v)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    document.getElementById('commandInput').addEventListener('keydown', e => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); execCommand(); }
+    });
+
+    connectConsole();
+</script>
+</body>
+</html>

@@ -145,6 +145,10 @@
   </div>
   <div class="input-row">
     <div class="field" style="flex:1">
+      <label>Name</label>
+      <input type="text" id="fName" placeholder="Ops Service" style="width:100%">
+    </div>
+    <div class="field" style="flex:1">
       <label>Prefix</label>
       <input type="text" id="fPrefix" placeholder="/gateway/icex/icet" style="width:100%">
     </div>
@@ -173,11 +177,21 @@
 <!-- ===== Routes table ===== -->
 <div class="card">
   <div class="card-title">Routes</div>
+  <div class="input-row">
+    <div class="field" style="flex:1">
+      <label>Filter by Name</label>
+      <input type="text" id="routeFilter" placeholder="Search routes by name..." style="width:100%" oninput="renderRoutes()">
+    </div>
+    <div class="field" style="flex-direction:row;gap:8px">
+      <button onclick="runFiltered()">Run Filtered Routes</button>
+    </div>
+  </div>
   <div class="tbl-wrap">
     <table>
       <thead>
         <tr>
           <th>Status</th>
+          <th>Name</th>
           <th>Prefix</th>
           <th></th>
           <th>Target URL</th>
@@ -189,6 +203,28 @@
     </table>
   </div>
   <div id="emptyMsg" class="empty-msg" style="display:none">No routes defined yet — add one above.</div>
+</div>
+
+<!-- ===== Run results ===== -->
+<div class="card" id="runResultsCard" style="display:none">
+  <div class="card-title">Run Results</div>
+  <div class="card-desc">HTTP status returned by each route's target URL, for the routes currently matching the filter above.</div>
+  <div class="tbl-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Prefix</th>
+          <th>Target URL</th>
+          <th>HTTP Status</th>
+          <th>Result</th>
+          <th>Latency</th>
+        </tr>
+      </thead>
+      <tbody id="runResultBody"></tbody>
+    </table>
+  </div>
+  <div id="runEmptyMsg" class="empty-msg" style="display:none"></div>
 </div>
 
 <!-- ===== Route tester ===== -->
@@ -228,17 +264,32 @@
     }
   }
 
+  function getFilterText() {
+    const el = document.getElementById('routeFilter');
+    return el ? el.value.trim().toLowerCase() : '';
+  }
+
+  function filteredRoutes() {
+    const f = getFilterText();
+    if (!f) return routes;
+    return routes.filter(r => (r.name || '').toLowerCase().includes(f));
+  }
+
   function renderRoutes() {
     const tbody = document.getElementById('routeBody');
     tbody.innerHTML = '';
-    document.getElementById('emptyMsg').style.display = routes.length ? 'none' : '';
-    routes.forEach(r => tbody.appendChild(buildRow(r)));
+    const list = filteredRoutes();
+    const emptyMsg = document.getElementById('emptyMsg');
+    emptyMsg.style.display = list.length ? 'none' : '';
+    emptyMsg.textContent = routes.length ? 'No routes match your filter.' : 'No routes defined yet — add one above.';
+    list.forEach(r => tbody.appendChild(buildRow(r)));
   }
 
   function buildRow(r) {
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td><span class="badge ${r.enabled ? 'badge-on' : 'badge-off'}">${r.enabled ? 'ON' : 'OFF'}</span></td>
+      <td><span class="badge ${r.enabled ? 'badge-on' : 'badge-off'}" style="cursor:pointer" title="Click to toggle enabled/disabled" onclick="toggleRoute('${escAttr(r.id)}')">${r.enabled ? 'ON' : 'OFF'}</span></td>
+      <td>${escHtml(r.name || '')}</td>
       <td class="mono">${escHtml(r.prefix)}</td>
       <td class="arrow">&#8594;</td>
       <td class="mono">${escHtml(r.targetUri)}</td>
@@ -250,6 +301,23 @@
     return tr;
   }
 
+  async function toggleRoute(id) {
+    const r = routes.find(x => x.id === id);
+    if (!r) return;
+    try {
+      const res = await fetch('/gatewayrouter/routes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(Object.assign({}, r, { enabled: !r.enabled }))
+      });
+      const data = await res.json();
+      if (!res.ok) { alert(data.error || 'Toggle failed.'); return; }
+      await loadRoutes();
+    } catch (e) {
+      alert('Toggle failed: ' + e.message);
+    }
+  }
+
   // =====================================================================
   // Form
   // =====================================================================
@@ -258,6 +326,7 @@
     const r = routes.find(x => x.id === id);
     if (!r) return;
     editingId = id;
+    document.getElementById('fName').value    = r.name || '';
     document.getElementById('fPrefix').value  = r.prefix;
     document.getElementById('fTarget').value  = r.targetUri;
     document.getElementById('fDesc').value    = r.description || '';
@@ -271,6 +340,7 @@
 
   function resetForm() {
     editingId = null;
+    document.getElementById('fName').value    = '';
     document.getElementById('fPrefix').value  = '';
     document.getElementById('fTarget').value  = '';
     document.getElementById('fDesc').value    = '';
@@ -282,6 +352,7 @@
   }
 
   async function saveRoute() {
+    const name     = document.getElementById('fName').value.trim();
     const prefix   = document.getElementById('fPrefix').value.trim();
     const target   = document.getElementById('fTarget').value.trim();
     const desc     = document.getElementById('fDesc').value.trim();
@@ -290,7 +361,7 @@
     if (!prefix)  { setFormStatus('Prefix is required.', true); return; }
     if (!target)  { setFormStatus('Target URL is required.', true); return; }
 
-    const body = { prefix, targetUri: target, description: desc, enabled };
+    const body = { name, prefix, targetUri: target, description: desc, enabled };
     if (editingId) body.id = editingId;
 
     try {
@@ -356,6 +427,57 @@
     const path = document.getElementById('testPath').value.trim();
     if (!path) return;
     window.open(path, '_blank');
+  }
+
+  // =====================================================================
+  // Run filtered routes
+  // =====================================================================
+
+  async function runFiltered() {
+    const list = filteredRoutes();
+    const card = document.getElementById('runResultsCard');
+    const tbody = document.getElementById('runResultBody');
+    const emptyMsg = document.getElementById('runEmptyMsg');
+    card.style.display = '';
+    tbody.innerHTML = '';
+
+    if (!list.length) {
+      emptyMsg.style.display = '';
+      emptyMsg.textContent = 'No routes match the current filter.';
+      return;
+    }
+    emptyMsg.style.display = 'none';
+    tbody.innerHTML = '<tr><td colspan="6">Running&hellip;</td></tr>';
+
+    try {
+      const res = await fetch('/gatewayrouter/routes/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: list.map(r => r.id) })
+      });
+      const results = await res.json();
+      tbody.innerHTML = '';
+      if (!res.ok) {
+        tbody.innerHTML = '<tr><td colspan="6" class="status-err">' + escHtml(results.error || 'Run failed.') + '</td></tr>';
+        return;
+      }
+      results.forEach(r => tbody.appendChild(buildResultRow(r)));
+    } catch (e) {
+      tbody.innerHTML = '<tr><td colspan="6" class="status-err">Run failed: ' + escHtml(e.message) + '</td></tr>';
+    }
+  }
+
+  function buildResultRow(r) {
+    const tr = document.createElement('tr');
+    const statusLabel = r.statusCode != null ? r.statusCode : (r.error || 'ERROR');
+    tr.innerHTML = `
+      <td>${escHtml(r.name || '')}</td>
+      <td class="mono">${escHtml(r.prefix)}</td>
+      <td class="mono">${escHtml(r.targetUri)}</td>
+      <td>${escHtml(String(statusLabel))}</td>
+      <td><span class="badge ${r.ok ? 'badge-on' : 'badge-off'}">${r.ok ? 'RUNNING' : 'NOT RUNNING'}</span></td>
+      <td>${r.latencyMs != null ? r.latencyMs + ' ms' : ''}</td>`;
+    return tr;
   }
 
   // =====================================================================

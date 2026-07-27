@@ -8,6 +8,7 @@ package com.mycompany.batch.model;
 public class RouteRule {
 
     private String  id          = "";
+    private String  name        = "";
     private String  prefix      = "";
     private String  targetUri   = "";
     private boolean enabled     = true;
@@ -15,6 +16,9 @@ public class RouteRule {
 
     public String  getId()                     { return id; }
     public void    setId(String id)             { this.id = id != null ? id : ""; }
+
+    public String  getName()                    { return name; }
+    public void    setName(String name)         { this.name = name != null ? name.trim() : ""; }
 
     public String  getPrefix()                  { return prefix; }
     public void    setPrefix(String prefix)     { this.prefix = prefix != null ? prefix.trim() : ""; }

@@ -1,0 +1,16 @@
+[ {
+  "id" : 20,
+  "taskId" : 12,
+  "fieldName" : "dueDate",
+  "newValue" : "2026-07-24T09:00",
+  "changedBy" : "system",
+  "changedAt" : "2026-07-24T23:57:41.6563614"
+}, {
+  "id" : 22,
+  "taskId" : 12,
+  "fieldName" : "dueDate",
+  "oldValue" : "2026-07-24T09:00",
+  "newValue" : "2026-07-31T09:00",
+  "changedBy" : "system",
+  "changedAt" : "2026-07-25T00:00:12.9358056"
+} ]

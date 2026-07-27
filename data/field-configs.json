@@ -36,5 +36,14 @@
       "type" : "static",
       "staticOptions" : [ "SUPPORT", "FOLLOWUP", "RELEASE", "DEVELOPMENT", "TESTING" ]
     }
+  },
+  "customField1" : {
+    "fieldId" : "customField1",
+    "displayName" : "Phase",
+    "fieldType" : "select",
+    "source" : {
+      "type" : "static",
+      "staticOptions" : [ "1", "2", "3", "4", "5", "6", "7", "8", "9", "10" ]
+    }
   }
 }

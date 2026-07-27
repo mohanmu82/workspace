@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Container Readiness Check</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #f4f6f9;
+      color: #222;
+      padding: 28px 28px 48px;
+    }
+
+    header { margin-bottom: 24px; }
+    header h1 { font-size: 1.3rem; font-weight: 700; }
+    header p  { font-size: 0.82rem; color: #666; margin-top: 4px; }
+    .back { font-size: 0.8rem; color: #0078d4; text-decoration: none; }
+    .back:hover { text-decoration: underline; }
+
+    .card {
+      background: #fff;
+      border: 1px solid #dde1e7;
+      border-radius: 8px;
+      padding: 18px 22px;
+      margin-bottom: 18px;
+    }
+
+    .card-title {
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: #111;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .field { display: flex; flex-direction: column; gap: 4px; }
+    .field label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+    input[type=text], input[type=number] {
+      padding: 7px 10px;
+      font-size: 0.85rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-family: inherit;
+    }
+    input:focus { outline: none; border-color: #0078d4; }
+
+    .form-row { display: flex; gap: 14px; align-items: end; flex-wrap: wrap; }
+    .form-row .field.grow { flex: 1; min-width: 260px; }
+
+    button {
+      padding: 7px 18px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      background: #0078d4;
+      color: #fff;
+      white-space: nowrap;
+    }
+    button:hover:not(:disabled) { background: #005fa3; }
+    button:disabled { background: #9ec5e8; cursor: not-allowed; }
+    button.secondary { background: #6c757d; }
+    button.secondary:hover { background: #545b62; }
+
+    .status-msg { font-size: 0.82rem; margin-top: 10px; }
+    .status-err { color: #842029; }
+    .status-ok  { color: #0a5c36; }
+    .hint { font-size: 0.75rem; color: #888; margin-top: 6px; }
+
+    /* Summary */
+    .summary-grid { display: flex; gap: 20px; flex-wrap: wrap; }
+    .summary-cell {
+      background: #f8f9fb;
+      border: 1px solid #dde1e7;
+      border-radius: 6px;
+      padding: 10px 18px;
+      min-width: 130px;
+    }
+    .summary-cell .lbl { font-size: 0.72rem; font-weight: 700; color: #888; text-transform: uppercase; }
+    .summary-cell .val { font-size: 1.3rem; font-weight: 700; color: #111; margin-top: 2px; }
+
+    /* Findings */
+    .module-block { margin-bottom: 20px; }
+    .module-block:last-child { margin-bottom: 0; }
+    .module-name {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: #111;
+      margin-bottom: 8px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #eee;
+    }
+
+    .sev-group { margin-bottom: 12px; }
+    .sev-heading {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      margin-bottom: 6px;
+    }
+    .sev-heading.BLOCKER { color: #842029; }
+    .sev-heading.WARNING { color: #8a6d00; }
+    .sev-heading.INFO    { color: #555; }
+
+    .finding {
+      border: 1px solid #dde1e7;
+      border-left-width: 4px;
+      border-radius: 4px;
+      padding: 8px 12px;
+      margin-bottom: 6px;
+      font-size: 0.82rem;
+    }
+    .finding.BLOCKER { border-left-color: #c0392b; background: #fdf3f2; }
+    .finding.WARNING { border-left-color: #e0a800; background: #fdf9ec; }
+    .finding.INFO    { border-left-color: #8a94a3; background: #f8f9fb; }
+
+    .finding .cat {
+      display: inline-block;
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: #555;
+      background: #eef0f3;
+      border-radius: 10px;
+      padding: 1px 8px;
+      margin-right: 6px;
+    }
+    .finding .msg { font-weight: 600; }
+    .finding .loc { font-family: monospace; font-size: 0.76rem; color: #666; margin-top: 3px; }
+    .finding .rec { font-size: 0.78rem; color: #444; margin-top: 4px; }
+
+    .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+    .toolbar select { padding: 6px 10px; font-size: 0.8rem; border: 1px solid #ccc; border-radius: 4px; }
+    .result-count { font-size: 0.8rem; color: #666; margin-left: auto; }
+  </style>
+</head>
+<body>
+
+<header>
+  <a class="back" href="index.html">&#8592; Home</a>
+  <h1>Container Readiness Check</h1>
+  <p>Point at a GitHub repository and check its Maven modules for what needs to change to run them as containers — missing Dockerfiles, hardcoded hosts/secrets, Kerberos/SSH usage, file-based state, and more.</p>
+</header>
+
+<!-- ===== Input ===== -->
+<div class="card">
+  <div class="card-title">Repository</div>
+  <div class="form-row">
+    <div class="field grow">
+      <label>GitHub URL</label>
+      <input type="text" id="repoUrl" placeholder="https://github.com/owner/repo">
+    </div>
+    <div class="field">
+      <label>Branch / Ref (optional)</label>
+      <input type="text" id="ref" placeholder="main" style="width:160px">
+    </div>
+    <div class="field">
+      <label>Timeout (s)</label>
+      <input type="number" id="timeoutSeconds" value="120" min="10" max="300" style="width:90px">
+    </div>
+    <button id="runBtn" onclick="runCheck()">Run Check</button>
+  </div>
+  <div class="hint">Only https://github.com/&lt;owner&gt;/&lt;repo&gt; URLs are accepted. The repo is shallow-cloned to a scratch directory on the server, scanned, then deleted — nothing is kept.</div>
+  <div id="statusMsg" class="status-msg"></div>
+</div>
+
+<!-- ===== Summary ===== -->
+<div class="card" id="summaryCard" style="display:none">
+  <div class="card-title">
+    <span>Summary</span>
+    <button class="secondary" style="padding:6px 14px" onclick="downloadReport()">Download Markdown Report</button>
+  </div>
+  <div class="summary-grid">
+    <div class="summary-cell"><div class="lbl">Modules</div><div class="val" id="sumModules">—</div></div>
+    <div class="summary-cell"><div class="lbl">Blockers</div><div class="val" id="sumBlockers" style="color:#842029">—</div></div>
+    <div class="summary-cell"><div class="lbl">Warnings</div><div class="val" id="sumWarnings" style="color:#8a6d00">—</div></div>
+    <div class="summary-cell"><div class="lbl">Info</div><div class="val" id="sumInfos">—</div></div>
+    <div class="summary-cell"><div class="lbl">Duration</div><div class="val" id="sumDuration">—</div></div>
+  </div>
+</div>
+
+<!-- ===== Findings ===== -->
+<div class="card" id="resultsCard" style="display:none">
+  <div class="card-title">Findings</div>
+  <div class="toolbar">
+    <select id="sevFilter" onchange="renderFindings()">
+      <option value="">All severities</option>
+      <option value="BLOCKER">Blockers only</option>
+      <option value="WARNING">Warnings only</option>
+      <option value="INFO">Info only</option>
+    </select>
+    <span class="result-count" id="resultCount"></span>
+  </div>
+  <div id="findingsBody"></div>
+</div>
+
+<script>
+  let lastResult = null;
+
+  async function runCheck() {
+    const repoUrl = document.getElementById('repoUrl').value.trim();
+    const ref = document.getElementById('ref').value.trim();
+    const timeoutSeconds = parseInt(document.getElementById('timeoutSeconds').value, 10) || 120;
+
+    if (!repoUrl) { setStatus('Enter a GitHub URL.', true); return; }
+
+    const runBtn = document.getElementById('runBtn');
+    runBtn.disabled = true;
+    setStatus('Cloning and analyzing — this can take a little while for larger repos…');
+    document.getElementById('summaryCard').style.display = 'none';
+    document.getElementById('resultsCard').style.display = 'none';
+    lastResult = null;
+
+    try {
+      const r = await fetch('/containerreadiness/check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repoUrl, ref, timeoutSeconds })
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        setStatus(d.error || 'Request failed', true);
+        return;
+      }
+      lastResult = d;
+      showSummary(d);
+      renderFindings();
+      setStatus('Done.', false);
+    } catch (e) {
+      setStatus('Request error: ' + e.message, true);
+    } finally {
+      runBtn.disabled = false;
+    }
+  }
+
+  function showSummary(d) {
+    document.getElementById('sumModules').textContent  = (d.modules || []).length;
+    document.getElementById('sumBlockers').textContent  = d.summary.blockers;
+    document.getElementById('sumWarnings').textContent  = d.summary.warnings;
+    document.getElementById('sumInfos').textContent     = d.summary.infos;
+    document.getElementById('sumDuration').textContent  = formatDuration(d.durationMs || 0);
+    document.getElementById('summaryCard').style.display = '';
+  }
+
+  function renderFindings() {
+    if (!lastResult) return;
+    const sevFilter = document.getElementById('sevFilter').value;
+    const findings = (lastResult.findings || []).filter(f => !sevFilter || f.severity === sevFilter);
+
+    const byModule = new Map();
+    (lastResult.modules || []).forEach(m => byModule.set(m, []));
+    findings.forEach(f => {
+      if (!byModule.has(f.module)) byModule.set(f.module, []);
+      byModule.get(f.module).push(f);
+    });
+
+    const body = document.getElementById('findingsBody');
+    body.innerHTML = '';
+    const order = ['BLOCKER', 'WARNING', 'INFO'];
+
+    for (const [module, items] of byModule.entries()) {
+      const block = document.createElement('div');
+      block.className = 'module-block';
+      const title = document.createElement('div');
+      title.className = 'module-name';
+      title.textContent = module;
+      block.appendChild(title);
+
+      if (items.length === 0) {
+        const none = document.createElement('div');
+        none.className = 'hint';
+        none.textContent = 'No findings' + (sevFilter ? ' at this severity' : '') + '.';
+        block.appendChild(none);
+      }
+
+      order.forEach(sev => {
+        const group = items.filter(f => f.severity === sev);
+        if (group.length === 0) return;
+        const groupEl = document.createElement('div');
+        groupEl.className = 'sev-group';
+        const heading = document.createElement('div');
+        heading.className = 'sev-heading ' + sev;
+        heading.textContent = sev + ' (' + group.length + ')';
+        groupEl.appendChild(heading);
+        group.forEach(f => groupEl.appendChild(buildFindingEl(f)));
+        block.appendChild(groupEl);
+      });
+
+      document.getElementById('resultsCard').style.display = '';
+      body.appendChild(block);
+    }
+
+    updateResultCount(findings.length);
+  }
+
+  function buildFindingEl(f) {
+    const el = document.createElement('div');
+    el.className = 'finding ' + f.severity;
+    el.innerHTML = `
+      <div><span class="cat">${escHtml(f.category)}</span><span class="msg">${escHtml(f.message)}</span></div>
+      <div class="loc">${escHtml(f.location)}</div>
+      <div class="rec">${escHtml(f.recommendation)}</div>`;
+    return el;
+  }
+
+  function updateResultCount(shown) {
+    const total = (lastResult.findings || []).length;
+    document.getElementById('resultCount').textContent =
+        shown === total ? total + ' finding' + (total !== 1 ? 's' : '') : shown + ' of ' + total + ' shown';
+  }
+
+  function downloadReport() {
+    if (!lastResult || !lastResult.markdownReport) return;
+    const blob = new Blob([lastResult.markdownReport], { type: 'text/markdown' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'container-readiness-' + new Date().toISOString().slice(0,10) + '.md';
+    a.click();
+  }
+
+  function formatDuration(ms) {
+    if (ms < 1000) return ms + ' ms';
+    if (ms < 60000) return (ms / 1000).toFixed(1) + ' s';
+    return Math.floor(ms / 60000) + 'm ' + Math.round((ms % 60000) / 1000) + 's';
+  }
+
+  function setStatus(msg, isErr) {
+    const el = document.getElementById('statusMsg');
+    el.textContent = msg || '';
+    el.className   = 'status-msg' + (isErr ? ' status-err' : (msg ? ' status-ok' : ''));
+  }
+
+  function escHtml(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HTTPS Trust Store Checker</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #f4f6f9;
+      color: #222;
+      padding: 28px 28px 48px;
+    }
+
+    header { margin-bottom: 24px; }
+    header h1 { font-size: 1.3rem; font-weight: 700; }
+    header p  { font-size: 0.82rem; color: #666; margin-top: 4px; }
+    .back { font-size: 0.8rem; color: #0078d4; text-decoration: none; }
+    .back:hover { text-decoration: underline; }
+
+    .card {
+      background: #fff;
+      border: 1px solid #dde1e7;
+      border-radius: 8px;
+      padding: 18px 22px;
+      margin-bottom: 18px;
+    }
+
+    .card-title {
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: #111;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .field { display: flex; flex-direction: column; gap: 4px; }
+    .field label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+    input[type=text], input[type=password], input[type=number], select, textarea {
+      padding: 7px 10px;
+      font-size: 0.85rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-family: inherit;
+    }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: #0078d4; }
+
+    textarea {
+      width: 100%;
+      height: 110px;
+      font-family: monospace;
+      font-size: 0.83rem;
+      resize: vertical;
+    }
+
+    button {
+      padding: 7px 18px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      background: #0078d4;
+      color: #fff;
+      white-space: nowrap;
+    }
+    button:hover:not(:disabled) { background: #005fa3; }
+    button:disabled { background: #9ec5e8; cursor: not-allowed; }
+    button.secondary { background: #6c757d; }
+    button.secondary:hover { background: #545b62; }
+    button.danger { background: #c0392b; }
+    button.danger:hover { background: #a93226; }
+    button.small { padding: 4px 12px; font-size: 0.75rem; }
+
+    /* Trust store rows */
+    .ts-row {
+      display: grid;
+      grid-template-columns: 1.1fr 1.6fr 1fr 0.8fr auto;
+      gap: 8px;
+      align-items: end;
+      margin-bottom: 10px;
+    }
+    .ts-row .field label { font-size: 0.68rem; }
+    .ts-row:last-of-type { margin-bottom: 0; }
+
+    .status-msg { font-size: 0.82rem; margin-top: 10px; }
+    .status-err { color: #842029; }
+    .status-ok  { color: #0a5c36; }
+
+    /* Results table */
+    .tbl-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.81rem; }
+    th {
+      background: #f0f2f5;
+      border: 1px solid #dde1e7;
+      padding: 7px 12px;
+      text-align: left;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    td {
+      border: 1px solid #dde1e7;
+      padding: 6px 12px;
+      vertical-align: top;
+      word-break: break-word;
+    }
+    tr:nth-child(even) td { background: #fafbfc; }
+
+    .url-cell { font-family: monospace; font-size: 0.8rem; }
+    .ts-cell  { font-size: 0.78rem; color: #444; }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 10px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .badge-ok     { background: #d1e7dd; color: #0a5c36; }
+    .badge-failed { background: #f8d7da; color: #842029; }
+
+    .comments-cell { font-size: 0.78rem; color: #842029; }
+    .resp-ms { font-size: 0.78rem; color: #555; }
+
+    /* Summary */
+    .summary-grid { display: flex; gap: 20px; flex-wrap: wrap; }
+    .summary-cell {
+      background: #f8f9fb;
+      border: 1px solid #dde1e7;
+      border-radius: 6px;
+      padding: 10px 18px;
+      min-width: 130px;
+    }
+    .summary-cell .lbl { font-size: 0.72rem; font-weight: 700; color: #888; text-transform: uppercase; }
+    .summary-cell .val { font-size: 1.3rem; font-weight: 700; color: #111; margin-top: 2px; }
+
+    /* Toolbar */
+    .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+    .toolbar input[type=text] { min-width: 200px; width: 200px; }
+    .result-count { font-size: 0.8rem; color: #666; margin-left: auto; }
+
+    .hint { font-size: 0.75rem; color: #888; margin-top: 6px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <a class="back" href="index.html">&#8592; Home</a>
+  <h1>HTTPS Trust Store Checker</h1>
+  <p>Test HTTPS connectivity to a list of URLs against one or more trust stores, to spot certificate problems before they hit production.</p>
+</header>
+
+<!-- ===== Trust Stores ===== -->
+<div class="card">
+  <div class="card-title">
+    <span>Trust Stores</span>
+    <button class="small" onclick="addTrustStoreRow()">+ Add Trust Store</button>
+  </div>
+  <div id="tsRows"></div>
+  <div class="hint">Leave Path blank to test against the JVM default trust store (cacerts). Type is auto-detected from the file extension (.p12/.pfx &rarr; PKCS12, otherwise JKS) if left blank.</div>
+</div>
+
+<!-- ===== URLs + Run ===== -->
+<div class="card">
+  <div class="card-title">HTTPS URLs</div>
+  <div class="field">
+    <label>URLs (one per line)</label>
+    <textarea id="urlInput" placeholder="https://api.example.com&#10;https://internal-service.corp.local:8443/health"></textarea>
+  </div>
+
+  <div style="display:flex;gap:14px;align-items:end;margin-top:12px;flex-wrap:wrap">
+    <div class="field">
+      <label>Timeout (ms)</label>
+      <input type="number" id="timeoutMs" value="8000" min="500" max="30000" step="500" style="width:110px">
+    </div>
+    <div style="display:flex;gap:8px">
+      <button id="runBtn" onclick="runCheck()">Check Connections</button>
+      <button class="secondary" onclick="clearResults()">Clear</button>
+    </div>
+  </div>
+
+  <div id="statusMsg" class="status-msg"></div>
+</div>
+
+<!-- ===== Results ===== -->
+<div class="card" id="resultsCard" style="display:none">
+  <div class="card-title">Results</div>
+  <div class="toolbar">
+    <input type="text" id="filterInput" placeholder="Filter by URL, trust store, status…" oninput="filterRows()">
+    <button class="secondary" style="padding:6px 14px" onclick="exportCsv()">Export CSV</button>
+    <span class="result-count" id="resultCount"></span>
+  </div>
+  <div class="tbl-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>HTTPS URL</th>
+          <th>Trust Store</th>
+          <th>Status</th>
+          <th>Failure Comments</th>
+          <th>Response</th>
+        </tr>
+      </thead>
+      <tbody id="resultBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ===== Summary ===== -->
+<div class="card" id="summaryCard" style="display:none">
+  <div class="card-title">Summary</div>
+  <div class="summary-grid">
+    <div class="summary-cell"><div class="lbl">Checks Run</div><div class="val" id="sumTotal">—</div></div>
+    <div class="summary-cell"><div class="lbl">OK</div><div class="val" id="sumOk" style="color:#0a5c36">—</div></div>
+    <div class="summary-cell"><div class="lbl">Failed</div><div class="val" id="sumFailed" style="color:#842029">—</div></div>
+    <div class="summary-cell"><div class="lbl">Duration</div><div class="val" id="sumDuration">—</div></div>
+  </div>
+</div>
+
+<script>
+  let allRows = [];
+  let tsRowSeq = 0;
+
+  // =====================================================================
+  // Trust store rows
+  // =====================================================================
+
+  function addTrustStoreRow(label, path, password, type) {
+    const id = 'ts-' + (tsRowSeq++);
+    const wrap = document.getElementById('tsRows');
+    const row = document.createElement('div');
+    row.className = 'ts-row';
+    row.id = id;
+    row.innerHTML = `
+      <div class="field">
+        <label>Label</label>
+        <input type="text" class="ts-label" placeholder="e.g. Prod Trust Store" value="${escAttr(label || '')}">
+      </div>
+      <div class="field">
+        <label>Path</label>
+        <input type="text" class="ts-path" placeholder="C:/certs/truststore.jks (blank = JVM default)" value="${escAttr(path || '')}">
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" class="ts-password" placeholder="(optional)" value="${escAttr(password || '')}">
+      </div>
+      <div class="field">
+        <label>Type</label>
+        <select class="ts-type">
+          <option value="" ${!type ? 'selected' : ''}>Auto</option>
+          <option value="JKS" ${type === 'JKS' ? 'selected' : ''}>JKS</option>
+          <option value="PKCS12" ${type === 'PKCS12' ? 'selected' : ''}>PKCS12</option>
+          <option value="JCEKS" ${type === 'JCEKS' ? 'selected' : ''}>JCEKS</option>
+        </select>
+      </div>
+      <button class="danger small" onclick="removeTrustStoreRow('${id}')">Remove</button>`;
+    wrap.appendChild(row);
+  }
+
+  function removeTrustStoreRow(id) {
+    const wrap = document.getElementById('tsRows');
+    if (wrap.children.length <= 1) return; // keep at least one row
+    const el = document.getElementById(id);
+    if (el) el.remove();
+  }
+
+  function collectTrustStores() {
+    return Array.from(document.querySelectorAll('.ts-row')).map(row => ({
+      label:    row.querySelector('.ts-label').value.trim(),
+      path:     row.querySelector('.ts-path').value.trim(),
+      password: row.querySelector('.ts-password').value,
+      type:     row.querySelector('.ts-type').value
+    }));
+  }
+
+  // =====================================================================
+  // Run check
+  // =====================================================================
+
+  async function runCheck() {
+    const urls = document.getElementById('urlInput').value
+        .split('\n').map(u => u.trim()).filter(u => u.length > 0);
+    const timeoutMs = parseInt(document.getElementById('timeoutMs').value, 10) || 8000;
+    const trustStores = collectTrustStores();
+
+    if (urls.length === 0)       { setStatus('Enter at least one HTTPS URL.', true); return; }
+    if (trustStores.length === 0) { setStatus('Add at least one trust store.', true); return; }
+
+    const runBtn = document.getElementById('runBtn');
+    runBtn.disabled = true;
+    setStatus('Running ' + (urls.length * trustStores.length) + ' check(s)…');
+    document.getElementById('resultsCard').style.display = 'none';
+    document.getElementById('summaryCard').style.display = 'none';
+    allRows = [];
+
+    try {
+      const r = await fetch('/httpscheck/check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ urls, trustStores, timeoutMs })
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        setStatus(d.error || 'Request failed', true);
+        return;
+      }
+      allRows = d.data || [];
+      renderRows(allRows);
+      showSummary(allRows, d.durationMs || 0);
+      setStatus('Done.', false);
+    } catch (e) {
+      setStatus('Request error: ' + e.message, true);
+    } finally {
+      runBtn.disabled = false;
+    }
+  }
+
+  // =====================================================================
+  // Table
+  // =====================================================================
+
+  function renderRows(rows) {
+    const tbody = document.getElementById('resultBody');
+    tbody.innerHTML = '';
+    rows.forEach(r => tbody.appendChild(buildRow(r)));
+    document.getElementById('resultsCard').style.display = rows.length ? '' : 'none';
+    updateResultCount(rows.length);
+  }
+
+  function buildRow(d) {
+    const tr = document.createElement('tr');
+    const ok = d.status === 'OK';
+    const respHtml = d.httpStatus !== undefined && d.httpStatus !== null
+        ? `HTTP ${d.httpStatus}` + (d.responseMs !== undefined ? ` · ${d.responseMs} ms` : '')
+        : (d.responseMs !== undefined ? `${d.responseMs} ms` : '—');
+
+    tr.innerHTML = `
+      <td class="url-cell">${escHtml(d.httpsUrl || '')}</td>
+      <td class="ts-cell">${escHtml(d.trustStore || '')}</td>
+      <td><span class="badge ${ok ? 'badge-ok' : 'badge-failed'}">${ok ? 'OK' : 'FAILED'}</span></td>
+      <td class="comments-cell">${escHtml(d.failureComments || '')}</td>
+      <td class="resp-ms">${respHtml}</td>`;
+    return tr;
+  }
+
+  function filterRows() {
+    const q = document.getElementById('filterInput').value.toLowerCase();
+    const filtered = q
+      ? allRows.filter(r =>
+          (r.httpsUrl        || '').toLowerCase().includes(q) ||
+          (r.trustStore      || '').toLowerCase().includes(q) ||
+          (r.status          || '').toLowerCase().includes(q) ||
+          (r.failureComments || '').toLowerCase().includes(q))
+      : allRows;
+    const tbody = document.getElementById('resultBody');
+    tbody.innerHTML = '';
+    filtered.forEach(r => tbody.appendChild(buildRow(r)));
+    updateResultCount(filtered.length);
+  }
+
+  function updateResultCount(shown) {
+    const n = shown !== undefined ? shown : allRows.length;
+    const el = document.getElementById('resultCount');
+    el.textContent = n === allRows.length
+        ? allRows.length + ' result' + (allRows.length !== 1 ? 's' : '')
+        : n + ' of ' + allRows.length + ' shown';
+  }
+
+  // =====================================================================
+  // Summary
+  // =====================================================================
+
+  function showSummary(rows, durationMs) {
+    const ok     = rows.filter(r => r.status === 'OK').length;
+    const failed = rows.length - ok;
+    document.getElementById('sumTotal').textContent    = rows.length;
+    document.getElementById('sumOk').textContent        = ok;
+    document.getElementById('sumFailed').textContent    = failed;
+    document.getElementById('sumDuration').textContent  = formatDuration(durationMs);
+    document.getElementById('summaryCard').style.display = '';
+  }
+
+  function formatDuration(ms) {
+    if (ms < 1000) return ms + ' ms';
+    if (ms < 60000) return (ms / 1000).toFixed(1) + ' s';
+    return Math.floor(ms / 60000) + 'm ' + Math.round((ms % 60000) / 1000) + 's';
+  }
+
+  // =====================================================================
+  // Export / clear / status
+  // =====================================================================
+
+  function exportCsv() {
+    const lines = ['httpsUrl,trustStore,status,failureComments'];
+    allRows.forEach(r => {
+      lines.push([
+        csvCell(r.httpsUrl || ''),
+        csvCell(r.trustStore || ''),
+        csvCell(r.status || ''),
+        csvCell(r.failureComments || '')
+      ].join(','));
+    });
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const a    = document.createElement('a');
+    a.href     = URL.createObjectURL(blob);
+    a.download = 'httpscheck-' + new Date().toISOString().slice(0,10) + '.csv';
+    a.click();
+  }
+
+  function csvCell(s) {
+    return '"' + String(s).replace(/"/g, '""') + '"';
+  }
+
+  function clearResults() {
+    allRows = [];
+    document.getElementById('resultBody').innerHTML = '';
+    document.getElementById('resultsCard').style.display = 'none';
+    document.getElementById('summaryCard').style.display = 'none';
+    setStatus('');
+  }
+
+  function setStatus(msg, isErr) {
+    const el = document.getElementById('statusMsg');
+    el.textContent = msg || '';
+    el.className   = 'status-msg' + (isErr ? ' status-err' : (msg ? ' status-ok' : ''));
+  }
+
+  function escHtml(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function escAttr(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+  }
+
+  // Seed with one default row (JVM trust store).
+  addTrustStoreRow('Default (JVM)', '', '', '');
+</script>
+</body>
+</html>

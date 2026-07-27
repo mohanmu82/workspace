@@ -68,7 +68,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.LongSummaryStatistics;
 import java.util.Map;
-import java.util.SequencedSet;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -1383,7 +1382,7 @@ public class BatchService {
             return;
         }
 
-        SequencedSet<String> columns = new LinkedHashSet<>();
+        LinkedHashSet<String> columns = new LinkedHashSet<>();
         batch.results().get(0).keySet().forEach(columns::add);
         for (Map<String, Object> row : batch.results()) {
             if (!row.containsKey("errorMessage")) {
@@ -1418,7 +1417,7 @@ public class BatchService {
      */
     public List<String> initPsvStream(Map<String, Object> firstRow, String outputFilePath,
                                       boolean append) throws Exception {
-        SequencedSet<String> cols = new LinkedHashSet<>(firstRow.keySet());
+        LinkedHashSet<String> cols = new LinkedHashSet<>(firstRow.keySet());
         cols.add("errorMessage");
         java.nio.file.OpenOption[] options = append
                 ? new java.nio.file.OpenOption[]{java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND}
@@ -3612,7 +3611,7 @@ public class BatchService {
 
     private List<ColumnDef> buildColumnDefsFromResults(List<Map<String, Object>> results) {
         if (results.isEmpty()) return List.of();
-        SequencedSet<String> keys = new LinkedHashSet<>();
+        LinkedHashSet<String> keys = new LinkedHashSet<>();
         results.get(0).keySet().forEach(keys::add);
         for (Map<String, Object> row : results) {
             if (!row.containsKey("errorMessage")) {

@@ -3,8 +3,10 @@ package com.mycompany.taskmanagement.service;
 import com.mycompany.taskmanagement.model.Programme;
 import com.mycompany.taskmanagement.store.ProgrammeDataStore;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 
@@ -20,7 +22,7 @@ public class ProgrammeService {
 
     public Programme getById(Long id) {
         return dataStore.findById(id)
-                .orElseThrow(() -> new RuntimeException("Programme not found: " + id));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Programme not found: " + id));
     }
 
     @Transactional

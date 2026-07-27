@@ -9,6 +9,8 @@ import javax.security.auth.Subject;
 import javax.security.auth.login.AppConfigurationEntry;
 import javax.security.auth.login.Configuration;
 import javax.security.auth.login.LoginContext;
+import java.security.PrivilegedActionException;
+import java.security.PrivilegedExceptionAction;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
@@ -33,14 +35,19 @@ public class KerberosAuthProvider implements HttpAuthProvider {
 
     @Override
     public String getAuthorizationHeader() throws Exception {
-        byte[] token = Subject.callAs(subject, () -> {
-            GSSManager manager = GSSManager.getInstance();
-            Oid spnegoOid = new Oid(SPNEGO_OID);
-            GSSName serverName = manager.createName(servicePrincipal, GSSName.NT_HOSTBASED_SERVICE);
-            GSSContext context = manager.createContext(serverName, spnegoOid, null, GSSContext.DEFAULT_LIFETIME);
-            context.requestMutualAuth(true);
-            return context.initSecContext(new byte[0], 0, 0);
-        });
+        byte[] token;
+        try {
+            token = Subject.doAs(subject, (PrivilegedExceptionAction<byte[]>) () -> {
+                GSSManager manager = GSSManager.getInstance();
+                Oid spnegoOid = new Oid(SPNEGO_OID);
+                GSSName serverName = manager.createName(servicePrincipal, GSSName.NT_HOSTBASED_SERVICE);
+                GSSContext context = manager.createContext(serverName, spnegoOid, null, GSSContext.DEFAULT_LIFETIME);
+                context.requestMutualAuth(true);
+                return context.initSecContext(new byte[0], 0, 0);
+            });
+        } catch (PrivilegedActionException e) {
+            throw (Exception) e.getCause();
+        }
         return "Negotiate " + Base64.getEncoder().encodeToString(token);
     }
 

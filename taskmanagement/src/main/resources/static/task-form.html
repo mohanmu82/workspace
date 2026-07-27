@@ -4,8 +4,10 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Task Form</title>
+  <script>document.documentElement.setAttribute('data-bs-theme', localStorage.getItem('theme') || 'light');</script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"/>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"/>
+  <link rel="stylesheet" href="theme.css"/>
   <style>
     body { background: #f4f6f9; font-size: 0.875rem; }
     .section-card { background:#fff; border-radius:8px; border:1px solid #dee2e6; padding:1.25rem; margin-bottom:1rem; }
@@ -36,10 +38,15 @@
   <div class="d-flex gap-2 align-items-center">
     <span class="text-light" id="navTitle">New Task</span>
     <a href="due-dates.html" class="btn btn-outline-light btn-sm ms-3"><i class="bi bi-calendar-event me-1"></i>Due Dates</a>
+    <a href="calendar.html" class="btn btn-outline-light btn-sm"><i class="bi bi-calendar3 me-1"></i>By Date</a>
     <a href="projects.html" class="btn btn-outline-light btn-sm"><i class="bi bi-diagram-3 me-1"></i>Projects</a>
     <a href="programmes.html" class="btn btn-outline-light btn-sm"><i class="bi bi-diagram-2 me-1"></i>Programmes</a>
+    <a href="phases.html" class="btn btn-outline-light btn-sm"><i class="bi bi-kanban me-1"></i>Phases</a>
     <a href="timeline.html" class="btn btn-outline-light btn-sm"><i class="bi bi-bar-chart-steps me-1"></i>Timeline</a>
+    <a href="dependencies.html" class="btn btn-outline-light btn-sm"><i class="bi bi-link-45deg me-1"></i>Dependencies</a>
     <a href="admin.html" class="btn btn-outline-light btn-sm"><i class="bi bi-gear me-1"></i>Admin</a>
+    <a href="api-docs.html" class="btn btn-outline-light btn-sm"><i class="bi bi-code-slash me-1"></i>API Docs</a>
+    <button class="btn btn-outline-light btn-sm" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle dark mode"><i class="bi bi-moon-stars" id="themeIcon"></i></button>
   </div>
 </nav>
 
@@ -69,6 +76,7 @@
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabClassification">Classification</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabExternal">External</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabCustom">Custom Fields</button></li>
+    <li class="nav-item" id="tabSubtasksNav" style="display:none"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabSubtasks">Subtasks <span id="subtaskCount" class="badge bg-primary ms-1">0</span></button></li>
     <li class="nav-item" id="tabCommentsNav" style="display:none"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabComments">Comments <span id="commentCount" class="badge bg-primary ms-1">0</span></button></li>
     <li class="nav-item" id="tabHistoryNav" style="display:none"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabHistory">History <span id="historyCount" class="badge bg-secondary ms-1">0</span></button></li>
   </ul>
@@ -77,6 +85,22 @@
 
     <!-- Basic Info -->
     <div class="tab-pane fade show active" id="tabBasic">
+      <div class="section-card" id="templateBar" style="display:none">
+        <div class="section-title">Task Template</div>
+        <div class="d-flex gap-2 align-items-center">
+          <div class="d-flex gap-2 align-items-center" id="templateApplyGroup">
+            <select id="templateSelect" class="form-select form-select-sm" style="max-width:280px" onchange="applySelectedTemplate()">
+              <option value="">-- Start from a template --</option>
+            </select>
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="deleteTemplateBtn" style="display:none" onclick="deleteSelectedTemplate()" title="Delete this template">
+              <i class="bi bi-trash"></i>
+            </button>
+          </div>
+          <button type="button" class="btn btn-outline-primary btn-sm ms-auto" onclick="saveAsTemplate()">
+            <i class="bi bi-bookmark-plus me-1"></i>Save as Template
+          </button>
+        </div>
+      </div>
       <div class="section-card">
         <div class="section-title">Basic Information</div>
         <div class="row g-3">
@@ -179,6 +203,11 @@
             <label class="form-label">Working Group</label>
             <input type="text" id="workingGroup" class="form-control" placeholder="Working group name"/>
           </div>
+          <div class="col-md-4">
+            <label class="form-label">Phase</label>
+            <input type="text" id="customField1" class="form-control" placeholder="e.g. 1, 2, 3..."/>
+            <div class="form-text">Project phase this task belongs to. Leave blank for tasks generic to the whole project (e.g. documentation).</div>
+          </div>
         </div>
       </div>
     </div>
@@ -205,7 +234,6 @@
       <div class="section-card">
         <div class="section-title">Custom Fields</div>
         <div class="row g-3">
-          <div class="col-md-6"><label class="form-label">Custom Field 1</label><input type="text" id="customField1" class="form-control"/></div>
           <div class="col-md-6"><label class="form-label">Custom Field 2</label><input type="text" id="customField2" class="form-control"/></div>
           <div class="col-md-6"><label class="form-label">Custom Field 3</label><input type="text" id="customField3" class="form-control"/></div>
           <div class="col-md-6"><label class="form-label">Custom Field 4</label><input type="text" id="customField4" class="form-control"/></div>
@@ -215,6 +243,19 @@
           <div class="col-md-6"><label class="form-label">Custom Field 8</label><input type="text" id="customField8" class="form-control"/></div>
           <div class="col-md-6"><label class="form-label">Custom Field 9</label><input type="text" id="customField9" class="form-control"/></div>
           <div class="col-md-6"><label class="form-label">Custom Field 10</label><input type="text" id="customField10" class="form-control"/></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Subtasks -->
+    <div class="tab-pane fade" id="tabSubtasks">
+      <div class="section-card">
+        <div class="section-title">Subtasks</div>
+        <div id="subtasksProgress" class="mb-2 small text-muted"></div>
+        <div id="subtasksList" class="mb-3"></div>
+        <div class="input-group input-group-sm">
+          <input type="text" id="newSubtaskTitle" class="form-control" placeholder="New subtask title..." onkeydown="if(event.key==='Enter') addSubtask();"/>
+          <button class="btn btn-primary" onclick="addSubtask()"><i class="bi bi-plus-lg me-1"></i>Add</button>
         </div>
       </div>
     </div>
@@ -271,6 +312,7 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="theme.js"></script>
 <script>
   const params = new URLSearchParams(location.search);
   const taskId = params.get('id');
@@ -279,17 +321,121 @@
   async function init() {
     toast = new bootstrap.Toast(document.getElementById('toastEl'), { delay: 2500 });
     await loadFieldConfigs();
+    document.getElementById('templateBar').style.display = '';
     if (taskId) {
       document.getElementById('navTitle').textContent = `Task #${taskId}`;
       document.getElementById('breadcrumbCurrent').textContent = `Task #${taskId}`;
       document.getElementById('deleteBtn').style.display = '';
+      document.getElementById('tabSubtasksNav').style.display = '';
       document.getElementById('tabCommentsNav').style.display = '';
       document.getElementById('tabHistoryNav').style.display = '';
       await loadTask();
+      document.getElementById('commentAuthor').value = getMyName();
+      document.getElementById('templateApplyGroup').style.display = 'none';
+      await loadSubtasks();
       await loadComments();
       await loadHistory();
+    } else {
+      if (!getField('createdBy') && getMyName()) {
+        setField('createdBy', getMyName());
+      }
+      await loadTemplateOptions();
     }
   }
+
+  // ── Task templates ──────────────────────────────────────────────────────────
+  async function loadTemplateOptions() {
+    const sel = document.getElementById('templateSelect');
+    try {
+      const templates = await fetch('/api/task-templates').then(r => r.json());
+      while (sel.options.length > 1) sel.remove(1);
+      (templates || []).forEach(t => {
+        const o = document.createElement('option');
+        o.value = t.id;
+        o.textContent = t.name;
+        sel.appendChild(o);
+      });
+    } catch (e) { console.error(e); }
+  }
+
+  async function applySelectedTemplate() {
+    const id = document.getElementById('templateSelect').value;
+    document.getElementById('deleteTemplateBtn').style.display = id ? '' : 'none';
+    if (!id) return;
+    try {
+      const t = await fetch(`/api/task-templates/${id}`).then(r => r.json());
+      setField('title', t.title);
+      setField('description', t.description);
+      setSelect('priority', t.priority);
+      setField('category', t.category);
+      setField('programme', t.programme);
+      setField('project', t.project);
+      setField('assetClass', t.assetClass);
+      setField('workingGroup', t.workingGroup);
+      setField('tags', (t.tags || []).join(', '));
+      setField('estimatedHours', t.estimatedHours);
+    } catch (e) {
+      console.error(e);
+      alert('Could not load template.');
+    }
+  }
+
+  async function deleteSelectedTemplate() {
+    const sel = document.getElementById('templateSelect');
+    const id = sel.value;
+    if (!id) return;
+    if (!confirm(`Delete template "${sel.options[sel.selectedIndex].textContent}"?`)) return;
+    try {
+      await fetch(`/api/task-templates/${id}`, { method: 'DELETE' });
+      sel.value = '';
+      document.getElementById('deleteTemplateBtn').style.display = 'none';
+      await loadTemplateOptions();
+    } catch (e) {
+      console.error(e);
+      alert('Could not delete template.');
+    }
+  }
+
+  async function saveAsTemplate() {
+    const title = getField('title');
+    if (!title) { alert('Enter a title before saving as a template.'); return; }
+    const name = prompt('Name this template:');
+    if (!name || !name.trim()) return;
+    const payload = buildPayload();
+    const templatePayload = {
+      name: name.trim(),
+      title: payload.title,
+      description: payload.description,
+      priority: payload.priority,
+      category: payload.category,
+      tags: payload.tags,
+      estimatedHours: payload.estimatedHours,
+      programme: payload.programme,
+      project: payload.project,
+      assetClass: payload.assetClass,
+      workingGroup: payload.workingGroup,
+    };
+    try {
+      const res = await fetch('/api/task-templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(templatePayload)
+      });
+      if (!res.ok) throw new Error(await res.text());
+      showToast('Template saved!', 'success');
+      await loadTemplateOptions();
+    } catch (e) {
+      console.error(e);
+      alert('Could not save template: ' + e.message);
+    }
+  }
+
+  document.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+      e.preventDefault();
+      saveTask();
+    }
+  });
 
   async function loadFieldConfigs() {
     let configs;
@@ -518,6 +664,80 @@
       showToast('Error: ' + e.message, 'danger');
     } finally {
       document.getElementById('saveSpinner').style.display = 'none';
+    }
+  }
+
+  let subtasks = [];
+
+  async function loadSubtasks() {
+    if (!taskId) return;
+    try {
+      const data = await fetch('/api/tasks?size=500').then(r => r.json());
+      subtasks = (data.tasks || []).filter(t => String(t.parentTaskId) === String(taskId));
+    } catch (e) {
+      console.error(e);
+      subtasks = [];
+    }
+    document.getElementById('subtaskCount').textContent = subtasks.length;
+    renderSubtasks();
+  }
+
+  function renderSubtasks() {
+    const doneCount = subtasks.filter(t => t.status === 'DONE').length;
+    document.getElementById('subtasksProgress').textContent = subtasks.length
+      ? `${doneCount} of ${subtasks.length} done`
+      : 'No subtasks yet.';
+    const list = document.getElementById('subtasksList');
+    if (!subtasks.length) { list.innerHTML = ''; return; }
+    list.innerHTML = subtasks.map(t => `
+      <div class="d-flex align-items-center justify-content-between border rounded px-2 py-1 mb-1">
+        <div class="form-check mb-0 flex-grow-1">
+          <input class="form-check-input" type="checkbox" id="sub-${t.id}" ${t.status === 'DONE' ? 'checked' : ''} onchange="toggleSubtaskDone(${t.id}, this.checked)"/>
+          <label class="form-check-label ${t.status === 'DONE' ? 'text-decoration-line-through text-muted' : ''}" for="sub-${t.id}">${esc(t.title)}</label>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          <span class="badge badge-status-${esc(t.status)}">${esc(t.status || '')}</span>
+          <a href="task-form.html?id=${t.id}" class="btn btn-sm btn-outline-secondary py-0 px-1" title="Open"><i class="bi bi-box-arrow-up-right"></i></a>
+        </div>
+      </div>`).join('');
+  }
+
+  async function toggleSubtaskDone(id, checked) {
+    const newStatus = checked ? 'DONE' : 'TODO';
+    const changedBy = getField('assignee') || getMyName() || 'system';
+    try {
+      await fetch(`/api/tasks/${id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'X-Changed-By': changedBy },
+        body: JSON.stringify({ status: newStatus })
+      });
+      await loadSubtasks();
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function addSubtask() {
+    const input = document.getElementById('newSubtaskTitle');
+    const title = input.value.trim();
+    if (!title) return;
+    try {
+      await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title,
+          parentTaskId: parseInt(taskId, 10),
+          programme: getField('programme'),
+          project: getField('project'),
+          assignee: getField('assignee')
+        })
+      });
+      input.value = '';
+      await loadSubtasks();
+    } catch (e) {
+      console.error(e);
+      alert('Could not create subtask.');
     }
   }
 

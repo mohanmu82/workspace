@@ -3,8 +3,10 @@ package com.mycompany.taskmanagement.store;
 import com.mycompany.taskmanagement.dto.TaskSearchRequest;
 import com.mycompany.taskmanagement.model.Task;
 import com.mycompany.taskmanagement.model.TaskComment;
+import com.mycompany.taskmanagement.model.TaskDependency;
 import com.mycompany.taskmanagement.model.TaskHistory;
 import com.mycompany.taskmanagement.repository.TaskCommentRepository;
+import com.mycompany.taskmanagement.repository.TaskDependencyRepository;
 import com.mycompany.taskmanagement.repository.TaskHistoryRepository;
 import com.mycompany.taskmanagement.repository.TaskRepository;
 import com.mycompany.taskmanagement.repository.TaskSpecification;
@@ -26,6 +28,7 @@ public class JpaTaskDataStore implements TaskDataStore {
     private final TaskRepository taskRepository;
     private final TaskCommentRepository commentRepository;
     private final TaskHistoryRepository historyRepository;
+    private final TaskDependencyRepository dependencyRepository;
 
     @Override
     public Page<Task> search(TaskSearchRequest req) {
@@ -93,4 +96,27 @@ public class JpaTaskDataStore implements TaskDataStore {
     public List<String> findDistinctWorkingGroups() { return taskRepository.findDistinctWorkingGroups(); }
     @Override
     public List<String> findDistinctAssetClasses() { return taskRepository.findDistinctAssetClasses(); }
+
+    @Override
+    public List<TaskDependency> findAllDependencies() { return dependencyRepository.findAll(); }
+
+    @Override
+    public List<TaskDependency> findDependenciesByTaskId(Long taskId) { return dependencyRepository.findByTaskId(taskId); }
+
+    @Override
+    public List<TaskDependency> findDependentsByTaskId(Long taskId) { return dependencyRepository.findByDependsOnTaskId(taskId); }
+
+    @Override
+    public TaskDependency saveDependency(TaskDependency dependency) { return dependencyRepository.save(dependency); }
+
+    @Override
+    public void deleteDependency(Long taskId, Long dependsOnTaskId) {
+        dependencyRepository.deleteByTaskIdAndDependsOnTaskId(taskId, dependsOnTaskId);
+    }
+
+    @Override
+    public void deleteDependenciesForTask(Long taskId) {
+        dependencyRepository.deleteByTaskId(taskId);
+        dependencyRepository.deleteByDependsOnTaskId(taskId);
+    }
 }

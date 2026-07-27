@@ -10,6 +10,7 @@ import com.mycompany.batch.model.stream.ExecuteRequest;
 import com.mycompany.batch.model.stream.LiveKeyInfo;
 import com.mycompany.batch.model.stream.StreamSession;
 import com.mycompany.batch.model.stream.UnsubscribeRequest;
+import com.mycompany.batch.util.Threads;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
@@ -147,7 +148,7 @@ public class StreamSessionService {
         String urlMethod = req.getUrlMethod() != null ? req.getUrlMethod().toUpperCase() : "GET";
         String urlBody   = req.getUrlBody();
 
-        Thread.ofVirtual().start(() -> {
+        Threads.startDaemon(() -> {
             try {
                 Object data      = fetchData(fetchUrl, urlMethod, urlBody);
                 String eventType = isRowUpdate ? "dataset.rowUpdate" : "dataset.load";
@@ -212,7 +213,7 @@ public class StreamSessionService {
 
     private void runBatchAsync(StreamSession session, RunRequest batchReq,
                                String datasetAlias, String requestId) {
-        Thread.ofVirtual().start(() -> {
+        Threads.startDaemon(() -> {
             String batchUuid = java.util.UUID.randomUUID().toString();
             try {
                 RunRequest resolvedReq = batchService.resolveAlias(batchReq);

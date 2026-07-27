@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Tasks by Phase</title>
+  <script>document.documentElement.setAttribute('data-bs-theme', localStorage.getItem('theme') || 'light');</script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"/>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"/>
+  <link rel="stylesheet" href="theme.css"/>
+  <style>
+    body { background: #f4f6f9; font-size: 0.875rem; }
+    .badge-status-BACKLOG    { background: #495057; }
+    .badge-status-TODO       { background: #6c757d; }
+    .badge-status-IN_PROGRESS{ background: #0d6efd; }
+    .badge-status-REVIEW     { background: #fd7e14; }
+    .badge-status-DONE       { background: #198754; }
+    .badge-status-BLOCKED    { background: #dc3545; }
+    .badge-status-CANCELLED  { background: #adb5bd; color: #000; }
+    .phase-wrap { display: flex; gap: 1rem; align-items: flex-start; }
+    .unassigned-panel { width: 260px; flex-shrink: 0; background: #fff; border: 1px solid #dee2e6; border-radius: 8px; padding: 0.75rem; max-height: calc(100vh - 190px); overflow-y: auto; }
+    .phase-board { flex: 1; min-width: 0; display: flex; gap: 0.75rem; overflow-x: auto; padding-bottom: 1rem; }
+    .phase-col { min-width: 240px; background: #fff; border-radius: 8px; border: 1px solid #dee2e6; flex-shrink: 0; max-height: calc(100vh - 190px); display: flex; flex-direction: column; }
+    .phase-col-header { padding: 0.5rem 0.75rem; font-weight: 700; border-radius: 8px 8px 0 0; font-size: 0.8rem; background: #0d6efd; color: #fff; flex-shrink: 0; }
+    .phase-cards { padding: 0.5rem; min-height: 100px; overflow-y: auto; flex: 1; transition: background-color 0.15s ease; }
+    .phase-cards.drag-over { background-color: #e7f1ff; outline: 2px dashed #0d6efd; outline-offset: -2px; }
+    .phase-card { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; padding: 0.4rem 0.5rem; margin-bottom: 0.4rem; cursor: grab; font-size: 0.78rem; display: flex; gap: 6px; align-items: flex-start; }
+    .phase-card:hover { background: #e9ecef; }
+    .phase-card.dragging { opacity: 0.4; }
+    .phase-card .card-body-text { flex: 1; min-width: 0; }
+    .phase-card .card-title-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+    .phase-card .card-meta { color: #6c757d; font-size: 0.68rem; margin-top: 2px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+    .overdue { color: #dc3545 !important; font-weight: 600; }
+    #noUnassigned { display: none; }
+    #noProjectMsg, #loadingIndicator { display: none; }
+    .bulk-bar { display: none; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark bg-dark px-3">
+  <a class="navbar-brand fw-bold" href="index.html"><i class="bi bi-check2-square me-2"></i>Task Manager</a>
+  <div class="d-flex gap-2 align-items-center">
+    <a href="index.html" class="btn btn-outline-light btn-sm"><i class="bi bi-list-task me-1"></i>Tasks</a>
+    <a href="due-dates.html" class="btn btn-outline-light btn-sm"><i class="bi bi-calendar-event me-1"></i>Due Dates</a>
+    <a href="calendar.html" class="btn btn-outline-light btn-sm"><i class="bi bi-calendar3 me-1"></i>By Date</a>
+    <a href="projects.html" class="btn btn-outline-light btn-sm"><i class="bi bi-diagram-3 me-1"></i>Projects</a>
+    <a href="programmes.html" class="btn btn-outline-light btn-sm"><i class="bi bi-diagram-2 me-1"></i>Programmes</a>
+    <span class="text-light fw-semibold"><i class="bi bi-kanban me-1"></i>Phases</span>
+    <a href="timeline.html" class="btn btn-outline-light btn-sm"><i class="bi bi-bar-chart-steps me-1"></i>Timeline</a>
+    <a href="dependencies.html" class="btn btn-outline-light btn-sm"><i class="bi bi-link-45deg me-1"></i>Dependencies</a>
+    <a href="admin.html" class="btn btn-outline-light btn-sm"><i class="bi bi-gear me-1"></i>Admin</a>
+    <button class="btn btn-outline-light btn-sm" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle dark mode"><i class="bi bi-moon-stars" id="themeIcon"></i></button>
+  </div>
+</nav>
+
+<div class="container-fluid p-3">
+
+  <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+    <div class="d-flex align-items-center gap-2">
+      <label class="form-label mb-0 fw-semibold small">Project</label>
+      <select id="projectSelect" class="form-select form-select-sm" style="min-width:240px" onchange="onProjectChange()">
+        <option value="">-- Select a project --</option>
+      </select>
+    </div>
+    <div class="form-check">
+      <input class="form-check-input" type="checkbox" id="includeDone" onchange="render()">
+      <label class="form-check-label small" for="includeDone">Include Done / Cancelled</label>
+    </div>
+  </div>
+
+  <div class="bulk-bar alert alert-primary d-flex align-items-center gap-2 py-2 mb-3" id="bulkBar">
+    <span id="bulkCount" class="fw-semibold small"></span>
+    <label class="small mb-0 ms-2">Move to:</label>
+    <select id="bulkPhaseSelect" class="form-select form-select-sm" style="max-width:200px"></select>
+    <button class="btn btn-primary btn-sm" onclick="applyBulkMove()"><i class="bi bi-arrow-right-circle me-1"></i>Move Selected</button>
+    <button class="btn btn-outline-secondary btn-sm" onclick="clearSelection()">Clear Selection</button>
+  </div>
+
+  <div id="loadingIndicator" class="text-center py-4 text-muted"><div class="spinner-border spinner-border-sm"></div> Loading...</div>
+  <div id="noProjectMsg" class="text-center py-5 text-muted"><i class="bi bi-diagram-3 fs-1 d-block mb-2"></i>Select a project above to view and organize its tasks by phase</div>
+
+  <div class="phase-wrap" id="boardWrap" style="display:none">
+    <div class="unassigned-panel">
+      <div class="fw-semibold small text-uppercase text-muted mb-2"><i class="bi bi-inbox me-1"></i>No Phase (General)</div>
+      <div id="noUnassigned" class="text-muted small">Nothing unassigned</div>
+      <div id="unassignedList" ondragover="onZoneDragOver(event)" ondragleave="onZoneDragLeave(event)" ondrop="onDropPhase(event, '')" style="min-height:60px"></div>
+    </div>
+    <div class="phase-board" id="phaseBoard"></div>
+  </div>
+
+</div>
+
+<script src="theme.js"></script>
+<script src="tasks-ws.js"></script>
+<script>
+let allProjects = [];
+let allTasks = [];
+let phaseOptions = ['1','2','3','4','5','6','7','8','9','10'];
+let selectedIds = new Set();
+const today = new Date();
+today.setHours(0, 0, 0, 0);
+
+async function init() {
+  try {
+    const [projects, configs] = await Promise.all([
+      fetch('/api/projects').then(r => r.json()),
+      fetch('/api/field-configs').then(r => r.json()).catch(() => null)
+    ]);
+    allProjects = projects || [];
+    if (configs && configs.customField1 && configs.customField1.source && configs.customField1.source.staticOptions) {
+      phaseOptions = configs.customField1.source.staticOptions.slice();
+    }
+    const sel = document.getElementById('projectSelect');
+    allProjects.forEach(p => {
+      const o = document.createElement('option');
+      o.value = p.name;
+      o.textContent = p.name;
+      sel.appendChild(o);
+    });
+    const params = new URLSearchParams(location.search);
+    const preselect = params.get('project');
+    if (preselect && allProjects.some(p => p.name === preselect)) {
+      sel.value = preselect;
+      await onProjectChange();
+    }
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+function onProjectChange() {
+  selectedIds.clear();
+  const name = document.getElementById('projectSelect').value;
+  const url = new URL(location.href);
+  if (name) url.searchParams.set('project', name); else url.searchParams.delete('project');
+  history.replaceState(null, '', url);
+  if (!name) {
+    document.getElementById('boardWrap').style.display = 'none';
+    document.getElementById('noProjectMsg').style.display = 'block';
+    return;
+  }
+  return loadTasks();
+}
+
+async function loadTasks() {
+  const name = document.getElementById('projectSelect').value;
+  if (!name) return;
+  document.getElementById('loadingIndicator').style.display = 'block';
+  document.getElementById('noProjectMsg').style.display = 'none';
+  try {
+    let data;
+    try {
+      data = await TaskWS.search({ project: name, size: 1000 });
+    } catch (wsErr) {
+      const res = await fetch(`/api/tasks?project=${encodeURIComponent(name)}&size=1000`);
+      data = await res.json();
+    }
+    allTasks = (data.tasks || []).filter(t => (t.project || '').trim().toLowerCase() === name.trim().toLowerCase());
+    render();
+  } catch (e) {
+    console.error(e);
+  } finally {
+    document.getElementById('loadingIndicator').style.display = 'none';
+  }
+}
+
+TaskWS.onTaskChanged(() => {
+  if (document.getElementById('projectSelect').value) loadTasks();
+});
+
+function visibleTasks() {
+  const includeDone = document.getElementById('includeDone').checked;
+  return allTasks.filter(t => includeDone || (t.status !== 'DONE' && t.status !== 'CANCELLED'));
+}
+
+function render() {
+  document.getElementById('boardWrap').style.display = 'flex';
+
+  const tasks = visibleTasks();
+  const unassigned = tasks.filter(t => !(t.customField1 || '').trim());
+  const usedValues = Array.from(new Set(tasks.map(t => (t.customField1 || '').trim()).filter(v => v)));
+  const columns = Array.from(new Set([...phaseOptions, ...usedValues])).sort((a, b) => {
+    const na = Number(a), nb = Number(b);
+    if (!isNaN(na) && !isNaN(nb)) return na - nb;
+    return String(a).localeCompare(String(b));
+  });
+
+  const ul = document.getElementById('unassignedList');
+  document.getElementById('noUnassigned').style.display = unassigned.length === 0 ? 'block' : 'none';
+  ul.innerHTML = unassigned.map(taskCard).join('');
+
+  const board = document.getElementById('phaseBoard');
+  board.innerHTML = columns.map(col => {
+    const colTasks = tasks.filter(t => (t.customField1 || '').trim() === col);
+    return `<div class="phase-col">
+      <div class="phase-col-header d-flex justify-content-between align-items-center">
+        <span>Phase ${esc(col)}</span>
+        <span class="badge bg-white text-dark">${colTasks.length}</span>
+      </div>
+      <div class="phase-cards" data-phase="${esc(col)}" ondragover="onZoneDragOver(event)" ondragleave="onZoneDragLeave(event)" ondrop="onDropPhase(event, '${esc(col)}')">
+        ${colTasks.map(taskCard).join('') || '<p class="text-muted small p-2 mb-0">Empty</p>'}
+      </div>
+    </div>`;
+  }).join('');
+
+  wireDragAndDrop();
+  updateBulkBar();
+}
+
+function taskCard(t) {
+  const due = t.dueDate ? new Date(t.dueDate) : null;
+  const over = due && due < today && t.status !== 'DONE' && t.status !== 'CANCELLED';
+  const checked = selectedIds.has(t.id) ? 'checked' : '';
+  return `<div class="phase-card" draggable="true" data-task-id="${t.id}"
+               ondragstart="onDragStart(event, ${t.id})" ondragend="onDragEnd(event)">
+    <input type="checkbox" class="form-check-input mt-1" ${checked} onclick="event.stopPropagation()" onchange="toggleSelect(${t.id}, this.checked)"/>
+    <div class="card-body-text">
+      <div class="card-title-line ${over ? 'overdue' : ''}" onclick="location.href='task-form.html?id=${t.id}'" title="${escAttr(t.title)}">${esc(t.title)}${over ? ' ⚠' : ''}</div>
+      <div class="card-meta">
+        <span class="badge badge-status-${esc(t.status)}" style="font-size:0.6rem">${esc(t.status || '')}</span>
+        ${t.assignee ? `<span>${esc(t.assignee)}</span>` : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+function toggleSelect(taskId, checked) {
+  if (checked) selectedIds.add(taskId); else selectedIds.delete(taskId);
+  updateBulkBar();
+}
+
+function clearSelection() {
+  selectedIds.clear();
+  render();
+}
+
+function updateBulkBar() {
+  const bar = document.getElementById('bulkBar');
+  if (selectedIds.size === 0) {
+    bar.style.display = 'none';
+    return;
+  }
+  bar.style.display = 'flex';
+  document.getElementById('bulkCount').textContent = `${selectedIds.size} task(s) selected`;
+  const sel = document.getElementById('bulkPhaseSelect');
+  const columns = Array.from(new Set([...phaseOptions])).sort((a, b) => {
+    const na = Number(a), nb = Number(b);
+    if (!isNaN(na) && !isNaN(nb)) return na - nb;
+    return String(a).localeCompare(String(b));
+  });
+  sel.innerHTML = `<option value="">No Phase (General)</option>` +
+    columns.map(c => `<option value="${esc(c)}">Phase ${esc(c)}</option>`).join('');
+}
+
+async function applyBulkMove() {
+  const phase = document.getElementById('bulkPhaseSelect').value;
+  const ids = Array.from(selectedIds);
+  if (!ids.length) return;
+  await Promise.all(ids.map(id => setPhase(id, phase)));
+  selectedIds.clear();
+  await loadTasks();
+}
+
+// ── Drag and drop ────────────────────────────────────────────────────────────
+let draggedTaskId = null;
+
+function onDragStart(evt, taskId) {
+  draggedTaskId = taskId;
+  evt.dataTransfer.setData('text/plain', String(taskId));
+  evt.dataTransfer.effectAllowed = 'move';
+  evt.target.classList.add('dragging');
+}
+
+function onDragEnd(evt) {
+  evt.target.classList.remove('dragging');
+  draggedTaskId = null;
+}
+
+function onZoneDragOver(evt) {
+  evt.preventDefault();
+  evt.dataTransfer.dropEffect = 'move';
+  evt.currentTarget.classList.add('drag-over');
+}
+
+function onZoneDragLeave(evt) {
+  evt.currentTarget.classList.remove('drag-over');
+}
+
+async function onDropPhase(evt, phaseValue) {
+  evt.preventDefault();
+  evt.currentTarget.classList.remove('drag-over');
+  const taskId = Number(evt.dataTransfer.getData('text/plain')) || draggedTaskId;
+  if (!taskId) return;
+  // If the dropped card is part of the current multi-select, move the whole selection together.
+  const ids = selectedIds.has(taskId) && selectedIds.size > 1 ? Array.from(selectedIds) : [taskId];
+  await Promise.all(ids.map(id => setPhase(id, phaseValue)));
+  await loadTasks();
+}
+
+function wireDragAndDrop() {
+  // Drag handlers are attached inline via ondragstart/ondragend/ondragover/ondrop above;
+  // nothing additional to wire up after innerHTML rebuilds.
+}
+
+async function setPhase(taskId, phase) {
+  try {
+    const res = await fetch(`/api/tasks/${taskId}/phase`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phase })
+    });
+    if (!res.ok) console.error('Failed to update phase for task', taskId);
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+function esc(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function escAttr(s) {
+  return esc(s).replace(/'/g, '&#39;');
+}
+
+init();
+</script>
+</body>
+</html>

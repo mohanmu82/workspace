@@ -4,8 +4,10 @@ import com.mycompany.taskmanagement.model.Milestone;
 import com.mycompany.taskmanagement.model.Project;
 import com.mycompany.taskmanagement.store.ProjectDataStore;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 
@@ -21,7 +23,7 @@ public class ProjectService {
 
     public Project getById(Long id) {
         return dataStore.findById(id)
-                .orElseThrow(() -> new RuntimeException("Project not found: " + id));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Project not found: " + id));
     }
 
     @Transactional
@@ -69,7 +71,7 @@ public class ProjectService {
         Milestone existing = dataStore.findMilestonesByProjectId(projectId).stream()
                 .filter(m -> m.getId().equals(milestoneId))
                 .findFirst()
-                .orElseThrow(() -> new RuntimeException("Milestone not found: " + milestoneId));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Milestone not found: " + milestoneId));
         existing.setName(updated.getName());
         existing.setDescription(updated.getDescription());
         existing.setTargetDate(updated.getTargetDate());

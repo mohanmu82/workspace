@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mycompany.taskmanagement.dto.TaskSearchRequest;
 import com.mycompany.taskmanagement.model.Task;
 import com.mycompany.taskmanagement.model.TaskComment;
+import com.mycompany.taskmanagement.model.TaskDependency;
 import com.mycompany.taskmanagement.model.TaskHistory;
 import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
@@ -31,9 +32,11 @@ public class JsonFileTaskDataStore implements TaskDataStore {
     private final Path tasksDir;
     private final Path commentsDir;
     private final Path historyDir;
+    private final Path dependenciesFile;
     private final AtomicLong taskSeq = new AtomicLong(0);
     private final AtomicLong commentSeq = new AtomicLong(0);
     private final AtomicLong historySeq = new AtomicLong(0);
+    private final AtomicLong dependencySeq = new AtomicLong(0);
 
     public JsonFileTaskDataStore(ObjectMapper objectMapper,
                                  @Value("${app.json.datasource.directory:./data}") String directory) {
@@ -42,6 +45,7 @@ public class JsonFileTaskDataStore implements TaskDataStore {
         this.tasksDir = base.resolve("tasks");
         this.commentsDir = base.resolve("comments");
         this.historyDir = base.resolve("history");
+        this.dependenciesFile = base.resolve("dependencies.json");
     }
 
     @PostConstruct
@@ -52,6 +56,14 @@ public class JsonFileTaskDataStore implements TaskDataStore {
         taskSeq.set(maxIdInDir(tasksDir));
         commentSeq.set(scanMaxIdInGroupedFiles(commentsDir, new TypeReference<List<TaskComment>>() {}, c -> c.getId()));
         historySeq.set(scanMaxIdInGroupedFiles(historyDir, new TypeReference<List<TaskHistory>>() {}, h -> h.getId()));
+        if (!Files.exists(dependenciesFile)) {
+            writeJson(dependenciesFile, new ArrayList<TaskDependency>());
+        }
+        long maxDepId = 0;
+        for (TaskDependency d : readDependencies()) {
+            if (d.getId() != null && d.getId() > maxDepId) maxDepId = d.getId();
+        }
+        dependencySeq.set(maxDepId);
     }
 
     // ---- Tasks ----
@@ -168,6 +180,66 @@ public class JsonFileTaskDataStore implements TaskDataStore {
     public List<String> findDistinctWorkingGroups() { return distinctValues(Task::getWorkingGroup); }
     @Override
     public List<String> findDistinctAssetClasses() { return distinctValues(Task::getAssetClass); }
+
+    // ---- Dependencies ----
+    // Stored as a single array file: dependencies.json
+
+    @Override
+    public List<TaskDependency> findAllDependencies() {
+        return readDependencies();
+    }
+
+    @Override
+    public List<TaskDependency> findDependenciesByTaskId(Long taskId) {
+        return readDependencies().stream()
+                .filter(d -> d.getTaskId().equals(taskId))
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public List<TaskDependency> findDependentsByTaskId(Long taskId) {
+        return readDependencies().stream()
+                .filter(d -> d.getDependsOnTaskId().equals(taskId))
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public TaskDependency saveDependency(TaskDependency dependency) {
+        List<TaskDependency> all = readDependencies();
+        if (dependency.getId() == null) {
+            dependency.setId(dependencySeq.incrementAndGet());
+            dependency.setCreatedAt(LocalDateTime.now());
+            all.add(dependency);
+        } else {
+            all.replaceAll(d -> d.getId().equals(dependency.getId()) ? dependency : d);
+        }
+        writeJson(dependenciesFile, all);
+        return dependency;
+    }
+
+    @Override
+    public void deleteDependency(Long taskId, Long dependsOnTaskId) {
+        List<TaskDependency> all = readDependencies();
+        boolean removed = all.removeIf(d -> d.getTaskId().equals(taskId) && d.getDependsOnTaskId().equals(dependsOnTaskId));
+        if (removed) {
+            writeJson(dependenciesFile, all);
+        }
+    }
+
+    @Override
+    public void deleteDependenciesForTask(Long taskId) {
+        List<TaskDependency> all = readDependencies();
+        boolean removed = all.removeIf(d -> d.getTaskId().equals(taskId) || d.getDependsOnTaskId().equals(taskId));
+        if (removed) {
+            writeJson(dependenciesFile, all);
+        }
+    }
+
+    private List<TaskDependency> readDependencies() {
+        if (!Files.exists(dependenciesFile)) return new ArrayList<>();
+        try { return objectMapper.readValue(dependenciesFile.toFile(), new TypeReference<>() {}); }
+        catch (IOException e) { throw new UncheckedIOException(e); }
+    }
 
     // ---- I/O helpers ----
 

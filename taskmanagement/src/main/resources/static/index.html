@@ -4,8 +4,10 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Task Manager</title>
+  <script>document.documentElement.setAttribute('data-bs-theme', localStorage.getItem('theme') || 'light');</script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"/>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"/>
+  <link rel="stylesheet" href="theme.css"/>
   <style>
     body { background: #f4f6f9; font-size: 0.875rem; }
     .sidebar { min-height: calc(100vh - 56px); background: #fff; border-right: 1px solid #dee2e6; padding: 1rem; }
@@ -36,6 +38,11 @@
     .kanban-card  { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; padding: 0.5rem; margin-bottom: 0.5rem; cursor: grab; }
     .kanban-card:hover { background: #e9ecef; }
     .kanban-card.dragging { opacity: 0.4; }
+    .kanban-card-compact { display: flex; align-items: center; gap: 6px; padding: 3px 6px; margin-bottom: 3px; }
+    .kanban-card-compact .task-title-ellipsis { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .kanban-card-compact .task-compact-assignee { flex: 0 0 auto; max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #6c757d; font-size: 0.72rem; }
+    .kanban-card-compact .task-compact-status { flex: 0 0 auto; font-size: 0.62rem; padding: 1px 5px; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .lane-filter-bar { max-width: 280px; }
     .group-header { background: #e9ecef; padding: 0.4rem 0.75rem; font-weight: 700; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
     .group-header.overdue-header { background: #f8d7da; color: #842029; }
     .group-header.today-header   { background: #fff3cd; color: #664d03; }
@@ -53,6 +60,26 @@
     th.sort-asc  { color: #0d6efd; background: #f0f4ff; }
     th.sort-desc { color: #0d6efd; background: #f0f4ff; }
     .sort-icon { font-size: 0.7em; margin-left: 3px; }
+    #tableView table { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 0.8rem; }
+    #tableView td, #tableView th { padding: 0.32rem 0.55rem; vertical-align: middle; line-height: 1.2; }
+    #tableView .badge { font-size: 0.68rem; font-weight: 400; padding: 0.2em 0.5em; }
+    #tableView .tag-badge { font-size: 0.65rem; }
+    #tableView td strong, #tableView td b { font-weight: 400; }
+    #tablePagination .page-info { font-size: 0.8rem; }
+    .cal-wrap { display: flex; gap: 1rem; align-items: flex-start; }
+    .unscheduled-panel { width: 240px; flex-shrink: 0; background: #fff; border: 1px solid #dee2e6; border-radius: 8px; padding: 0.75rem; max-height: 620px; overflow-y: auto; }
+    .cal-main { flex: 1; min-width: 0; }
+    .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+    .cal-dow { text-align: center; font-weight: 700; font-size: 0.72rem; text-transform: uppercase; color: #6c757d; padding-bottom: 4px; }
+    .cal-cell { background: #fff; border: 1px solid #dee2e6; border-radius: 6px; min-height: 100px; padding: 4px; display: flex; flex-direction: column; }
+    .cal-cell.other-month { background: #f4f6f9; color: #adb5bd; }
+    .cal-cell.is-today { border-color: #0d6efd; box-shadow: inset 0 0 0 1px #0d6efd; }
+    .cal-cell.drag-over { background-color: #e7f1ff; outline: 2px dashed #0d6efd; outline-offset: -2px; }
+    .cal-date-num { font-size: 0.75rem; font-weight: 600; margin-bottom: 2px; }
+    .cal-cell.is-today .cal-date-num { color: #0d6efd; }
+    .cal-tasks { flex: 1; overflow-y: auto; overflow-x: hidden; max-height: 110px; }
+    .cal-tasks .kanban-card-compact, .unscheduled-panel .kanban-card-compact { margin-bottom: 3px; }
+    #noUnscheduled { display: none; }
   </style>
 </head>
 <body>
@@ -69,8 +96,14 @@
     <button class="btn btn-outline-light btn-sm" onclick="openBulkAddModal()"><i class="bi bi-list-check me-1"></i>Bulk Add</button>
     <a href="projects.html" class="btn btn-outline-light btn-sm"><i class="bi bi-diagram-3 me-1"></i>Projects</a>
     <a href="programmes.html" class="btn btn-outline-light btn-sm"><i class="bi bi-diagram-2 me-1"></i>Programmes</a>
+    <a href="phases.html" class="btn btn-outline-light btn-sm"><i class="bi bi-kanban me-1"></i>Phases</a>
     <a href="timeline.html" class="btn btn-outline-light btn-sm"><i class="bi bi-bar-chart-steps me-1"></i>Timeline</a>
+    <a href="dependencies.html" class="btn btn-outline-light btn-sm"><i class="bi bi-link-45deg me-1"></i>Dependencies</a>
     <a href="admin.html" class="btn btn-outline-light btn-sm"><i class="bi bi-gear me-1"></i>Admin</a>
+    <a href="api-docs.html" class="btn btn-outline-light btn-sm"><i class="bi bi-code-slash me-1"></i>API Docs</a>
+    <button class="btn btn-outline-light btn-sm" id="whoAmIBtn" onclick="onWhoAmIClick()" title="Set your name (used for My Tasks and to prefill fields)"><i class="bi bi-person-circle"></i></button>
+    <button class="btn btn-outline-light btn-sm" onclick="openShortcutsModal()" title="Keyboard shortcuts (?)"><i class="bi bi-keyboard"></i></button>
+    <button class="btn btn-outline-light btn-sm" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle dark mode"><i class="bi bi-moon-stars" id="themeIcon"></i></button>
   </div>
 </nav>
 
@@ -82,6 +115,17 @@
       <div class="d-flex justify-content-between align-items-center mb-2">
         <strong style="font-size:0.85rem">Filters</strong>
         <button class="btn btn-link btn-sm p-0" onclick="clearFilters()">Clear all</button>
+      </div>
+
+      <div class="d-flex justify-content-between align-items-center">
+        <strong style="font-size:0.85rem">Saved Views</strong>
+      </div>
+      <select id="savedViewSelect" class="form-select form-select-sm mt-1" onchange="onSavedViewSelect()">
+        <option value="">-- Select a saved view --</option>
+      </select>
+      <div class="d-flex gap-1 mt-1 mb-2">
+        <button class="btn btn-outline-secondary btn-sm flex-grow-1" onclick="saveCurrentFilterView()"><i class="bi bi-bookmark-plus me-1"></i>Save current</button>
+        <button class="btn btn-outline-danger btn-sm" id="deleteSavedViewBtn" onclick="deleteSelectedFilterView()" style="display:none" title="Delete this saved view"><i class="bi bi-trash"></i></button>
       </div>
 
       <button class="btn btn-sm w-100 d-flex justify-content-between align-items-center px-0 filter-group-toggle collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#statusFilters" aria-expanded="false" aria-controls="statusFilters">
@@ -167,13 +211,17 @@
       <div class="d-flex justify-content-between align-items-center mb-2">
         <div class="btn-group btn-group-sm">
           <button class="btn btn-outline-primary active" id="btnTable" onclick="setView('table')"><i class="bi bi-table"></i> Table</button>
-          <button class="btn btn-outline-primary" id="btnKanban" onclick="setView('kanban')"><i class="bi bi-kanban"></i> Kanban</button>
+          <button class="btn btn-outline-primary" id="btnKanban" onclick="setView('kanban')"><i class="bi bi-kanban"></i> By Status</button>
           <button class="btn btn-outline-primary" id="btnSwimlaneProject" onclick="setView('swimlaneProject')"><i class="bi bi-columns-gap"></i> By Project</button>
           <button class="btn btn-outline-primary" id="btnSwimlaneProgramme" onclick="setView('swimlaneProgramme')"><i class="bi bi-columns-gap"></i> By Programme</button>
           <button class="btn btn-outline-primary" id="btnSwimlaneAssignee" onclick="setView('swimlaneAssignee')"><i class="bi bi-person-lines-fill"></i> By Assignee</button>
+          <button class="btn btn-outline-primary" id="btnByDate" onclick="setView('byDate')"><i class="bi bi-calendar3"></i> By Date</button>
           <button class="btn btn-outline-primary" id="btnDueDates" onclick="setView('dueDates')"><i class="bi bi-calendar-event"></i> Due Dates</button>
         </div>
         <div class="d-flex align-items-center gap-2">
+          <button class="btn btn-outline-primary btn-sm" id="btnMyTasks" onclick="toggleMyTasksFilter()" title="Show only tasks assigned to me">
+            <i class="bi bi-person-check me-1"></i>My Tasks
+          </button>
           <button class="btn btn-outline-warning btn-sm" id="btnUnassigned" onclick="toggleUnassignedFilter()" title="Show only tasks with no assignee">
             <i class="bi bi-person-x me-1"></i>Unassigned
           </button>
@@ -185,7 +233,7 @@
             <span class="input-group-text">days</span>
           </div>
           <label class="mb-0 small fw-semibold">Group by:</label>
-          <select id="groupBySelect" class="form-select form-select-sm" style="width:140px" onchange="renderTasks()">
+          <select id="groupBySelect" class="form-select form-select-sm" style="width:140px" onchange="onGroupByChange()">
             <option value="">None</option>
             <option value="status">Status</option>
             <option value="priority">Priority</option>
@@ -203,20 +251,33 @@
           <button class="btn btn-outline-success btn-sm" onclick="exportCsv()" title="Export visible data as CSV">
             <i class="bi bi-download me-1"></i>CSV
           </button>
+          <button class="btn btn-outline-primary btn-sm" onclick="document.getElementById('csvImportInput').click()" title="Bulk-create tasks from a CSV file">
+            <i class="bi bi-upload me-1"></i>Import
+          </button>
+          <button class="btn btn-outline-secondary btn-sm" onclick="downloadImportTemplate()" title="Download a sample CSV to fill in and import">
+            <i class="bi bi-file-earmark-spreadsheet me-1"></i>Template
+          </button>
+          <input type="file" id="csvImportInput" accept=".csv,text/csv" style="display:none" onchange="onCsvImportSelected(event)"/>
         </div>
       </div>
 
       <div id="loadingIndicator" class="text-center py-4 text-muted" style="display:none"><div class="spinner-border spinner-border-sm"></div> Loading...</div>
       <div id="noResults" class="text-center py-5 text-muted"><i class="bi bi-inbox fs-1 d-block mb-2"></i>No tasks found</div>
 
+      <!-- Swim lane filter (Kanban / By Project / By Programme / By Assignee) -->
+      <div id="laneFilterBar" class="mb-2" style="display:none">
+        <input type="text" id="laneFilterInput" class="form-control form-control-sm lane-filter-bar" placeholder="Filter swim lanes..." oninput="onLaneFilterChange()"/>
+      </div>
+
       <!-- Table view -->
       <div id="tableView">
         <div class="table-responsive">
-          <table class="table table-sm table-hover table-bordered bg-white mb-0" style="font-size:0.82rem">
+          <table class="table table-sm table-hover table-bordered bg-white mb-0">
             <thead class="table-light sticky-top" id="tableHead"></thead>
             <tbody id="taskTableBody"></tbody>
           </table>
         </div>
+        <div id="tablePagination"></div>
       </div>
 
       <!-- Kanban view -->
@@ -239,6 +300,36 @@
         <div class="kanban-board" id="swimlaneAssigneeBoard"></div>
       </div>
 
+      <!-- By Date (calendar) view -->
+      <div id="byDateView" style="display:none">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div class="d-flex align-items-center gap-2">
+            <button class="btn btn-outline-secondary btn-sm" onclick="shiftCalMonth(-1)"><i class="bi bi-chevron-left"></i></button>
+            <h6 class="mb-0" id="calMonthLabel" style="min-width:150px"></h6>
+            <button class="btn btn-outline-secondary btn-sm" onclick="shiftCalMonth(1)"><i class="bi bi-chevron-right"></i></button>
+            <button class="btn btn-outline-primary btn-sm" onclick="goCalToday()">Today</button>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="includeDoneByDate" onchange="renderByDate()">
+            <label class="form-check-label small" for="includeDoneByDate">Include Done / Cancelled</label>
+          </div>
+        </div>
+        <div class="cal-wrap">
+          <div class="unscheduled-panel">
+            <div class="fw-semibold small text-uppercase text-muted mb-2"><i class="bi bi-inbox me-1"></i>No Due Date</div>
+            <div id="noUnscheduled" class="text-muted small">Nothing unscheduled</div>
+            <div id="unscheduledList" ondragover="onCalZoneDragOver(event)" ondrop="onCalDropUnscheduled(event)" style="min-height:60px"></div>
+          </div>
+          <div class="cal-main">
+            <div class="cal-grid mb-1">
+              <div class="cal-dow">Sun</div><div class="cal-dow">Mon</div><div class="cal-dow">Tue</div>
+              <div class="cal-dow">Wed</div><div class="cal-dow">Thu</div><div class="cal-dow">Fri</div><div class="cal-dow">Sat</div>
+            </div>
+            <div class="cal-grid" id="calGrid"></div>
+          </div>
+        </div>
+      </div>
+
       <!-- Due Dates view -->
       <div id="dueDatesView" style="display:none">
         <div class="d-flex justify-content-end align-items-center mb-2">
@@ -257,6 +348,7 @@
                 <th>Title</th>
                 <th style="width:110px">Assignee</th>
                 <th style="width:110px">Project</th>
+                <th style="width:70px">Actions</th>
               </tr>
             </thead>
             <tbody id="dueDatesTableBody"></tbody>
@@ -277,6 +369,25 @@
       <div class="modal-footer">
         <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
         <button class="btn btn-danger btn-sm" id="confirmDeleteBtn">Delete</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Keyboard shortcuts modal -->
+<div class="modal fade" id="shortcutsModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title"><i class="bi bi-keyboard me-1"></i>Keyboard Shortcuts</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body small">
+        <div class="d-flex justify-content-between mb-2"><kbd>/</kbd><span>Focus search</span></div>
+        <div class="d-flex justify-content-between mb-2"><kbd>n</kbd><span>New task</span></div>
+        <div class="d-flex justify-content-between mb-2"><span><kbd>1</kbd>–<kbd>7</kbd></span><span>Switch view</span></div>
+        <div class="d-flex justify-content-between mb-2"><kbd>?</kbd><span>Show this help</span></div>
+        <div class="d-flex justify-content-between"><kbd>Esc</kbd><span>Unfocus search</span></div>
       </div>
     </div>
   </div>
@@ -331,26 +442,29 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="theme.js"></script>
+<script src="tasks-ws.js"></script>
 <script>
 // ── Column definitions ────────────────────────────────────────────────────────
 const ALL_COLUMNS = [
-  { id: 'id',          label: '#',            sortKey: 'id',           width: '50px'  },
+  { id: 'id',          label: '#',            sortKey: 'id',           width: '55px'  },
   { id: 'title',       label: 'Title',        sortKey: 'title',        width: null    },
-  { id: 'status',      label: 'Status',       sortKey: 'status',       width: '110px' },
-  { id: 'priority',    label: 'Priority',     sortKey: 'priority',     width: '90px'  },
-  { id: 'assignee',    label: 'Assignee',     sortKey: 'assignee',     width: '110px' },
-  { id: 'dueDate',     label: 'Due Date',     sortKey: 'dueDate',      width: '105px' },
-  { id: 'updatedAt',   label: 'Updated',      sortKey: 'updatedAt',    width: '130px' },
-  { id: 'category',    label: 'Category',     sortKey: 'category',     width: '100px' },
-  { id: 'programme',   label: 'Programme',    sortKey: 'programme',    width: '100px' },
-  { id: 'project',     label: 'Project',      sortKey: 'project',      width: '100px' },
-  { id: 'workingGroup',label: 'Working Grp',  sortKey: 'workingGroup', width: '110px' },
-  { id: 'assetClass',  label: 'Asset Class',  sortKey: 'assetClass',   width: '100px' },
-  { id: 'stakeholder', label: 'Stakeholder',  sortKey: 'stakeholder',  width: '110px' },
-  { id: 'jira',        label: 'Jira',         sortKey: 'jira',         width: '100px' },
-  { id: 'createdBy',   label: 'Created By',   sortKey: 'createdBy',    width: '100px' },
-  { id: 'tags',        label: 'Tags',         sortKey: null,           width: '120px' },
-  { id: 'actions',     label: 'Actions',      sortKey: null,           width: '80px'  },
+  { id: 'status',      label: 'Status',       sortKey: 'status',       width: '130px' },
+  { id: 'priority',    label: 'Priority',     sortKey: 'priority',     width: '110px' },
+  { id: 'assignee',    label: 'Assignee',     sortKey: 'assignee',     width: '130px' },
+  { id: 'dueDate',     label: 'Due Date',     sortKey: 'dueDate',      width: '120px' },
+  { id: 'updatedAt',   label: 'Updated',      sortKey: 'updatedAt',    width: '150px' },
+  { id: 'category',    label: 'Category',     sortKey: 'category',     width: '120px' },
+  { id: 'programme',   label: 'Programme',    sortKey: 'programme',    width: '120px' },
+  { id: 'project',     label: 'Project',      sortKey: 'project',      width: '120px' },
+  { id: 'workingGroup',label: 'Working Grp',  sortKey: 'workingGroup', width: '130px' },
+  { id: 'assetClass',  label: 'Asset Class',  sortKey: 'assetClass',   width: '120px' },
+  { id: 'stakeholder', label: 'Stakeholder',  sortKey: 'stakeholder',  width: '130px' },
+  { id: 'jira',        label: 'Jira',         sortKey: 'jira',         width: '110px' },
+  { id: 'createdBy',   label: 'Created By',   sortKey: 'createdBy',    width: '120px' },
+  { id: 'customField1',label: 'Phase',        sortKey: 'customField1', width: '90px'  },
+  { id: 'tags',        label: 'Tags',         sortKey: null,           width: '140px' },
+  { id: 'actions',     label: 'Actions',      sortKey: null,           width: '90px'  },
 ];
 const DEFAULT_VISIBLE = new Set(['id','title','status','priority','assignee','dueDate','updatedAt','category','programme','project','tags','actions']);
 const LS_KEY_COLS = 'taskColVisibility';
@@ -358,22 +472,31 @@ const LS_KEY_COLS = 'taskColVisibility';
 // ── State ─────────────────────────────────────────────────────────────────────
 let allTasks = [];
 let currentView = 'table';
+let calYear = null;
+let calMonth = null; // 0-based
 let deleteTaskId = null;
 let searchTimer = null;
 const today = new Date();
 let sortState = { col: null, dir: 'asc' };
+const PAGE_SIZE = 25;
+let currentPage = 1;
 let showUnassignedOnly = false;
 let showRecentOnly = false;
+let showMyTasksOnly = false;
+let laneFilterText = '';
 let colVisibility = {};
 let fieldConfigs = {};
 let statusOptions = ['BACKLOG','TODO','IN_PROGRESS','REVIEW','DONE','BLOCKED','CANCELLED'];
 const STATUS_COLORS = {BACKLOG:'#495057',TODO:'#6c757d',IN_PROGRESS:'#0d6efd',REVIEW:'#fd7e14',DONE:'#198754',BLOCKED:'#dc3545',CANCELLED:'#adb5bd'};
 let masterProgrammes = [];
 let masterProjects = [];
+let masterAssignees = [];
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
   loadColVisibility();
+  updateWhoAmIBtn();
+  renderSavedViewOptions();
   await loadFieldConfigs();
   await loadFilterOptions();
   await loadMasterLists();
@@ -382,12 +505,14 @@ async function init() {
 
 async function loadMasterLists() {
   try {
-    const [programmes, projects] = await Promise.all([
+    const [programmes, projects, assignees] = await Promise.all([
       fetch('/api/programmes').then(r => r.json()),
-      fetch('/api/projects').then(r => r.json())
+      fetch('/api/projects').then(r => r.json()),
+      fetch('/api/field-options/assignee').then(r => r.ok ? r.json() : [])
     ]);
     masterProgrammes = (programmes || []).map(p => p.name).filter(Boolean);
     masterProjects = (projects || []).map(p => p.name).filter(Boolean);
+    masterAssignees = (Array.isArray(assignees) ? assignees : []).map(a => a.value || a.name).filter(Boolean);
   } catch (e) {
     console.error(e);
   }
@@ -436,13 +561,28 @@ async function loadFieldConfigs() {
 async function loadFilterOptions() {
   try {
     const opts = await fetch('/api/tasks/filter-options').then(r => r.json());
-    populateSelect('filterAssignee', opts.assignees || []);
-    populateSelect('filterCategory', opts.categories || []);
-    populateSelect('filterProgramme', opts.programmes || []);
-    populateSelect('filterProject', opts.projects || []);
-    populateSelect('filterWorkingGroup', opts.workingGroups || []);
-    populateSelect('filterAssetClass', opts.assetClasses || []);
+    populateSelect('filterAssignee', await mergeWithConfiguredOptions('assignee', opts.assignees));
+    populateSelect('filterCategory', await mergeWithConfiguredOptions('category', opts.categories));
+    populateSelect('filterProgramme', await mergeWithConfiguredOptions('programme', opts.programmes));
+    populateSelect('filterProject', await mergeWithConfiguredOptions('project', opts.projects));
+    populateSelect('filterWorkingGroup', await mergeWithConfiguredOptions('workingGroup', opts.workingGroups));
+    populateSelect('filterAssetClass', await mergeWithConfiguredOptions('assetClass', opts.assetClasses));
   } catch(e) { console.error(e); }
+}
+
+// Merge distinct values already used on tasks with the admin-configured dropdown
+// options for a field, so categories defined in Admin show up even before any
+// task uses them.
+async function mergeWithConfiguredOptions(fieldId, existingValues) {
+  const values = new Set(existingValues || []);
+  const cfg = fieldConfigs[fieldId];
+  if (cfg?.fieldType === 'select' && cfg.source) {
+    try {
+      const options = await fetch(`/api/field-options/${fieldId}`).then(r => r.json());
+      if (Array.isArray(options)) options.forEach(o => values.add(o.value));
+    } catch (_) {}
+  }
+  return [...values].sort();
 }
 
 function populateSelect(id, values) {
@@ -499,9 +639,17 @@ function buildParams() {
 async function loadTasks() {
   document.getElementById('loadingIndicator').style.display = 'block';
   try {
-    const res = await fetch('/api/tasks?' + buildParams());
-    const data = await res.json();
+    const params = buildParams();
+    let data;
+    try {
+      // Fast path: reuse the open WebSocket connection instead of a new HTTP request.
+      data = await TaskWS.search(TaskWS.paramsToPayload(params));
+    } catch (wsErr) {
+      const res = await fetch('/api/tasks?' + params);
+      data = await res.json();
+    }
     allTasks = data.tasks || [];
+    currentPage = 1;
     updateStats();
     renderTasks();
   } catch(e) {
@@ -511,10 +659,190 @@ async function loadTasks() {
   }
 }
 
+// ── Saved filter views (stored per-browser in localStorage) ────────────────────
+const LS_KEY_SAVED_VIEWS = 'taskSavedFilterViews';
+const FILTER_FIELD_IDS = ['filterAssignee','filterDueFrom','filterDueTo','filterCategory','filterProgramme','filterProject','filterWorkingGroup','filterAssetClass','filterTags','filterJira'];
+
+function getSavedViews() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(LS_KEY_SAVED_VIEWS) || '[]');
+    return Array.isArray(stored) ? stored : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function setSavedViews(views) {
+  localStorage.setItem(LS_KEY_SAVED_VIEWS, JSON.stringify(views));
+}
+
+function renderSavedViewOptions() {
+  const sel = document.getElementById('savedViewSelect');
+  const current = sel.value;
+  while (sel.options.length > 1) sel.remove(1);
+  getSavedViews().forEach(v => {
+    const o = document.createElement('option');
+    o.value = v.name;
+    o.textContent = v.name;
+    sel.appendChild(o);
+  });
+  sel.value = current;
+  document.getElementById('deleteSavedViewBtn').style.display = sel.value ? '' : 'none';
+}
+
+function captureCurrentFilters() {
+  const filters = { q: document.getElementById('globalSearch').value.trim() };
+  filters.status = Array.from(document.querySelectorAll('.filter-status:checked')).map(cb => cb.value);
+  filters.priority = Array.from(document.querySelectorAll('.filter-priority:checked')).map(cb => cb.value);
+  FILTER_FIELD_IDS.forEach(id => { filters[id] = document.getElementById(id).value; });
+  return filters;
+}
+
+function applyFilters(filters) {
+  document.getElementById('globalSearch').value = filters.q || '';
+  document.querySelectorAll('.filter-status').forEach(cb => { cb.checked = (filters.status || []).includes(cb.value); });
+  document.querySelectorAll('.filter-priority').forEach(cb => { cb.checked = (filters.priority || []).includes(cb.value); });
+  FILTER_FIELD_IDS.forEach(id => { document.getElementById(id).value = filters[id] || ''; });
+  loadTasks();
+}
+
+function saveCurrentFilterView() {
+  const name = prompt('Name this view:');
+  if (!name || !name.trim()) return;
+  const views = getSavedViews().filter(v => v.name !== name.trim());
+  views.push({ name: name.trim(), filters: captureCurrentFilters() });
+  views.sort((a, b) => a.name.localeCompare(b.name));
+  setSavedViews(views);
+  renderSavedViewOptions();
+  document.getElementById('savedViewSelect').value = name.trim();
+  document.getElementById('deleteSavedViewBtn').style.display = '';
+}
+
+function onSavedViewSelect() {
+  const name = document.getElementById('savedViewSelect').value;
+  document.getElementById('deleteSavedViewBtn').style.display = name ? '' : 'none';
+  if (!name) return;
+  const view = getSavedViews().find(v => v.name === name);
+  if (view) applyFilters(view.filters);
+}
+
+function deleteSelectedFilterView() {
+  const name = document.getElementById('savedViewSelect').value;
+  if (!name) return;
+  setSavedViews(getSavedViews().filter(v => v.name !== name));
+  renderSavedViewOptions();
+}
+
+// ── CSV import template (sample file to fill in and import) ────────────────────
+function downloadImportTemplate() {
+  const headers = ['title','description','status','priority','assignee','dueDate','category',
+    'programme','project','assetClass','workingGroup','stakeholder','jira','tags','estimatedHours'];
+  const sampleRow = ['Fix login page bug','Investigate null pointer on login form submit','TODO','HIGH',
+    'jane.doe','2026-08-15T09:00','Development','IceX','Test Project','Equities','Platform Team',
+    'CFO Office','PROJ-123','backend;urgent','4'];
+  const csv = [headers.join(','), sampleRow.map(csvCell).join(',')].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'task-import-template.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ── CSV import (bulk-create tasks from a CSV file) ──────────────────────────────
+async function onCsvImportSelected(event) {
+  const file = event.target.files[0];
+  event.target.value = '';
+  if (!file) return;
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await fetch('/api/tasks/import', { method: 'POST', body: formData });
+    if (!res.ok) throw new Error(await res.text());
+    const result = await res.json();
+    alert(`Imported ${result.created} task(s).` + (result.skipped ? ` Skipped ${result.skipped} row(s) without a title.` : ''));
+    await loadTasks();
+    await loadFilterOptions();
+  } catch (e) {
+    console.error(e);
+    alert('CSV import failed: ' + e.message);
+  }
+}
+
+// Live updates from other browsers/tabs: silently refresh unless the user is mid-edit.
+TaskWS.onTaskChanged(() => {
+  if (document.body.classList.contains('modal-open')) return;
+  loadTasks();
+});
+
+// ── My Tasks / identity ──────────────────────────────────────────────────────
+function updateWhoAmIBtn() {
+  const name = getMyName();
+  const btn = document.getElementById('whoAmIBtn');
+  if (btn) btn.title = name ? `Signed in as ${name} (click to change)` : 'Set your name (used for My Tasks and to prefill fields)';
+}
+
+function onWhoAmIClick() {
+  promptForMyName();
+  updateWhoAmIBtn();
+  if (showMyTasksOnly) { updateStats(); renderTasks(); }
+}
+
+function toggleMyTasksFilter() {
+  if (!getMyName()) {
+    promptForMyName();
+    updateWhoAmIBtn();
+    if (!getMyName()) return;
+  }
+  showMyTasksOnly = !showMyTasksOnly;
+  document.getElementById('btnMyTasks').classList.toggle('active', showMyTasksOnly);
+  currentPage = 1;
+  updateStats();
+  renderTasks();
+}
+
+function openShortcutsModal() {
+  new bootstrap.Modal(document.getElementById('shortcutsModal')).show();
+}
+
+function isTypingTarget(el) {
+  if (!el) return false;
+  const tag = el.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    if (document.activeElement === document.getElementById('globalSearch')) document.activeElement.blur();
+    return;
+  }
+  if (e.key === '?' && !isTypingTarget(e.target)) {
+    e.preventDefault();
+    openShortcutsModal();
+    return;
+  }
+  if (isTypingTarget(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
+
+  if (e.key === '/') {
+    e.preventDefault();
+    document.getElementById('globalSearch').focus();
+  } else if (e.key.toLowerCase() === 'n') {
+    e.preventDefault();
+    location.href = 'task-form.html';
+  } else if (e.key >= '1' && e.key <= '7') {
+    const views = ['table', 'kanban', 'swimlaneProject', 'swimlaneProgramme', 'swimlaneAssignee', 'byDate', 'dueDates'];
+    setView(views[parseInt(e.key, 10) - 1]);
+  }
+});
+
 // ── Unassigned / recently-updated toggle filters ───────────────────────────────
 function toggleUnassignedFilter() {
   showUnassignedOnly = !showUnassignedOnly;
   document.getElementById('btnUnassigned').classList.toggle('active', showUnassignedOnly);
+  currentPage = 1;
   updateStats();
   renderTasks();
 }
@@ -522,12 +850,14 @@ function toggleUnassignedFilter() {
 function toggleRecentFilter() {
   showRecentOnly = !showRecentOnly;
   document.getElementById('btnRecentlyUpdated').classList.toggle('active', showRecentOnly);
+  currentPage = 1;
   updateStats();
   renderTasks();
 }
 
 function onRecentDaysChange() {
   if (showRecentOnly) {
+    currentPage = 1;
     updateStats();
     renderTasks();
   }
@@ -535,6 +865,10 @@ function onRecentDaysChange() {
 
 function getFilteredTasks() {
   let tasks = allTasks;
+  if (showMyTasksOnly) {
+    const name = getMyName().trim().toLowerCase();
+    tasks = tasks.filter(t => (t.assignee || '').trim().toLowerCase() === name);
+  }
   if (showUnassignedOnly) {
     tasks = tasks.filter(t => !t.assignee || !t.assignee.trim());
   }
@@ -565,7 +899,8 @@ function renderTasks() {
   else if (currentView === 'kanban') renderKanban();
   else if (currentView === 'swimlaneProject') renderLaneBoard('project', 'swimlaneProjectBoard', masterProjects);
   else if (currentView === 'swimlaneProgramme') renderLaneBoard('programme', 'swimlaneProgrammeBoard', masterProgrammes);
-  else if (currentView === 'swimlaneAssignee') renderLaneBoard('assignee', 'swimlaneAssigneeBoard');
+  else if (currentView === 'swimlaneAssignee') renderLaneBoard('assignee', 'swimlaneAssigneeBoard', masterAssignees);
+  else if (currentView === 'byDate') renderByDate();
   else if (currentView === 'dueDates') renderDueDates();
   document.getElementById('noResults').style.display = getFilteredTasks().length === 0 ? 'block' : 'none';
 }
@@ -611,10 +946,15 @@ function renderTable() {
     return `<th class="sortable${cls}"${col.width ? ` style="width:${col.width}"` : ''} onclick="onColumnSort('${col.sortKey}')">${col.label}${icon}</th>`;
   }).join('') + '</tr>';
 
-  // Build body
+  // Build body — paginated to PAGE_SIZE tasks per page
   const tbody = document.getElementById('taskTableBody');
   tbody.innerHTML = '';
-  const tasks = getSortedTasks();
+  const allSorted = getSortedTasks();
+  const totalPages = Math.max(1, Math.ceil(allSorted.length / PAGE_SIZE));
+  if (currentPage > totalPages) currentPage = totalPages;
+  if (currentPage < 1) currentPage = 1;
+  const pageStart = (currentPage - 1) * PAGE_SIZE;
+  const tasks = allSorted.slice(pageStart, pageStart + PAGE_SIZE);
 
   if (!groupBy) {
     tasks.forEach(t => tbody.innerHTML += taskRow(t, visCols));
@@ -626,6 +966,30 @@ function renderTable() {
       gtasks.forEach(t => tbody.innerHTML += taskRow(t, visCols));
     });
   }
+
+  renderTablePagination(allSorted.length, totalPages);
+}
+
+function renderTablePagination(total, totalPages) {
+  const el = document.getElementById('tablePagination');
+  if (!el) return;
+  if (total === 0) { el.innerHTML = ''; return; }
+  const start = (currentPage - 1) * PAGE_SIZE + 1;
+  const end = Math.min(currentPage * PAGE_SIZE, total);
+  el.innerHTML = `
+    <div class="d-flex justify-content-between align-items-center mt-2">
+      <div class="page-info text-muted">Showing ${start}-${end} of ${total} tasks</div>
+      <div class="btn-group btn-group-sm">
+        <button class="btn btn-outline-secondary" ${currentPage <= 1 ? 'disabled' : ''} onclick="changeTablePage(-1)"><i class="bi bi-chevron-left"></i> Prev</button>
+        <span class="btn btn-outline-secondary disabled">Page ${currentPage} of ${totalPages}</span>
+        <button class="btn btn-outline-secondary" ${currentPage >= totalPages ? 'disabled' : ''} onclick="changeTablePage(1)">Next <i class="bi bi-chevron-right"></i></button>
+      </div>
+    </div>`;
+}
+
+function changeTablePage(delta) {
+  currentPage += delta;
+  renderTable();
 }
 
 function taskRow(t, visCols) {
@@ -637,11 +1001,11 @@ function taskCell(t, colId) {
     case 'id':
       return `<td class="text-muted">${t.id}</td>`;
     case 'title':
-      return `<td><strong>${esc(t.title)}</strong>${t.parentTaskId ? `<span class="ms-1 text-muted small">↳${t.parentTaskId}</span>` : ''}</td>`;
+      return `<td>${esc(t.title)}${t.parentTaskId ? `<span class="ms-1 text-muted small">↳${t.parentTaskId}</span>` : ''}</td>`;
     case 'status':
-      return `<td><span class="badge badge-status-${t.status}">${esc(t.status||'')}</span></td>`;
+      return `<td><span class="badge badge-status-${esc(t.status)}">${esc(t.status||'')}</span></td>`;
     case 'priority':
-      return `<td><span class="badge badge-priority-${t.priority}">${esc(t.priority||'')}</span></td>`;
+      return `<td><span class="badge badge-priority-${esc(t.priority)}">${esc(t.priority||'')}</span></td>`;
     case 'assignee':
       return `<td>${esc(t.assignee||'')}</td>`;
     case 'dueDate': {
@@ -663,7 +1027,8 @@ function taskCell(t, colId) {
       return `<td>${(t.tags||[]).map(tag=>`<span class="tag-badge">${esc(tag)}</span>`).join(' ')}</td>`;
     case 'actions':
       return `<td onclick="event.stopPropagation()">
-        <a href="task-form.html?id=${t.id}" class="btn btn-xs btn-outline-primary" style="padding:1px 6px;font-size:0.75rem"><i class="bi bi-pencil"></i></a>
+        ${(t.status !== 'DONE' && t.status !== 'CANCELLED') ? `<button class="btn btn-xs btn-outline-success" style="padding:1px 6px;font-size:0.75rem" onclick="closeTask(${t.id})" title="Close (mark as Done)"><i class="bi bi-check-lg"></i></button>` : ''}
+        <a href="task-form.html?id=${t.id}" class="btn btn-xs btn-outline-primary ms-1" style="padding:1px 6px;font-size:0.75rem"><i class="bi bi-pencil"></i></a>
         <button class="btn btn-xs btn-outline-danger ms-1" style="padding:1px 6px;font-size:0.75rem" onclick="confirmDelete(${t.id})"><i class="bi bi-trash"></i></button>
       </td>`;
     default:
@@ -679,7 +1044,13 @@ function onColumnSort(sortKey) {
     sortState.col = sortKey;
     sortState.dir = 'asc';
   }
+  currentPage = 1;
   renderTable();
+}
+
+function onGroupByChange() {
+  currentPage = 1;
+  renderTasks();
 }
 
 // ── Column chooser ─────────────────────────────────────────────────────────────
@@ -739,6 +1110,29 @@ function csvCell(val) {
   return s;
 }
 
+// ── Card rendering (compact single-line: title, assignee, status) ─────────────
+function renderCompactCard(t) {
+  const due = t.dueDate ? new Date(t.dueDate) : null;
+  const over = due && due < today && t.status !== 'DONE' && t.status !== 'CANCELLED';
+  const tooltip = `${t.title}${t.assignee ? ' · ' + t.assignee : ''}${t.status ? ' · ' + t.status : ''}${due ? ' · due ' + due.toLocaleDateString() : ''}`;
+  return `<div class="kanban-card kanban-card-compact" draggable="true" data-task-id="${t.id}" onclick="location.href='task-form.html?id=${t.id}'" title="${esc(tooltip)}">
+    <span class="task-title-ellipsis${over?' overdue':''}">${esc(t.title)}${over?' ⚠':''}</span>
+    <span class="task-compact-assignee">${esc(t.assignee||'')}</span>
+    <span class="badge badge-status-${esc(t.status)} task-compact-status">${esc(t.status||'')}</span>
+  </div>`;
+}
+
+// ── Lane filter (Kanban / By Project / By Programme / By Assignee) ────────────
+function onLaneFilterChange() {
+  laneFilterText = document.getElementById('laneFilterInput').value.trim().toLowerCase();
+  renderTasks();
+}
+
+function updateLaneFilterBarVisibility(view) {
+  const isBoardView = ['kanban','swimlaneProject','swimlaneProgramme','swimlaneAssignee'].includes(view);
+  document.getElementById('laneFilterBar').style.display = isBoardView ? '' : 'none';
+}
+
 // ── Kanban ────────────────────────────────────────────────────────────────────
 function renderKanban() {
   const board = document.getElementById('kanbanBoard');
@@ -750,18 +1144,13 @@ function renderKanban() {
     if (!grouped[s]) grouped[s] = [];
     grouped[s].push(t);
   });
-  statusOptions.forEach(status => {
+  const visibleStatuses = statusOptions.filter(status =>
+    !laneFilterText || status.replace(/_/g,' ').toLowerCase().includes(laneFilterText)
+  );
+  visibleStatuses.forEach(status => {
     const col = document.createElement('div');
     col.className = 'kanban-col';
-    const cards = (grouped[status]||[]).map(t => {
-      const due = t.dueDate ? new Date(t.dueDate) : null;
-      const over = due && due < today && status !== 'DONE' && status !== 'CANCELLED';
-      return `<div class="kanban-card" draggable="true" data-task-id="${t.id}" onclick="location.href='task-form.html?id=${t.id}'">
-        <div class="fw-semibold">${esc(t.title)}</div>
-        <div class="text-muted small">${esc(t.assignee||'')}${due ? ` · <span class="${over?'text-danger':''}">📅 ${due.toLocaleDateString()}</span>` : ''}</div>
-        <div class="mt-1"><span class="badge badge-priority-${t.priority}" style="font-size:0.65rem">${t.priority}</span></div>
-      </div>`;
-    }).join('');
+    const cards = (grouped[status]||[]).map(renderCompactCard).join('');
     const color = STATUS_COLORS[status] || '#6c757d';
     col.innerHTML = `<div class="kanban-col-header" style="background:${color};color:#fff">${esc(status.replace(/_/g,' '))} <span class="badge bg-white text-dark ms-1">${(grouped[status]||[]).length}</span></div><div class="kanban-cards" data-status="${status}">${cards||'<p class="text-muted small p-2">Empty</p>'}</div>`;
     board.appendChild(col);
@@ -831,23 +1220,18 @@ function renderLaneBoard(field, boardId, masterList) {
   const masterSet = new Set(masterNames);
   const taskValues = tasks.map(t => (t[field] || '').trim()).filter(v => v);
   // Lanes = every master-list entry (even with 0 tasks) plus any values in use that aren't in the master list.
-  const laneValues = Array.from(new Set([...masterNames, ...taskValues])).sort();
+  let laneValues = Array.from(new Set([...masterNames, ...taskValues])).sort();
   laneValues.push('(none)');
+  if (laneFilterText) {
+    laneValues = laneValues.filter(lane => lane.toLowerCase().includes(laneFilterText));
+  }
 
   laneValues.forEach((lane, idx) => {
     const laneTasks = tasks.filter(t => (lane === '(none)') ? !((t[field] || '').trim()) : (t[field] || '').trim() === lane);
     const isInvalid = lane !== '(none)' && masterSet.size > 0 && !masterSet.has(lane);
     const col = document.createElement('div');
     col.className = 'kanban-col';
-    const cards = laneTasks.map(t => {
-      const due = t.dueDate ? new Date(t.dueDate) : null;
-      const over = due && due < today && t.status !== 'DONE' && t.status !== 'CANCELLED';
-      return `<div class="kanban-card" draggable="true" data-task-id="${t.id}" onclick="location.href='task-form.html?id=${t.id}'">
-        <div class="fw-semibold">${esc(t.title)}</div>
-        <div class="text-muted small">${esc(t.assignee||'')}${due ? ` · <span class="${over?'text-danger':''}">📅 ${due.toLocaleDateString()}</span>` : ''}</div>
-        <div class="mt-1"><span class="badge badge-status-${t.status}" style="font-size:0.65rem">${esc(t.status||'')}</span> <span class="badge badge-priority-${t.priority}" style="font-size:0.65rem">${t.priority}</span></div>
-      </div>`;
-    }).join('');
+    const cards = laneTasks.map(renderCompactCard).join('');
     const color = lane === '(none)' ? '#6c757d' : (isInvalid ? '#dc3545' : LANE_COLORS[idx % LANE_COLORS.length]);
     const label = isInvalid
       ? `<i class="bi bi-exclamation-triangle-fill me-1" title="Not in the master ${esc(field)} list"></i>${esc(lane)} <span class="badge bg-light text-danger ms-1">Invalid</span>`
@@ -913,6 +1297,145 @@ async function moveTaskToLane(taskId, field, newLaneValue, boardId) {
   }
 }
 
+// ── By Date (calendar) ──────────────────────────────────────────────────────────
+function calDateKey(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function shiftCalMonth(delta) {
+  calMonth += delta;
+  if (calMonth < 0) { calMonth = 11; calYear--; }
+  if (calMonth > 11) { calMonth = 0; calYear++; }
+  renderByDate();
+}
+
+function goCalToday() {
+  calYear = today.getFullYear();
+  calMonth = today.getMonth();
+  renderByDate();
+}
+
+function renderByDate() {
+  if (calYear === null) { calYear = today.getFullYear(); calMonth = today.getMonth(); }
+  const includeDone = document.getElementById('includeDoneByDate').checked;
+  const tasks = getFilteredTasks().filter(t => includeDone || (t.status !== 'DONE' && t.status !== 'CANCELLED'));
+
+  const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  document.getElementById('calMonthLabel').textContent = `${monthNames[calMonth]} ${calYear}`;
+
+  const byDate = {};
+  const unscheduled = [];
+  tasks.forEach(t => {
+    if (!t.dueDate) { unscheduled.push(t); return; }
+    const key = calDateKey(new Date(t.dueDate));
+    (byDate[key] = byDate[key] || []).push(t);
+  });
+
+  const ul = document.getElementById('unscheduledList');
+  document.getElementById('noUnscheduled').style.display = unscheduled.length === 0 ? 'block' : 'none';
+  ul.innerHTML = unscheduled.map(t => calTaskChip(t)).join('');
+
+  const todayMid = new Date(today);
+  todayMid.setHours(0, 0, 0, 0);
+  const firstOfMonth = new Date(calYear, calMonth, 1);
+  const startDate = new Date(firstOfMonth);
+  startDate.setDate(startDate.getDate() - startDate.getDay());
+  const lastOfMonth = new Date(calYear, calMonth + 1, 0);
+  const endDate = new Date(lastOfMonth);
+  endDate.setDate(endDate.getDate() + (6 - endDate.getDay()));
+
+  const grid = document.getElementById('calGrid');
+  let html = '';
+  const cursor = new Date(startDate);
+  while (cursor <= endDate) {
+    const key = calDateKey(cursor);
+    const cellTasks = byDate[key] || [];
+    const otherMonth = cursor.getMonth() !== calMonth;
+    const isToday = cursor.getTime() === todayMid.getTime();
+    html += `<div class="cal-cell ${otherMonth ? 'other-month' : ''} ${isToday ? 'is-today' : ''}"
+                  ondragover="onCalZoneDragOver(event)" ondragleave="onCalZoneDragLeave(event)" ondrop="onCalDropDate(event, '${key}')">
+      <div class="cal-date-num">${cursor.getDate()}</div>
+      <div class="cal-tasks">${cellTasks.map(t => calTaskChip(t)).join('')}</div>
+    </div>`;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  grid.innerHTML = html;
+}
+
+// Same look as the By Project / By Programme / By Assignee compact cards.
+function calTaskChip(t) {
+  const due = t.dueDate ? new Date(t.dueDate) : null;
+  const over = due && due < today && t.status !== 'DONE' && t.status !== 'CANCELLED';
+  const tooltip = `${t.title}${t.assignee ? ' · ' + t.assignee : ''}${t.status ? ' · ' + t.status : ''}${due ? ' · due ' + due.toLocaleDateString() : ''}`;
+  return `<div class="kanban-card kanban-card-compact" draggable="true"
+               ondragstart="onCalDragStart(event, ${t.id})" ondragend="onCalDragEnd(event)"
+               onclick="location.href='task-form.html?id=${t.id}'" title="${esc(tooltip)}">
+    <span class="task-title-ellipsis${over?' overdue':''}">${esc(t.title)}${over?' ⚠':''}</span>
+    <span class="task-compact-assignee">${esc(t.assignee||'')}</span>
+    <span class="badge badge-status-${esc(t.status)} task-compact-status">${esc(t.status||'')}</span>
+  </div>`;
+}
+
+let calDraggedTaskId = null;
+
+function onCalDragStart(evt, taskId) {
+  calDraggedTaskId = taskId;
+  evt.dataTransfer.setData('text/plain', String(taskId));
+  evt.dataTransfer.effectAllowed = 'move';
+  evt.target.classList.add('dragging');
+}
+
+function onCalDragEnd(evt) {
+  evt.target.classList.remove('dragging');
+  calDraggedTaskId = null;
+}
+
+function onCalZoneDragOver(evt) {
+  evt.preventDefault();
+  evt.dataTransfer.dropEffect = 'move';
+  evt.currentTarget.classList.add('drag-over');
+}
+
+function onCalZoneDragLeave(evt) {
+  evt.currentTarget.classList.remove('drag-over');
+}
+
+async function onCalDropDate(evt, dateKeyStr) {
+  evt.preventDefault();
+  evt.currentTarget.classList.remove('drag-over');
+  const taskId = Number(evt.dataTransfer.getData('text/plain')) || calDraggedTaskId;
+  if (!taskId) return;
+  const task = allTasks.find(t => t.id === taskId);
+  if (!task) return;
+  const timePart = task.dueDate ? task.dueDate.substring(11, 19) : '09:00:00';
+  await setCalDueDate(taskId, `${dateKeyStr}T${timePart}`);
+}
+
+async function onCalDropUnscheduled(evt) {
+  evt.preventDefault();
+  const taskId = Number(evt.dataTransfer.getData('text/plain')) || calDraggedTaskId;
+  if (!taskId) return;
+  await setCalDueDate(taskId, null);
+}
+
+async function setCalDueDate(taskId, dueDate) {
+  try {
+    const res = await fetch(`/api/tasks/${taskId}/due-date`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dueDate })
+    });
+    if (!res.ok) { console.error('Failed to update due date'); return; }
+    const updated = await res.json();
+    const idx = allTasks.findIndex(t => t.id === taskId);
+    if (idx >= 0) allTasks[idx] = updated;
+    updateStats();
+    renderByDate();
+  } catch (e) {
+    console.error(e);
+  }
+}
+
 // ── Due Dates ─────────────────────────────────────────────────────────────────
 function dueDateBucketFor(t) {
   if (!t.dueDate) return 'No Due Date';
@@ -951,7 +1474,7 @@ function renderDueDates() {
     const gtasks = grouped[b];
     if (!gtasks.length) return;
     const headerCls = b === 'Overdue' ? 'overdue-header' : (b === 'Today' ? 'today-header' : '');
-    tbody.innerHTML += `<tr><td colspan="6" class="group-header ${headerCls}">${b} <span class="badge bg-secondary ms-1">${gtasks.length}</span></td></tr>`;
+    tbody.innerHTML += `<tr><td colspan="7" class="group-header ${headerCls}">${b} <span class="badge bg-secondary ms-1">${gtasks.length}</span></td></tr>`;
     gtasks.forEach(t => tbody.innerHTML += dueDateRow(t));
   });
 }
@@ -961,11 +1484,14 @@ function dueDateRow(t) {
   const over = due && due < today && t.status !== 'DONE' && t.status !== 'CANCELLED';
   return `<tr class="task-row" onclick="location.href='task-form.html?id=${t.id}'">
     <td class="${over ? 'overdue' : ''}">${due ? due.toLocaleDateString() : ''}${over ? ' ⚠' : ''}</td>
-    <td><span class="badge badge-status-${t.status}">${esc(t.status||'')}</span></td>
-    <td><span class="badge badge-priority-${t.priority}">${esc(t.priority||'')}</span></td>
+    <td><span class="badge badge-status-${esc(t.status)}">${esc(t.status||'')}</span></td>
+    <td><span class="badge badge-priority-${esc(t.priority)}">${esc(t.priority||'')}</span></td>
     <td><strong>${esc(t.title)}</strong></td>
     <td>${esc(t.assignee||'')}</td>
     <td>${esc(t.project||'')}</td>
+    <td onclick="event.stopPropagation()">
+      ${(t.status !== 'DONE' && t.status !== 'CANCELLED') ? `<button class="btn btn-xs btn-outline-success" style="padding:1px 6px;font-size:0.75rem" onclick="closeTask(${t.id})" title="Close (mark as Done)"><i class="bi bi-check-lg"></i></button>` : ''}
+    </td>
   </tr>`;
 }
 
@@ -990,14 +1516,17 @@ function setView(view) {
   document.getElementById('swimlaneProjectView').style.display   = view === 'swimlaneProject'  ? '' : 'none';
   document.getElementById('swimlaneProgrammeView').style.display = view === 'swimlaneProgramme' ? '' : 'none';
   document.getElementById('swimlaneAssigneeView').style.display  = view === 'swimlaneAssignee'  ? '' : 'none';
+  document.getElementById('byDateView').style.display             = view === 'byDate'            ? '' : 'none';
   document.getElementById('dueDatesView').style.display          = view === 'dueDates'         ? '' : 'none';
   document.getElementById('btnTable').classList.toggle('active', view === 'table');
   document.getElementById('btnKanban').classList.toggle('active', view === 'kanban');
   document.getElementById('btnSwimlaneProject').classList.toggle('active', view === 'swimlaneProject');
   document.getElementById('btnSwimlaneProgramme').classList.toggle('active', view === 'swimlaneProgramme');
   document.getElementById('btnSwimlaneAssignee').classList.toggle('active', view === 'swimlaneAssignee');
+  document.getElementById('btnByDate').classList.toggle('active', view === 'byDate');
   document.getElementById('btnDueDates').classList.toggle('active', view === 'dueDates');
   document.getElementById('groupBySelect').disabled = view !== 'table';
+  updateLaneFilterBarVisibility(view);
   renderTasks();
 }
 
@@ -1011,9 +1540,13 @@ function clearFilters() {
     .forEach(id => document.getElementById(id).value = '');
   showUnassignedOnly = false;
   showRecentOnly = false;
+  showMyTasksOnly = false;
+  document.getElementById('btnMyTasks').classList.remove('active');
   document.getElementById('btnUnassigned').classList.remove('active');
   document.getElementById('btnRecentlyUpdated').classList.remove('active');
   document.getElementById('recentDays').value = 5;
+  laneFilterText = '';
+  document.getElementById('laneFilterInput').value = '';
   loadTasks();
 }
 
@@ -1050,9 +1583,9 @@ async function openBulkAddModal() {
   document.getElementById('bulkAddProgramme').value = '';
   document.getElementById('bulkAddProject').value = '';
   try {
-    const opts = await fetch('/api/tasks/filter-options').then(r => r.json());
-    populateSelect('bulkAddProgramme', opts.programmes || []);
-    populateSelect('bulkAddProject', opts.projects || []);
+    await loadMasterLists();
+    populateSelect('bulkAddProgramme', masterProgrammes);
+    populateSelect('bulkAddProject', masterProjects);
   } catch (e) { console.error(e); }
   new bootstrap.Modal(document.getElementById('bulkAddModal')).show();
 }
@@ -1088,6 +1621,22 @@ async function submitBulkAdd() {
   }
 }
 
+// ── Quick close (mark as Done without opening the full form) ──────────────────
+async function closeTask(id) {
+  try {
+    const res = await fetch(`/api/tasks/${id}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'X-Changed-By': getMyName() || 'system' },
+      body: JSON.stringify({ status: 'DONE' })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    await loadTasks();
+  } catch (e) {
+    console.error(e);
+    alert('Could not close task: ' + e.message);
+  }
+}
+
 // ── Delete ────────────────────────────────────────────────────────────────────
 function confirmDelete(id) {
   deleteTaskId = id;
@@ -1107,6 +1656,10 @@ document.getElementById('confirmDeleteBtn').addEventListener('click', async () =
 function esc(s) {
   if (!s) return '';
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function escAttr(s) {
+  return esc(s).replace(/'/g, '&#39;');
 }
 
 init();

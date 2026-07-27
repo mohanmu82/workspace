@@ -14,6 +14,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -33,7 +34,7 @@ public class GatewayRouterController {
 
     private static final HttpClient HTTP = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
-            .followRedirects(HttpClient.Redirect.NEVER)
+            .followRedirects(HttpClient.Redirect.NORMAL)
             .build();
 
     /**
@@ -101,6 +102,53 @@ public class GatewayRouterController {
         result.put("targetUri", r.getTargetUri());
         result.put("resolvedUrl", r.getTargetUri() + remainder);
         return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Issues a lightweight GET against each requested route's targetUri and reports the HTTP
+     * status returned, so the UI can tell which routes are currently reachable. Body {@code ids}
+     * selects which routes to test; omitted or empty means "test all routes".
+     */
+    @PostMapping("/gatewayrouter/routes/test")
+    public ResponseEntity<List<Map<String, Object>>> testRoutes(@RequestBody(required = false) Map<String, List<String>> body) {
+        List<String> ids = body != null ? body.get("ids") : null;
+        List<RouteRule> toTest = new ArrayList<>();
+        for (RouteRule r : routerService.list()) {
+            if (ids == null || ids.isEmpty() || ids.contains(r.getId())) toTest.add(r);
+        }
+
+        List<Map<String, Object>> results = new ArrayList<>();
+        for (RouteRule r : toTest) {
+            results.add(testOne(r));
+        }
+        return ResponseEntity.ok(results);
+    }
+
+    private Map<String, Object> testOne(RouteRule r) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("id", r.getId());
+        result.put("name", r.getName());
+        result.put("prefix", r.getPrefix());
+        result.put("targetUri", r.getTargetUri());
+
+        long start = System.currentTimeMillis();
+        try {
+            HttpRequest req = HttpRequest.newBuilder()
+                    .uri(URI.create(r.getTargetUri()))
+                    .timeout(Duration.ofSeconds(10))
+                    .GET()
+                    .build();
+            HttpResponse<Void> response = HTTP.send(req, HttpResponse.BodyHandlers.discarding());
+            result.put("statusCode", response.statusCode());
+            result.put("ok", response.statusCode() < 400);
+            result.put("error", null);
+        } catch (Exception e) {
+            result.put("statusCode", null);
+            result.put("ok", false);
+            result.put("error", e.getMessage());
+        }
+        result.put("latencyMs", System.currentTimeMillis() - start);
+        return result;
     }
 
     // -------------------------------------------------------------------------

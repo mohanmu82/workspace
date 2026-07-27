@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jcraft.jsch.ChannelExec;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.Session;
+import com.mycompany.batch.util.Threads;
 import org.springframework.lang.NonNull;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
@@ -82,7 +83,7 @@ public class LogTailWebSocketHandler extends TextWebSocketHandler {
             // Stop any existing tail for this WebSocket session
             disconnect(ws.getId());
 
-            Thread.ofVirtual().name("logtail-" + ws.getId()).start(() -> tailLog(
+            Threads.startDaemon("logtail-" + ws.getId(), () -> tailLog(
                     ws, hostname, port, username, logFilePath, privateKeyFilePath, tailLines, timeoutMs));
 
         } catch (Exception e) {

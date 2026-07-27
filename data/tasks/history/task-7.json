@@ -1,0 +1,23 @@
+[ {
+  "id" : 27,
+  "taskId" : 7,
+  "fieldName" : "dueDate",
+  "newValue" : "2026-07-24T09:00",
+  "changedBy" : "system",
+  "changedAt" : "2026-07-25T00:07:24.1896284"
+}, {
+  "id" : 32,
+  "taskId" : 7,
+  "fieldName" : "dueDate",
+  "oldValue" : "2026-07-24T09:00",
+  "newValue" : "2026-07-28T09:00",
+  "changedBy" : "system",
+  "changedAt" : "2026-07-25T00:16:44.8995633"
+}, {
+  "id" : 33,
+  "taskId" : 7,
+  "fieldName" : "dueDate",
+  "oldValue" : "2026-07-28T09:00",
+  "changedBy" : "system",
+  "changedAt" : "2026-07-25T00:16:45.7641636"
+} ]

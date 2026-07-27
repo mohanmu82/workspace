@@ -1,0 +1,10 @@
+{
+  "id" : 1,
+  "title" : "CSV Task One",
+  "status" : "TODO",
+  "priority" : "HIGH",
+  "assignee" : "alice",
+  "createdAt" : "2026-07-25T09:22:32.2312889",
+  "updatedAt" : "2026-07-25T09:22:32.2312889",
+  "tags" : [ "alpha", "beta" ]
+}

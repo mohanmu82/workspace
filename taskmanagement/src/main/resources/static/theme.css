@@ -1,0 +1,94 @@
+/* Shared dark-mode overrides. Bootstrap 5.3's data-bs-theme handles most
+   components automatically; these rules cover the app's custom classes
+   (cards, kanban, tables, badges) that hardcode light colors. */
+
+html[data-bs-theme="dark"] body {
+  background: #14171c;
+  color: #d7dadf;
+}
+
+html[data-bs-theme="dark"] .bg-white,
+html[data-bs-theme="dark"] .sidebar,
+html[data-bs-theme="dark"] .kanban-col,
+html[data-bs-theme="dark"] .section-card,
+html[data-bs-theme="dark"] .project-card,
+html[data-bs-theme="dark"] .programme-card,
+html[data-bs-theme="dark"] .field-card,
+html[data-bs-theme="dark"] .gantt-wrap,
+html[data-bs-theme="dark"] .history-item,
+html[data-bs-theme="dark"] .chips-wrap {
+  background: #1c2027 !important;
+  border-color: #333a45 !important;
+  color: #d7dadf;
+}
+
+html[data-bs-theme="dark"] .table {
+  --bs-table-bg: #1c2027;
+  --bs-table-color: #d7dadf;
+  --bs-table-border-color: #333a45;
+  --bs-table-hover-bg: #232a35;
+  --bs-table-hover-color: #d7dadf;
+}
+
+html[data-bs-theme="dark"] .table-light,
+html[data-bs-theme="dark"] thead.sticky-top {
+  --bs-table-bg: #232830;
+  --bs-table-color: #c3c8d1;
+  background: #232830;
+  color: #c3c8d1;
+}
+
+html[data-bs-theme="dark"] .kanban-card,
+html[data-bs-theme="dark"] .comment-item,
+html[data-bs-theme="dark"] .milestone-item,
+html[data-bs-theme="dark"] .source-section,
+html[data-bs-theme="dark"] .field-card.no-config {
+  background: #232830 !important;
+  border-color: #333a45 !important;
+}
+html[data-bs-theme="dark"] .kanban-card:hover { background: #2a3038 !important; }
+html[data-bs-theme="dark"] .task-row:hover { background: #232a35 !important; }
+
+html[data-bs-theme="dark"] .group-header { background: #232830; color: #c3c8d1; }
+html[data-bs-theme="dark"] .group-header.overdue-header { background: #3d1f24; color: #f5a3ad; }
+html[data-bs-theme="dark"] .group-header.today-header { background: #3d3520; color: #f0d585; }
+
+html[data-bs-theme="dark"] .tag-badge { background: #2a3038; color: #c3c8d1; }
+html[data-bs-theme="dark"] th.sortable:hover { background: #232830; }
+html[data-bs-theme="dark"] th.sort-asc, html[data-bs-theme="dark"] th.sort-desc { background: #232a35; color: #7db2ff; }
+html[data-bs-theme="dark"] .filter-active { background: #1d2f4d !important; border-color: #0d6efd !important; }
+html[data-bs-theme="dark"] .kanban-cards.drag-over { background: #1d2f4d; }
+
+html[data-bs-theme="dark"] .modal-content { background: #1c2027; color: #d7dadf; }
+html[data-bs-theme="dark"] .form-control,
+html[data-bs-theme="dark"] .form-select {
+  background: #1c2027;
+  color: #d7dadf;
+  border-color: #333a45;
+}
+html[data-bs-theme="dark"] .form-control:focus,
+html[data-bs-theme="dark"] .form-select:focus {
+  background: #1c2027;
+  color: #d7dadf;
+}
+html[data-bs-theme="dark"] .form-control::placeholder { color: #6c7480; }
+html[data-bs-theme="dark"] .form-check-input { background-color: #1c2027; border-color: #4a5260; }
+
+html[data-bs-theme="dark"] a { color: #7db2ff; }
+html[data-bs-theme="dark"] .text-muted { color: #8b93a1 !important; }
+html[data-bs-theme="dark"] .border-top,
+html[data-bs-theme="dark"] .border-bottom,
+html[data-bs-theme="dark"] .border,
+html[data-bs-theme="dark"] .table-bordered,
+html[data-bs-theme="dark"] .table-bordered td,
+html[data-bs-theme="dark"] .table-bordered th {
+  border-color: #333a45 !important;
+}
+html[data-bs-theme="dark"] .btn-close { filter: invert(1) grayscale(100%) brightness(200%); }
+
+/* Kanban/swimlane header count badges sit on a colored header background,
+   not the page background — keep them white/dark regardless of theme. */
+html[data-bs-theme="dark"] .kanban-col-header .badge.bg-white {
+  background: #fff !important;
+  color: #14171c !important;
+}
