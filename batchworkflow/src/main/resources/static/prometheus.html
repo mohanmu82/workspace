@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Prometheus Viewer</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', sans-serif;
+    background: #f4f6f9;
+    color: #222;
+    padding: 28px 28px 48px;
+  }
+  header { margin-bottom: 22px; }
+  header h1 { font-size: 1.3rem; font-weight: 700; }
+  header p  { font-size: 0.82rem; color: #666; margin-top: 4px; }
+  .back     { font-size: 0.8rem; color: #0078d4; text-decoration: none; }
+  .back:hover { text-decoration: underline; }
+
+  .card {
+    background: #fff;
+    border: 1px solid #dde1e7;
+    border-radius: 8px;
+    padding: 20px 22px;
+    margin-bottom: 20px;
+  }
+  .card-title { font-size: 0.95rem; font-weight: 700; margin-bottom: 12px; color: #111; }
+
+  .input-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 10px; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label {
+    font-size: 0.72rem; font-weight: 700; color: #666;
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  input[type=text], select {
+    padding: 7px 10px; font-size: 0.85rem; border: 1px solid #ccc; border-radius: 4px;
+    font-family: inherit; background: #fff;
+  }
+  input:focus, select:focus { outline: none; border-color: #0078d4; }
+
+  button {
+    padding: 7px 18px; font-size: 0.85rem; font-weight: 600; border: none;
+    border-radius: 4px; cursor: pointer; background: #0078d4; color: #fff; white-space: nowrap;
+  }
+  button:hover:not(:disabled) { background: #005fa3; }
+  button:disabled { background: #9ec5e8; cursor: not-allowed; }
+  button.secondary { background: #6c757d; }
+  button.secondary:hover { background: #545b62; }
+
+  .checkbox-field { display: flex; flex-direction: row; align-items: center; gap: 6px; }
+  .checkbox-field label { font-size: 0.82rem; color: #333; font-weight: 600; }
+  input[type=checkbox] { width: 16px; height: 16px; }
+
+  .status-msg { font-size: 0.82rem; margin-top: 8px; }
+  .status-ok  { color: #0a5c36; }
+  .status-err { color: #842029; }
+
+  .mono { font-family: Consolas, monospace; }
+
+  /* ── Stat tiles ─────────────────────────────────────────────────────── */
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin-bottom: 6px; }
+  .stat-tile {
+    background: #fff; border: 1px solid #dde1e7; border-radius: 8px; padding: 14px 16px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .stat-tile .val { font-size: 1.5rem; font-weight: 700; color: #111; }
+  .stat-tile .lbl { font-size: 0.72rem; color: #666; text-transform: uppercase; letter-spacing: .03em; }
+  .stat-tile .sub { font-size: 0.72rem; color: #898781; }
+
+  /* Meter (used for heap / cpu percentage tiles) */
+  .meter-track { width: 100%; height: 6px; border-radius: 3px; background: #e1e0d9; overflow: hidden; }
+  .meter-fill  { height: 100%; border-radius: 3px; background: #2a78d6; transition: width .2s ease; }
+  .meter-fill.good     { background: #0ca30c; }
+  .meter-fill.warning  { background: #fab219; }
+  .meter-fill.critical { background: #d03b3b; }
+
+  /* ── Metric family cards ────────────────────────────────────────────── */
+  .fam-toolbar { display: flex; gap: 10px; align-items: center; margin: 4px 0 14px; flex-wrap: wrap; }
+  .fam-toolbar input[type=text] { min-width: 260px; }
+  .fam-count-note { font-size: 0.8rem; color: #666; margin-left: auto; }
+
+  .fam-card { border: 1px solid #dde1e7; border-radius: 6px; margin-bottom: 10px; overflow: hidden; }
+  .fam-head {
+    display: flex; align-items: center; gap: 10px; padding: 9px 12px; background: #f8f9fb;
+    cursor: pointer; user-select: none; flex-wrap: wrap;
+  }
+  .fam-head:hover { background: #eef1f5; }
+  .fam-name { font-size: 0.85rem; font-weight: 700; color: #111; }
+  .fam-help { font-size: 0.78rem; color: #666; flex: 1 1 100%; margin-top: -2px; }
+  .fam-series-count { font-size: 0.75rem; color: #898781; margin-left: auto; }
+  .fam-chevron { transition: transform .12s; display: inline-block; color: #898781; }
+  .fam-chevron.open { transform: rotate(90deg); }
+
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 0.7rem; font-weight: 700; white-space: nowrap; }
+  .badge-counter   { background: #dbe9fa; color: #184f95; }
+  .badge-gauge     { background: #d3f3e6; color: #0a6b47; }
+  .badge-histogram { background: #fbebc9; color: #8a5a00; }
+  .badge-summary   { background: #e3defa; color: #3a2c85; }
+  .badge-untyped   { background: #e9e9e6; color: #55534d; }
+
+  .fam-body { display: none; border-top: 1px solid #dde1e7; }
+  .fam-body.open { display: block; }
+  .tbl-wrap { overflow-x: auto; max-height: 320px; overflow-y: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+  th {
+    background: #fafbfc; border-bottom: 1px solid #eef0f3; padding: 6px 12px; text-align: left;
+    font-weight: 600; white-space: nowrap; position: sticky; top: 0;
+  }
+  td { border-bottom: 1px solid #f2f3f5; padding: 5px 12px; vertical-align: middle; }
+  td.val-cell { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr:nth-child(even) td { background: #fcfcfc; }
+  .more-note { padding: 6px 12px; font-size: 0.75rem; color: #898781; }
+
+  .empty-msg { font-size: 0.82rem; color: #888; padding: 18px; text-align: center; }
+
+  /* ── Time series charts ─────────────────────────────────────────────── */
+  .ts-hint { font-size: 0.8rem; color: #666; margin-bottom: 10px; }
+  .ts-card { border: 1px solid #dde1e7; border-radius: 6px; margin-bottom: 14px; padding: 12px 14px 14px; }
+  .ts-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+  .ts-title { font-size: 0.85rem; font-weight: 700; color: #111; }
+  .ts-help { font-size: 0.76rem; color: #898781; flex: 1 1 auto; }
+  .ts-remove {
+    padding: 3px 10px; font-size: 0.72rem; font-weight: 600; background: #f2f3f5; color: #55534d;
+    border: 1px solid #dde1e7; border-radius: 4px;
+  }
+  .ts-remove:hover { background: #e9e9e6; }
+  .ts-chart-wrap { position: relative; }
+  .ts-svg { width: 100%; height: 190px; display: block; }
+  .ts-grid { stroke: #e1e0d9; stroke-width: 1; }
+  .ts-axis { stroke: #c3c2b7; stroke-width: 1; }
+  .ts-axis-label { fill: #898781; font-size: 9px; font-family: Consolas, monospace; }
+  .ts-crosshair { stroke: #c3c2b7; stroke-width: 1; pointer-events: none; }
+  .ts-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; }
+  .ts-legend-item { display: inline-flex; align-items: center; gap: 6px; font-size: 0.75rem; color: #52514e; }
+  .ts-key { display: inline-block; width: 12px; height: 3px; border-radius: 2px; flex: none; }
+  .ts-tooltip {
+    position: absolute; min-width: 150px; max-width: 260px; background: #fff; border: 1px solid #dde1e7;
+    border-radius: 6px; box-shadow: 0 2px 10px rgba(11,11,11,0.12); padding: 8px 10px; font-size: 0.75rem;
+    pointer-events: none; z-index: 5;
+  }
+  .ts-tt-time { font-size: 0.7rem; color: #898781; margin-bottom: 4px; }
+  .ts-tt-row { display: flex; align-items: center; gap: 6px; padding: 1px 0; }
+  .ts-tt-val { font-weight: 700; color: #111; font-variant-numeric: tabular-nums; }
+  .ts-tt-lbl { color: #52514e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ts-empty { font-size: 0.78rem; color: #898781; padding: 10px 0; }
+  td.track-cell { width: 26px; padding-left: 12px; }
+
+  details.raw summary { cursor: pointer; font-size: 0.82rem; font-weight: 600; color: #0078d4; }
+  .raw-body {
+    margin-top: 10px; background: #1e1e2e; color: #cdd6f4; font-family: Consolas, monospace;
+    font-size: 0.75rem; border-radius: 6px; padding: 12px 14px; max-height: 400px; overflow: auto;
+    white-space: pre-wrap; word-break: break-all;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <a class="back" href="index.html">&#8592; Home</a>
+  <h1>Prometheus Viewer</h1>
+  <p>Point at any Prometheus text-exposition endpoint (Actuator's <span class="mono">/actuator/prometheus</span>, a Pushgateway, a Prometheus server's own <span class="mono">/metrics</span>) and browse the scrape in a readable, searchable format.</p>
+</header>
+
+<div class="card">
+  <div class="card-title">Source</div>
+  <div class="input-row">
+    <div class="field" style="flex:1">
+      <label>Prometheus URL</label>
+      <input type="text" id="url" placeholder="http://localhost:8091/actuator/prometheus" style="width:100%">
+    </div>
+    <div class="field">
+      <label>Auto Refresh</label>
+      <select id="refreshInterval">
+        <option value="0" selected>Off</option>
+        <option value="5000">5s</option>
+        <option value="10000">10s</option>
+        <option value="30000">30s</option>
+        <option value="60000">60s</option>
+      </select>
+    </div>
+    <div class="field" style="flex-direction:row;gap:8px">
+      <button id="loadBtn" onclick="loadMetrics()">Load</button>
+    </div>
+  </div>
+  <div id="statusMsg" class="status-msg"></div>
+</div>
+
+<div id="resultsWrap" style="display:none">
+
+  <div class="card">
+    <div class="card-title">Overview</div>
+    <div class="stat-grid" id="statGrid"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Time Series</div>
+    <div class="ts-hint">Check a series in the Metric Families table below to graph it here. New points are added on each Load / auto-refresh, so turn on Auto Refresh above to keep collecting.</div>
+    <div id="tsEmpty" class="empty-msg">No series tracked yet.</div>
+    <button id="tsClearBtn" class="secondary" type="button" style="display:none;margin-bottom:10px" onclick="clearAllTracked()">Clear all</button>
+    <div id="tsWrap"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Metric Families</div>
+    <div class="fam-toolbar">
+      <input type="text" id="famFilter" placeholder="Filter by metric name…" oninput="renderFamilies()">
+      <span class="fam-count-note" id="famCountNote"></span>
+    </div>
+    <div id="famList"></div>
+  </div>
+
+  <div class="card">
+    <details class="raw">
+      <summary>Raw response</summary>
+      <div class="raw-body" id="rawBody"></div>
+    </details>
+  </div>
+
+</div>
+
+<script>
+  const TYPE_BADGE = { counter: 'badge-counter', gauge: 'badge-gauge', histogram: 'badge-histogram', summary: 'badge-summary' };
+  const MAX_ROWS_PER_FAMILY = 50;
+
+  let families = new Map();   // name -> { help, type, samples: [{labels, value}] }
+  let sampleCount = 0;
+  let lastRawText = '';
+  let refreshTimer = null;
+  const openFamilies = new Set();
+
+  function setStatus(msg, type) {
+    const el = document.getElementById('statusMsg');
+    el.textContent = msg;
+    el.className = 'status-msg' + (type ? ' ' + type : '');
+  }
+
+  // ── Parsing ──────────────────────────────────────────────────────────────
+  function getFamily(name) {
+    if (!families.has(name)) families.set(name, { help: '', type: 'untyped', samples: [] });
+    return families.get(name);
+  }
+
+  function unescapeLabelValue(s) {
+    return s.replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+  }
+
+  function parseLabels(raw) {
+    const labels = {};
+    if (!raw) return labels;
+    const re = /([a-zA-Z_][a-zA-Z0-9_]*)="((?:[^"\\]|\\.)*)"/g;
+    let m;
+    while ((m = re.exec(raw)) !== null) labels[m[1]] = unescapeLabelValue(m[2]);
+    return labels;
+  }
+
+  function parseValue(raw) {
+    if (raw === '+Inf') return Infinity;
+    if (raw === '-Inf') return -Infinity;
+    if (raw === 'NaN') return NaN;
+    return parseFloat(raw);
+  }
+
+  function parsePrometheusText(text) {
+    families = new Map();
+    sampleCount = 0;
+    const lines = text.split(/\r?\n/);
+    const lineRe = /^([a-zA-Z_:][a-zA-Z0-9_:]*)(\{(.*)\})?\s+(\S+)(?:\s+\S+)?\s*$/;
+    for (const line of lines) {
+      if (!line || !line.trim()) continue;
+      if (line.startsWith('#')) {
+        const m = line.match(/^#\s*(HELP|TYPE)\s+(\S+)\s+(.*)$/);
+        if (!m) continue;
+        const fam = getFamily(m[2]);
+        if (m[1] === 'HELP') fam.help = m[3];
+        else fam.type = m[3].trim();
+        continue;
+      }
+      const m = line.match(lineRe);
+      if (!m) continue;
+      const fam = getFamily(m[1]);
+      fam.samples.push({ labels: parseLabels(m[3]), value: parseValue(m[4]) });
+      sampleCount++;
+    }
+  }
+
+  // ── Stat tile helpers ────────────────────────────────────────────────────
+  function sumSeries(name, labelFilter) {
+    const fam = families.get(name);
+    if (!fam) return null;
+    let total = 0, found = false;
+    for (const s of fam.samples) {
+      if (labelFilter && !labelFilter(s.labels)) continue;
+      if (Number.isFinite(s.value)) { total += s.value; found = true; }
+    }
+    return found ? total : null;
+  }
+
+  function firstValue(name) {
+    const fam = families.get(name);
+    if (!fam || fam.samples.length === 0) return null;
+    return fam.samples[0].value;
+  }
+
+  function formatDuration(seconds) {
+    seconds = Math.floor(seconds);
+    const d = Math.floor(seconds / 86400); seconds %= 86400;
+    const h = Math.floor(seconds / 3600); seconds %= 3600;
+    const mnt = Math.floor(seconds / 60); const s = seconds % 60;
+    if (d > 0) return d + 'd ' + h + 'h';
+    if (h > 0) return h + 'h ' + mnt + 'm';
+    if (mnt > 0) return mnt + 'm ' + s + 's';
+    return s + 's';
+  }
+
+  function formatBytes(bytes) {
+    if (bytes == null) return '—';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let v = bytes, i = 0;
+    while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+    return v.toFixed(v < 10 ? 2 : 1) + ' ' + units[i];
+  }
+
+  function formatValue(v) {
+    if (v === Infinity) return '+Inf';
+    if (v === -Infinity) return '-Inf';
+    if (Number.isNaN(v)) return 'NaN';
+    if (Number.isInteger(v)) return v.toLocaleString();
+    if (Math.abs(v) >= 1000) return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    return String(Math.round(v * 1e6) / 1e6);
+  }
+
+  function meterStatusClass(pct) {
+    if (pct >= 90) return 'critical';
+    if (pct >= 70) return 'warning';
+    return 'good';
+  }
+
+  function statTile(label, value, sub, meterPct) {
+    let meterHtml = '';
+    if (meterPct != null) {
+      const cls = meterStatusClass(meterPct);
+      meterHtml = '<div class="meter-track"><div class="meter-fill ' + cls + '" style="width:' + Math.min(100, Math.max(0, meterPct)) + '%"></div></div>';
+    }
+    return '<div class="stat-tile">' +
+      '<div class="val">' + value + '</div>' +
+      '<div class="lbl">' + label + '</div>' +
+      (sub ? '<div class="sub">' + sub + '</div>' : '') +
+      meterHtml +
+      '</div>';
+  }
+
+  function renderStatTiles() {
+    const tiles = [];
+
+    tiles.push(statTile('Metric Families', families.size.toLocaleString()));
+    tiles.push(statTile('Series Scraped', sampleCount.toLocaleString()));
+
+    const uptime = firstValue('process_uptime_seconds');
+    if (uptime != null) tiles.push(statTile('Uptime', formatDuration(uptime)));
+
+    const cpu = firstValue('process_cpu_usage');
+    if (cpu != null && cpu >= 0) tiles.push(statTile('Process CPU', (cpu * 100).toFixed(1) + '%', null, cpu * 100));
+
+    const heapUsed = sumSeries('jvm_memory_used_bytes', l => l.area === 'heap');
+    if (heapUsed != null) {
+      const fam = families.get('jvm_memory_max_bytes');
+      let maxBounded = null;
+      if (fam) {
+        let total = 0, any = false;
+        for (const s of fam.samples) {
+          if (s.labels.area !== 'heap') continue;
+          if (s.value < 0) continue; // -1 means unbounded for that pool
+          total += s.value; any = true;
+        }
+        if (any) maxBounded = total;
+      }
+      if (maxBounded) {
+        const pct = (heapUsed / maxBounded) * 100;
+        tiles.push(statTile('Heap Used', formatBytes(heapUsed), 'of ' + formatBytes(maxBounded), pct));
+      } else {
+        tiles.push(statTile('Heap Used', formatBytes(heapUsed)));
+      }
+    }
+
+    const threads = firstValue('jvm_threads_live_threads');
+    if (threads != null) tiles.push(statTile('Live Threads', threads.toLocaleString()));
+
+    const httpTotal = sumSeries('http_server_requests_seconds_count');
+    if (httpTotal != null) tiles.push(statTile('HTTP Requests', Math.round(httpTotal).toLocaleString()));
+
+    document.getElementById('statGrid').innerHTML = tiles.join('');
+  }
+
+  // ── Family list rendering ────────────────────────────────────────────────
+  function labelsToString(labels) {
+    const keys = Object.keys(labels);
+    if (keys.length === 0) return '(no labels)';
+    return keys.map(k => k + '=' + JSON.stringify(labels[k])).join(', ');
+  }
+
+  function toggleFamily(name) {
+    if (openFamilies.has(name)) openFamilies.delete(name); else openFamilies.add(name);
+    renderFamilies();
+  }
+
+  function renderFamilies() {
+    const filter = document.getElementById('famFilter').value.trim().toLowerCase();
+    const names = [...families.keys()].filter(n => !filter || n.toLowerCase().includes(filter)).sort();
+
+    document.getElementById('famCountNote').textContent =
+      names.length + ' of ' + families.size + ' families shown';
+
+    if (names.length === 0) {
+      document.getElementById('famList').innerHTML = '<div class="empty-msg">No metric families match this filter.</div>';
+      return;
+    }
+
+    const html = names.map(name => {
+      const fam = families.get(name);
+      const badgeCls = TYPE_BADGE[fam.type] || 'badge-untyped';
+      const open = openFamilies.has(name);
+      let bodyHtml = '';
+      if (open) {
+        const rows = fam.samples.slice(0, MAX_ROWS_PER_FAMILY).map(s => {
+          const key = seriesKey(name, s.labels);
+          const checked = selectedSeries.has(key);
+          return '<tr><td class="track-cell"><input type="checkbox" class="track-cb" title="Graph this series over time" ' +
+            'data-metric="' + escapeHtml(name) + '" data-key="' + escapeHtml(key) + '"' + (checked ? ' checked' : '') + '></td>' +
+            '<td class="mono">' + escapeHtml(labelsToString(s.labels)) + '</td>' +
+            '<td class="val-cell mono">' + formatValue(s.value) + '</td></tr>';
+        }).join('');
+        const more = fam.samples.length > MAX_ROWS_PER_FAMILY
+          ? '<div class="more-note">+ ' + (fam.samples.length - MAX_ROWS_PER_FAMILY) + ' more series (refine the filter or view raw response below)</div>'
+          : '';
+        bodyHtml =
+          '<div class="fam-body open">' +
+            '<div class="tbl-wrap"><table><thead><tr><th class="track-cell"></th><th>Labels</th><th style="text-align:right">Value</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+            more +
+          '</div>';
+      }
+      return (
+        '<div class="fam-card">' +
+          '<div class="fam-head" data-name="' + escapeHtml(name) + '">' +
+            '<span class="fam-chevron' + (open ? ' open' : '') + '">&#9658;</span>' +
+            '<span class="fam-name mono">' + escapeHtml(name) + '</span>' +
+            '<span class="badge ' + badgeCls + '">' + escapeHtml(fam.type) + '</span>' +
+            '<span class="fam-series-count">' + fam.samples.length + ' series</span>' +
+            (fam.help ? '<div class="fam-help">' + escapeHtml(fam.help) + '</div>' : '') +
+          '</div>' +
+          bodyHtml +
+        '</div>'
+      );
+    }).join('');
+
+    document.getElementById('famList').innerHTML = html;
+  }
+
+  document.getElementById('famList').addEventListener('click', e => {
+    const head = e.target.closest('.fam-head');
+    if (head) toggleFamily(head.dataset.name);
+  });
+
+  // ── Time series tracking ─────────────────────────────────────────────────
+  const PALETTE = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
+  const MAX_POINTS = 720;
+  const TS_W = 640, TS_H = 190;
+  const TS_PAD = { l: 52, r: 14, t: 12, b: 24 };
+
+  let selectedSeries = new Map();   // key -> { metric, labels, points: [{t, v}] }
+  let lastLoadedUrl = null;
+
+  function seriesKey(name, labels) {
+    const parts = Object.keys(labels).sort().map(k => k + '=' + labels[k]);
+    return name + '{' + parts.join(',') + '}';
+  }
+
+  document.getElementById('famList').addEventListener('change', e => {
+    const cb = e.target.closest('.track-cb');
+    if (!cb) return;
+    const key = cb.dataset.key;
+    const metric = cb.dataset.metric;
+    if (cb.checked) {
+      const fam = families.get(metric);
+      const sample = fam && fam.samples.find(s => seriesKey(metric, s.labels) === key);
+      if (sample) {
+        selectedSeries.set(key, { metric, labels: sample.labels, points: [{ t: Date.now(), v: sample.value }] });
+      }
+    } else {
+      selectedSeries.delete(key);
+    }
+    renderTimeSeriesCharts();
+  });
+
+  function clearAllTracked() {
+    selectedSeries.clear();
+    renderTimeSeriesCharts();
+    renderFamilies();
+  }
+
+  function updateSeriesHistory() {
+    const now = Date.now();
+    for (const [key, entry] of selectedSeries) {
+      const fam = families.get(entry.metric);
+      const sample = fam && fam.samples.find(s => seriesKey(entry.metric, s.labels) === key);
+      if (sample && Number.isFinite(sample.value)) {
+        entry.points.push({ t: now, v: sample.value });
+        if (entry.points.length > MAX_POINTS) entry.points.shift();
+      }
+    }
+  }
+
+  function niceTicks(min, max, count) {
+    if (min === max) { min -= 1; max += 1; }
+    const range = max - min;
+    const rawStep = range / count;
+    const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+    const norm = rawStep / mag;
+    let step;
+    if (norm < 1.5) step = 1 * mag;
+    else if (norm < 3) step = 2 * mag;
+    else if (norm < 7) step = 5 * mag;
+    else step = 10 * mag;
+    const niceMin = Math.floor(min / step) * step;
+    const niceMax = Math.ceil(max / step) * step;
+    const ticks = [];
+    for (let v = niceMin; v <= niceMax + step * 0.001; v += step) ticks.push(v);
+    return ticks;
+  }
+
+  function formatTime(t) {
+    return new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+
+  // Compact axis-tick formatting (34,000,000 -> "34M") — keeps labels short so they never
+  // clip against the chart's left edge, regardless of the metric's magnitude/units.
+  function formatAxisValue(v) {
+    if (v === 0) return '0';
+    const sign = v < 0 ? '-' : '';
+    const abs = Math.abs(v);
+    const compact = (scaled, suffix) => {
+      const s = scaled >= 100 ? scaled.toFixed(0) : scaled.toFixed(1).replace(/\.0$/, '');
+      return sign + s + suffix;
+    };
+    if (abs >= 1e9) return compact(abs / 1e9, 'B');
+    if (abs >= 1e6) return compact(abs / 1e6, 'M');
+    if (abs >= 1e4) return compact(abs / 1e3, 'K');
+    if (Number.isInteger(v)) return String(v);
+    return String(Math.round(v * 1e4) / 1e4);
+  }
+
+  // metric name -> { el, update(seriesList) }. Cards are created once and updated in place on
+  // every refresh so a card being hovered doesn't lose its tooltip/crosshair mid-hover.
+  let tsCards = new Map();
+
+  function renderTimeSeriesCharts() {
+    const wrap = document.getElementById('tsWrap');
+    const empty = document.getElementById('tsEmpty');
+    const clearBtn = document.getElementById('tsClearBtn');
+
+    if (selectedSeries.size === 0) {
+      wrap.innerHTML = '';
+      tsCards.clear();
+      empty.style.display = 'block';
+      clearBtn.style.display = 'none';
+      return;
+    }
+    empty.style.display = 'none';
+    clearBtn.style.display = '';
+
+    const byMetric = new Map();
+    for (const [key, entry] of selectedSeries) {
+      if (!byMetric.has(entry.metric)) byMetric.set(entry.metric, []);
+      byMetric.get(entry.metric).push({ key, metric: entry.metric, labels: entry.labels, points: entry.points });
+    }
+
+    for (const [metric, card] of tsCards) {
+      if (!byMetric.has(metric)) { card.el.remove(); tsCards.delete(metric); }
+    }
+
+    for (const [metric, seriesList] of byMetric) {
+      let card = tsCards.get(metric);
+      if (!card) {
+        card = createChartCard(metric);
+        tsCards.set(metric, card);
+        wrap.appendChild(card.el);
+      }
+      card.update(seriesList);
+    }
+  }
+
+  // Builds the static DOM (and attaches listeners) for one metric's chart card, once. Returns
+  // an { el, update } handle — update() rewrites the plotted geometry in place on every refresh.
+  function createChartCard(metric) {
+    const el = document.createElement('div');
+    el.className = 'ts-card';
+    el.innerHTML =
+      '<div class="ts-head">' +
+        '<span class="ts-title mono"></span>' +
+        '<span class="ts-help"></span>' +
+        '<button class="ts-remove" type="button">Remove</button>' +
+      '</div>' +
+      '<div class="ts-chart-wrap">' +
+        '<svg viewBox="0 0 ' + TS_W + ' ' + TS_H + '" preserveAspectRatio="none" class="ts-svg">' +
+          '<g class="ts-content"></g>' +
+          '<line class="ts-crosshair" x1="0" y1="' + TS_PAD.t + '" x2="0" y2="' + (TS_H - TS_PAD.b) + '" style="display:none"/>' +
+        '</svg>' +
+        '<div class="ts-tooltip" style="display:none"></div>' +
+      '</div>' +
+      '<div class="ts-legend" style="display:none"></div>';
+
+    el.querySelector('.ts-title').textContent = metric;
+
+    const helpEl = el.querySelector('.ts-help');
+    const contentG = el.querySelector('.ts-content');
+    const legendEl = el.querySelector('.ts-legend');
+    const chartWrap = el.querySelector('.ts-chart-wrap');
+    const svgEl = el.querySelector('.ts-svg');
+    const crosshair = el.querySelector('.ts-crosshair');
+    const tooltip = el.querySelector('.ts-tooltip');
+
+    let state = null; // { seriesList, xFor, allPoints } — refreshed by update()
+
+    el.querySelector('.ts-remove').addEventListener('click', () => {
+      if (state) state.seriesList.forEach(s => selectedSeries.delete(s.key));
+      renderTimeSeriesCharts();
+      renderFamilies();
+    });
+
+    chartWrap.addEventListener('mousemove', ev => {
+      if (!state) return;
+      const rect = svgEl.getBoundingClientRect();
+      if (rect.width === 0) return;
+      const relX = (ev.clientX - rect.left) / rect.width * TS_W;
+      let nearestT = null, minDist = Infinity;
+      state.allPoints.forEach(p => {
+        const d = Math.abs(state.xFor(p.t) - relX);
+        if (d < minDist) { minDist = d; nearestT = p.t; }
+      });
+      if (nearestT == null) return;
+      const cx = state.xFor(nearestT);
+      crosshair.setAttribute('x1', cx.toFixed(1));
+      crosshair.setAttribute('x2', cx.toFixed(1));
+      crosshair.style.display = '';
+
+      let rows = '<div class="ts-tt-time">' + escapeHtml(formatTime(nearestT)) + '</div>';
+      state.seriesList.forEach(s => {
+        let best = null, bd = Infinity;
+        s.points.forEach(p => { const d = Math.abs(p.t - nearestT); if (d < bd) { bd = d; best = p; } });
+        if (!best) return;
+        rows += '<div class="ts-tt-row"><span class="ts-key" style="background:' + s.color + '"></span>' +
+          '<span class="ts-tt-val">' + escapeHtml(formatValue(best.v)) + '</span>' +
+          '<span class="ts-tt-lbl">' + escapeHtml(labelsToString(s.labels)) + '</span></div>';
+      });
+      tooltip.innerHTML = rows;
+      tooltip.style.display = 'block';
+      const wrapRect = chartWrap.getBoundingClientRect();
+      let left = (ev.clientX - wrapRect.left) + 12;
+      if (left + 190 > wrapRect.width) left = Math.max(0, (ev.clientX - wrapRect.left) - 192);
+      tooltip.style.left = left + 'px';
+      tooltip.style.top = '8px';
+    });
+    chartWrap.addEventListener('mouseleave', () => {
+      crosshair.style.display = 'none';
+      tooltip.style.display = 'none';
+    });
+
+    return {
+      el,
+      update(seriesList) {
+        const help = (families.get(metric) || {}).help || '';
+        helpEl.textContent = help;
+        helpEl.style.display = help ? '' : 'none';
+
+        seriesList.forEach((s, i) => { s.color = PALETTE[i % PALETTE.length]; });
+        const allPoints = seriesList.flatMap(s => s.points);
+
+        if (allPoints.length === 0) {
+          contentG.innerHTML = '<text x="' + (TS_W / 2) + '" y="' + (TS_H / 2) + '" text-anchor="middle" class="ts-axis-label">No data points yet</text>';
+          legendEl.innerHTML = '';
+          legendEl.style.display = 'none';
+          state = null;
+          return;
+        }
+
+        const tMin = Math.min(...allPoints.map(p => p.t));
+        const tMax = Math.max(...allPoints.map(p => p.t));
+        const vMin = Math.min(...allPoints.map(p => p.v));
+        const vMax = Math.max(...allPoints.map(p => p.v));
+        const yTicks = niceTicks(vMin, vMax, 4);
+        const yLo = yTicks[0], yHi = yTicks[yTicks.length - 1];
+
+        const plotW = TS_W - TS_PAD.l - TS_PAD.r, plotH = TS_H - TS_PAD.t - TS_PAD.b;
+        const xFor = t => tMax === tMin ? TS_PAD.l + plotW / 2 : TS_PAD.l + (t - tMin) / (tMax - tMin) * plotW;
+        const yFor = v => TS_PAD.t + (1 - (v - yLo) / (yHi - yLo)) * plotH;
+
+        let inner = '';
+        yTicks.forEach(v => {
+          const y = yFor(v);
+          inner += '<line x1="' + TS_PAD.l + '" y1="' + y + '" x2="' + (TS_W - TS_PAD.r) + '" y2="' + y + '" class="ts-grid"/>';
+          inner += '<text x="' + (TS_PAD.l - 8) + '" y="' + (y + 3) + '" class="ts-axis-label" text-anchor="end">' + escapeHtml(formatAxisValue(v)) + '</text>';
+        });
+        inner += '<line x1="' + TS_PAD.l + '" y1="' + (TS_H - TS_PAD.b) + '" x2="' + (TS_W - TS_PAD.r) + '" y2="' + (TS_H - TS_PAD.b) + '" class="ts-axis"/>';
+        inner += '<text x="' + TS_PAD.l + '" y="' + (TS_H - 6) + '" class="ts-axis-label">' + escapeHtml(formatTime(tMin)) + '</text>';
+        inner += '<text x="' + (TS_W - TS_PAD.r) + '" y="' + (TS_H - 6) + '" class="ts-axis-label" text-anchor="end">' + escapeHtml(formatTime(tMax)) + '</text>';
+
+        seriesList.forEach(s => {
+          if (s.points.length === 0) return;
+          const path = s.points.map((p, i) => (i === 0 ? 'M' : 'L') + xFor(p.t).toFixed(1) + ',' + yFor(p.v).toFixed(1)).join(' ');
+          inner += '<path d="' + path + '" fill="none" stroke="' + s.color + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>';
+          const last = s.points[s.points.length - 1];
+          inner += '<circle cx="' + xFor(last.t).toFixed(1) + '" cy="' + yFor(last.v).toFixed(1) + '" r="4" fill="' + s.color + '" stroke="#fff" stroke-width="2"/>';
+        });
+        contentG.innerHTML = inner;
+
+        legendEl.innerHTML = seriesList.length > 1
+          ? seriesList.map(s => '<span class="ts-legend-item"><span class="ts-key" style="background:' + s.color + '"></span>' + escapeHtml(labelsToString(s.labels)) + '</span>').join('')
+          : '';
+        legendEl.style.display = seriesList.length > 1 ? '' : 'none';
+
+        state = { seriesList, xFor, allPoints };
+      }
+    };
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  // ── Fetch + refresh cycle ────────────────────────────────────────────────
+  async function loadMetrics() {
+    const url = document.getElementById('url').value.trim();
+    if (!url) { setStatus('Enter a Prometheus URL first.', 'status-err'); return; }
+
+    const btn = document.getElementById('loadBtn');
+    btn.disabled = true;
+    setStatus('Fetching…');
+
+    try {
+      const res = await fetch('/prometheus/fetch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url })
+      });
+      const data = await res.json();
+
+      if (!data.ok) {
+        setStatus('Fetch failed: ' + (data.error || ('HTTP ' + data.statusCode)), 'status-err');
+        document.getElementById('resultsWrap').style.display = 'none';
+        return;
+      }
+
+      if (lastLoadedUrl !== null && lastLoadedUrl !== url) selectedSeries.clear();
+      lastLoadedUrl = url;
+
+      lastRawText = data.body || '';
+      parsePrometheusText(lastRawText);
+      updateSeriesHistory();
+      renderStatTiles();
+      renderFamilies();
+      renderTimeSeriesCharts();
+      document.getElementById('rawBody').textContent = lastRawText;
+      document.getElementById('resultsWrap').style.display = 'block';
+      setStatus('Loaded ' + sampleCount.toLocaleString() + ' series across ' + families.size.toLocaleString() +
+        ' families in ' + data.latencyMs + ' ms — ' + new Date().toLocaleTimeString() + '.', 'status-ok');
+    } catch (e) {
+      setStatus('Fetch failed: ' + e.message, 'status-err');
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function applyRefreshInterval() {
+    if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+    const ms = parseInt(document.getElementById('refreshInterval').value, 10);
+    if (ms > 0) refreshTimer = setInterval(loadMetrics, ms);
+  }
+  document.getElementById('refreshInterval').addEventListener('change', applyRefreshInterval);
+  document.getElementById('url').addEventListener('keydown', e => { if (e.key === 'Enter') loadMetrics(); });
+
+  // Deep-link support: ?url=<encoded target>[&autoload=0]
+  (function initFromQuery() {
+    const params = new URLSearchParams(location.search);
+    const u = params.get('url');
+    if (u) {
+      document.getElementById('url').value = u;
+      if (params.get('autoload') !== '0') loadMetrics();
+    }
+  })();
+</script>
+</body>
+</html>

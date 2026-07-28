@@ -172,6 +172,12 @@
   <div class="hint">Leave Path blank to test against the JVM default trust store (cacerts). Type is auto-detected from the file extension (.p12/.pfx &rarr; PKCS12, otherwise JKS) if left blank.</div>
 </div>
 
+<!-- ===== Load from Static Dataset ===== -->
+<div class="card">
+  <div class="card-title">Load URLs from Static Dataset</div>
+  <div id="dsWidget"></div>
+</div>
+
 <!-- ===== URLs + Run ===== -->
 <div class="card">
   <div class="card-title">HTTPS URLs</div>
@@ -229,6 +235,7 @@
   </div>
 </div>
 
+<script src="staticdataset-widget.js"></script>
 <script>
   let allRows = [];
   let tsRowSeq = 0;
@@ -449,6 +456,29 @@
 
   // Seed with one default row (JVM trust store).
   addTrustStoreRow('Default (JVM)', '', '', '');
+
+  StaticDatasetWidget.mount({
+    containerId: 'dsWidget',
+    fields: [
+      { key: 'url', label: 'HTTPS URL', guesses: ['url', 'httpsurl', 'endpoint'], required: true }
+    ],
+    loadLabel: 'Load URLs',
+    onLoad(rows) {
+      const input = document.getElementById('urlInput');
+      const existing = input.value.split('\n').map(s => s.trim()).filter(Boolean);
+      const seen = new Set(existing);
+      let added = 0;
+      rows.forEach(row => {
+        const url = row.url != null ? String(row.url).trim() : '';
+        if (!url || seen.has(url)) return;
+        seen.add(url);
+        existing.push(url);
+        added++;
+      });
+      input.value = existing.join('\n');
+      return added + ' URL(s) added (' + (rows.length - added) + ' duplicate/skipped).';
+    }
+  });
 </script>
 </body>
 </html>

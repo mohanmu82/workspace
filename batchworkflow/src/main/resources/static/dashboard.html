@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Service Dashboard</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', sans-serif;
+    background: #f4f6f9;
+    color: #222;
+    padding: 28px 28px 48px;
+  }
+  header { margin-bottom: 22px; }
+  header h1 { font-size: 1.3rem; font-weight: 700; }
+  header p  { font-size: 0.82rem; color: #666; margin-top: 4px; }
+  .back     { font-size: 0.8rem; color: #0078d4; text-decoration: none; }
+  .back:hover { text-decoration: underline; }
+
+  .card {
+    background: #fff;
+    border: 1px solid #dde1e7;
+    border-radius: 8px;
+    padding: 20px 22px;
+    margin-bottom: 20px;
+  }
+  .card-title { font-size: 0.95rem; font-weight: 700; margin-bottom: 12px; color: #111; }
+
+  .input-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 4px; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label {
+    font-size: 0.72rem; font-weight: 700; color: #666;
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  input[type=text], select {
+    padding: 7px 10px; font-size: 0.85rem; border: 1px solid #ccc; border-radius: 4px;
+    font-family: inherit; background: #fff;
+  }
+  input:focus, select:focus { outline: none; border-color: #0078d4; }
+
+  button {
+    padding: 7px 18px; font-size: 0.85rem; font-weight: 600; border: none;
+    border-radius: 4px; cursor: pointer; background: #0078d4; color: #fff; white-space: nowrap;
+  }
+  button:hover:not(:disabled) { background: #005fa3; }
+  button:disabled { background: #9ec5e8; cursor: not-allowed; }
+  button.secondary { background: #6c757d; }
+  button.secondary:hover { background: #545b62; }
+
+  .status-msg { font-size: 0.82rem; margin-top: 8px; }
+  .status-ok  { color: #0a5c36; }
+  .status-err { color: #842029; }
+
+  .mono { font-family: Consolas, monospace; }
+
+  /* ── Summary strip ──────────────────────────────────────────────────── */
+  .summary-row { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+  .summary-cell {
+    background: #f8f9fb; border: 1px solid #dde1e7; border-radius: 6px;
+    padding: 8px 16px; min-width: 90px;
+  }
+  .summary-cell .lbl { font-size: 0.7rem; font-weight: 700; color: #888; text-transform: uppercase; }
+  .summary-cell .val { font-size: 1.2rem; font-weight: 700; color: #111; margin-top: 2px; }
+  .summary-cell .val.up   { color: #0a5c36; }
+  .summary-cell .val.down { color: #b02a37; }
+
+  /* ── Type badges ─────────────────────────────────────────────────────── */
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 0.7rem; font-weight: 700; white-space: nowrap; }
+  .badge-http       { background: #cfe2ff; color: #084298; }
+  .badge-prometheus { background: #fde3d0; color: #8a3a00; }
+  .badge-jolokia    { background: #e3defa; color: #3a2c85; }
+
+  /* ── Target grid ────────────────────────────────────────────────────── */
+  .target-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+  .empty-msg { font-size: 0.82rem; color: #888; padding: 18px; text-align: center; }
+
+  .svc-card {
+    border: 1px solid #dde1e7; border-radius: 8px; padding: 14px 16px; background: #fff;
+    display: flex; flex-direction: column; gap: 8px; position: relative;
+  }
+  .svc-card.up   { border-left: 4px solid #0ca30c; }
+  .svc-card.down { border-left: 4px solid #d03b3b; }
+  .svc-card.checking { border-left: 4px solid #cfd4da; }
+
+  .svc-head { display: flex; align-items: flex-start; gap: 8px; }
+  .svc-name { font-size: 0.95rem; font-weight: 700; color: #111; flex: 1; word-break: break-word; }
+  .svc-remove {
+    background: none; border: none; color: #aaa; font-size: 1rem; padding: 0 2px; cursor: pointer;
+    line-height: 1; font-weight: 400;
+  }
+  .svc-remove:hover { color: #d03b3b; background: none; }
+
+  .svc-badges { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .pill { display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 10px; font-size: 0.7rem; font-weight: 700; }
+  .pill-up       { background: #d3f3e6; color: #0a6b47; }
+  .pill-down     { background: #fbdcdc; color: #92251f; }
+  .pill-checking { background: #eceff3; color: #666; }
+  .pill-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; display: inline-block; }
+
+  .svc-url { font-size: 0.72rem; color: #888; word-break: break-all; }
+  .svc-url a { color: #888; text-decoration: none; }
+  .svc-url a:hover { text-decoration: underline; color: #0078d4; }
+
+  .svc-meta { font-size: 0.75rem; color: #666; }
+
+  .svc-metrics { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+  .metric-row { display: flex; justify-content: space-between; font-size: 0.78rem; }
+  .metric-row .k { color: #666; }
+  .metric-row .v { font-weight: 600; color: #222; font-variant-numeric: tabular-nums; }
+
+  .meter-track { width: 100%; height: 6px; border-radius: 3px; background: #e1e0d9; overflow: hidden; margin-top: 2px; }
+  .meter-fill  { height: 100%; border-radius: 3px; background: #2a78d6; transition: width .2s ease; }
+  .meter-fill.good     { background: #0ca30c; }
+  .meter-fill.warning  { background: #fab219; }
+  .meter-fill.critical { background: #d03b3b; }
+
+  .svc-error { font-size: 0.75rem; color: #b02a37; word-break: break-word; }
+
+  .svc-footer { display: flex; justify-content: space-between; align-items: center; margin-top: auto; padding-top: 4px; }
+  .svc-footer button { padding: 4px 12px; font-size: 0.72rem; background: #f0f2f5; color: #444; }
+  .svc-footer button:hover { background: #e4e8ef; }
+  .svc-checked-at { font-size: 0.68rem; color: #aaa; }
+</style>
+</head>
+<body>
+
+<header>
+  <a class="back" href="index.html">&#8592; Home</a>
+  <h1>Service Dashboard</h1>
+  <p>A uniform status view across microservices that expose health differently — plain HTTP (200 = up), Prometheus text-exposition, or Jolokia (JVM heap, pid, threads).</p>
+</header>
+
+<div class="card">
+  <div class="card-title">Add Target</div>
+  <div class="input-row">
+    <div class="field" style="flex:1;min-width:160px">
+      <label>Name</label>
+      <input type="text" id="newName" placeholder="order-service">
+    </div>
+    <div class="field">
+      <label>Type</label>
+      <select id="newType">
+        <option value="http">HTTP (status 200)</option>
+        <option value="prometheus">Prometheus</option>
+        <option value="jolokia">Jolokia</option>
+      </select>
+    </div>
+    <div class="field" style="flex:2;min-width:260px">
+      <label>URL</label>
+      <input type="text" id="newUrl" placeholder="http://host:port/actuator/health" style="width:100%" onkeydown="if(event.key==='Enter')addTarget()">
+    </div>
+    <div class="field">
+      <button onclick="addTarget()">Add Target</button>
+    </div>
+  </div>
+  <div id="addStatusMsg" class="status-msg"></div>
+</div>
+
+<div class="card">
+  <div class="card-title">Load from Static Dataset</div>
+  <div id="dsWidget"></div>
+</div>
+
+<div class="card">
+  <div class="input-row" style="margin-bottom:0">
+    <div class="summary-row" style="flex:1">
+      <div class="summary-cell"><div class="lbl">Targets</div><div class="val" id="sumTotal">0</div></div>
+      <div class="summary-cell"><div class="lbl">Up</div><div class="val up" id="sumUp">0</div></div>
+      <div class="summary-cell"><div class="lbl">Down</div><div class="val down" id="sumDown">0</div></div>
+    </div>
+    <div class="field">
+      <label>Auto Refresh</label>
+      <select id="refreshInterval">
+        <option value="0">Off</option>
+        <option value="5000">5s</option>
+        <option value="10000" selected>10s</option>
+        <option value="30000">30s</option>
+        <option value="60000">60s</option>
+      </select>
+    </div>
+    <div class="field">
+      <button class="secondary" onclick="checkAll()">Check All Now</button>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">Services</div>
+  <div id="targetGrid" class="target-grid"></div>
+</div>
+
+<script src="staticdataset-widget.js"></script>
+<script>
+  const STORAGE_KEY = 'serviceDashboard.targets';
+  let targets = loadTargets();
+  const results = new Map();   // id -> last check result
+  const checking = new Set();  // ids currently in-flight
+  let refreshTimer = null;
+
+  function loadTargets() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+      return Array.isArray(raw) ? raw : [];
+    } catch { return []; }
+  }
+
+  function saveTargets() {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(targets));
+  }
+
+  function setAddStatus(msg, cls) {
+    const el = document.getElementById('addStatusMsg');
+    el.textContent = msg;
+    el.className = 'status-msg' + (cls ? ' ' + cls : '');
+  }
+
+  function addTarget() {
+    const name = document.getElementById('newName').value.trim();
+    const type = document.getElementById('newType').value;
+    const url  = document.getElementById('newUrl').value.trim();
+    if (!url) { setAddStatus('URL is required.', 'status-err'); return; }
+
+    const target = { id: 't' + Date.now() + Math.random().toString(36).slice(2, 7), name: name || url, type, url };
+    targets.push(target);
+    saveTargets();
+    document.getElementById('newName').value = '';
+    document.getElementById('newUrl').value = '';
+    setAddStatus('');
+    renderGrid();
+    checkOne(target);
+  }
+
+  function removeTarget(id) {
+    targets = targets.filter(t => t.id !== id);
+    results.delete(id);
+    saveTargets();
+    renderGrid();
+  }
+
+  // ── Fetch + normalize ─────────────────────────────────────────────────────
+  async function checkOne(target) {
+    checking.add(target.id);
+    renderGrid();
+    try {
+      const res = await fetch('/servicemonitor/check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: target.url, type: target.type })
+      });
+      const data = await res.json();
+      data._checkedAt = Date.now();
+      results.set(target.id, data);
+    } catch (e) {
+      results.set(target.id, { ok: false, status: 'DOWN', error: e.message, _checkedAt: Date.now() });
+    } finally {
+      checking.delete(target.id);
+      renderGrid();
+    }
+  }
+
+  function checkAll() {
+    targets.forEach(t => checkOne(t));
+  }
+
+  // ── Formatting ───────────────────────────────────────────────────────────
+  function formatBytes(bytes) {
+    if (bytes == null) return null;
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let v = bytes, i = 0;
+    while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+    return v.toFixed(v < 10 ? 2 : 1) + ' ' + units[i];
+  }
+
+  function formatDuration(seconds) {
+    if (seconds == null) return null;
+    seconds = Math.floor(seconds);
+    const d = Math.floor(seconds / 86400); seconds %= 86400;
+    const h = Math.floor(seconds / 3600); seconds %= 3600;
+    const mnt = Math.floor(seconds / 60); const s = seconds % 60;
+    if (d > 0) return d + 'd ' + h + 'h';
+    if (h > 0) return h + 'h ' + mnt + 'm';
+    if (mnt > 0) return mnt + 'm ' + s + 's';
+    return s + 's';
+  }
+
+  function meterClass(pct) {
+    if (pct >= 90) return 'critical';
+    if (pct >= 70) return 'warning';
+    return 'good';
+  }
+
+  function timeAgo(ts) {
+    if (!ts) return '';
+    const s = Math.floor((Date.now() - ts) / 1000);
+    if (s < 5) return 'just now';
+    if (s < 60) return s + 's ago';
+    return Math.floor(s / 60) + 'm ago';
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  // ── Rendering ────────────────────────────────────────────────────────────
+  function renderGrid() {
+    const grid = document.getElementById('targetGrid');
+
+    if (targets.length === 0) {
+      grid.innerHTML = '<div class="empty-msg">No targets yet — add a service above to start monitoring it.</div>';
+      updateSummary();
+      return;
+    }
+
+    grid.innerHTML = targets.map(renderCard).join('');
+    updateSummary();
+  }
+
+  function renderCard(t) {
+    const r = results.get(t.id);
+    const isChecking = checking.has(t.id) && !r;
+    const state = isChecking ? 'checking' : (r ? (r.status === 'UP' ? 'up' : 'down') : 'checking');
+
+    const pillCls = state === 'up' ? 'pill-up' : (state === 'down' ? 'pill-down' : 'pill-checking');
+    const pillText = state === 'up' ? 'UP' : (state === 'down' ? 'DOWN' : 'checking…');
+
+    const typeBadge = { http: 'badge-http', prometheus: 'badge-prometheus', jolokia: 'badge-jolokia' }[t.type] || 'badge-http';
+    const typeLabel = { http: 'HTTP', prometheus: 'Prometheus', jolokia: 'Jolokia' }[t.type] || t.type;
+
+    let metaHtml = '';
+    if (r) {
+      const parts = [];
+      if (r.statusCode != null) parts.push('HTTP ' + r.statusCode);
+      if (r.latencyMs != null) parts.push(r.latencyMs + ' ms');
+      metaHtml = '<div class="svc-meta">' + parts.join(' · ') + '</div>';
+    }
+
+    let errorHtml = '';
+    if (r && r.error) errorHtml = '<div class="svc-error">' + escapeHtml(r.error) + '</div>';
+
+    let metricsHtml = '';
+    if (r && r.metrics && Object.keys(r.metrics).length > 0) {
+      const rows = [];
+      const met = r.metrics;
+
+      if (met.memoryUsedBytes != null) {
+        if (met.memoryMaxBytes != null && met.memoryMaxBytes > 0) {
+          const pct = (met.memoryUsedBytes / met.memoryMaxBytes) * 100;
+          rows.push(
+            '<div class="metric-row"><span class="k">Heap</span><span class="v">' +
+            formatBytes(met.memoryUsedBytes) + ' / ' + formatBytes(met.memoryMaxBytes) + '</span></div>' +
+            '<div class="meter-track"><div class="meter-fill ' + meterClass(pct) + '" style="width:' + Math.min(100, pct).toFixed(0) + '%"></div></div>'
+          );
+        } else {
+          rows.push('<div class="metric-row"><span class="k">Heap Used</span><span class="v">' + formatBytes(met.memoryUsedBytes) + '</span></div>');
+        }
+      }
+      if (met.pid != null) rows.push('<div class="metric-row"><span class="k">PID</span><span class="v">' + met.pid + '</span></div>');
+      if (met.uptimeSeconds != null) rows.push('<div class="metric-row"><span class="k">Uptime</span><span class="v">' + formatDuration(met.uptimeSeconds) + '</span></div>');
+      if (met.threadsLive != null) rows.push('<div class="metric-row"><span class="k">Threads</span><span class="v">' + met.threadsLive + '</span></div>');
+      if (met.cpuUsage != null && met.cpuUsage >= 0) rows.push('<div class="metric-row"><span class="k">CPU</span><span class="v">' + (met.cpuUsage * 100).toFixed(1) + '%</span></div>');
+
+      metricsHtml = '<div class="svc-metrics">' + rows.join('') + '</div>';
+    }
+
+    return (
+      '<div class="svc-card ' + state + '">' +
+        '<div class="svc-head">' +
+          '<div class="svc-name">' + escapeHtml(t.name) + '</div>' +
+          '<button class="svc-remove" title="Remove" onclick="removeTarget(\'' + t.id + '\')">&times;</button>' +
+        '</div>' +
+        '<div class="svc-badges">' +
+          '<span class="badge ' + typeBadge + '">' + typeLabel + '</span>' +
+          '<span class="pill ' + pillCls + '"><span class="pill-dot"></span>' + pillText + '</span>' +
+        '</div>' +
+        '<div class="svc-url"><a href="' + escapeHtml(t.url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(t.url) + '</a></div>' +
+        metaHtml +
+        errorHtml +
+        metricsHtml +
+        '<div class="svc-footer">' +
+          '<button onclick="checkOneById(\'' + t.id + '\')">Recheck</button>' +
+          '<span class="svc-checked-at">' + (r ? timeAgo(r._checkedAt) : '') + '</span>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  function checkOneById(id) {
+    const t = targets.find(x => x.id === id);
+    if (t) checkOne(t);
+  }
+
+  function updateSummary() {
+    let up = 0, down = 0;
+    targets.forEach(t => {
+      const r = results.get(t.id);
+      if (r) { if (r.status === 'UP') up++; else down++; }
+    });
+    document.getElementById('sumTotal').textContent = targets.length;
+    document.getElementById('sumUp').textContent = up;
+    document.getElementById('sumDown').textContent = down;
+  }
+
+  function applyRefreshInterval() {
+    if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+    const ms = parseInt(document.getElementById('refreshInterval').value, 10);
+    if (ms > 0) refreshTimer = setInterval(checkAll, ms);
+  }
+  document.getElementById('refreshInterval').addEventListener('change', applyRefreshInterval);
+
+  // ── Init ─────────────────────────────────────────────────────────────────
+  renderGrid();
+  if (targets.length > 0) checkAll();
+  applyRefreshInterval();
+
+  StaticDatasetWidget.mount({
+    containerId: 'dsWidget',
+    fields: [
+      { key: 'url',  label: 'URL',  guesses: ['url', 'httpurl', 'endpoint'], required: true },
+      { key: 'name', label: 'Name', guesses: ['name', 'servicename', 'hostname'], required: false },
+      { key: 'type', label: 'Type', guesses: ['type'], required: false,
+        fallback: {
+          label: 'Default Type', default: 'http',
+          options: [
+            { value: 'http', label: 'HTTP (status 200)' },
+            { value: 'prometheus', label: 'Prometheus' },
+            { value: 'jolokia', label: 'Jolokia' }
+          ]
+        } }
+    ],
+    loadLabel: 'Load Targets',
+    onLoad(rows) {
+      let added = 0;
+      rows.forEach(row => {
+        const url = row.url != null ? String(row.url) : '';
+        if (!url) return;
+        const name = row.name != null && row.name !== '' ? String(row.name) : url;
+        const type = ['http', 'prometheus', 'jolokia'].includes(row.type) ? row.type : 'http';
+        const id = 'ds-' + row._dataset + '-' + url;
+        if (targets.some(t => t.id === id)) return; // already loaded
+        targets.push({ id, name, type, url });
+        added++;
+      });
+      saveTargets();
+      renderGrid();
+      checkAll();
+      return 'Added ' + added + ' target(s).';
+    }
+  });
+</script>
+</body>
+</html>

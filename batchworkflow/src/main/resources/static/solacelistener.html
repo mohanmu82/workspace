@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Solace Listener</title>
+<script src="https://cdn.jsdelivr.net/npm/solclientjs@10.18.3/lib-browser/solclient.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/ag-grid-community@31/dist/ag-grid-community.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsonpath-plus@10.4.0/dist/index-browser-umd.min.cjs"></script>
+<script src="staticdataset-widget.js"></script>
+<style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           background: #f4f5f7; color: #172b4d; padding: 24px; }
+    .nav { margin-bottom: 18px; }
+    .nav a { font-size: 13px; color: #0052cc; text-decoration: none; }
+    .nav a:hover { text-decoration: underline; }
+    .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+    .page-header h1 { font-size: 20px; font-weight: 600; }
+
+    .panel { background: #fff; border: 1px solid #dfe1e6; border-radius: 6px; padding: 16px; margin-bottom: 16px; }
+    .panel-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px;
+                   margin-bottom: 10px; color: #5e6c84; }
+    .help-note { font-size: 12px; color: #5e6c84; margin-bottom: 12px; line-height: 1.5; }
+
+    .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 12px; }
+    .form-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; font-weight: 600;
+                        color: #5e6c84; text-transform: uppercase; letter-spacing: .4px; }
+    .form-grid input, .form-grid select {
+        padding: 7px 10px; font-size: 13px; border: 1px solid #ccc; border-radius: 4px; outline: none;
+        font-family: inherit; text-transform: none; font-weight: 400; color: #172b4d;
+    }
+    .form-grid input:focus, .form-grid select:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.25); }
+
+    button { padding: 7px 16px; font-size: 13px; font-weight: 500; border: none;
+             border-radius: 4px; cursor: pointer; white-space: nowrap; }
+    button.primary   { background: #0052cc; color: #fff; }
+    button.primary:hover  { background: #0065ff; }
+    button.danger    { background: #de350b; color: #fff; }
+    button.danger:hover   { background: #ff5630; }
+    button.secondary { background: #fff; color: #0052cc; border: 1px solid #0052cc; }
+    button.tool-btn  { background: #f4f5f7; color: #172b4d; border: 1px solid #dfe1e6;
+                       padding: 5px 12px; font-size: 12px; }
+    button.tool-btn:hover { background: #ebecf0; }
+    button:disabled  { opacity: .45; cursor: not-allowed; }
+
+    .toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .form-error { font-size: 12px; color: #de350b; }
+
+    .ws-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #a5adba; flex-shrink: 0; }
+    .ws-dot.connecting   { background: #ffab00; }
+    .ws-dot.live         { background: #57d9a3; }
+    .ws-dot.paused       { background: #ffab00; }
+    .ws-dot.error        { background: #de350b; }
+    .ws-dot.unsubscribed { background: #a5adba; }
+
+    .listeners-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(540px, 1fr)); gap: 16px; }
+    .empty-state { display: none; text-align: center; color: #97a0af; font-size: 13px; padding: 40px 0; }
+    .empty-state.show { display: block; }
+
+    .listener-card { background: #fff; border: 1px solid #dfe1e6; border-radius: 8px;
+                      overflow: hidden; display: flex; flex-direction: column; }
+    .listener-card.unsubscribed { opacity: .65; }
+    .card-header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid #eee; }
+    .card-title { flex: 1; min-width: 0; }
+    .card-title-main { font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .card-title-sub { font-size: 11px; color: #5e6c84; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .card-count { font-size: 12px; font-weight: 700; color: #0052cc; background: #e9f0ff;
+                  padding: 2px 8px; border-radius: 10px; flex-shrink: 0; }
+    .card-actions { display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+    .paused-banner { background: #fffae6; color: #7a4600; font-size: 11px; padding: 5px 14px; border-bottom: 1px solid #f0e2b6; }
+    .card-grid { width: 100%; height: 340px; }
+
+    .chart-modal-overlay {
+        display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;
+    }
+    .chart-modal-overlay.open { display: flex; }
+    .chart-modal-box {
+        background: #fff; border-radius: 8px; padding: 20px 24px;
+        width: 640px; max-width: 92vw; box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+    }
+    .chart-modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; gap: 10px; }
+    .chart-modal-header h3 { font-size: 14px; font-weight: 600; margin: 0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .chart-modal-header button { background: none; border: none; font-size: 18px; cursor: pointer; color: #5e6c84; padding: 2px 6px; border-radius: 4px; }
+    .chart-modal-header button:hover { background: #f4f5f7; }
+    .payload-pre {
+        background: #0d1117; color: #c9d1d9;
+        font-family: "Cascadia Code", "Fira Code", Consolas, "Courier New", monospace;
+        font-size: 12px; line-height: 1.5; padding: 12px; border-radius: 6px;
+        max-height: 60vh; overflow: auto; white-space: pre-wrap; word-break: break-word;
+    }
+</style>
+</head>
+<body>
+
+<div class="nav"><a href="/">&larr; Batch Workflow</a></div>
+<div class="page-header">
+    <h1>Solace Listener</h1>
+    <button class="danger" onclick="unsubscribeAll()">Unsubscribe All</button>
+</div>
+
+<div class="panel">
+    <div class="panel-title">New Listener</div>
+    <div class="help-note">
+        Connects directly from the browser to a Solace PubSub+ Message VPN over the Web Messaging API's
+        WebSocket transport (<code>ws://</code> / <code>wss://</code> &mdash; a WebSocket connection begins as
+        an HTTP(S) upgrade handshake). Each listener below opens its own session and shows live messages in
+        its own grid.
+    </div>
+    <div class="form-grid">
+        <label>Host / URL
+            <input id="newHost" placeholder="wss://mr-xxxxxxx.messaging.solace.cloud:443">
+        </label>
+        <label>Message VPN
+            <input id="newVpn" placeholder="default">
+        </label>
+        <label>Username
+            <input id="newUsername" placeholder="solace-username">
+        </label>
+        <label>Password
+            <input id="newPassword" type="password" placeholder="••••••••">
+        </label>
+        <label>Topic
+            <input id="newTopic" placeholder="orders/eu/*">
+        </label>
+        <label>Message Type
+            <select id="newMsgType">
+                <option value="auto">Auto-detect</option>
+                <option value="map">Map Message</option>
+                <option value="json">JSON</option>
+                <option value="xml">XML</option>
+            </select>
+        </label>
+        <label>
+            <span id="idExprLabel">Identifier Expression</span>
+            <input id="newIdExpr" placeholder="attribute name / $.jsonpath / xpath — applied per detected type">
+        </label>
+    </div>
+    <div class="toolbar">
+        <button class="primary" onclick="addListenerFromForm()">+ Add Listener</button>
+        <span id="formError" class="form-error"></span>
+    </div>
+</div>
+
+<div class="panel">
+    <div class="panel-title">Load Listeners from Static Dataset</div>
+    <div class="help-note">
+        Pick a <a href="staticdatasets.html" target="_blank">static dataset</a> and map its columns to the
+        listener attributes below (host, VPN, topic, username, password, message type, identifier expression),
+        then Load &mdash; one listener card is created per matching row.
+    </div>
+    <div id="dsWidget"></div>
+</div>
+
+<div id="listenersGrid" class="listeners-grid"></div>
+<div id="emptyState" class="empty-state show">No listeners yet &mdash; add one above.</div>
+
+<div id="payloadModal" class="chart-modal-overlay" onclick="onPayloadOverlayClick(event)">
+    <div class="chart-modal-box">
+        <div class="chart-modal-header">
+            <h3 id="payloadModalTitle"></h3>
+            <div>
+                <button class="tool-btn" onclick="copyPayloadModal()">Copy</button>
+                <button onclick="closePayloadModal()">&#10005;</button>
+            </div>
+        </div>
+        <pre id="payloadModalBody" class="payload-pre"></pre>
+    </div>
+</div>
+
+<script>
+    // =========================================================================
+    // Solace factory init
+    // =========================================================================
+    const factoryProps = new solace.SolclientFactoryProperties();
+    factoryProps.profile = solace.SolclientFactoryProfiles.version10;
+    solace.SolclientFactory.init(factoryProps);
+    solace.SolclientFactory.setLogLevel(solace.LogLevel.WARN);
+
+    let listenerSeq = 0;
+    const listeners = new Map();
+    const MAX_ROWS = 500;
+
+    // =========================================================================
+    // Helpers
+    // =========================================================================
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+    function truncate(s, n) {
+        if (s == null) return '';
+        s = String(s);
+        return s.length > n ? s.slice(0, n) + '…' : s;
+    }
+    function nowTimeStr() {
+        const d = new Date();
+        return d.toLocaleTimeString(undefined, { hour12: false }) + '.' + String(d.getMilliseconds()).padStart(3, '0');
+    }
+    function copyCellValue(val) {
+        if (val == null) return;
+        navigator.clipboard.writeText(String(val)).catch(() => {});
+    }
+
+    // =========================================================================
+    // New Listener form
+    // =========================================================================
+    document.getElementById('newMsgType').addEventListener('change', updateIdLabel);
+    function updateIdLabel() {
+        const v = document.getElementById('newMsgType').value;
+        const lbl = document.getElementById('idExprLabel');
+        const inp = document.getElementById('newIdExpr');
+        if (v === 'map') { lbl.textContent = 'Identifier Attribute Name'; inp.placeholder = 'e.g. id'; }
+        else if (v === 'json') { lbl.textContent = 'Identifier JSONPath'; inp.placeholder = 'e.g. $.data.identifier'; }
+        else if (v === 'xml') { lbl.textContent = 'Identifier XPath'; inp.placeholder = 'e.g. /Order/@id or /Order/Id/text()'; }
+        else { lbl.textContent = 'Identifier Expression'; inp.placeholder = 'attribute name / $.jsonpath / xpath — applied per detected type'; }
+    }
+
+    function loadDefaults() {
+        try {
+            const d = JSON.parse(localStorage.getItem('solaceListenerDefaults') || '{}');
+            if (d.host) document.getElementById('newHost').value = d.host;
+            if (d.vpn) document.getElementById('newVpn').value = d.vpn;
+            if (d.username) document.getElementById('newUsername').value = d.username;
+        } catch (e) {}
+    }
+    loadDefaults();
+
+    // =========================================================================
+    // Load listeners from a Static Dataset — maps dataset columns to the same
+    // attributes (host, vpn, topic, username, password, msgType, idExpr) the
+    // manual form above collects, then creates one listener card per row.
+    // =========================================================================
+    if (window.StaticDatasetWidget) {
+        StaticDatasetWidget.mount({
+            containerId: 'dsWidget',
+            fields: [
+                { key: 'host', label: 'Host / URL', guesses: ['host', 'url'], required: true },
+                { key: 'vpn', label: 'Message VPN', guesses: ['vpn', 'messagevpn', 'msgvpn'], required: true },
+                { key: 'topic', label: 'Topic', guesses: ['topic'], required: true },
+                { key: 'username', label: 'Username', guesses: ['username', 'user'], required: false },
+                { key: 'password', label: 'Password', guesses: ['password', 'pass'], required: false },
+                { key: 'msgType', label: 'Message Type', guesses: ['msgtype', 'messagetype', 'type'], required: false,
+                  fallback: { label: 'Default Message Type', default: 'auto',
+                              options: [
+                                  { value: 'auto', label: 'Auto-detect' },
+                                  { value: 'map',  label: 'Map Message' },
+                                  { value: 'json', label: 'JSON' },
+                                  { value: 'xml',  label: 'XML' },
+                              ] } },
+                { key: 'idExpr', label: 'Identifier Expr', guesses: ['idexpr', 'identifier', 'identifierexpr'], required: false },
+            ],
+            loadLabel: 'Load Listeners',
+            onLoad(rows) {
+                let created = 0, skipped = 0;
+                rows.forEach(row => {
+                    if (!row.host || !row.vpn || !row.topic) { skipped++; return; }
+                    createListener({
+                        host: String(row.host).trim(),
+                        vpn: String(row.vpn).trim(),
+                        username: row.username != null ? String(row.username).trim() : '',
+                        password: row.password != null ? String(row.password) : '',
+                        topic: String(row.topic).trim(),
+                        msgType: row.msgType || 'auto',
+                        idExpr: row.idExpr != null ? String(row.idExpr).trim() : '',
+                    });
+                    created++;
+                });
+                return created + ' listener(s) created' +
+                    (skipped ? ', ' + skipped + ' row(s) skipped (missing host/vpn/topic).' : '.');
+            }
+        });
+    }
+
+    function addListenerFromForm() {
+        const host = document.getElementById('newHost').value.trim();
+        const vpn = document.getElementById('newVpn').value.trim();
+        const username = document.getElementById('newUsername').value.trim();
+        const password = document.getElementById('newPassword').value;
+        const topic = document.getElementById('newTopic').value.trim();
+        const msgType = document.getElementById('newMsgType').value;
+        const idExpr = document.getElementById('newIdExpr').value.trim();
+        const errEl = document.getElementById('formError');
+
+        if (!host || !vpn || !topic) {
+            errEl.textContent = 'Host, VPN, and Topic are required.';
+            return;
+        }
+        errEl.textContent = '';
+        localStorage.setItem('solaceListenerDefaults', JSON.stringify({ host, vpn, username }));
+
+        createListener({ host, vpn, username, password, topic, msgType, idExpr });
+        document.getElementById('newTopic').value = '';
+    }
+
+    // =========================================================================
+    // Listener lifecycle
+    // =========================================================================
+    function createListener(cfg) {
+        const id = 'l' + (++listenerSeq);
+        const state = {
+            id, host: cfg.host, vpn: cfg.vpn, username: cfg.username, password: cfg.password,
+            topic: cfg.topic, msgType: cfg.msgType, idExpr: cfg.idExpr,
+            session: null, gridApi: null, seq: 0, rowCount: 0,
+            paused: false, pausedCount: 0, status: 'connecting', subscribed: false,
+        };
+        listeners.set(id, state);
+        renderCard(state);
+        connectListener(state);
+    }
+
+    function connectListener(state) {
+        setCardStatus(state, 'connecting', 'Connecting…');
+        let session;
+        try {
+            session = solace.SolclientFactory.createSession({
+                url: state.host,
+                vpnName: state.vpn,
+                userName: state.username || '',
+                password: state.password || '',
+                connectRetries: 0,
+            });
+        } catch (e) {
+            setCardStatus(state, 'error', 'Session error: ' + e.message);
+            return;
+        }
+        state.session = session;
+
+        session.on(solace.SessionEventCode.UP_NOTICE, () => subscribeTopic(state));
+        session.on(solace.SessionEventCode.CONNECT_FAILED_ERROR, e => {
+            setCardStatus(state, 'error', 'Connect failed: ' + (e && e.infoStr ? e.infoStr : ''));
+        });
+        session.on(solace.SessionEventCode.DISCONNECTED, () => {
+            if (state.status !== 'unsubscribed') setCardStatus(state, 'error', 'Disconnected');
+        });
+        session.on(solace.SessionEventCode.SUBSCRIPTION_ERROR, e => {
+            setCardStatus(state, 'error', 'Subscribe failed: ' + (e && e.infoStr ? e.infoStr : ''));
+        });
+        session.on(solace.SessionEventCode.SUBSCRIPTION_OK, () => {
+            state.subscribed = true;
+            if (state.status !== 'unsubscribed') setCardStatus(state, state.paused ? 'paused' : 'live', state.paused ? 'Paused' : 'Live');
+        });
+        session.on(solace.SessionEventCode.MESSAGE, message => onMessage(state, message));
+
+        try {
+            session.connect();
+        } catch (e) {
+            setCardStatus(state, 'error', 'Connect error: ' + e.message);
+        }
+    }
+
+    function subscribeTopic(state) {
+        setCardStatus(state, 'connecting', 'Subscribing…');
+        try {
+            state.session.subscribe(
+                solace.SolclientFactory.createTopicDestination(state.topic),
+                true,
+                state.topic,
+                10000
+            );
+        } catch (e) {
+            setCardStatus(state, 'error', 'Subscribe error: ' + e.message);
+        }
+    }
+
+    // =========================================================================
+    // Message parsing
+    // =========================================================================
+    function getPayloadText(message) {
+        try {
+            const attach = message.getBinaryAttachment();
+            if (attach == null) return '';
+            if (typeof attach === 'string') return attach;
+            if (attach instanceof ArrayBuffer) return new TextDecoder('utf-8').decode(attach);
+            if (ArrayBuffer.isView(attach)) return new TextDecoder('utf-8').decode(attach);
+            return String(attach);
+        } catch (e) { return ''; }
+    }
+
+    function getDestName(message) {
+        try {
+            const d = message.getDestination();
+            return d ? d.getName() : '';
+        } catch (e) { return ''; }
+    }
+
+    // A MapMessage arrives as an SDT container of type MAP rather than a plain
+    // binary attachment, so it has to be detected and unpacked separately from
+    // the JSON/XML/text path below.
+    function parseMessage(message, msgType) {
+        let detectedType = msgType === 'auto' ? null : msgType;
+        let mapEntries = null;
+        try {
+            const sdt = message.getSdtContainer && message.getSdtContainer();
+            if (sdt && sdt.getType && sdt.getType() === solace.SDTFieldType.MAP) {
+                const map = sdt.getValue();
+                mapEntries = {};
+                (map.getKeys() || []).forEach(k => {
+                    const f = map.getField(k);
+                    mapEntries[k] = f ? f.getValue() : null;
+                });
+                if (!detectedType) detectedType = 'map';
+            }
+        } catch (e) {}
+
+        const text = mapEntries ? JSON.stringify(mapEntries) : getPayloadText(message);
+
+        if (!detectedType) {
+            const trimmed = (text || '').trim();
+            if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+                try { JSON.parse(trimmed); detectedType = 'json'; } catch (e) { detectedType = 'text'; }
+            } else if (trimmed.startsWith('<')) {
+                detectedType = 'xml';
+            } else {
+                detectedType = 'text';
+            }
+        }
+        return { detectedType, text, mapEntries };
+    }
+
+    function extractIdentifier(parsed, idExpr) {
+        if (!idExpr) return '';
+        try {
+            if (parsed.detectedType === 'map') {
+                if (!parsed.mapEntries) return '';
+                const v = parsed.mapEntries[idExpr];
+                return (v === undefined || v === null) ? '' : String(v);
+            }
+            if (parsed.detectedType === 'json') {
+                const obj = JSON.parse(parsed.text);
+                const res = JSONPath.JSONPath({ path: idExpr, json: obj, wrap: false });
+                return (res === undefined || res === null) ? '' : String(res);
+            }
+            if (parsed.detectedType === 'xml') {
+                const xmlDoc = new DOMParser().parseFromString(parsed.text, 'application/xml');
+                if (xmlDoc.getElementsByTagName('parsererror').length) return '';
+                const result = xmlDoc.evaluate(idExpr, xmlDoc, null, XPathResult.STRING_TYPE, null);
+                return result.stringValue || '';
+            }
+        } catch (e) { return ''; }
+        return '';
+    }
+
+    function onMessage(state, message) {
+        if (state.paused) {
+            state.pausedCount++;
+            updatePausedBadge(state);
+            return;
+        }
+        const parsed = parseMessage(message, state.msgType);
+        const row = {
+            seq: ++state.seq,
+            time: nowTimeStr(),
+            identifier: extractIdentifier(parsed, state.idExpr),
+            type: parsed.detectedType,
+            destination: getDestName(message),
+            payload: parsed.text,
+        };
+        state.gridApi.applyTransaction({ add: [row], addIndex: 0 });
+        state.rowCount++;
+        if (state.rowCount > MAX_ROWS) {
+            const lastIdx = state.gridApi.getDisplayedRowCount() - 1;
+            const lastNode = state.gridApi.getDisplayedRowAtIndex(lastIdx);
+            if (lastNode) { state.gridApi.applyTransaction({ remove: [lastNode.data] }); state.rowCount--; }
+        }
+        updateCardCount(state);
+    }
+
+    // =========================================================================
+    // Card rendering
+    // =========================================================================
+    function renderCard(state) {
+        document.getElementById('emptyState').classList.remove('show');
+
+        const card = document.createElement('div');
+        card.className = 'listener-card';
+        card.id = 'card-' + state.id;
+        card.innerHTML = `
+            <div class="card-header">
+                <span class="ws-dot connecting" id="dot-${state.id}"></span>
+                <div class="card-title">
+                    <div class="card-title-main" id="title-${state.id}"></div>
+                    <div class="card-title-sub" id="status-${state.id}">Connecting…</div>
+                </div>
+                <span class="card-count" id="count-${state.id}">0</span>
+                <div class="card-actions">
+                    <button class="tool-btn" id="pause-${state.id}" onclick="togglePause('${state.id}')">Pause</button>
+                    <button class="tool-btn" onclick="exportCardCsv('${state.id}')">Export</button>
+                    <button class="tool-btn" onclick="clearCard('${state.id}')">Clear</button>
+                    <button class="danger" id="unsub-${state.id}" onclick="unsubscribeListener('${state.id}')">Unsubscribe</button>
+                    <button class="tool-btn" id="remove-${state.id}" style="display:none" onclick="removeCard('${state.id}')">Remove</button>
+                </div>
+            </div>
+            <div class="paused-banner" id="pausedbadge-${state.id}" style="display:none"></div>
+            <div class="card-grid ag-theme-alpine" id="grid-${state.id}"></div>
+        `;
+        document.getElementById('title-' + state.id).textContent = state.vpn + '  /  ' + state.topic;
+        document.getElementById('listenersGrid').appendChild(card);
+
+        const gridOptions = {
+            columnDefs: [
+                { field: 'seq', headerName: '#', width: 64, sort: 'desc' },
+                { field: 'time', headerName: 'Time', width: 100 },
+                { field: 'identifier', headerName: 'Identifier', width: 150, cellStyle: { fontWeight: '600', color: '#0052cc' } },
+                { field: 'type', headerName: 'Type', width: 80 },
+                { field: 'destination', headerName: 'Destination', width: 180 },
+                { field: 'payload', headerName: 'Payload', flex: 1, cellRenderer: p => escapeHtml(truncate(p.value, 140)) },
+            ],
+            rowData: [],
+            defaultColDef: { sortable: true, resizable: true },
+            animateRows: false,
+            onCellClicked: params => {
+                if (params.colDef.field === 'payload') openPayloadModal(state, params.data);
+                else copyCellValue(params.value);
+            },
+        };
+        state.gridApi = agGrid.createGrid(document.getElementById('grid-' + state.id), gridOptions);
+    }
+
+    function setCardStatus(state, cls, text) {
+        state.status = cls;
+        const dot = document.getElementById('dot-' + state.id);
+        if (dot) dot.className = 'ws-dot ' + cls;
+        const sub = document.getElementById('status-' + state.id);
+        if (sub) sub.textContent = text;
+    }
+
+    function updateCardCount(state) {
+        const el = document.getElementById('count-' + state.id);
+        if (el) el.textContent = String(state.seq);
+    }
+
+    function updatePausedBadge(state) {
+        const el = document.getElementById('pausedbadge-' + state.id);
+        if (!el) return;
+        el.style.display = '';
+        el.textContent = 'Paused — ' + state.pausedCount + ' message(s) received and dropped while paused.';
+    }
+
+    // =========================================================================
+    // Card actions
+    // =========================================================================
+    function togglePause(id) {
+        const state = listeners.get(id);
+        if (!state || state.status === 'unsubscribed') return;
+        state.paused = !state.paused;
+        document.getElementById('pause-' + id).textContent = state.paused ? 'Resume' : 'Pause';
+        if (state.paused) {
+            setCardStatus(state, 'paused', 'Paused');
+        } else {
+            state.pausedCount = 0;
+            document.getElementById('pausedbadge-' + id).style.display = 'none';
+            setCardStatus(state, 'live', 'Live');
+        }
+    }
+
+    function clearCard(id) {
+        const state = listeners.get(id);
+        if (!state) return;
+        state.gridApi.setGridOption('rowData', []);
+        state.seq = 0;
+        state.rowCount = 0;
+        updateCardCount(state);
+    }
+
+    function exportCardCsv(id) {
+        const state = listeners.get(id);
+        if (!state) return;
+        const name = (state.vpn + '_' + state.topic).replace(/[^\w.-]+/g, '_') + '.csv';
+        state.gridApi.exportDataAsCsv({ fileName: name });
+    }
+
+    function unsubscribeListener(id) {
+        const state = listeners.get(id);
+        if (!state || state.status === 'unsubscribed') return;
+        try {
+            if (state.session && state.subscribed) {
+                state.session.unsubscribe(
+                    solace.SolclientFactory.createTopicDestination(state.topic),
+                    true, state.topic, 10000
+                );
+            }
+        } catch (e) {}
+        try { if (state.session) state.session.disconnect(); } catch (e) {}
+        state.subscribed = false;
+        setCardStatus(state, 'unsubscribed', 'Unsubscribed');
+
+        const card = document.getElementById('card-' + id);
+        if (card) card.classList.add('unsubscribed');
+        const pauseBtn = document.getElementById('pause-' + id);
+        if (pauseBtn) pauseBtn.style.display = 'none';
+        const unsubBtn = document.getElementById('unsub-' + id);
+        if (unsubBtn) unsubBtn.style.display = 'none';
+        const removeBtn = document.getElementById('remove-' + id);
+        if (removeBtn) removeBtn.style.display = '';
+    }
+
+    function removeCard(id) {
+        const state = listeners.get(id);
+        if (!state) return;
+        try { if (state.session) state.session.disconnect(); } catch (e) {}
+        try { if (state.gridApi) state.gridApi.destroy(); } catch (e) {}
+        const card = document.getElementById('card-' + id);
+        if (card) card.remove();
+        listeners.delete(id);
+        if (listeners.size === 0) document.getElementById('emptyState').classList.add('show');
+    }
+
+    function unsubscribeAll() {
+        listeners.forEach(state => { if (state.status !== 'unsubscribed') unsubscribeListener(state.id); });
+    }
+
+    // =========================================================================
+    // Payload modal
+    // =========================================================================
+    let _payloadModalRaw = '';
+    function openPayloadModal(state, rowData) {
+        document.getElementById('payloadModalTitle').textContent =
+            state.vpn + ' / ' + state.topic + ' — #' + rowData.seq + ' · ' + rowData.type;
+        let pretty = rowData.payload;
+        if (rowData.type === 'json' || rowData.type === 'map') {
+            try { pretty = JSON.stringify(JSON.parse(rowData.payload), null, 2); } catch (e) {}
+        }
+        _payloadModalRaw = pretty;
+        document.getElementById('payloadModalBody').textContent = pretty;
+        document.getElementById('payloadModal').classList.add('open');
+    }
+    function closePayloadModal() { document.getElementById('payloadModal').classList.remove('open'); }
+    function onPayloadOverlayClick(e) { if (e.target === document.getElementById('payloadModal')) closePayloadModal(); }
+    function copyPayloadModal() { navigator.clipboard.writeText(_payloadModalRaw).catch(() => {}); }
+</script>
+</body>
+</html>

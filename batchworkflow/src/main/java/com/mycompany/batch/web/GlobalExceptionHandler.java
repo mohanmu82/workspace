@@ -8,7 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-@RestControllerAdvice
+@RestControllerAdvice(basePackages = "com.mycompany.batch.web")
 public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)

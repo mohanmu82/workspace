@@ -1,0 +1,7 @@
+{
+  "name" : "Components",
+  "source" : "file",
+  "location" : "C:\\work\\data\\url.txt.txt",
+  "arrayElement" : null,
+  "attributes" : [ "url", "name", "location", "environment" ]
+}

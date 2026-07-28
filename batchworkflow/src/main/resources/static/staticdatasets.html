@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Static Datasets</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', sans-serif;
+    background: #f4f6f9;
+    color: #222;
+    padding: 28px 28px 48px;
+  }
+  header { margin-bottom: 22px; }
+  header h1 { font-size: 1.3rem; font-weight: 700; }
+  header p  { font-size: 0.82rem; color: #666; margin-top: 4px; }
+  .back     { font-size: 0.8rem; color: #0078d4; text-decoration: none; }
+  .back:hover { text-decoration: underline; }
+
+  .card {
+    background: #fff;
+    border: 1px solid #dde1e7;
+    border-radius: 8px;
+    padding: 20px 22px;
+    margin-bottom: 20px;
+  }
+  .card-title { font-size: 0.95rem; font-weight: 700; margin-bottom: 12px; color: #111; }
+
+  .input-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 4px; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label {
+    font-size: 0.72rem; font-weight: 700; color: #666;
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  .field .hint { font-size: 0.7rem; color: #999; font-weight: 400; text-transform: none; letter-spacing: 0; }
+  input[type=text], select {
+    padding: 7px 10px; font-size: 0.85rem; border: 1px solid #ccc; border-radius: 4px;
+    font-family: inherit; background: #fff;
+  }
+  input:focus, select:focus { outline: none; border-color: #0078d4; }
+  input:disabled { background: #f0f2f5; color: #888; }
+
+  button {
+    padding: 7px 18px; font-size: 0.85rem; font-weight: 600; border: none;
+    border-radius: 4px; cursor: pointer; background: #0078d4; color: #fff; white-space: nowrap;
+  }
+  button:hover:not(:disabled) { background: #005fa3; }
+  button:disabled { background: #9ec5e8; cursor: not-allowed; }
+  button.secondary { background: #6c757d; }
+  button.secondary:hover { background: #545b62; }
+  button.danger { background: #b02a37; }
+  button.danger:hover { background: #8f2029; }
+  button.small { padding: 4px 12px; font-size: 0.72rem; }
+
+  .status-msg { font-size: 0.82rem; margin-top: 8px; }
+  .status-ok  { color: #0a5c36; }
+  .status-err { color: #842029; }
+
+  .mono { font-family: Consolas, monospace; }
+
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 0.7rem; font-weight: 700; white-space: nowrap; }
+  .badge-file { background: #d3f3e6; color: #0a6b47; }
+  .badge-http { background: #cfe2ff; color: #084298; }
+
+  .ds-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
+  .empty-msg { font-size: 0.82rem; color: #888; padding: 18px; text-align: center; }
+
+  .ds-card {
+    border: 1px solid #dde1e7; border-radius: 8px; padding: 14px 16px; background: #fff;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .ds-head { display: flex; align-items: flex-start; gap: 8px; }
+  .ds-name { font-size: 0.95rem; font-weight: 700; color: #111; flex: 1; word-break: break-word; }
+  .ds-location { font-size: 0.75rem; color: #888; word-break: break-all; }
+  .ds-meta { font-size: 0.75rem; color: #666; }
+  .ds-error { font-size: 0.75rem; color: #b02a37; word-break: break-word; }
+
+  .chip-row { display: flex; flex-wrap: wrap; gap: 5px; }
+  .chip {
+    display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.68rem;
+    background: #eceff3; color: #444;
+  }
+
+  .ds-footer { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; padding-top: 6px; }
+  .ds-footer button { background: #f0f2f5; color: #444; }
+  .ds-footer button:hover { background: #e4e8ef; }
+  .ds-footer button.danger { background: #fbdcdc; color: #92251f; }
+  .ds-footer button.danger:hover { background: #f6c6c6; }
+
+  .preview-table-wrap { overflow-x: auto; max-height: 260px; overflow-y: auto; border: 1px solid #eceff3; border-radius: 4px; }
+  table.preview { border-collapse: collapse; width: 100%; font-size: 0.75rem; }
+  table.preview th, table.preview td {
+    padding: 5px 8px; border-bottom: 1px solid #eceff3; text-align: left; white-space: nowrap;
+  }
+  table.preview th { background: #f8f9fb; position: sticky; top: 0; }
+</style>
+</head>
+<body>
+
+<header>
+  <a class="back" href="index.html">&#8592; Home</a>
+  <h1>Static Datasets</h1>
+  <p>Define named row sets loaded once from a file or HTTP endpoint. Other pages (e.g. the Service Dashboard) can pull their input from a saved dataset instead of manual entry.</p>
+</header>
+
+<div class="card">
+  <div class="card-title" id="formTitle">Add Dataset</div>
+  <div class="input-row">
+    <div class="field" style="flex:1;min-width:160px">
+      <label>Dataset Name</label>
+      <input type="text" id="fName" placeholder="my-services">
+    </div>
+    <div class="field">
+      <label>Source</label>
+      <select id="fSource" onchange="onSourceChange()">
+        <option value="file">File</option>
+        <option value="http">HTTP</option>
+      </select>
+    </div>
+    <div class="field" style="flex:2;min-width:280px">
+      <label id="fLocationLabel">File Path</label>
+      <input type="text" id="fLocation" placeholder="C:/data/services.csv" style="width:100%">
+    </div>
+    <div class="field" id="fArrayElementField" style="flex:1;min-width:180px;display:none">
+      <label>Array Element <span class="hint">(JSONPath)</span></label>
+      <input type="text" id="fArrayElement" placeholder="$ or $.data" style="width:100%">
+    </div>
+    <div class="field">
+      <button onclick="saveDataset()" id="saveBtn">Save Dataset</button>
+    </div>
+    <div class="field">
+      <button class="secondary" onclick="cancelEdit()" id="cancelBtn" style="display:none">Cancel</button>
+    </div>
+  </div>
+  <div id="formStatusMsg" class="status-msg"></div>
+</div>
+
+<div class="card">
+  <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
+    <span>Datasets</span>
+    <button class="secondary small" onclick="reloadAll()" id="reloadAllBtn">Reload All</button>
+  </div>
+  <div id="dsGrid" class="ds-grid"></div>
+</div>
+
+<script>
+  let datasets = [];
+  let editingName = null;
+
+  function onSourceChange() {
+    const isHttp = document.getElementById('fSource').value === 'http';
+    document.getElementById('fLocationLabel').textContent = isHttp ? 'HTTP URL' : 'File Path';
+    document.getElementById('fLocation').placeholder = isHttp
+        ? 'http://host:port/services.json' : 'C:/data/services.csv';
+    document.getElementById('fArrayElementField').style.display = isHttp ? 'flex' : 'none';
+  }
+
+  function setFormStatus(msg, cls) {
+    const el = document.getElementById('formStatusMsg');
+    el.textContent = msg;
+    el.className = 'status-msg' + (cls ? ' ' + cls : '');
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  async function loadList() {
+    try {
+      const res = await fetch('/staticdataset');
+      datasets = await res.json();
+    } catch (e) {
+      datasets = [];
+    }
+    renderGrid();
+  }
+
+  async function saveDataset() {
+    const name = document.getElementById('fName').value.trim();
+    const source = document.getElementById('fSource').value;
+    const location = document.getElementById('fLocation').value.trim();
+    const arrayElement = document.getElementById('fArrayElement').value.trim();
+
+    if (!name) { setFormStatus('Dataset name is required.', 'status-err'); return; }
+    if (!/^[\w-]+$/.test(name)) { setFormStatus('Name must contain only letters, digits, _ or -.', 'status-err'); return; }
+    if (!location) { setFormStatus('Location is required.', 'status-err'); return; }
+
+    const payload = { name, source, location, arrayElement: arrayElement || null };
+    const isEdit = editingName !== null;
+    const url = isEdit ? '/staticdataset/' + encodeURIComponent(editingName) : '/staticdataset';
+    const method = isEdit ? 'PUT' : 'POST';
+
+    try {
+      const res = await fetch(url, {
+        method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!res.ok) { setFormStatus(data.error || 'Save failed.', 'status-err'); return; }
+      const note = data.error ? (' — ' + data.error) : (' — ' + data.count + ' rows loaded');
+      setFormStatus('Saved "' + name + '"' + note, data.error ? 'status-err' : 'status-ok');
+      cancelEdit();
+      loadList();
+    } catch (e) {
+      setFormStatus('Save failed: ' + e.message, 'status-err');
+    }
+  }
+
+  function editDataset(name) {
+    const ds = datasets.find(d => d.name === name);
+    if (!ds) return;
+    editingName = name;
+    document.getElementById('formTitle').textContent = 'Edit Dataset: ' + name;
+    document.getElementById('fName').value = ds.name;
+    document.getElementById('fName').disabled = true;
+    document.getElementById('fSource').value = ds.source;
+    document.getElementById('fLocation').value = ds.location || '';
+    document.getElementById('fArrayElement').value = ds.arrayElement || '';
+    document.getElementById('cancelBtn').style.display = '';
+    onSourceChange();
+    setFormStatus('');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function cancelEdit() {
+    editingName = null;
+    document.getElementById('formTitle').textContent = 'Add Dataset';
+    document.getElementById('fName').value = '';
+    document.getElementById('fName').disabled = false;
+    document.getElementById('fLocation').value = '';
+    document.getElementById('fArrayElement').value = '';
+    document.getElementById('cancelBtn').style.display = 'none';
+  }
+
+  async function reloadAll() {
+    const btn = document.getElementById('reloadAllBtn');
+    btn.disabled = true;
+    setFormStatus('Reloading all datasets…');
+    try {
+      await Promise.all(datasets.map(d =>
+        fetch('/staticdataset/' + encodeURIComponent(d.name) + '/reload', { method: 'POST' })
+          .catch(() => null)));
+      setFormStatus('Reloaded ' + datasets.length + ' dataset(s).', 'status-ok');
+    } finally {
+      btn.disabled = false;
+      loadList();
+    }
+  }
+
+  async function reloadDataset(name) {
+    setFormStatus('');
+    try {
+      const res = await fetch('/staticdataset/' + encodeURIComponent(name) + '/reload', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) { alert('Reload failed: ' + (data.error || res.status)); return; }
+    } catch (e) {
+      alert('Reload failed: ' + e.message);
+    }
+    loadList();
+  }
+
+  async function deleteDataset(name) {
+    if (!confirm('Delete static dataset "' + name + '"?')) return;
+    try {
+      await fetch('/staticdataset/' + encodeURIComponent(name), { method: 'DELETE' });
+    } catch (e) { /* ignore */ }
+    if (editingName === name) cancelEdit();
+    loadList();
+  }
+
+  async function togglePreview(name) {
+    const wrap = document.getElementById('preview-' + cssId(name));
+    if (!wrap) return;
+    if (wrap.style.display === 'block') { wrap.style.display = 'none'; return; }
+    wrap.style.display = 'block';
+    wrap.innerHTML = '<div class="empty-msg">Loading…</div>';
+    try {
+      const res = await fetch('/staticdataset/' + encodeURIComponent(name) + '/data');
+      const data = await res.json();
+      wrap.innerHTML = renderPreviewTable(data);
+    } catch (e) {
+      wrap.innerHTML = '<div class="ds-error">Failed to load: ' + escapeHtml(e.message) + '</div>';
+    }
+  }
+
+  function renderPreviewTable(data) {
+    const attrs = data.attributes || [];
+    const rows = (data.rows || []).slice(0, 20);
+    if (attrs.length === 0 || rows.length === 0) {
+      return '<div class="empty-msg">No rows loaded yet.</div>';
+    }
+    let html = '<div class="preview-table-wrap"><table class="preview"><thead><tr>';
+    attrs.forEach(a => html += '<th>' + escapeHtml(a) + '</th>');
+    html += '</tr></thead><tbody>';
+    rows.forEach(row => {
+      html += '<tr>';
+      attrs.forEach(a => html += '<td>' + escapeHtml(row[a] != null ? row[a] : '') + '</td>');
+      html += '</tr>';
+    });
+    html += '</tbody></table></div>';
+    if ((data.rows || []).length > 20) {
+      html += '<div class="ds-meta">Showing 20 of ' + data.rows.length + ' rows</div>';
+    }
+    return html;
+  }
+
+  function cssId(name) { return name.replace(/[^\w-]/g, '_'); }
+
+  function renderGrid() {
+    const grid = document.getElementById('dsGrid');
+    if (datasets.length === 0) {
+      grid.innerHTML = '<div class="empty-msg">No static datasets yet — add one above.</div>';
+      return;
+    }
+    grid.innerHTML = datasets.map(renderCard).join('');
+  }
+
+  function renderCard(ds) {
+    const badgeCls = ds.source === 'http' ? 'badge-http' : 'badge-file';
+    const chips = (ds.attributes || []).map(a => '<span class="chip">' + escapeHtml(a) + '</span>').join('');
+    const metaParts = [];
+    if (ds.count != null) metaParts.push(ds.count + ' rows');
+    if (ds.loadedTime) metaParts.push('loaded ' + ds.loadedTime);
+    const errorHtml = ds.error ? '<div class="ds-error">' + escapeHtml(ds.error) + '</div>' : '';
+
+    return (
+      '<div class="ds-card">' +
+        '<div class="ds-head">' +
+          '<div class="ds-name">' + escapeHtml(ds.name) + '</div>' +
+          '<span class="badge ' + badgeCls + '">' + ds.source.toUpperCase() + '</span>' +
+        '</div>' +
+        '<div class="ds-location" title="' + escapeHtml(ds.location) + '">' + escapeHtml(ds.location) + '</div>' +
+        (ds.source === 'http' && ds.arrayElement ? '<div class="ds-meta mono">arrayElement: ' + escapeHtml(ds.arrayElement) + '</div>' : '') +
+        '<div class="chip-row">' + chips + '</div>' +
+        '<div class="ds-meta">' + metaParts.join(' · ') + '</div>' +
+        errorHtml +
+        '<div id="preview-' + cssId(ds.name) + '" style="display:none"></div>' +
+        '<div class="ds-footer">' +
+          '<button class="small" onclick="togglePreview(\'' + ds.name + '\')">Preview</button>' +
+          '<button class="small" onclick="reloadDataset(\'' + ds.name + '\')">Reload</button>' +
+          '<button class="small" onclick="editDataset(\'' + ds.name + '\')">Edit</button>' +
+          '<button class="small danger" onclick="deleteDataset(\'' + ds.name + '\')">Delete</button>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  onSourceChange();
+  loadList();
+</script>
+</body>
+</html>

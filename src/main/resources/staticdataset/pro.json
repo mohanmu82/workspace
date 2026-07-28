@@ -1,0 +1,8 @@
+{
+  "name" : "pro",
+  "source" : "file",
+  "location" : "C:\\work\\data\\url.txt.txt",
+  "arrayElement" : null,
+  "attributes" : [ "url", "name", "type", "environment" ],
+  "favorites" : [ ]
+}

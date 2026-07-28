@@ -13,7 +13,7 @@
 
     <groupId>com.mycompany</groupId>
     <artifactId>batchworkflow</artifactId>
-    <version>1.0.30</version>
+    <version>1.0.31</version>
     <name>batchworkflow</name>
     <description>Batch HTTP fetch and XPath extraction service</description>
 
@@ -51,6 +51,16 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!-- Prometheus metrics export + Pushgateway push support -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.prometheus</groupId>
+            <artifactId>prometheus-metrics-exporter-pushgateway</artifactId>
         </dependency>
 
         <!-- Jolokia 2.x â€“ required for Spring Boot 3.x (javax â†’ jakarta migration) -->
