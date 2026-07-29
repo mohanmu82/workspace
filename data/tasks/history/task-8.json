@@ -1,0 +1,71 @@
+[ {
+  "id" : 51,
+  "taskId" : 8,
+  "fieldName" : "dueDate",
+  "newValue" : "2026-07-24T09:00",
+  "changedBy" : "system",
+  "changedAt" : "2026-07-28T18:11:18.8924597"
+}, {
+  "id" : 52,
+  "taskId" : 8,
+  "fieldName" : "dueDate",
+  "oldValue" : "2026-07-24T09:00",
+  "newValue" : "2026-08-01T09:00",
+  "changedBy" : "system",
+  "changedAt" : "2026-07-28T18:11:22.3063483"
+}, {
+  "id" : 54,
+  "taskId" : 8,
+  "fieldName" : "dueDate",
+  "oldValue" : "2026-08-01T09:00",
+  "newValue" : "2026-07-26T09:00",
+  "changedBy" : "system",
+  "changedAt" : "2026-07-28T19:28:46.6823811"
+}, {
+  "id" : 55,
+  "taskId" : 8,
+  "fieldName" : "dueDate",
+  "oldValue" : "2026-07-26T09:00",
+  "newValue" : "2026-08-01T09:00",
+  "changedBy" : "system",
+  "changedAt" : "2026-07-28T19:28:48.8371704"
+}, {
+  "id" : 56,
+  "taskId" : 8,
+  "fieldName" : "dueDate",
+  "oldValue" : "2026-08-01T09:00",
+  "newValue" : "2026-07-26T09:00",
+  "changedBy" : "system",
+  "changedAt" : "2026-07-28T19:28:58.7816527"
+}, {
+  "id" : 57,
+  "taskId" : 8,
+  "fieldName" : "status",
+  "oldValue" : "TODO",
+  "newValue" : "DONE",
+  "changedBy" : "system",
+  "changedAt" : "2026-07-28T22:47:46.9172465"
+}, {
+  "id" : 58,
+  "taskId" : 8,
+  "fieldName" : "status",
+  "oldValue" : "DONE",
+  "newValue" : "IN_PROGRESS",
+  "changedBy" : "system",
+  "changedAt" : "2026-07-28T22:48:04.8998391"
+}, {
+  "id" : 59,
+  "taskId" : 8,
+  "fieldName" : "dueDate",
+  "oldValue" : "2026-07-26T09:00",
+  "newValue" : "2026-07-26T13:00",
+  "changedBy" : "system",
+  "changedAt" : "2026-07-28T22:48:04.8998391"
+}, {
+  "id" : 60,
+  "taskId" : 8,
+  "fieldName" : "tags",
+  "newValue" : "[]",
+  "changedBy" : "system",
+  "changedAt" : "2026-07-28T22:48:04.8998391"
+} ]

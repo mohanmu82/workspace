@@ -61,6 +61,7 @@
     <a href="phases.html" class="btn btn-outline-light btn-sm"><i class="bi bi-kanban me-1"></i>Phases</a>
     <a href="timeline.html" class="btn btn-outline-light btn-sm"><i class="bi bi-bar-chart-steps me-1"></i>Timeline</a>
     <span class="text-light fw-semibold"><i class="bi bi-link-45deg me-1"></i>Dependencies</span>
+    <a href="events.html" class="btn btn-outline-light btn-sm"><i class="bi bi-calendar-week me-1"></i>Events</a>
     <a href="admin.html" class="btn btn-outline-light btn-sm"><i class="bi bi-gear me-1"></i>Admin</a>
     <a href="api-docs.html" class="btn btn-outline-light btn-sm"><i class="bi bi-code-slash me-1"></i>API Docs</a>
     <button class="btn btn-outline-light btn-sm" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle dark mode"><i class="bi bi-moon-stars" id="themeIcon"></i></button>
@@ -85,7 +86,8 @@
       <input class="form-check-input" type="checkbox" id="onlyLinked" onchange="renderCards()">
       <label class="form-check-label small" for="onlyLinked">Only tasks with links</label>
     </div>
-    <button class="btn btn-outline-secondary btn-sm ms-auto" onclick="loadData()"><i class="bi bi-arrow-clockwise me-1"></i>Refresh</button>
+    <span id="cardFieldsSlot" class="ms-auto"></span>
+    <button class="btn btn-outline-secondary btn-sm" onclick="loadData()"><i class="bi bi-arrow-clockwise me-1"></i>Refresh</button>
   </div>
 
   <div id="loadingIndicator" class="text-center py-4 text-muted" style="display:none"><div class="spinner-border spinner-border-sm"></div> Loading...</div>
@@ -129,6 +131,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="theme.js"></script>
+<script src="card-fields.js"></script>
 <script>
 let allTasks = [];
 let dependsOnMap = {};   // taskId -> [taskId it depends on, ...]
@@ -137,9 +140,21 @@ let tasksById = {};
 let addDepModal = null, toast = null;
 let addDepForTaskId = null;
 
+const DEP_CARD_FIELDS = [
+  { id: 'assignee', label: 'Assignee', default: true },
+  { id: 'status',   label: 'Status',   default: true },
+  { id: 'priority', label: 'Priority', default: true },
+];
+
+function initCardFields() {
+  CardFields.onChange('dependencies', () => renderCards());
+  document.getElementById('cardFieldsSlot').innerHTML = CardFields.renderButton('dependencies', DEP_CARD_FIELDS);
+}
+
 async function init() {
   addDepModal = new bootstrap.Modal(document.getElementById('addDepModal'));
   toast = new bootstrap.Toast(document.getElementById('toastEl'), { delay: 3000 });
+  initCardFields();
   await loadData();
 }
 
@@ -217,16 +232,19 @@ function cardHtml(t) {
     ? dependents.map(id => chipHtml(id, t.id, true)).join('')
     : '<span class="dep-empty-hint">None</span>';
 
+  const showAssignee = CardFields.isOn('dependencies', 'assignee', true);
+  const showStatus = CardFields.isOn('dependencies', 'status', true);
+  const showPriority = CardFields.isOn('dependencies', 'priority', true);
   return `
   <div class="dep-card" draggable="true" data-task-id="${t.id}" id="dep-card-${t.id}">
     <div class="dep-card-head">
       <div class="min-w-0">
         <span class="dep-card-title" onclick="location.href='task-form.html?id=${t.id}'" title="Open task #${t.id}">#${t.id} ${esc(t.title)}</span>
-        <div class="dep-card-meta">${t.assignee ? esc(t.assignee) : '<span class=\"fst-italic\">Unassigned</span>'}</div>
+        ${showAssignee ? `<div class="dep-card-meta">${t.assignee ? esc(t.assignee) : '<span class=\"fst-italic\">Unassigned</span>'}</div>` : ''}
       </div>
       <div class="text-end flex-shrink-0">
-        <span class="badge badge-status-${esc(t.status)}" style="font-size:0.62rem">${esc((t.status||'').replace(/_/g,' '))}</span><br/>
-        <span class="badge badge-priority-${esc(t.priority)} mt-1" style="font-size:0.6rem">${esc(t.priority||'')}</span>
+        ${showStatus ? `<span class="badge badge-status-${esc(t.status)}" style="font-size:0.62rem">${esc((t.status||'').replace(/_/g,' '))}</span><br/>` : ''}
+        ${showPriority ? `<span class="badge badge-priority-${esc(t.priority)} mt-1" style="font-size:0.6rem">${esc(t.priority||'')}</span>` : ''}
       </div>
     </div>
 

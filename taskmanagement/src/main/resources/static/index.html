@@ -51,7 +51,8 @@
     .tag-badge { background: #e9ecef; color: #495057; padding: 1px 6px; border-radius: 10px; font-size: 0.7rem; }
     .filter-active { border-color: #0d6efd !important; background: #e7f1ff !important; }
     #noResults { display:none; }
-    .col-sidebar { width: 220px; flex-shrink: 0; }
+    .col-sidebar { width: 220px; flex-shrink: 0; transition: margin-left 0.15s ease; }
+    .col-sidebar.sidebar-hidden { display: none; }
     .col-main { flex: 1; min-width: 0; }
     .main-wrap { display: flex; gap: 0; }
     /* Sortable column headers */
@@ -67,7 +68,8 @@
     #tableView td strong, #tableView td b { font-weight: 400; }
     #tablePagination .page-info { font-size: 0.8rem; }
     .cal-wrap { display: flex; gap: 1rem; align-items: flex-start; }
-    .unscheduled-panel { width: 240px; flex-shrink: 0; background: #fff; border: 1px solid #dee2e6; border-radius: 8px; padding: 0.75rem; max-height: 620px; overflow-y: auto; }
+    .unscheduled-panel { width: 240px; min-width: 200px; max-width: 600px; flex-shrink: 0; background: #fff; border: 1px solid #dee2e6; border-radius: 8px; padding: 0.75rem; max-height: 620px; overflow: auto; resize: horizontal; }
+    .unscheduled-panel #unscheduledSearch { margin-bottom: 0.5rem; }
     .cal-main { flex: 1; min-width: 0; }
     .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
     .cal-dow { text-align: center; font-weight: 700; font-size: 0.72rem; text-transform: uppercase; color: #6c757d; padding-bottom: 4px; }
@@ -79,7 +81,17 @@
     .cal-cell.is-today .cal-date-num { color: #0d6efd; }
     .cal-tasks { flex: 1; overflow-y: auto; overflow-x: hidden; max-height: 110px; }
     .cal-tasks .kanban-card-compact, .unscheduled-panel .kanban-card-compact { margin-bottom: 3px; }
+    .cal-event-chip { border-radius: 4px; padding: 2px 5px; margin-bottom: 3px; font-size: 0.68rem; cursor: pointer; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cal-event-chip:hover { opacity: 0.85; }
+    .cal-cell.mini .cal-event-chip { padding: 1px 3px; font-size: 0.6rem; }
     #noUnscheduled { display: none; }
+    .cal-quarter-row { display: flex; gap: 0.75rem; align-items: flex-start; }
+    .cal-mini-month { flex: 1; min-width: 0; }
+    .cal-mini-month-title { font-weight: 700; font-size: 0.78rem; text-align: center; margin-bottom: 4px; }
+    .cal-mini-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; margin-bottom: 3px; }
+    .cal-cell.mini { min-height: 58px; padding: 3px; }
+    .cal-cell.mini .cal-tasks { max-height: 42px; }
+    .cal-cell.mini .kanban-card-compact { font-size: 0.6rem; padding: 1px 3px; }
   </style>
 </head>
 <body>
@@ -99,6 +111,7 @@
     <a href="phases.html" class="btn btn-outline-light btn-sm"><i class="bi bi-kanban me-1"></i>Phases</a>
     <a href="timeline.html" class="btn btn-outline-light btn-sm"><i class="bi bi-bar-chart-steps me-1"></i>Timeline</a>
     <a href="dependencies.html" class="btn btn-outline-light btn-sm"><i class="bi bi-link-45deg me-1"></i>Dependencies</a>
+    <a href="events.html" class="btn btn-outline-light btn-sm"><i class="bi bi-calendar-week me-1"></i>Events</a>
     <a href="admin.html" class="btn btn-outline-light btn-sm"><i class="bi bi-gear me-1"></i>Admin</a>
     <a href="api-docs.html" class="btn btn-outline-light btn-sm"><i class="bi bi-code-slash me-1"></i>API Docs</a>
     <button class="btn btn-outline-light btn-sm" id="whoAmIBtn" onclick="onWhoAmIClick()" title="Set your name (used for My Tasks and to prefill fields)"><i class="bi bi-person-circle"></i></button>
@@ -210,6 +223,9 @@
       <!-- Toolbar -->
       <div class="d-flex justify-content-between align-items-center mb-2">
         <div class="btn-group btn-group-sm">
+          <button class="btn btn-outline-secondary" id="toggleSidebarBtn" onclick="toggleSidebar()" title="Hide filter panel">
+            <i class="bi bi-layout-sidebar-inset-reverse"></i>
+          </button>
           <button class="btn btn-outline-primary active" id="btnTable" onclick="setView('table')"><i class="bi bi-table"></i> Table</button>
           <button class="btn btn-outline-primary" id="btnKanban" onclick="setView('kanban')"><i class="bi bi-kanban"></i> By Status</button>
           <button class="btn btn-outline-primary" id="btnSwimlaneProject" onclick="setView('swimlaneProject')"><i class="bi bi-columns-gap"></i> By Project</button>
@@ -245,6 +261,7 @@
             <option value="workingGroup">Working Group</option>
             <option value="dueDate">Due Date</option>
           </select>
+          <span id="cardFieldsSlot"></span>
           <button class="btn btn-outline-secondary btn-sm" onclick="openColumnChooser()" title="Show/hide columns">
             <i class="bi bi-layout-three-columns me-1"></i>Columns
           </button>
@@ -264,9 +281,16 @@
       <div id="loadingIndicator" class="text-center py-4 text-muted" style="display:none"><div class="spinner-border spinner-border-sm"></div> Loading...</div>
       <div id="noResults" class="text-center py-5 text-muted"><i class="bi bi-inbox fs-1 d-block mb-2"></i>No tasks found</div>
 
+      <!-- Active filters summary (shown above the lanes/board so it's visible even with the sidebar hidden) -->
+      <div id="activeFiltersBar" class="mb-2 flex-wrap align-items-center gap-1" style="display:none"></div>
+
       <!-- Swim lane filter (Kanban / By Project / By Programme / By Assignee) -->
-      <div id="laneFilterBar" class="mb-2" style="display:none">
+      <div id="laneFilterBar" class="mb-2 d-flex align-items-center gap-2" style="display:none">
         <input type="text" id="laneFilterInput" class="form-control form-control-sm lane-filter-bar" placeholder="Filter swim lanes..." oninput="onLaneFilterChange()"/>
+        <div class="form-check form-check-sm text-nowrap mb-0">
+          <input type="checkbox" class="form-check-input" id="laneHideEmptyInput" onchange="onLaneHideEmptyChange()"/>
+          <label class="form-check-label small" for="laneHideEmptyInput">Non-zero swimlanes only</label>
+        </div>
       </div>
 
       <!-- Table view -->
@@ -304,35 +328,44 @@
       <div id="byDateView" style="display:none">
         <div class="d-flex justify-content-between align-items-center mb-2">
           <div class="d-flex align-items-center gap-2">
-            <button class="btn btn-outline-secondary btn-sm" onclick="shiftCalMonth(-1)"><i class="bi bi-chevron-left"></i></button>
+            <button class="btn btn-outline-secondary btn-sm" onclick="shiftCalView(-1)"><i class="bi bi-chevron-left"></i></button>
             <h6 class="mb-0" id="calMonthLabel" style="min-width:150px"></h6>
-            <button class="btn btn-outline-secondary btn-sm" onclick="shiftCalMonth(1)"><i class="bi bi-chevron-right"></i></button>
+            <button class="btn btn-outline-secondary btn-sm" onclick="shiftCalView(1)"><i class="bi bi-chevron-right"></i></button>
             <button class="btn btn-outline-primary btn-sm" onclick="goCalToday()">Today</button>
+            <div class="btn-group btn-group-sm ms-2" role="group">
+              <button class="btn btn-outline-primary" id="calWeekendToggleBtn" onclick="toggleCalWeekendOnly()">Weekends</button>
+              <button class="btn btn-outline-primary" id="calQuarterToggleBtn" onclick="toggleCalQuarter()">3 Months</button>
+            </div>
           </div>
-          <div class="form-check">
-            <input class="form-check-input" type="checkbox" id="includeDoneByDate" onchange="renderByDate()">
-            <label class="form-check-label small" for="includeDoneByDate">Include Done / Cancelled</label>
+          <div class="d-flex align-items-center gap-3">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="showEventsByDate" onchange="renderByDate()">
+              <label class="form-check-label small" for="showEventsByDate">Show Events</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="includeDoneByDate" onchange="renderByDate()">
+              <label class="form-check-label small" for="includeDoneByDate">Include Done / Cancelled</label>
+            </div>
           </div>
         </div>
         <div class="cal-wrap">
           <div class="unscheduled-panel">
             <div class="fw-semibold small text-uppercase text-muted mb-2"><i class="bi bi-inbox me-1"></i>No Due Date</div>
+            <input id="unscheduledSearch" class="form-control form-control-sm" placeholder="&#128269; Search..." oninput="renderByDate()"/>
             <div id="noUnscheduled" class="text-muted small">Nothing unscheduled</div>
             <div id="unscheduledList" ondragover="onCalZoneDragOver(event)" ondrop="onCalDropUnscheduled(event)" style="min-height:60px"></div>
           </div>
           <div class="cal-main">
-            <div class="cal-grid mb-1">
-              <div class="cal-dow">Sun</div><div class="cal-dow">Mon</div><div class="cal-dow">Tue</div>
-              <div class="cal-dow">Wed</div><div class="cal-dow">Thu</div><div class="cal-dow">Fri</div><div class="cal-dow">Sat</div>
-            </div>
-            <div class="cal-grid" id="calGrid"></div>
+            <div class="cal-grid mb-1" id="calDowHeader"></div>
+            <div id="calGrid"></div>
           </div>
         </div>
       </div>
 
       <!-- Due Dates view -->
       <div id="dueDatesView" style="display:none">
-        <div class="d-flex justify-content-end align-items-center mb-2">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <span id="dueDatesCardFieldsSlot"></span>
           <div class="form-check">
             <input class="form-check-input" type="checkbox" id="includeDoneDueDates" onchange="renderTasks()">
             <label class="form-check-label small" for="includeDoneDueDates">Include Done / Cancelled</label>
@@ -340,17 +373,7 @@
         </div>
         <div class="table-responsive">
           <table class="table table-sm table-hover table-bordered bg-white mb-0" style="font-size:0.82rem">
-            <thead class="table-light sticky-top">
-              <tr>
-                <th style="width:105px">Due Date</th>
-                <th style="width:110px">Status</th>
-                <th style="width:90px">Priority</th>
-                <th>Title</th>
-                <th style="width:110px">Assignee</th>
-                <th style="width:110px">Project</th>
-                <th style="width:70px">Actions</th>
-              </tr>
-            </thead>
+            <thead class="table-light sticky-top" id="dueDatesThead"></thead>
             <tbody id="dueDatesTableBody"></tbody>
           </table>
         </div>
@@ -444,6 +467,8 @@
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="theme.js"></script>
 <script src="tasks-ws.js"></script>
+<script src="card-fields.js"></script>
+<script src="events.js"></script>
 <script>
 // ── Column definitions ────────────────────────────────────────────────────────
 const ALL_COLUMNS = [
@@ -474,6 +499,8 @@ let allTasks = [];
 let currentView = 'table';
 let calYear = null;
 let calMonth = null; // 0-based
+let calWeekendOnly = false; // show only Fri/Sat/Sun
+let calShowQuarter = false; // zoom out to 3 months
 let deleteTaskId = null;
 let searchTimer = null;
 const today = new Date();
@@ -484,6 +511,8 @@ let showUnassignedOnly = false;
 let showRecentOnly = false;
 let showMyTasksOnly = false;
 let laneFilterText = '';
+let laneHideEmpty = false;
+let activeFilterChips = [];
 let colVisibility = {};
 let fieldConfigs = {};
 let statusOptions = ['BACKLOG','TODO','IN_PROGRESS','REVIEW','DONE','BLOCKED','CANCELLED'];
@@ -491,16 +520,85 @@ const STATUS_COLORS = {BACKLOG:'#495057',TODO:'#6c757d',IN_PROGRESS:'#0d6efd',RE
 let masterProgrammes = [];
 let masterProjects = [];
 let masterAssignees = [];
+let allEvents = [];
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
   loadColVisibility();
   updateWhoAmIBtn();
   renderSavedViewOptions();
+  initSidebarState();
+  initCardFields();
+  updateCalViewModeButtons();
   await loadFieldConfigs();
   await loadFilterOptions();
   await loadMasterLists();
+  loadEvents();
   await loadTasks();
+}
+
+async function loadEvents() {
+  try {
+    const res = await fetch('/api/events');
+    allEvents = await res.json();
+    if (currentView === 'byDate') renderByDate();
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+// ── Sidebar (filter panel) hide/show ───────────────────────────────────────────
+const LS_KEY_SIDEBAR_HIDDEN = 'taskSidebarHidden';
+
+function initSidebarState() {
+  if (localStorage.getItem(LS_KEY_SIDEBAR_HIDDEN) === '1') {
+    document.querySelector('.col-sidebar').classList.add('sidebar-hidden');
+    updateSidebarToggleBtn(true);
+  }
+}
+
+function toggleSidebar() {
+  const hidden = document.querySelector('.col-sidebar').classList.toggle('sidebar-hidden');
+  localStorage.setItem(LS_KEY_SIDEBAR_HIDDEN, hidden ? '1' : '0');
+  updateSidebarToggleBtn(hidden);
+}
+
+function updateSidebarToggleBtn(hidden) {
+  const btn = document.getElementById('toggleSidebarBtn');
+  btn.innerHTML = `<i class="bi bi-layout-sidebar-inset${hidden ? '' : '-reverse'}"></i>`;
+  btn.title = hidden ? 'Show filter panel' : 'Hide filter panel';
+}
+
+// ── Card Fields (which fields show on kanban/swimlane/calendar cards & due dates table) ─
+const BOARD_CARD_FIELDS = [
+  { id: 'assignee', label: 'Assignee', default: true },
+  { id: 'status',   label: 'Status',   default: true },
+];
+const DUE_DATES_FIELDS = [
+  { id: 'status',       label: 'Status',       default: true },
+  { id: 'priority',     label: 'Priority',     default: true },
+  { id: 'assignee',     label: 'Assignee',     default: true },
+  { id: 'project',      label: 'Project',      default: true },
+  { id: 'programme',    label: 'Programme',    default: false },
+  { id: 'phase',        label: 'Phase',        default: false },
+  { id: 'category',     label: 'Category',     default: false },
+  { id: 'workingGroup', label: 'Working Grp',  default: false },
+  { id: 'assetClass',   label: 'Asset Class',  default: false },
+  { id: 'stakeholder',  label: 'Stakeholder',  default: false },
+  { id: 'tags',         label: 'Tags',         default: false },
+];
+
+function initCardFields() {
+  CardFields.onChange('board', () => renderTasks());
+  CardFields.onChange('indexDueDates', () => renderDueDates());
+  document.getElementById('dueDatesCardFieldsSlot').innerHTML = CardFields.renderButton('indexDueDates', DUE_DATES_FIELDS);
+  renderCardFieldsSlot();
+}
+
+function renderCardFieldsSlot() {
+  const slot = document.getElementById('cardFieldsSlot');
+  const boardViews = ['kanban', 'swimlaneProject', 'swimlaneProgramme', 'swimlaneAssignee', 'byDate'];
+  slot.innerHTML = boardViews.includes(currentView) ? CardFields.renderButton('board', BOARD_CARD_FIELDS) : '';
 }
 
 async function loadMasterLists() {
@@ -895,6 +993,7 @@ function updateStats() {
 
 // ── Render ────────────────────────────────────────────────────────────────────
 function renderTasks() {
+  renderActiveFiltersBar();
   if (currentView === 'table') renderTable();
   else if (currentView === 'kanban') renderKanban();
   else if (currentView === 'swimlaneProject') renderLaneBoard('project', 'swimlaneProjectBoard', masterProjects);
@@ -1115,10 +1214,12 @@ function renderCompactCard(t) {
   const due = t.dueDate ? new Date(t.dueDate) : null;
   const over = due && due < today && t.status !== 'DONE' && t.status !== 'CANCELLED';
   const tooltip = `${t.title}${t.assignee ? ' · ' + t.assignee : ''}${t.status ? ' · ' + t.status : ''}${due ? ' · due ' + due.toLocaleDateString() : ''}`;
+  const showAssignee = CardFields.isOn('board', 'assignee', true);
+  const showStatus = CardFields.isOn('board', 'status', true);
   return `<div class="kanban-card kanban-card-compact" draggable="true" data-task-id="${t.id}" onclick="location.href='task-form.html?id=${t.id}'" title="${esc(tooltip)}">
     <span class="task-title-ellipsis${over?' overdue':''}">${esc(t.title)}${over?' ⚠':''}</span>
-    <span class="task-compact-assignee">${esc(t.assignee||'')}</span>
-    <span class="badge badge-status-${esc(t.status)} task-compact-status">${esc(t.status||'')}</span>
+    ${showAssignee ? `<span class="task-compact-assignee">${esc(t.assignee||'')}</span>` : ''}
+    ${showStatus ? `<span class="badge badge-status-${esc(t.status)} task-compact-status">${esc(t.status||'')}</span>` : ''}
   </div>`;
 }
 
@@ -1128,9 +1229,14 @@ function onLaneFilterChange() {
   renderTasks();
 }
 
+function onLaneHideEmptyChange() {
+  laneHideEmpty = document.getElementById('laneHideEmptyInput').checked;
+  renderTasks();
+}
+
 function updateLaneFilterBarVisibility(view) {
   const isBoardView = ['kanban','swimlaneProject','swimlaneProgramme','swimlaneAssignee'].includes(view);
-  document.getElementById('laneFilterBar').style.display = isBoardView ? '' : 'none';
+  document.getElementById('laneFilterBar').style.display = isBoardView ? 'flex' : 'none';
 }
 
 // ── Kanban ────────────────────────────────────────────────────────────────────
@@ -1144,9 +1250,11 @@ function renderKanban() {
     if (!grouped[s]) grouped[s] = [];
     grouped[s].push(t);
   });
-  const visibleStatuses = statusOptions.filter(status =>
-    !laneFilterText || status.replace(/_/g,' ').toLowerCase().includes(laneFilterText)
-  );
+  const visibleStatuses = statusOptions.filter(status => {
+    if (laneFilterText && !status.replace(/_/g,' ').toLowerCase().includes(laneFilterText)) return false;
+    if (laneHideEmpty && (grouped[status]||[]).length === 0) return false;
+    return true;
+  });
   visibleStatuses.forEach(status => {
     const col = document.createElement('div');
     col.className = 'kanban-col';
@@ -1225,6 +1333,9 @@ function renderLaneBoard(field, boardId, masterList) {
   if (laneFilterText) {
     laneValues = laneValues.filter(lane => lane.toLowerCase().includes(laneFilterText));
   }
+  if (laneHideEmpty) {
+    laneValues = laneValues.filter(lane => tasks.some(t => (lane === '(none)') ? !((t[field] || '').trim()) : (t[field] || '').trim() === lane));
+  }
 
   laneValues.forEach((lane, idx) => {
     const laneTasks = tasks.filter(t => (lane === '(none)') ? !((t[field] || '').trim()) : (t[field] || '').trim() === lane);
@@ -1302,10 +1413,14 @@ function calDateKey(d) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
 
-function shiftCalMonth(delta) {
-  calMonth += delta;
-  if (calMonth < 0) { calMonth = 11; calYear--; }
-  if (calMonth > 11) { calMonth = 0; calYear++; }
+const CAL_MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const CAL_DOW_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+function shiftCalView(delta) {
+  const step = calShowQuarter ? delta * 3 : delta;
+  calMonth += step;
+  while (calMonth < 0) { calMonth += 12; calYear--; }
+  while (calMonth > 11) { calMonth -= 12; calYear++; }
   renderByDate();
 }
 
@@ -1315,13 +1430,27 @@ function goCalToday() {
   renderByDate();
 }
 
+function toggleCalWeekendOnly() {
+  calWeekendOnly = !calWeekendOnly;
+  updateCalViewModeButtons();
+  renderByDate();
+}
+
+function toggleCalQuarter() {
+  calShowQuarter = !calShowQuarter;
+  updateCalViewModeButtons();
+  renderByDate();
+}
+
+function updateCalViewModeButtons() {
+  document.getElementById('calWeekendToggleBtn').classList.toggle('active', calWeekendOnly);
+  document.getElementById('calQuarterToggleBtn').classList.toggle('active', calShowQuarter);
+}
+
 function renderByDate() {
   if (calYear === null) { calYear = today.getFullYear(); calMonth = today.getMonth(); }
   const includeDone = document.getElementById('includeDoneByDate').checked;
   const tasks = getFilteredTasks().filter(t => includeDone || (t.status !== 'DONE' && t.status !== 'CANCELLED'));
-
-  const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-  document.getElementById('calMonthLabel').textContent = `${monthNames[calMonth]} ${calYear}`;
 
   const byDate = {};
   const unscheduled = [];
@@ -1331,12 +1460,76 @@ function renderByDate() {
     (byDate[key] = byDate[key] || []).push(t);
   });
 
-  const ul = document.getElementById('unscheduledList');
-  document.getElementById('noUnscheduled').style.display = unscheduled.length === 0 ? 'block' : 'none';
-  ul.innerHTML = unscheduled.map(t => calTaskChip(t)).join('');
+  const searchTerm = document.getElementById('unscheduledSearch').value.trim().toLowerCase();
+  const filteredUnscheduled = searchTerm
+    ? unscheduled.filter(t => (t.title || '').toLowerCase().includes(searchTerm))
+    : unscheduled;
 
+  const ul = document.getElementById('unscheduledList');
+  document.getElementById('noUnscheduled').textContent = searchTerm ? 'No matching tasks' : 'Nothing unscheduled';
+  document.getElementById('noUnscheduled').style.display = filteredUnscheduled.length === 0 ? 'block' : 'none';
+  ul.innerHTML = filteredUnscheduled.map(t => calTaskChip(t)).join('');
+
+  if (calShowQuarter) renderByDateQuarter(byDate);
+  else renderByDateSingleMonth(byDate);
+}
+
+function calEventsForDate(cursor) {
+  if (!document.getElementById('showEventsByDate').checked) return [];
+  const key = calDateKey(cursor);
+  return allEvents.filter(e => {
+    const start = e.startDate.substring(0, 10);
+    const end = (e.endDate || e.startDate).substring(0, 10);
+    return key >= start && key <= end;
+  });
+}
+
+function calEventChip(e) {
+  return `<div class="cal-event-chip" style="background:${EventTypes.color(e.type)}"
+               onclick="location.href='events.html'"
+               title="${esc(e.title)} — ${esc(EventTypes.label(e.type))}">${esc(e.title)}</div>`;
+}
+
+function calDayCellHtml(cursor, byDate, otherMonth, mini) {
+  const key = calDateKey(cursor);
+  const cellTasks = byDate[key] || [];
+  const cellEvents = calEventsForDate(cursor);
   const todayMid = new Date(today);
   todayMid.setHours(0, 0, 0, 0);
+  const isToday = cursor.getTime() === todayMid.getTime();
+  return `<div class="cal-cell ${mini ? 'mini' : ''} ${otherMonth ? 'other-month' : ''} ${isToday ? 'is-today' : ''}"
+                ondragover="onCalZoneDragOver(event)" ondragleave="onCalZoneDragLeave(event)" ondrop="onCalDropDate(event, '${key}')">
+    <div class="cal-date-num">${cursor.getDate()}</div>
+    <div class="cal-tasks">${cellEvents.map(e => calEventChip(e)).join('')}${cellTasks.map(t => calTaskChip(t)).join('')}</div>
+  </div>`;
+}
+
+function renderByDateSingleMonth(byDate) {
+  document.getElementById('calMonthLabel').textContent =
+    `${CAL_MONTH_NAMES[calMonth]} ${calYear}${calWeekendOnly ? ' · Weekends' : ''}`;
+
+  const dowHeader = document.getElementById('calDowHeader');
+  dowHeader.style.display = 'grid';
+  const grid = document.getElementById('calGrid');
+  grid.className = 'cal-grid';
+
+  if (calWeekendOnly) {
+    dowHeader.style.gridTemplateColumns = 'repeat(3, 1fr)';
+    dowHeader.innerHTML = ['Fri', 'Sat', 'Sun'].map(d => `<div class="cal-dow">${d}</div>`).join('');
+    grid.style.gridTemplateColumns = 'repeat(3, 1fr)';
+    let html = '';
+    calGetWeekendsInMonth(calYear, calMonth).forEach(([fri, sat, sun]) => {
+      [fri, sat, sun].forEach(d => {
+        html += calDayCellHtml(d, byDate, d.getMonth() !== calMonth, false);
+      });
+    });
+    grid.innerHTML = html;
+    return;
+  }
+
+  dowHeader.style.gridTemplateColumns = 'repeat(7, 1fr)';
+  dowHeader.innerHTML = CAL_DOW_NAMES.map(d => `<div class="cal-dow">${d}</div>`).join('');
+
   const firstOfMonth = new Date(calYear, calMonth, 1);
   const startDate = new Date(firstOfMonth);
   startDate.setDate(startDate.getDate() - startDate.getDay());
@@ -1344,20 +1537,87 @@ function renderByDate() {
   const endDate = new Date(lastOfMonth);
   endDate.setDate(endDate.getDate() + (6 - endDate.getDay()));
 
-  const grid = document.getElementById('calGrid');
+  grid.style.gridTemplateColumns = 'repeat(7, 1fr)';
   let html = '';
   const cursor = new Date(startDate);
   while (cursor <= endDate) {
-    const key = calDateKey(cursor);
-    const cellTasks = byDate[key] || [];
-    const otherMonth = cursor.getMonth() !== calMonth;
-    const isToday = cursor.getTime() === todayMid.getTime();
-    html += `<div class="cal-cell ${otherMonth ? 'other-month' : ''} ${isToday ? 'is-today' : ''}"
-                  ondragover="onCalZoneDragOver(event)" ondragleave="onCalZoneDragLeave(event)" ondrop="onCalDropDate(event, '${key}')">
-      <div class="cal-date-num">${cursor.getDate()}</div>
-      <div class="cal-tasks">${cellTasks.map(t => calTaskChip(t)).join('')}</div>
-    </div>`;
+    html += calDayCellHtml(cursor, byDate, cursor.getMonth() !== calMonth, false);
     cursor.setDate(cursor.getDate() + 1);
+  }
+  grid.innerHTML = html;
+}
+
+function calGetWeekendsInMonth(year, month) {
+  const first = new Date(year, month, 1);
+  const last = new Date(year, month + 1, 0);
+  const cursor = new Date(first);
+  const diffToFriday = (cursor.getDay() - 5 + 7) % 7; // days since the last Friday on/before the 1st
+  cursor.setDate(cursor.getDate() - diffToFriday);
+
+  const weekends = [];
+  while (cursor <= last) {
+    const fri = new Date(cursor);
+    const sat = new Date(cursor); sat.setDate(sat.getDate() + 1);
+    const sun = new Date(cursor); sun.setDate(sun.getDate() + 2);
+    if (sun >= first) weekends.push([fri, sat, sun]);
+    cursor.setDate(cursor.getDate() + 7);
+  }
+  return weekends;
+}
+
+function calMiniMonthHtml(year, month, byDate) {
+  let cellsHtml = '';
+
+  if (calWeekendOnly) {
+    calGetWeekendsInMonth(year, month).forEach(([fri, sat, sun]) => {
+      [fri, sat, sun].forEach(d => {
+        cellsHtml += calDayCellHtml(d, byDate, d.getMonth() !== month, true);
+      });
+    });
+    return `<div class="cal-mini-month">
+      <div class="cal-mini-month-title">${CAL_MONTH_NAMES[month]} ${year}</div>
+      <div class="cal-mini-grid" style="grid-template-columns:repeat(3, 1fr)">${['F','S','S'].map(d => `<div class="cal-dow">${d}</div>`).join('')}</div>
+      <div class="cal-mini-grid" style="grid-template-columns:repeat(3, 1fr)">${cellsHtml}</div>
+    </div>`;
+  }
+
+  const firstOfMonth = new Date(year, month, 1);
+  const startDate = new Date(firstOfMonth);
+  startDate.setDate(startDate.getDate() - startDate.getDay());
+  const lastOfMonth = new Date(year, month + 1, 0);
+  const endDate = new Date(lastOfMonth);
+  endDate.setDate(endDate.getDate() + (6 - endDate.getDay()));
+
+  const cursor = new Date(startDate);
+  while (cursor <= endDate) {
+    cellsHtml += calDayCellHtml(cursor, byDate, cursor.getMonth() !== month, true);
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return `<div class="cal-mini-month">
+    <div class="cal-mini-month-title">${CAL_MONTH_NAMES[month]} ${year}</div>
+    <div class="cal-mini-grid">${CAL_DOW_NAMES.map(d => `<div class="cal-dow">${d[0]}</div>`).join('')}</div>
+    <div class="cal-mini-grid">${cellsHtml}</div>
+  </div>`;
+}
+
+function renderByDateQuarter(byDate) {
+  const endMonth = (calMonth + 2) % 12;
+  const endYear = calYear + Math.floor((calMonth + 2) / 12);
+  document.getElementById('calMonthLabel').textContent =
+    `${CAL_MONTH_NAMES[calMonth]} – ${CAL_MONTH_NAMES[endMonth]} ${endYear}${calWeekendOnly ? ' · Weekends' : ''}`;
+
+  const dowHeader = document.getElementById('calDowHeader');
+  dowHeader.style.display = 'none';
+  dowHeader.innerHTML = '';
+
+  const grid = document.getElementById('calGrid');
+  grid.className = 'cal-quarter-row';
+  let html = '';
+  for (let i = 0; i < 3; i++) {
+    let m = calMonth + i, y = calYear;
+    while (m > 11) { m -= 12; y++; }
+    html += calMiniMonthHtml(y, m, byDate);
   }
   grid.innerHTML = html;
 }
@@ -1367,12 +1627,14 @@ function calTaskChip(t) {
   const due = t.dueDate ? new Date(t.dueDate) : null;
   const over = due && due < today && t.status !== 'DONE' && t.status !== 'CANCELLED';
   const tooltip = `${t.title}${t.assignee ? ' · ' + t.assignee : ''}${t.status ? ' · ' + t.status : ''}${due ? ' · due ' + due.toLocaleDateString() : ''}`;
+  const showAssignee = CardFields.isOn('board', 'assignee', true);
+  const showStatus = CardFields.isOn('board', 'status', true);
   return `<div class="kanban-card kanban-card-compact" draggable="true"
                ondragstart="onCalDragStart(event, ${t.id})" ondragend="onCalDragEnd(event)"
                onclick="location.href='task-form.html?id=${t.id}'" title="${esc(tooltip)}">
     <span class="task-title-ellipsis${over?' overdue':''}">${esc(t.title)}${over?' ⚠':''}</span>
-    <span class="task-compact-assignee">${esc(t.assignee||'')}</span>
-    <span class="badge badge-status-${esc(t.status)} task-compact-status">${esc(t.status||'')}</span>
+    ${showAssignee ? `<span class="task-compact-assignee">${esc(t.assignee||'')}</span>` : ''}
+    ${showStatus ? `<span class="badge badge-status-${esc(t.status)} task-compact-status">${esc(t.status||'')}</span>` : ''}
   </div>`;
 }
 
@@ -1452,6 +1714,23 @@ function dueDateBucketFor(t) {
   return 'Later';
 }
 
+function dueDatesVisibleFields() {
+  return DUE_DATES_FIELDS.filter(f => CardFields.isOn('indexDueDates', f.id, f.default));
+}
+
+function renderDueDatesHead() {
+  const widths = { status: '110px', priority: '90px', assignee: '110px', project: '110px', programme: '110px', phase: '90px', category: '110px', workingGroup: '110px', assetClass: '110px', stakeholder: '110px', tags: '140px' };
+  const visFields = dueDatesVisibleFields();
+  const head = document.getElementById('dueDatesThead');
+  head.innerHTML = '<tr>' +
+    '<th style="width:105px">Due Date</th>' +
+    '<th>Title</th>' +
+    visFields.map(f => `<th style="width:${widths[f.id]}">${f.label}</th>`).join('') +
+    '<th style="width:70px">Actions</th>' +
+    '</tr>';
+  return visFields;
+}
+
 function renderDueDates() {
   const includeDone = document.getElementById('includeDoneDueDates').checked;
   const tasks = getFilteredTasks()
@@ -1462,6 +1741,9 @@ function renderDueDates() {
       const bv = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
       return av - bv;
     });
+
+  const visFields = renderDueDatesHead();
+  const colspan = 3 + visFields.length;
 
   const buckets = ['Overdue', 'Today', 'Tomorrow', 'This Week', 'This Month', 'Later', 'No Due Date'];
   const grouped = {};
@@ -1474,21 +1756,35 @@ function renderDueDates() {
     const gtasks = grouped[b];
     if (!gtasks.length) return;
     const headerCls = b === 'Overdue' ? 'overdue-header' : (b === 'Today' ? 'today-header' : '');
-    tbody.innerHTML += `<tr><td colspan="7" class="group-header ${headerCls}">${b} <span class="badge bg-secondary ms-1">${gtasks.length}</span></td></tr>`;
-    gtasks.forEach(t => tbody.innerHTML += dueDateRow(t));
+    tbody.innerHTML += `<tr><td colspan="${colspan}" class="group-header ${headerCls}">${b} <span class="badge bg-secondary ms-1">${gtasks.length}</span></td></tr>`;
+    gtasks.forEach(t => tbody.innerHTML += dueDateRow(t, visFields));
   });
 }
 
-function dueDateRow(t) {
+function dueDateFieldCell(t, fieldId) {
+  switch (fieldId) {
+    case 'status':   return `<td><span class="badge badge-status-${esc(t.status)}">${esc(t.status||'')}</span></td>`;
+    case 'priority': return `<td><span class="badge badge-priority-${esc(t.priority)}">${esc(t.priority||'')}</span></td>`;
+    case 'assignee': return `<td>${esc(t.assignee||'')}</td>`;
+    case 'project':  return `<td>${esc(t.project||'')}</td>`;
+    case 'programme':    return `<td>${esc(t.programme||'')}</td>`;
+    case 'phase':         return `<td>${esc(t.customField1||'')}</td>`;
+    case 'category':      return `<td>${esc(t.category||'')}</td>`;
+    case 'workingGroup':  return `<td>${esc(t.workingGroup||'')}</td>`;
+    case 'assetClass':    return `<td>${esc(t.assetClass||'')}</td>`;
+    case 'stakeholder':   return `<td>${esc(t.stakeholder||'')}</td>`;
+    case 'tags':          return `<td>${(t.tags||[]).join(', ')}</td>`;
+    default: return '<td></td>';
+  }
+}
+
+function dueDateRow(t, visFields) {
   const due = t.dueDate ? new Date(t.dueDate) : null;
   const over = due && due < today && t.status !== 'DONE' && t.status !== 'CANCELLED';
   return `<tr class="task-row" onclick="location.href='task-form.html?id=${t.id}'">
     <td class="${over ? 'overdue' : ''}">${due ? due.toLocaleDateString() : ''}${over ? ' ⚠' : ''}</td>
-    <td><span class="badge badge-status-${esc(t.status)}">${esc(t.status||'')}</span></td>
-    <td><span class="badge badge-priority-${esc(t.priority)}">${esc(t.priority||'')}</span></td>
     <td><strong>${esc(t.title)}</strong></td>
-    <td>${esc(t.assignee||'')}</td>
-    <td>${esc(t.project||'')}</td>
+    ${visFields.map(f => dueDateFieldCell(t, f.id)).join('')}
     <td onclick="event.stopPropagation()">
       ${(t.status !== 'DONE' && t.status !== 'CANCELLED') ? `<button class="btn btn-xs btn-outline-success" style="padding:1px 6px;font-size:0.75rem" onclick="closeTask(${t.id})" title="Close (mark as Done)"><i class="bi bi-check-lg"></i></button>` : ''}
     </td>
@@ -1527,6 +1823,7 @@ function setView(view) {
   document.getElementById('btnDueDates').classList.toggle('active', view === 'dueDates');
   document.getElementById('groupBySelect').disabled = view !== 'table';
   updateLaneFilterBarVisibility(view);
+  renderCardFieldsSlot();
   renderTasks();
 }
 
@@ -1547,7 +1844,78 @@ function clearFilters() {
   document.getElementById('recentDays').value = 5;
   laneFilterText = '';
   document.getElementById('laneFilterInput').value = '';
+  laneHideEmpty = false;
+  document.getElementById('laneHideEmptyInput').checked = false;
   loadTasks();
+}
+
+// ── Active filters summary bar (shown above the lanes/board, works even with sidebar hidden) ──
+function renderActiveFiltersBar() {
+  const bar = document.getElementById('activeFiltersBar');
+  const chips = [];
+
+  const q = document.getElementById('globalSearch').value.trim();
+  if (q) chips.push({ label: `Search: "${q}"`, clear: () => { document.getElementById('globalSearch').value = ''; loadTasks(); } });
+
+  document.querySelectorAll('.filter-status:checked').forEach(cb => {
+    chips.push({ label: `Status: ${cb.value.replace(/_/g,' ')}`, clear: () => { cb.checked = false; loadTasks(); } });
+  });
+  document.querySelectorAll('.filter-priority:checked').forEach(cb => {
+    chips.push({ label: `Priority: ${cb.value}`, clear: () => { cb.checked = false; loadTasks(); } });
+  });
+
+  [['filterAssignee','Assignee'], ['filterCategory','Category'], ['filterProgramme','Programme'],
+   ['filterProject','Project'], ['filterWorkingGroup','Working Group'], ['filterAssetClass','Asset Class']]
+    .forEach(([id, label]) => {
+      const el = document.getElementById(id);
+      if (el.value) chips.push({ label: `${label}: ${el.value}`, clear: () => { el.value = ''; loadTasks(); } });
+    });
+
+  const dueFrom = document.getElementById('filterDueFrom');
+  if (dueFrom.value) chips.push({ label: `Due from: ${dueFrom.value}`, clear: () => { dueFrom.value = ''; loadTasks(); } });
+  const dueTo = document.getElementById('filterDueTo');
+  if (dueTo.value) chips.push({ label: `Due to: ${dueTo.value}`, clear: () => { dueTo.value = ''; loadTasks(); } });
+
+  const tagsEl = document.getElementById('filterTags');
+  if (tagsEl.value.trim()) chips.push({ label: `Tags: ${tagsEl.value.trim()}`, clear: () => { tagsEl.value = ''; loadTasks(); } });
+
+  const jiraEl = document.getElementById('filterJira');
+  if (jiraEl.value.trim()) chips.push({ label: `Jira: ${jiraEl.value.trim()}`, clear: () => { jiraEl.value = ''; loadTasks(); } });
+
+  if (showMyTasksOnly) chips.push({ label: 'My Tasks', clear: () => {
+    showMyTasksOnly = false; document.getElementById('btnMyTasks').classList.remove('active'); updateStats(); renderTasks();
+  } });
+  if (showUnassignedOnly) chips.push({ label: 'Unassigned', clear: () => {
+    showUnassignedOnly = false; document.getElementById('btnUnassigned').classList.remove('active'); updateStats(); renderTasks();
+  } });
+  if (showRecentOnly) chips.push({ label: `Updated in last ${document.getElementById('recentDays').value || 5} days`, clear: () => {
+    showRecentOnly = false; document.getElementById('btnRecentlyUpdated').classList.remove('active'); updateStats(); renderTasks();
+  } });
+
+  if (laneFilterText) chips.push({ label: `Swimlane: "${laneFilterText}"`, clear: () => {
+    laneFilterText = ''; document.getElementById('laneFilterInput').value = ''; renderTasks();
+  } });
+  if (laneHideEmpty) chips.push({ label: 'Non-zero swimlanes only', clear: () => {
+    laneHideEmpty = false; document.getElementById('laneHideEmptyInput').checked = false; renderTasks();
+  } });
+
+  activeFilterChips = chips;
+
+  if (!chips.length) {
+    bar.style.display = 'none';
+    bar.innerHTML = '';
+    return;
+  }
+
+  bar.style.display = 'flex';
+  bar.innerHTML = '<span class="small fw-semibold text-muted me-1">Filters:</span>' +
+    chips.map((c, i) => `<span class="badge rounded-pill text-bg-primary d-inline-flex align-items-center gap-1 py-1 px-2" style="font-weight:400">${esc(c.label)}<i class="bi bi-x-lg" role="button" style="font-size:0.6rem" onclick="clearActiveFilterChip(${i})" title="Remove this filter"></i></span>`).join('') +
+    '<button class="btn btn-link btn-sm p-0 ms-1" onclick="clearFilters()">Clear all</button>';
+}
+
+function clearActiveFilterChip(i) {
+  const chip = activeFilterChips[i];
+  if (chip) chip.clear();
 }
 
 function debounceSearch() {

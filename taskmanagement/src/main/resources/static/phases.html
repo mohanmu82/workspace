@@ -18,7 +18,9 @@
     .badge-status-BLOCKED    { background: #dc3545; }
     .badge-status-CANCELLED  { background: #adb5bd; color: #000; }
     .phase-wrap { display: flex; gap: 1rem; align-items: flex-start; }
-    .unassigned-panel { width: 260px; flex-shrink: 0; background: #fff; border: 1px solid #dee2e6; border-radius: 8px; padding: 0.75rem; max-height: calc(100vh - 190px); overflow-y: auto; }
+    .unassigned-panel { width: 260px; min-width: 200px; max-width: 600px; flex-shrink: 0; background: #fff; border: 1px solid #dee2e6; border-radius: 8px; padding: 0.75rem; max-height: calc(100vh - 190px); overflow: auto; resize: horizontal; }
+    .unassigned-panel.panel-collapsed { width: 0 !important; min-width: 0; padding: 0; border: none; overflow: hidden; resize: none; }
+    .panel-collapse-btn { flex-shrink: 0; }
     .phase-board { flex: 1; min-width: 0; display: flex; gap: 0.75rem; overflow-x: auto; padding-bottom: 1rem; }
     .phase-col { min-width: 240px; background: #fff; border-radius: 8px; border: 1px solid #dee2e6; flex-shrink: 0; max-height: calc(100vh - 190px); display: flex; flex-direction: column; }
     .phase-col-header { padding: 0.5rem 0.75rem; font-weight: 700; border-radius: 8px 8px 0 0; font-size: 0.8rem; background: #0d6efd; color: #fff; flex-shrink: 0; }
@@ -49,6 +51,7 @@
     <span class="text-light fw-semibold"><i class="bi bi-kanban me-1"></i>Phases</span>
     <a href="timeline.html" class="btn btn-outline-light btn-sm"><i class="bi bi-bar-chart-steps me-1"></i>Timeline</a>
     <a href="dependencies.html" class="btn btn-outline-light btn-sm"><i class="bi bi-link-45deg me-1"></i>Dependencies</a>
+    <a href="events.html" class="btn btn-outline-light btn-sm"><i class="bi bi-calendar-week me-1"></i>Events</a>
     <a href="admin.html" class="btn btn-outline-light btn-sm"><i class="bi bi-gear me-1"></i>Admin</a>
     <button class="btn btn-outline-light btn-sm" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle dark mode"><i class="bi bi-moon-stars" id="themeIcon"></i></button>
   </div>
@@ -58,14 +61,20 @@
 
   <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
     <div class="d-flex align-items-center gap-2">
+      <button class="btn btn-outline-secondary btn-sm" id="togglePanelBtn" onclick="togglePanel()" title="Hide the No Phase panel">
+        <i class="bi bi-layout-sidebar-inset-reverse"></i>
+      </button>
       <label class="form-label mb-0 fw-semibold small">Project</label>
       <select id="projectSelect" class="form-select form-select-sm" style="min-width:240px" onchange="onProjectChange()">
         <option value="">-- Select a project --</option>
       </select>
     </div>
-    <div class="form-check">
-      <input class="form-check-input" type="checkbox" id="includeDone" onchange="render()">
-      <label class="form-check-label small" for="includeDone">Include Done / Cancelled</label>
+    <div class="d-flex align-items-center gap-2">
+      <span id="cardFieldsSlot"></span>
+      <div class="form-check mb-0">
+        <input class="form-check-input" type="checkbox" id="includeDone" onchange="render()">
+        <label class="form-check-label small" for="includeDone">Include Done / Cancelled</label>
+      </div>
     </div>
   </div>
 
@@ -91,8 +100,10 @@
 
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="theme.js"></script>
 <script src="tasks-ws.js"></script>
+<script src="card-fields.js"></script>
 <script>
 let allProjects = [];
 let allTasks = [];
@@ -101,7 +112,42 @@ let selectedIds = new Set();
 const today = new Date();
 today.setHours(0, 0, 0, 0);
 
+// ── No Phase panel hide/show ────────────────────────────────────────────────
+const LS_KEY_PANEL_HIDDEN = 'phasesPanelHidden';
+
+function initPanelState() {
+  if (localStorage.getItem(LS_KEY_PANEL_HIDDEN) === '1') {
+    document.querySelector('.unassigned-panel').classList.add('panel-collapsed');
+    updateTogglePanelBtn(true);
+  }
+}
+
+function togglePanel() {
+  const hidden = document.querySelector('.unassigned-panel').classList.toggle('panel-collapsed');
+  localStorage.setItem(LS_KEY_PANEL_HIDDEN, hidden ? '1' : '0');
+  updateTogglePanelBtn(hidden);
+}
+
+function updateTogglePanelBtn(hidden) {
+  const btn = document.getElementById('togglePanelBtn');
+  btn.innerHTML = `<i class="bi bi-layout-sidebar-inset${hidden ? '' : '-reverse'}"></i>`;
+  btn.title = hidden ? 'Show the No Phase panel' : 'Hide the No Phase panel';
+}
+
+// ── Card Fields (which fields show on phase cards) ─────────────────────────────
+const PHASE_CARD_FIELDS = [
+  { id: 'status',   label: 'Status',   default: true },
+  { id: 'assignee', label: 'Assignee', default: true },
+];
+
+function initCardFields() {
+  CardFields.onChange('phases', () => render());
+  document.getElementById('cardFieldsSlot').innerHTML = CardFields.renderButton('phases', PHASE_CARD_FIELDS);
+}
+
 async function init() {
+  initPanelState();
+  initCardFields();
   try {
     const [projects, configs] = await Promise.all([
       fetch('/api/projects').then(r => r.json()),
@@ -212,14 +258,16 @@ function taskCard(t) {
   const due = t.dueDate ? new Date(t.dueDate) : null;
   const over = due && due < today && t.status !== 'DONE' && t.status !== 'CANCELLED';
   const checked = selectedIds.has(t.id) ? 'checked' : '';
+  const showStatus = CardFields.isOn('phases', 'status', true);
+  const showAssignee = CardFields.isOn('phases', 'assignee', true);
   return `<div class="phase-card" draggable="true" data-task-id="${t.id}"
                ondragstart="onDragStart(event, ${t.id})" ondragend="onDragEnd(event)">
     <input type="checkbox" class="form-check-input mt-1" ${checked} onclick="event.stopPropagation()" onchange="toggleSelect(${t.id}, this.checked)"/>
     <div class="card-body-text">
       <div class="card-title-line ${over ? 'overdue' : ''}" onclick="location.href='task-form.html?id=${t.id}'" title="${escAttr(t.title)}">${esc(t.title)}${over ? ' ⚠' : ''}</div>
       <div class="card-meta">
-        <span class="badge badge-status-${esc(t.status)}" style="font-size:0.6rem">${esc(t.status || '')}</span>
-        ${t.assignee ? `<span>${esc(t.assignee)}</span>` : ''}
+        ${showStatus ? `<span class="badge badge-status-${esc(t.status)}" style="font-size:0.6rem">${esc(t.status || '')}</span>` : ''}
+        ${showAssignee && t.assignee ? `<span>${esc(t.assignee)}</span>` : ''}
       </div>
     </div>
   </div>`;

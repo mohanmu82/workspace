@@ -33,6 +33,13 @@
     .cal-date-num { font-size: 0.75rem; font-weight: 600; margin-bottom: 2px; }
     .cal-cell.is-today .cal-date-num { color: #0d6efd; }
     .cal-tasks { flex: 1; overflow-y: auto; max-height: 120px; }
+    .quarter-row { display: flex; gap: 0.75rem; align-items: flex-start; }
+    .mini-month { flex: 1; min-width: 0; }
+    .mini-month-title { font-weight: 700; font-size: 0.78rem; text-align: center; margin-bottom: 4px; }
+    .mini-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; margin-bottom: 3px; }
+    .cal-cell.mini { min-height: 62px; padding: 3px; }
+    .cal-cell.mini .cal-tasks { max-height: 46px; }
+    .cal-cell.mini .cal-task-chip { padding: 1px 3px; font-size: 0.6rem; }
     .cal-task-chip { background: #f0f4ff; border: 1px solid #cfe0ff; border-radius: 4px; padding: 2px 5px; margin-bottom: 3px; font-size: 0.68rem; cursor: grab; display: flex; align-items: center; gap: 3px; }
     .cal-task-chip:hover { background: #e0ebff; }
     .cal-task-chip.overdue { background: #f8d7da; border-color: #f1aeb5; }
@@ -40,6 +47,9 @@
     .cal-task-chip .status-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
     .cal-task-chip .chip-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .cal-task-chip .chip-assignee { flex: 0 1 auto; min-width: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #6c757d; font-size: 0.62rem; }
+    .cal-event-chip { border-radius: 4px; padding: 2px 5px; margin-bottom: 3px; font-size: 0.68rem; cursor: pointer; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cal-event-chip:hover { opacity: 0.85; }
+    .cal-cell.mini .cal-event-chip { padding: 1px 3px; font-size: 0.6rem; }
     .unscheduled-item { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; padding: 0.4rem 0.5rem; margin-bottom: 0.4rem; cursor: grab; font-size: 0.78rem; }
     .unscheduled-item:hover { background: #e9ecef; }
     .unscheduled-item.dragging { opacity: 0.4; }
@@ -60,6 +70,7 @@
     <a href="phases.html" class="btn btn-outline-light btn-sm"><i class="bi bi-kanban me-1"></i>Phases</a>
     <a href="timeline.html" class="btn btn-outline-light btn-sm"><i class="bi bi-bar-chart-steps me-1"></i>Timeline</a>
     <a href="dependencies.html" class="btn btn-outline-light btn-sm"><i class="bi bi-link-45deg me-1"></i>Dependencies</a>
+    <a href="events.html" class="btn btn-outline-light btn-sm"><i class="bi bi-calendar-week me-1"></i>Events</a>
     <a href="admin.html" class="btn btn-outline-light btn-sm"><i class="bi bi-gear me-1"></i>Admin</a>
     <a href="api-docs.html" class="btn btn-outline-light btn-sm"><i class="bi bi-code-slash me-1"></i>API Docs</a>
     <button class="btn btn-outline-light btn-sm" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle dark mode"><i class="bi bi-moon-stars" id="themeIcon"></i></button>
@@ -70,14 +81,26 @@
 
   <div class="d-flex justify-content-between align-items-center mb-3">
     <div class="d-flex align-items-center gap-2">
-      <button class="btn btn-outline-secondary btn-sm" onclick="shiftMonth(-1)"><i class="bi bi-chevron-left"></i></button>
+      <button class="btn btn-outline-secondary btn-sm" onclick="shiftView(-1)"><i class="bi bi-chevron-left"></i></button>
       <h5 class="mb-0" id="monthLabel" style="min-width:170px"></h5>
-      <button class="btn btn-outline-secondary btn-sm" onclick="shiftMonth(1)"><i class="bi bi-chevron-right"></i></button>
+      <button class="btn btn-outline-secondary btn-sm" onclick="shiftView(1)"><i class="bi bi-chevron-right"></i></button>
       <button class="btn btn-outline-primary btn-sm" onclick="goToday()">Today</button>
+      <div class="btn-group btn-group-sm ms-2" role="group">
+        <button class="btn btn-outline-primary" id="viewModeMonthBtn" onclick="setViewMode('month')">Month</button>
+        <button class="btn btn-outline-primary" id="viewModeWeekendBtn" onclick="setViewMode('weekend')">Weekends</button>
+        <button class="btn btn-outline-primary" id="viewModeQuarterBtn" onclick="setViewMode('quarter')">3 Months</button>
+      </div>
     </div>
-    <div class="form-check">
-      <input class="form-check-input" type="checkbox" id="includeDone" onchange="render()">
-      <label class="form-check-label small" for="includeDone">Include Done / Cancelled</label>
+    <div class="d-flex align-items-center gap-2">
+      <span id="cardFieldsSlot"></span>
+      <div class="form-check mb-0">
+        <input class="form-check-input" type="checkbox" id="showEvents" onchange="render()">
+        <label class="form-check-label small" for="showEvents">Show Events</label>
+      </div>
+      <div class="form-check mb-0">
+        <input class="form-check-input" type="checkbox" id="includeDone" onchange="render()">
+        <label class="form-check-label small" for="includeDone">Include Done / Cancelled</label>
+      </div>
     </div>
   </div>
 
@@ -91,28 +114,47 @@
     </div>
 
     <div class="cal-main">
-      <div class="cal-grid mb-1">
-        <div class="cal-dow">Sun</div><div class="cal-dow">Mon</div><div class="cal-dow">Tue</div>
-        <div class="cal-dow">Wed</div><div class="cal-dow">Thu</div><div class="cal-dow">Fri</div><div class="cal-dow">Sat</div>
-      </div>
-      <div class="cal-grid" id="calGrid"></div>
+      <div class="cal-grid mb-1" id="calHeader"></div>
+      <div id="calGrid"></div>
     </div>
   </div>
 
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="theme.js"></script>
 <script src="tasks-ws.js"></script>
+<script src="card-fields.js"></script>
+<script src="events.js"></script>
 <script>
 let allTasks = [];
+let allEvents = [];
 let viewYear, viewMonth; // viewMonth is 0-based
+let viewMode = 'month'; // 'month' | 'weekend' | 'quarter'
 const today = new Date();
 today.setHours(0, 0, 0, 0);
+
+const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const DOW_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+const CAL_CARD_FIELDS = [
+  { id: 'status',   label: 'Status',   default: true },
+  { id: 'assignee', label: 'Assignee', default: true },
+  { id: 'priority', label: 'Priority', default: true },
+];
+
+function initCardFields() {
+  CardFields.onChange('calendarPage', () => render());
+  document.getElementById('cardFieldsSlot').innerHTML = CardFields.renderButton('calendarPage', CAL_CARD_FIELDS);
+}
 
 function init() {
   viewYear = today.getFullYear();
   viewMonth = today.getMonth();
+  updateViewModeButtons();
+  initCardFields();
   loadTasks();
+  loadEvents();
 }
 
 async function loadTasks() {
@@ -134,12 +176,23 @@ async function loadTasks() {
   }
 }
 
+async function loadEvents() {
+  try {
+    const res = await fetch('/api/events');
+    allEvents = await res.json();
+    render();
+  } catch (e) {
+    console.error(e);
+  }
+}
+
 TaskWS.onTaskChanged(() => loadTasks());
 
-function shiftMonth(delta) {
-  viewMonth += delta;
-  if (viewMonth < 0) { viewMonth = 11; viewYear--; }
-  if (viewMonth > 11) { viewMonth = 0; viewYear++; }
+function shiftView(delta) {
+  const step = viewMode === 'quarter' ? delta * 3 : delta;
+  viewMonth += step;
+  while (viewMonth < 0) { viewMonth += 12; viewYear--; }
+  while (viewMonth > 11) { viewMonth -= 12; viewYear++; }
   render();
 }
 
@@ -147,6 +200,18 @@ function goToday() {
   viewYear = today.getFullYear();
   viewMonth = today.getMonth();
   render();
+}
+
+function setViewMode(mode) {
+  viewMode = mode;
+  updateViewModeButtons();
+  render();
+}
+
+function updateViewModeButtons() {
+  document.getElementById('viewModeMonthBtn').classList.toggle('active', viewMode === 'month');
+  document.getElementById('viewModeWeekendBtn').classList.toggle('active', viewMode === 'weekend');
+  document.getElementById('viewModeQuarterBtn').classList.toggle('active', viewMode === 'quarter');
 }
 
 function dateKey(d) {
@@ -159,9 +224,6 @@ function visibleTasks() {
 }
 
 function render() {
-  const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-  document.getElementById('monthLabel').textContent = `${monthNames[viewMonth]} ${viewYear}`;
-
   const tasks = visibleTasks();
   const byDate = {};
   const unscheduled = [];
@@ -176,6 +238,47 @@ function render() {
   document.getElementById('noUnscheduled').style.display = unscheduled.length === 0 ? 'block' : 'none';
   ul.innerHTML = unscheduled.map(t => unscheduledItem(t)).join('');
 
+  if (viewMode === 'weekend') renderWeekendView(byDate);
+  else if (viewMode === 'quarter') renderQuarterView(byDate);
+  else renderMonthView(byDate);
+}
+
+function eventsForDate(cursor) {
+  if (!document.getElementById('showEvents').checked) return [];
+  const key = dateKey(cursor);
+  return allEvents.filter(e => {
+    const start = e.startDate.substring(0, 10);
+    const end = (e.endDate || e.startDate).substring(0, 10);
+    return key >= start && key <= end;
+  });
+}
+
+function eventChip(e) {
+  return `<div class="cal-event-chip" style="background:${EventTypes.color(e.type)}"
+               onclick="location.href='events.html'"
+               title="${escAttr(e.title)} — ${escAttr(EventTypes.label(e.type))}">${esc(e.title)}</div>`;
+}
+
+function dayCellHtml(cursor, byDate, otherMonth, mini) {
+  const key = dateKey(cursor);
+  const cellTasks = byDate[key] || [];
+  const cellEvents = eventsForDate(cursor);
+  const isToday = cursor.getTime() === today.getTime();
+  return `<div class="cal-cell ${mini ? 'mini' : ''} ${otherMonth ? 'other-month' : ''} ${isToday ? 'is-today' : ''}"
+                ondragover="onZoneDragOver(event)" ondragleave="onZoneDragLeave(event)" ondrop="onDropDate(event, '${key}')">
+    <div class="cal-date-num">${cursor.getDate()}</div>
+    <div class="cal-tasks">${cellEvents.map(e => eventChip(e)).join('')}${cellTasks.map(t => taskChip(t)).join('')}</div>
+  </div>`;
+}
+
+function renderMonthView(byDate) {
+  document.getElementById('monthLabel').textContent = `${MONTH_NAMES[viewMonth]} ${viewYear}`;
+
+  const header = document.getElementById('calHeader');
+  header.style.display = 'grid';
+  header.style.gridTemplateColumns = 'repeat(7, 1fr)';
+  header.innerHTML = DOW_NAMES.map(d => `<div class="cal-dow">${d}</div>`).join('');
+
   // Calendar grid: start from the Sunday on/before the 1st, end on the Saturday on/after the last day
   const firstOfMonth = new Date(viewYear, viewMonth, 1);
   const startDate = new Date(firstOfMonth);
@@ -185,19 +288,94 @@ function render() {
   endDate.setDate(endDate.getDate() + (6 - endDate.getDay()));
 
   const grid = document.getElementById('calGrid');
+  grid.className = 'cal-grid';
+  grid.style.gridTemplateColumns = 'repeat(7, 1fr)';
   let html = '';
   const cursor = new Date(startDate);
   while (cursor <= endDate) {
-    const key = dateKey(cursor);
-    const cellTasks = byDate[key] || [];
-    const otherMonth = cursor.getMonth() !== viewMonth;
-    const isToday = cursor.getTime() === today.getTime();
-    html += `<div class="cal-cell ${otherMonth ? 'other-month' : ''} ${isToday ? 'is-today' : ''}"
-                  ondragover="onZoneDragOver(event)" ondragleave="onZoneDragLeave(event)" ondrop="onDropDate(event, '${key}')">
-      <div class="cal-date-num">${cursor.getDate()}</div>
-      <div class="cal-tasks">${cellTasks.map(t => taskChip(t)).join('')}</div>
-    </div>`;
+    html += dayCellHtml(cursor, byDate, cursor.getMonth() !== viewMonth, false);
     cursor.setDate(cursor.getDate() + 1);
+  }
+  grid.innerHTML = html;
+}
+
+function getWeekendsInMonth(year, month) {
+  const first = new Date(year, month, 1);
+  const last = new Date(year, month + 1, 0);
+  const cursor = new Date(first);
+  const diffToFriday = (cursor.getDay() - 5 + 7) % 7; // days since the last Friday on/before the 1st
+  cursor.setDate(cursor.getDate() - diffToFriday);
+
+  const weekends = [];
+  while (cursor <= last) {
+    const fri = new Date(cursor);
+    const sat = new Date(cursor); sat.setDate(sat.getDate() + 1);
+    const sun = new Date(cursor); sun.setDate(sun.getDate() + 2);
+    if (sun >= first) weekends.push([fri, sat, sun]);
+    cursor.setDate(cursor.getDate() + 7);
+  }
+  return weekends;
+}
+
+function renderWeekendView(byDate) {
+  document.getElementById('monthLabel').textContent = `${MONTH_NAMES[viewMonth]} ${viewYear} · Weekends`;
+
+  const header = document.getElementById('calHeader');
+  header.style.display = 'grid';
+  header.style.gridTemplateColumns = 'repeat(3, 1fr)';
+  header.innerHTML = ['Fri', 'Sat', 'Sun'].map(d => `<div class="cal-dow">${d}</div>`).join('');
+
+  const weekends = getWeekendsInMonth(viewYear, viewMonth);
+  const grid = document.getElementById('calGrid');
+  grid.className = 'cal-grid';
+  grid.style.gridTemplateColumns = 'repeat(3, 1fr)';
+  let html = '';
+  weekends.forEach(([fri, sat, sun]) => {
+    [fri, sat, sun].forEach(d => {
+      html += dayCellHtml(d, byDate, d.getMonth() !== viewMonth, false);
+    });
+  });
+  grid.innerHTML = html;
+}
+
+function miniMonthHtml(year, month, byDate) {
+  const firstOfMonth = new Date(year, month, 1);
+  const startDate = new Date(firstOfMonth);
+  startDate.setDate(startDate.getDate() - startDate.getDay());
+  const lastOfMonth = new Date(year, month + 1, 0);
+  const endDate = new Date(lastOfMonth);
+  endDate.setDate(endDate.getDate() + (6 - endDate.getDay()));
+
+  let cellsHtml = '';
+  const cursor = new Date(startDate);
+  while (cursor <= endDate) {
+    cellsHtml += dayCellHtml(cursor, byDate, cursor.getMonth() !== month, true);
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return `<div class="mini-month">
+    <div class="mini-month-title">${MONTH_NAMES[month]} ${year}</div>
+    <div class="mini-grid">${DOW_NAMES.map(d => `<div class="cal-dow">${d[0]}</div>`).join('')}</div>
+    <div class="mini-grid">${cellsHtml}</div>
+  </div>`;
+}
+
+function renderQuarterView(byDate) {
+  const endMonth = (viewMonth + 2) % 12;
+  const endYear = viewYear + Math.floor((viewMonth + 2) / 12);
+  document.getElementById('monthLabel').textContent = `${MONTH_NAMES[viewMonth]} – ${MONTH_NAMES[endMonth]} ${endYear}`;
+
+  const header = document.getElementById('calHeader');
+  header.style.display = 'none';
+  header.innerHTML = '';
+
+  const grid = document.getElementById('calGrid');
+  grid.className = 'quarter-row';
+  let html = '';
+  for (let i = 0; i < 3; i++) {
+    let m = viewMonth + i, y = viewYear;
+    while (m > 11) { m -= 12; y++; }
+    html += miniMonthHtml(y, m, byDate);
   }
   grid.innerHTML = html;
 }
@@ -205,21 +383,25 @@ function render() {
 function taskChip(t) {
   const due = t.dueDate ? new Date(t.dueDate) : null;
   const over = due && due < today && t.status !== 'DONE' && t.status !== 'CANCELLED';
+  const showStatus = CardFields.isOn('calendarPage', 'status', true);
+  const showAssignee = CardFields.isOn('calendarPage', 'assignee', true);
   return `<div class="cal-task-chip ${over ? 'overdue' : ''}" draggable="true"
                ondragstart="onDragStart(event, ${t.id})" ondragend="onDragEnd(event)"
                onclick="location.href='task-form.html?id=${t.id}'"
                title="${escAttr(t.title)}${t.assignee ? ' — ' + escAttr(t.assignee) : ''}">
-    <span class="status-dot badge-status-${esc(t.status)}"></span><span class="chip-title">${esc(t.title)}</span>${t.assignee ? `<span class="chip-assignee">${esc(t.assignee)}</span>` : ''}
+    ${showStatus ? `<span class="status-dot badge-status-${esc(t.status)}"></span>` : ''}<span class="chip-title">${esc(t.title)}</span>${showAssignee && t.assignee ? `<span class="chip-assignee">${esc(t.assignee)}</span>` : ''}
   </div>`;
 }
 
 function unscheduledItem(t) {
+  const showStatus = CardFields.isOn('calendarPage', 'status', true);
+  const showPriority = CardFields.isOn('calendarPage', 'priority', true);
   return `<div class="unscheduled-item" draggable="true"
                ondragstart="onDragStart(event, ${t.id})" ondragend="onDragEnd(event)"
                onclick="location.href='task-form.html?id=${t.id}'">
     <div class="d-flex justify-content-between align-items-center">
-      <span class="badge badge-status-${esc(t.status)}" style="font-size:0.62rem">${esc(t.status||'')}</span>
-      ${t.priority ? `<span class="badge badge-priority-${esc(t.priority)}" style="font-size:0.62rem">${esc(t.priority)}</span>` : ''}
+      ${showStatus ? `<span class="badge badge-status-${esc(t.status)}" style="font-size:0.62rem">${esc(t.status||'')}</span>` : '<span></span>'}
+      ${showPriority && t.priority ? `<span class="badge badge-priority-${esc(t.priority)}" style="font-size:0.62rem">${esc(t.priority)}</span>` : ''}
     </div>
     <div class="mt-1">${esc(t.title)}</div>
   </div>`;
