@@ -1,0 +1,15 @@
+[ {
+  "id" : 1,
+  "taskId" : 1,
+  "fieldName" : "customField3",
+  "newValue" : "smoketest",
+  "changedBy" : "system",
+  "changedAt" : "2026-07-29T17:23:16.7594207"
+}, {
+  "id" : 2,
+  "taskId" : 1,
+  "fieldName" : "customField3",
+  "oldValue" : "smoketest",
+  "changedBy" : "system",
+  "changedAt" : "2026-07-29T17:23:16.9366496"
+} ]

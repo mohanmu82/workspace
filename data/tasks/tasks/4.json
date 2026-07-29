@@ -3,9 +3,10 @@
   "title" : "Test",
   "status" : "TODO",
   "priority" : "MEDIUM",
+  "assignee" : "nitin",
   "createdBy" : "Mohan, Muthiah",
   "createdAt" : "2026-07-22T23:48:42.8738996",
-  "updatedAt" : "2026-07-22T23:48:42.8738996",
+  "updatedAt" : "2026-07-29T17:29:30.8564275",
   "tags" : [ ],
   "project" : "Test Project"
 }

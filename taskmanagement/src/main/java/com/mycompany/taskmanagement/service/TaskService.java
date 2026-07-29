@@ -227,6 +227,58 @@ public class TaskService {
     }
 
     @Transactional
+    public Task updateCustomField(Long id, int fieldNumber, String value, String changedBy) {
+        if (fieldNumber < 1 || fieldNumber > 10) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "fieldNumber must be between 1 and 10");
+        }
+        Task existing = getById(id);
+        List<TaskHistory> histories = new ArrayList<>();
+        String fieldName = "customField" + fieldNumber;
+        String newValue = (value == null || value.isBlank()) ? null : value;
+        String oldValue = getCustomField(existing, fieldNumber);
+        record(histories, id, fieldName, oldValue, newValue, changedBy);
+        setCustomField(existing, fieldNumber, newValue);
+        if (!histories.isEmpty()) {
+            dataStore.saveAllHistory(histories);
+        }
+        Task saved = dataStore.save(existing);
+        eventPublisher.publishEvent(TaskChangedEvent.updated(saved));
+        return saved;
+    }
+
+    private String getCustomField(Task task, int fieldNumber) {
+        return switch (fieldNumber) {
+            case 1 -> task.getCustomField1();
+            case 2 -> task.getCustomField2();
+            case 3 -> task.getCustomField3();
+            case 4 -> task.getCustomField4();
+            case 5 -> task.getCustomField5();
+            case 6 -> task.getCustomField6();
+            case 7 -> task.getCustomField7();
+            case 8 -> task.getCustomField8();
+            case 9 -> task.getCustomField9();
+            case 10 -> task.getCustomField10();
+            default -> throw new IllegalArgumentException("Invalid fieldNumber: " + fieldNumber);
+        };
+    }
+
+    private void setCustomField(Task task, int fieldNumber, String value) {
+        switch (fieldNumber) {
+            case 1 -> task.setCustomField1(value);
+            case 2 -> task.setCustomField2(value);
+            case 3 -> task.setCustomField3(value);
+            case 4 -> task.setCustomField4(value);
+            case 5 -> task.setCustomField5(value);
+            case 6 -> task.setCustomField6(value);
+            case 7 -> task.setCustomField7(value);
+            case 8 -> task.setCustomField8(value);
+            case 9 -> task.setCustomField9(value);
+            case 10 -> task.setCustomField10(value);
+            default -> throw new IllegalArgumentException("Invalid fieldNumber: " + fieldNumber);
+        }
+    }
+
+    @Transactional
     public List<Task> bulkCreate(TaskBulkCreateRequest req) {
         List<Task> created = new ArrayList<>();
         if (req.getTitles() == null) {

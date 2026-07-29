@@ -56,7 +56,7 @@
   <div class="d-flex justify-content-between align-items-center mb-3">
     <nav aria-label="breadcrumb">
       <ol class="breadcrumb mb-0">
-        <li class="breadcrumb-item"><a href="index.html">Tasks</a></li>
+        <li class="breadcrumb-item"><a href="index.html" onclick="return onCancelClick()">Tasks</a></li>
         <li class="breadcrumb-item active" id="breadcrumbCurrent">New Task</li>
       </ol>
     </nav>
@@ -65,7 +65,8 @@
         <span id="saveSpinner" class="spinner-border spinner-border-sm me-1"></span>
         <i class="bi bi-save me-1"></i>Save
       </button>
-      <a href="index.html" class="btn btn-outline-secondary btn-sm"><i class="bi bi-x me-1"></i>Cancel</a>
+      <a href="index.html" id="cancelBtn" class="btn btn-outline-secondary btn-sm" onclick="return onCancelClick()"><i class="bi bi-x me-1"></i>Cancel</a>
+      <button id="cloneBtn" class="btn btn-outline-primary btn-sm" style="display:none" onclick="cloneTask()"><i class="bi bi-copy me-1"></i>Clone</button>
       <button id="deleteBtn" class="btn btn-outline-danger btn-sm" style="display:none" onclick="confirmDelete()"><i class="bi bi-trash me-1"></i>Delete</button>
     </div>
   </div>
@@ -317,9 +318,33 @@
 <script>
   const params = new URLSearchParams(location.search);
   const taskId = params.get('id');
+  const embed = params.get('embed') === '1';
   let toast = null;
 
+  // Builds a link to another task, preserving embed mode so it keeps opening in the panel.
+  function taskLink(id) {
+    return `task-form.html?id=${id}${embed ? '&embed=1' : ''}`;
+  }
+
+  // When embedded in the index.html task panel, tell the parent window instead of navigating.
+  function notifyParent(type) {
+    if (embed && window.parent !== window) {
+      window.parent.postMessage({ type }, location.origin);
+    }
+  }
+
+  function onCancelClick() {
+    if (embed) {
+      notifyParent('taskPanelClose');
+      return false;
+    }
+    return true;
+  }
+
   async function init() {
+    if (embed) {
+      document.querySelector('nav.navbar').style.display = 'none';
+    }
     toast = new bootstrap.Toast(document.getElementById('toastEl'), { delay: 2500 });
     await loadFieldConfigs();
     document.getElementById('templateBar').style.display = '';
@@ -327,6 +352,7 @@
       document.getElementById('navTitle').textContent = `Task #${taskId}`;
       document.getElementById('breadcrumbCurrent').textContent = `Task #${taskId}`;
       document.getElementById('deleteBtn').style.display = '';
+      document.getElementById('cloneBtn').style.display = '';
       document.getElementById('tabSubtasksNav').style.display = '';
       document.getElementById('tabCommentsNav').style.display = '';
       document.getElementById('tabHistoryNav').style.display = '';
@@ -656,8 +682,9 @@
       if (!res.ok) throw new Error(await res.text());
       const saved = await res.json();
       showToast('Task saved successfully!', 'success');
+      notifyParent('taskPanelSaved');
       if (!taskId) {
-        setTimeout(() => location.href = `task-form.html?id=${saved.id}`, 800);
+        setTimeout(() => location.href = taskLink(saved.id), 800);
       } else {
         await loadHistory();
       }
@@ -698,7 +725,7 @@
         </div>
         <div class="d-flex align-items-center gap-2">
           <span class="badge badge-status-${esc(t.status)}">${esc(t.status || '')}</span>
-          <a href="task-form.html?id=${t.id}" class="btn btn-sm btn-outline-secondary py-0 px-1" title="Open"><i class="bi bi-box-arrow-up-right"></i></a>
+          <a href="${taskLink(t.id)}" class="btn btn-sm btn-outline-secondary py-0 px-1" title="Open"><i class="bi bi-box-arrow-up-right"></i></a>
         </div>
       </div>`).join('');
   }
@@ -713,6 +740,7 @@
         body: JSON.stringify({ status: newStatus })
       });
       await loadSubtasks();
+      notifyParent('taskPanelSaved');
     } catch (e) {
       console.error(e);
     }
@@ -736,6 +764,7 @@
       });
       input.value = '';
       await loadSubtasks();
+      notifyParent('taskPanelSaved');
     } catch (e) {
       console.error(e);
       alert('Could not create subtask.');
@@ -805,7 +834,30 @@
 
   async function deleteTask() {
     await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' });
-    location.href = 'index.html';
+    if (embed) {
+      notifyParent('taskPanelClose');
+    } else {
+      location.href = 'index.html';
+    }
+  }
+
+  async function cloneTask() {
+    const payload = buildPayload();
+    payload.title = `Clone of ${payload.title}`;
+    try {
+      const res = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const created = await res.json();
+      notifyParent('taskPanelSaved');
+      location.href = taskLink(created.id);
+    } catch (e) {
+      console.error(e);
+      alert('Could not clone task: ' + e.message);
+    }
   }
 
   function showToast(msg, type) {

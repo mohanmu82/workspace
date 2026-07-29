@@ -13,7 +13,9 @@
       "Bash(\"C:/work/apache-maven-3.9.14/bin/mvn\" compile *)",
       "Bash(JAVA_HOME=\"C:/work/java/jdk-21.0.10+7\" \"C:/work/apache-maven-3.9.14/bin/mvn\" compile)",
       "Bash(JAVA_HOME=\"C:/work/java/jdk-21.0.10+7\" \"C:/work/apache-maven-3.9.14/bin/mvn\" build)",
-      "Bash(JAVA_HOME=\"C:/work/java/jdk-21.0.10+7\" \"C:/work/apache-maven-3.9.14/bin/mvn\" compile -X)"
+      "Bash(JAVA_HOME=\"C:/work/java/jdk-21.0.10+7\" \"C:/work/apache-maven-3.9.14/bin/mvn\" compile -X)",
+      "Bash(curl -s -o /dev/null -w \"delete clone task status: %{http_code}\\\\n\" -X DELETE http://localhost:8099/api/tasks/3)",
+      "Bash(curl -s http://localhost:8099/api/tasks/3 -o /dev/null -w \"confirm gone \\(expect 404\\): %{http_code}\\\\n\")"
     ]
   }
 }

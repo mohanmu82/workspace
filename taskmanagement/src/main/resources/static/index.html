@@ -38,6 +38,9 @@
     .kanban-card  { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; padding: 0.5rem; margin-bottom: 0.5rem; cursor: grab; }
     .kanban-card:hover { background: #e9ecef; }
     .kanban-card.dragging { opacity: 0.4; }
+    .kanban-card.kanban-card-selected { outline: 2px solid #0d6efd; outline-offset: -2px; background: #e7f1ff; }
+    .kanban-board { position: relative; }
+    .selection-marquee { position: absolute; border: 1px solid #0d6efd; background: rgba(13,110,253,0.12); z-index: 5; pointer-events: none; }
     .kanban-card-compact { display: flex; align-items: center; gap: 6px; padding: 3px 6px; margin-bottom: 3px; }
     .kanban-card-compact .task-title-ellipsis { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .kanban-card-compact .task-compact-assignee { flex: 0 0 auto; max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #6c757d; font-size: 0.72rem; }
@@ -92,6 +95,8 @@
     .cal-cell.mini { min-height: 58px; padding: 3px; }
     .cal-cell.mini .cal-tasks { max-height: 42px; }
     .cal-cell.mini .kanban-card-compact { font-size: 0.6rem; padding: 1px 3px; }
+    .task-panel-offcanvas { width: min(1100px, 92vw); }
+    .task-panel-offcanvas .offcanvas-body { overflow: hidden; }
   </style>
 </head>
 <body>
@@ -231,6 +236,7 @@
           <button class="btn btn-outline-primary" id="btnSwimlaneProject" onclick="setView('swimlaneProject')"><i class="bi bi-columns-gap"></i> By Project</button>
           <button class="btn btn-outline-primary" id="btnSwimlaneProgramme" onclick="setView('swimlaneProgramme')"><i class="bi bi-columns-gap"></i> By Programme</button>
           <button class="btn btn-outline-primary" id="btnSwimlaneAssignee" onclick="setView('swimlaneAssignee')"><i class="bi bi-person-lines-fill"></i> By Assignee</button>
+          <button class="btn btn-outline-primary" id="btnSwimlaneCustomField" onclick="setView('swimlaneCustomField')"><i class="bi bi-columns-gap"></i> By Custom Field</button>
           <button class="btn btn-outline-primary" id="btnByDate" onclick="setView('byDate')"><i class="bi bi-calendar3"></i> By Date</button>
           <button class="btn btn-outline-primary" id="btnDueDates" onclick="setView('dueDates')"><i class="bi bi-calendar-event"></i> Due Dates</button>
         </div>
@@ -248,6 +254,13 @@
             <input type="number" id="recentDays" class="form-control" style="width:55px" min="1" value="5" onchange="onRecentDaysChange()"/>
             <span class="input-group-text">days</span>
           </div>
+          <div class="input-group input-group-sm" style="width:auto">
+            <button class="btn btn-outline-warning" id="btnRecentlyCreated" onclick="toggleCreatedRecentFilter()" title="Show tasks created within the last N days">
+              <i class="bi bi-calendar-plus me-1"></i>Created in last
+            </button>
+            <input type="number" id="createdDays" class="form-control" style="width:55px" min="1" value="5" onchange="onCreatedDaysChange()"/>
+            <span class="input-group-text">days</span>
+          </div>
           <label class="mb-0 small fw-semibold">Group by:</label>
           <select id="groupBySelect" class="form-select form-select-sm" style="width:140px" onchange="onGroupByChange()">
             <option value="">None</option>
@@ -260,6 +273,7 @@
             <option value="assetClass">Asset Class</option>
             <option value="workingGroup">Working Group</option>
             <option value="dueDate">Due Date</option>
+            <optgroup label="Custom Fields" id="groupByCustomFieldsGroup"></optgroup>
           </select>
           <span id="cardFieldsSlot"></span>
           <button class="btn btn-outline-secondary btn-sm" onclick="openColumnChooser()" title="Show/hide columns">
@@ -284,13 +298,18 @@
       <!-- Active filters summary (shown above the lanes/board so it's visible even with the sidebar hidden) -->
       <div id="activeFiltersBar" class="mb-2 flex-wrap align-items-center gap-1" style="display:none"></div>
 
-      <!-- Swim lane filter (Kanban / By Project / By Programme / By Assignee) -->
+      <!-- Swim lane filter (Kanban / By Project / By Programme / By Assignee / By Custom Field) -->
       <div id="laneFilterBar" class="mb-2 d-flex align-items-center gap-2" style="display:none">
         <input type="text" id="laneFilterInput" class="form-control form-control-sm lane-filter-bar" placeholder="Filter swim lanes..." oninput="onLaneFilterChange()"/>
         <div class="form-check form-check-sm text-nowrap mb-0">
           <input type="checkbox" class="form-check-input" id="laneHideEmptyInput" onchange="onLaneHideEmptyChange()"/>
           <label class="form-check-label small" for="laneHideEmptyInput">Non-zero swimlanes only</label>
         </div>
+      </div>
+
+      <!-- Text filter (title/description) — applies to every view, not just swim lanes -->
+      <div id="textFilterBar" class="mb-2 d-flex align-items-center gap-2">
+        <input type="text" id="textFilterInput" class="form-control form-control-sm lane-filter-bar" placeholder="Filter by text (title/description)..." oninput="onTextFilterChange()"/>
       </div>
 
       <!-- Table view -->
@@ -322,6 +341,15 @@
       <!-- Swimlane by Assignee view -->
       <div id="swimlaneAssigneeView" style="display:none">
         <div class="kanban-board" id="swimlaneAssigneeBoard"></div>
+      </div>
+
+      <!-- Swimlane by Custom Field view -->
+      <div id="swimlaneCustomFieldView" style="display:none">
+        <div class="mb-2 d-flex align-items-center gap-2">
+          <label class="mb-0 small fw-semibold">Custom field:</label>
+          <select id="customFieldSelect" class="form-select form-select-sm" style="width:220px" onchange="onCustomFieldSelectChange()"></select>
+        </div>
+        <div class="kanban-board" id="swimlaneCustomFieldBoard"></div>
       </div>
 
       <!-- By Date (calendar) view -->
@@ -464,6 +492,18 @@
   </div>
 </div>
 
+<!-- Task detail panel: opens the task in an iframe so the filter sidebar and toolbar behind it
+     stay exactly as they were (same view, filters, scroll position) once it's closed. -->
+<div class="offcanvas offcanvas-end task-panel-offcanvas" tabindex="-1" id="taskPanelOffcanvas" aria-labelledby="taskPanelLabel">
+  <div class="offcanvas-header py-2 border-bottom">
+    <h6 class="offcanvas-title" id="taskPanelLabel">Task</h6>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+  </div>
+  <div class="offcanvas-body p-0">
+    <iframe id="taskPanelFrame" src="about:blank" style="width:100%; height:100%; border:0;"></iframe>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="theme.js"></script>
 <script src="tasks-ws.js"></script>
@@ -488,6 +528,15 @@ const ALL_COLUMNS = [
   { id: 'jira',        label: 'Jira',         sortKey: 'jira',         width: '110px' },
   { id: 'createdBy',   label: 'Created By',   sortKey: 'createdBy',    width: '120px' },
   { id: 'customField1',label: 'Phase',        sortKey: 'customField1', width: '90px'  },
+  { id: 'customField2',label: 'Custom Field 2',  sortKey: 'customField2',  width: '110px' },
+  { id: 'customField3',label: 'Custom Field 3',  sortKey: 'customField3',  width: '110px' },
+  { id: 'customField4',label: 'Custom Field 4',  sortKey: 'customField4',  width: '110px' },
+  { id: 'customField5',label: 'Custom Field 5',  sortKey: 'customField5',  width: '110px' },
+  { id: 'customField6',label: 'Custom Field 6',  sortKey: 'customField6',  width: '110px' },
+  { id: 'customField7',label: 'Custom Field 7',  sortKey: 'customField7',  width: '110px' },
+  { id: 'customField8',label: 'Custom Field 8',  sortKey: 'customField8',  width: '110px' },
+  { id: 'customField9',label: 'Custom Field 9',  sortKey: 'customField9',  width: '110px' },
+  { id: 'customField10',label: 'Custom Field 10', sortKey: 'customField10', width: '110px' },
   { id: 'tags',        label: 'Tags',         sortKey: null,           width: '140px' },
   { id: 'actions',     label: 'Actions',      sortKey: null,           width: '90px'  },
 ];
@@ -509,9 +558,11 @@ const PAGE_SIZE = 25;
 let currentPage = 1;
 let showUnassignedOnly = false;
 let showRecentOnly = false;
+let showCreatedRecentOnly = false;
 let showMyTasksOnly = false;
 let laneFilterText = '';
 let laneHideEmpty = false;
+let textFilterText = '';
 let activeFilterChips = [];
 let colVisibility = {};
 let fieldConfigs = {};
@@ -521,6 +572,11 @@ let masterProgrammes = [];
 let masterProjects = [];
 let masterAssignees = [];
 let allEvents = [];
+const LS_KEY_CUSTOM_FIELD = 'taskSwimlaneCustomField';
+let selectedCustomFieldKey = localStorage.getItem(LS_KEY_CUSTOM_FIELD) || 'customField1';
+// Selection state shared by every kanban-card board (multi-select + bulk drag)
+let selectedTaskIds = new Set();
+let lastClickedCardId = null;
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
@@ -569,10 +625,38 @@ function updateSidebarToggleBtn(hidden) {
   btn.title = hidden ? 'Show filter panel' : 'Hide filter panel';
 }
 
+// ── Task detail panel ───────────────────────────────────────────────────────────
+// Opens task-form.html inside an iframe/offcanvas instead of navigating away, so the
+// sidebar and toolbar stay put and whatever view/filters/scroll you had are still
+// there the moment the panel closes.
+let taskPanelInstance = null;
+
+function openTaskPanel(id) {
+  document.getElementById('taskPanelFrame').src = `task-form.html?id=${id}&embed=1`;
+  document.getElementById('taskPanelLabel').textContent = `Task #${id}`;
+  if (!taskPanelInstance) taskPanelInstance = new bootstrap.Offcanvas(document.getElementById('taskPanelOffcanvas'));
+  taskPanelInstance.show();
+}
+
+document.getElementById('taskPanelOffcanvas').addEventListener('hidden.bs.offcanvas', () => {
+  document.getElementById('taskPanelFrame').src = 'about:blank';
+  loadTasks();
+});
+
+window.addEventListener('message', (event) => {
+  if (event.origin !== location.origin || !event.data) return;
+  if (event.data.type === 'taskPanelClose') {
+    taskPanelInstance?.hide();
+  } else if (event.data.type === 'taskPanelSaved') {
+    loadTasks();
+  }
+});
+
 // ── Card Fields (which fields show on kanban/swimlane/calendar cards & due dates table) ─
 const BOARD_CARD_FIELDS = [
   { id: 'assignee', label: 'Assignee', default: true },
   { id: 'status',   label: 'Status',   default: true },
+  ...Array.from({length:10}, (_,i) => ({ id: `customField${i+1}`, label: `Custom Field ${i+1}`, default: false })),
 ];
 const DUE_DATES_FIELDS = [
   { id: 'status',       label: 'Status',       default: true },
@@ -586,6 +670,7 @@ const DUE_DATES_FIELDS = [
   { id: 'assetClass',   label: 'Asset Class',  default: false },
   { id: 'stakeholder',  label: 'Stakeholder',  default: false },
   { id: 'tags',         label: 'Tags',         default: false },
+  ...Array.from({length:9}, (_,i) => ({ id: `customField${i+2}`, label: `Custom Field ${i+2}`, default: false })),
 ];
 
 function initCardFields() {
@@ -597,7 +682,7 @@ function initCardFields() {
 
 function renderCardFieldsSlot() {
   const slot = document.getElementById('cardFieldsSlot');
-  const boardViews = ['kanban', 'swimlaneProject', 'swimlaneProgramme', 'swimlaneAssignee', 'byDate'];
+  const boardViews = ['kanban', 'swimlaneProject', 'swimlaneProgramme', 'swimlaneAssignee', 'swimlaneCustomField', 'byDate'];
   slot.innerHTML = boardViews.includes(currentView) ? CardFields.renderButton('board', BOARD_CARD_FIELDS) : '';
 }
 
@@ -642,10 +727,12 @@ function getVisibleColumns() {
 async function loadFieldConfigs() {
   try {
     fieldConfigs = await fetch('/api/field-configs').then(r => r.json());
-    // Apply custom display names to column labels
-    ALL_COLUMNS.forEach(col => {
-      const cfg = fieldConfigs[col.id];
-      if (cfg?.displayName) col.label = cfg.displayName;
+    // Apply custom display names to column labels / card-field toggle labels
+    [ALL_COLUMNS, BOARD_CARD_FIELDS, DUE_DATES_FIELDS].forEach(fields => {
+      fields.forEach(f => {
+        const cfg = fieldConfigs[f.id];
+        if (cfg?.displayName) f.label = cfg.displayName;
+      });
     });
     // Use configured status options for kanban
     const scfg = fieldConfigs['status'];
@@ -653,6 +740,48 @@ async function loadFieldConfigs() {
       statusOptions = scfg.source.staticOptions;
     }
   } catch (_) {}
+  populateCustomFieldSelect();
+  populateGroupByCustomFieldOptions();
+}
+
+// ── Custom field swimlane picker ────────────────────────────────────────────────
+function customFieldLabel(n) {
+  const cfg = fieldConfigs[`customField${n}`];
+  return cfg?.displayName || `Custom Field ${n}`;
+}
+
+function populateCustomFieldSelect() {
+  const sel = document.getElementById('customFieldSelect');
+  if (!sel) return;
+  sel.innerHTML = '';
+  for (let n = 1; n <= 10; n++) {
+    const o = document.createElement('option');
+    o.value = `customField${n}`;
+    o.textContent = customFieldLabel(n);
+    sel.appendChild(o);
+  }
+  sel.value = selectedCustomFieldKey;
+}
+
+function onCustomFieldSelectChange() {
+  selectedCustomFieldKey = document.getElementById('customFieldSelect').value;
+  localStorage.setItem(LS_KEY_CUSTOM_FIELD, selectedCustomFieldKey);
+  renderTasks();
+}
+
+function populateGroupByCustomFieldOptions() {
+  const grp = document.getElementById('groupByCustomFieldsGroup');
+  if (!grp) return;
+  const sel = document.getElementById('groupBySelect');
+  const current = sel.value;
+  grp.innerHTML = '';
+  for (let n = 1; n <= 10; n++) {
+    const o = document.createElement('option');
+    o.value = `customField${n}`;
+    o.textContent = customFieldLabel(n);
+    grp.appendChild(o);
+  }
+  sel.value = current;
 }
 
 // ── Filter options ─────────────────────────────────────────────────────────────
@@ -931,7 +1060,7 @@ document.addEventListener('keydown', e => {
     e.preventDefault();
     location.href = 'task-form.html';
   } else if (e.key >= '1' && e.key <= '7') {
-    const views = ['table', 'kanban', 'swimlaneProject', 'swimlaneProgramme', 'swimlaneAssignee', 'byDate', 'dueDates'];
+    const views = ['table', 'kanban', 'swimlaneProject', 'swimlaneProgramme', 'swimlaneAssignee', 'swimlaneCustomField', 'byDate', 'dueDates'];
     setView(views[parseInt(e.key, 10) - 1]);
   }
 });
@@ -961,6 +1090,29 @@ function onRecentDaysChange() {
   }
 }
 
+function toggleCreatedRecentFilter() {
+  showCreatedRecentOnly = !showCreatedRecentOnly;
+  document.getElementById('btnRecentlyCreated').classList.toggle('active', showCreatedRecentOnly);
+  currentPage = 1;
+  updateStats();
+  renderTasks();
+}
+
+function onCreatedDaysChange() {
+  if (showCreatedRecentOnly) {
+    currentPage = 1;
+    updateStats();
+    renderTasks();
+  }
+}
+
+function onTextFilterChange() {
+  textFilterText = document.getElementById('textFilterInput').value.trim().toLowerCase();
+  currentPage = 1;
+  updateStats();
+  renderTasks();
+}
+
 function getFilteredTasks() {
   let tasks = allTasks;
   if (showMyTasksOnly) {
@@ -974,6 +1126,16 @@ function getFilteredTasks() {
     const days = parseInt(document.getElementById('recentDays').value, 10) || 5;
     const cutoff = Date.now() - days * 86400000;
     tasks = tasks.filter(t => t.updatedAt && new Date(t.updatedAt).getTime() >= cutoff);
+  }
+  if (showCreatedRecentOnly) {
+    const days = parseInt(document.getElementById('createdDays').value, 10) || 5;
+    const cutoff = Date.now() - days * 86400000;
+    tasks = tasks.filter(t => t.createdAt && new Date(t.createdAt).getTime() >= cutoff);
+  }
+  if (textFilterText) {
+    tasks = tasks.filter(t =>
+      (t.title || '').toLowerCase().includes(textFilterText) ||
+      (t.description || '').toLowerCase().includes(textFilterText));
   }
   return tasks;
 }
@@ -999,6 +1161,7 @@ function renderTasks() {
   else if (currentView === 'swimlaneProject') renderLaneBoard('project', 'swimlaneProjectBoard', masterProjects);
   else if (currentView === 'swimlaneProgramme') renderLaneBoard('programme', 'swimlaneProgrammeBoard', masterProgrammes);
   else if (currentView === 'swimlaneAssignee') renderLaneBoard('assignee', 'swimlaneAssigneeBoard', masterAssignees);
+  else if (currentView === 'swimlaneCustomField') renderLaneBoard(selectedCustomFieldKey, 'swimlaneCustomFieldBoard', []);
   else if (currentView === 'byDate') renderByDate();
   else if (currentView === 'dueDates') renderDueDates();
   document.getElementById('noResults').style.display = getFilteredTasks().length === 0 ? 'block' : 'none';
@@ -1092,7 +1255,7 @@ function changeTablePage(delta) {
 }
 
 function taskRow(t, visCols) {
-  return `<tr class="task-row" onclick="location.href='task-form.html?id=${t.id}'">${visCols.map(col => taskCell(t, col.id)).join('')}</tr>`;
+  return `<tr class="task-row" onclick="openTaskPanel(${t.id})">${visCols.map(col => taskCell(t, col.id)).join('')}</tr>`;
 }
 
 function taskCell(t, colId) {
@@ -1127,7 +1290,7 @@ function taskCell(t, colId) {
     case 'actions':
       return `<td onclick="event.stopPropagation()">
         ${(t.status !== 'DONE' && t.status !== 'CANCELLED') ? `<button class="btn btn-xs btn-outline-success" style="padding:1px 6px;font-size:0.75rem" onclick="closeTask(${t.id})" title="Close (mark as Done)"><i class="bi bi-check-lg"></i></button>` : ''}
-        <a href="task-form.html?id=${t.id}" class="btn btn-xs btn-outline-primary ms-1" style="padding:1px 6px;font-size:0.75rem"><i class="bi bi-pencil"></i></a>
+        <a href="#" onclick="openTaskPanel(${t.id}); return false;" class="btn btn-xs btn-outline-primary ms-1" style="padding:1px 6px;font-size:0.75rem"><i class="bi bi-pencil"></i></a>
         <button class="btn btn-xs btn-outline-danger ms-1" style="padding:1px 6px;font-size:0.75rem" onclick="confirmDelete(${t.id})"><i class="bi bi-trash"></i></button>
       </td>`;
     default:
@@ -1216,9 +1379,18 @@ function renderCompactCard(t) {
   const tooltip = `${t.title}${t.assignee ? ' · ' + t.assignee : ''}${t.status ? ' · ' + t.status : ''}${due ? ' · due ' + due.toLocaleDateString() : ''}`;
   const showAssignee = CardFields.isOn('board', 'assignee', true);
   const showStatus = CardFields.isOn('board', 'status', true);
-  return `<div class="kanban-card kanban-card-compact" draggable="true" data-task-id="${t.id}" onclick="location.href='task-form.html?id=${t.id}'" title="${esc(tooltip)}">
+  const customChips = [];
+  for (let n = 1; n <= 10; n++) {
+    const fid = `customField${n}`;
+    if (t[fid] && CardFields.isOn('board', fid, false)) {
+      customChips.push(`<span class="task-compact-assignee" title="${esc(customFieldLabel(n))}">${esc(t[fid])}</span>`);
+    }
+  }
+  const selectedClass = selectedTaskIds.has(t.id) ? ' kanban-card-selected' : '';
+  return `<div class="kanban-card kanban-card-compact${selectedClass}" draggable="true" data-task-id="${t.id}" onclick="onCardClick(event, ${t.id})" title="${esc(tooltip)}">
     <span class="task-title-ellipsis${over?' overdue':''}">${esc(t.title)}${over?' ⚠':''}</span>
     ${showAssignee ? `<span class="task-compact-assignee">${esc(t.assignee||'')}</span>` : ''}
+    ${customChips.join('')}
     ${showStatus ? `<span class="badge badge-status-${esc(t.status)} task-compact-status">${esc(t.status||'')}</span>` : ''}
   </div>`;
 }
@@ -1235,7 +1407,7 @@ function onLaneHideEmptyChange() {
 }
 
 function updateLaneFilterBarVisibility(view) {
-  const isBoardView = ['kanban','swimlaneProject','swimlaneProgramme','swimlaneAssignee'].includes(view);
+  const isBoardView = ['kanban','swimlaneProject','swimlaneProgramme','swimlaneAssignee','swimlaneCustomField'].includes(view);
   document.getElementById('laneFilterBar').style.display = isBoardView ? 'flex' : 'none';
 }
 
@@ -1263,60 +1435,44 @@ function renderKanban() {
     col.innerHTML = `<div class="kanban-col-header" style="background:${color};color:#fff">${esc(status.replace(/_/g,' '))} <span class="badge bg-white text-dark ms-1">${(grouped[status]||[]).length}</span></div><div class="kanban-cards" data-status="${status}">${cards||'<p class="text-muted small p-2">Empty</p>'}</div>`;
     board.appendChild(col);
   });
-  wireKanbanDragAndDrop();
+  wireBoardCards('kanbanBoard', (ids, zone) => moveTasksToStatus(ids, zone.dataset.status));
 }
 
-// ── Kanban drag & drop ─────────────────────────────────────────────────────────
-function wireKanbanDragAndDrop() {
-  document.querySelectorAll('.kanban-card').forEach(card => {
-    card.addEventListener('dragstart', e => {
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', card.dataset.taskId);
-      card.classList.add('dragging');
-    });
-    card.addEventListener('dragend', () => card.classList.remove('dragging'));
+async function moveTasksToStatus(taskIds, newStatus) {
+  const changed = [];
+  taskIds.forEach(taskId => {
+    const task = allTasks.find(t => String(t.id) === String(taskId));
+    if (task && task.status !== newStatus) {
+      changed.push({ task, prevStatus: task.status });
+      task.status = newStatus;
+    }
   });
-
-  document.querySelectorAll('.kanban-cards').forEach(zone => {
-    zone.addEventListener('dragover', e => {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      zone.classList.add('drag-over');
-    });
-    zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
-    zone.addEventListener('drop', async e => {
-      e.preventDefault();
-      zone.classList.remove('drag-over');
-      const taskId = e.dataTransfer.getData('text/plain');
-      const newStatus = zone.dataset.status;
-      await moveTaskToStatus(taskId, newStatus);
-    });
-  });
-}
-
-async function moveTaskToStatus(taskId, newStatus) {
-  const task = allTasks.find(t => String(t.id) === String(taskId));
-  if (!task || task.status === newStatus) return;
-  const prevStatus = task.status;
-  task.status = newStatus;
+  if (!changed.length) return;
   renderKanban();
   updateStats();
-  try {
-    await fetch(`/api/tasks/${taskId}/status`, {
+  const results = await Promise.allSettled(changed.map(({ task }) =>
+    fetch(`/api/tasks/${task.id}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: newStatus })
-    });
-  } catch (e) {
-    console.error(e);
-    task.status = prevStatus;
+    })
+  ));
+  let anyFailed = false;
+  results.forEach((r, i) => {
+    if (r.status === 'rejected') {
+      changed[i].task.status = changed[i].prevStatus;
+      anyFailed = true;
+    }
+  });
+  if (anyFailed) {
+    console.error('Some tasks failed to update status');
     renderKanban();
     updateStats();
   }
 }
 
-// ── Swimlanes (by Project / by Programme) ───────────────────────────────────────
-// Columns are the distinct project/programme values (not status); dragging a card
+// ── Swimlanes (by Project / by Programme / by Assignee / by Custom Field) ──────
+// Columns are the distinct values of `field` (not status); dragging a card
 // to another column only changes that field, leaving status untouched.
 const LANE_COLORS = ['#0d6efd','#6f42c1','#20c997','#fd7e14','#e83e8c','#198754','#0dcaf0','#6610f2','#d63384','#495057'];
 
@@ -1351,18 +1507,116 @@ function renderLaneBoard(field, boardId, masterList) {
     board.appendChild(col);
   });
 
-  wireLaneDragAndDrop(boardId);
+  wireBoardCards(boardId, (ids, zone) => moveTasksToLane(ids, zone.dataset.field, zone.dataset.lane));
 }
 
-function wireLaneDragAndDrop(boardId) {
+async function moveTasksToLane(taskIds, field, newLaneValue) {
+  const changed = [];
+  taskIds.forEach(taskId => {
+    const task = allTasks.find(t => String(t.id) === String(taskId));
+    if (!task) return;
+    const currentLane = (task[field] || '').trim();
+    if (currentLane === newLaneValue) return;
+    changed.push({ task, prevValue: task[field] });
+    task[field] = newLaneValue || null;
+  });
+  if (!changed.length) return;
+  renderTasks();
+  updateStats();
+  const isCustomField = /^customField\d+$/.test(field);
+  const results = await Promise.allSettled(changed.map(({ task }) => {
+    if (isCustomField) {
+      const n = field.replace('customField', '');
+      return fetch(`/api/tasks/${task.id}/custom-field/${n}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: newLaneValue || '' })
+      });
+    }
+    const body = {};
+    body[field] = newLaneValue || '';
+    return fetch(`/api/tasks/${task.id}/board`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+  }));
+  let anyFailed = false;
+  results.forEach((r, i) => {
+    if (r.status === 'rejected') {
+      changed[i].task[field] = changed[i].prevValue;
+      anyFailed = true;
+    }
+  });
+  await loadFilterOptions();
+  if (anyFailed) {
+    console.error('Some tasks failed to update');
+    renderTasks();
+    updateStats();
+  }
+}
+
+// ── Multi-select + drag & drop (shared by every kanban-card board: By Status, ──
+// By Project, By Programme, By Assignee, By Custom Field) ──────────────────────
+function clearSelection() {
+  selectedTaskIds.clear();
+  document.querySelectorAll('.kanban-card.kanban-card-selected').forEach(c => c.classList.remove('kanban-card-selected'));
+}
+
+function setCardSelected(card, selected) {
+  const id = Number(card.dataset.taskId);
+  if (selected) { selectedTaskIds.add(id); card.classList.add('kanban-card-selected'); }
+  else { selectedTaskIds.delete(id); card.classList.remove('kanban-card-selected'); }
+}
+
+// Plain click navigates to the task (unchanged); ctrl/cmd-click toggles it into the
+// multi-select, shift-click range-selects within the same lane/column.
+function onCardClick(evt, taskId) {
+  const card = evt.currentTarget;
+  if (evt.ctrlKey || evt.metaKey) {
+    evt.preventDefault();
+    setCardSelected(card, !selectedTaskIds.has(taskId));
+    lastClickedCardId = taskId;
+    return;
+  }
+  if (evt.shiftKey) {
+    evt.preventDefault();
+    const zone = card.closest('.kanban-cards');
+    const cards = zone ? Array.from(zone.querySelectorAll('.kanban-card')) : [card];
+    const lastIdx = cards.findIndex(c => Number(c.dataset.taskId) === lastClickedCardId);
+    const curIdx = cards.indexOf(card);
+    const [from, to] = lastIdx === -1 ? [curIdx, curIdx] : [Math.min(lastIdx, curIdx), Math.max(lastIdx, curIdx)];
+    for (let i = from; i <= to; i++) setCardSelected(cards[i], true);
+    lastClickedCardId = taskId;
+    return;
+  }
+  openTaskPanel(taskId);
+}
+
+// Wires card drag (single or bulk, based on the current selection) and drop zones for one
+// board container. `onDrop(ids, zone)` performs the actual field update for the dropped ids.
+function wireBoardCards(boardId, onDrop) {
   const board = document.getElementById(boardId);
+  if (!board) return;
+
   board.querySelectorAll('.kanban-card').forEach(card => {
     card.addEventListener('dragstart', e => {
+      const id = Number(card.dataset.taskId);
+      let ids;
+      if (selectedTaskIds.has(id) && selectedTaskIds.size > 1) {
+        ids = Array.from(selectedTaskIds);
+      } else {
+        clearSelection();
+        setCardSelected(card, true);
+        ids = [id];
+      }
       e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', card.dataset.taskId);
-      card.classList.add('dragging');
+      e.dataTransfer.setData('text/plain', JSON.stringify(ids));
+      ids.forEach(i => board.querySelectorAll(`.kanban-card[data-task-id="${i}"]`).forEach(c => c.classList.add('dragging')));
     });
-    card.addEventListener('dragend', () => card.classList.remove('dragging'));
+    card.addEventListener('dragend', () => {
+      board.querySelectorAll('.kanban-card.dragging').forEach(c => c.classList.remove('dragging'));
+    });
   });
 
   board.querySelectorAll('.kanban-cards').forEach(zone => {
@@ -1375,37 +1629,71 @@ function wireLaneDragAndDrop(boardId) {
     zone.addEventListener('drop', async e => {
       e.preventDefault();
       zone.classList.remove('drag-over');
-      const taskId = e.dataTransfer.getData('text/plain');
-      await moveTaskToLane(taskId, zone.dataset.field, zone.dataset.lane, boardId);
+      let ids = [];
+      try { ids = JSON.parse(e.dataTransfer.getData('text/plain')); } catch (_) { /* ignore */ }
+      if (!Array.isArray(ids)) ids = [ids];
+      clearSelection();
+      await onDrop(ids, zone);
     });
   });
+
+  wireBoardMarquee(board);
 }
 
-async function moveTaskToLane(taskId, field, newLaneValue, boardId) {
-  const task = allTasks.find(t => String(t.id) === String(taskId));
-  if (!task) return;
-  const currentLane = (task[field] || '').trim();
-  if (currentLane === newLaneValue) return;
+// Rubber-band select: mousedown+drag over empty board space selects every card the
+// rectangle intersects. Wired once per board — the board container element itself
+// survives re-renders (only its children are replaced), so this doesn't need re-wiring.
+function wireBoardMarquee(board) {
+  if (board.dataset.marqueeWired) return;
+  board.dataset.marqueeWired = '1';
 
-  const prevValue = task[field];
-  task[field] = newLaneValue || null;
-  renderTasks();
-  updateStats();
-  try {
-    const body = {};
-    body[field] = newLaneValue || '';
-    await fetch(`/api/tasks/${taskId}/board`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    await loadFilterOptions();
-  } catch (e) {
-    console.error(e);
-    task[field] = prevValue;
-    renderTasks();
-    updateStats();
+  let baseSelection = null;
+  let marqueeStart = null;
+  let marqueeEl = null;
+
+  function positionMarquee(start, current) {
+    marqueeEl.style.left = Math.min(start.x, current.x) + 'px';
+    marqueeEl.style.top = Math.min(start.y, current.y) + 'px';
+    marqueeEl.style.width = Math.abs(current.x - start.x) + 'px';
+    marqueeEl.style.height = Math.abs(current.y - start.y) + 'px';
   }
+
+  board.addEventListener('mousedown', e => {
+    if (e.button !== 0 || e.target.closest('.kanban-card')) return;
+    baseSelection = (e.ctrlKey || e.metaKey || e.shiftKey) ? new Set(selectedTaskIds) : new Set();
+    if (baseSelection.size === 0) clearSelection();
+    const rect = board.getBoundingClientRect();
+    marqueeStart = { x: e.clientX - rect.left + board.scrollLeft, y: e.clientY - rect.top + board.scrollTop };
+    marqueeEl = document.createElement('div');
+    marqueeEl.className = 'selection-marquee';
+    board.appendChild(marqueeEl);
+    positionMarquee(marqueeStart, marqueeStart);
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', e => {
+    if (!marqueeStart || !marqueeEl) return;
+    const rect = board.getBoundingClientRect();
+    const current = { x: e.clientX - rect.left + board.scrollLeft, y: e.clientY - rect.top + board.scrollTop };
+    positionMarquee(marqueeStart, current);
+    const box = marqueeEl.getBoundingClientRect();
+    const hits = new Set(baseSelection);
+    board.querySelectorAll('.kanban-card').forEach(card => {
+      const cbox = card.getBoundingClientRect();
+      const intersects = !(cbox.right < box.left || cbox.left > box.right || cbox.bottom < box.top || cbox.top > box.bottom);
+      if (intersects) hits.add(Number(card.dataset.taskId));
+    });
+    selectedTaskIds = hits;
+    board.querySelectorAll('.kanban-card').forEach(card => {
+      card.classList.toggle('kanban-card-selected', selectedTaskIds.has(Number(card.dataset.taskId)));
+    });
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (marqueeEl) { marqueeEl.remove(); marqueeEl = null; }
+    marqueeStart = null;
+    baseSelection = null;
+  });
 }
 
 // ── By Date (calendar) ──────────────────────────────────────────────────────────
@@ -1631,7 +1919,7 @@ function calTaskChip(t) {
   const showStatus = CardFields.isOn('board', 'status', true);
   return `<div class="kanban-card kanban-card-compact" draggable="true"
                ondragstart="onCalDragStart(event, ${t.id})" ondragend="onCalDragEnd(event)"
-               onclick="location.href='task-form.html?id=${t.id}'" title="${esc(tooltip)}">
+               onclick="openTaskPanel(${t.id})" title="${esc(tooltip)}">
     <span class="task-title-ellipsis${over?' overdue':''}">${esc(t.title)}${over?' ⚠':''}</span>
     ${showAssignee ? `<span class="task-compact-assignee">${esc(t.assignee||'')}</span>` : ''}
     ${showStatus ? `<span class="badge badge-status-${esc(t.status)} task-compact-status">${esc(t.status||'')}</span>` : ''}
@@ -1774,14 +2062,14 @@ function dueDateFieldCell(t, fieldId) {
     case 'assetClass':    return `<td>${esc(t.assetClass||'')}</td>`;
     case 'stakeholder':   return `<td>${esc(t.stakeholder||'')}</td>`;
     case 'tags':          return `<td>${(t.tags||[]).join(', ')}</td>`;
-    default: return '<td></td>';
+    default: return `<td>${esc(t[fieldId]||'')}</td>`;
   }
 }
 
 function dueDateRow(t, visFields) {
   const due = t.dueDate ? new Date(t.dueDate) : null;
   const over = due && due < today && t.status !== 'DONE' && t.status !== 'CANCELLED';
-  return `<tr class="task-row" onclick="location.href='task-form.html?id=${t.id}'">
+  return `<tr class="task-row" onclick="openTaskPanel(${t.id})">
     <td class="${over ? 'overdue' : ''}">${due ? due.toLocaleDateString() : ''}${over ? ' ⚠' : ''}</td>
     <td><strong>${esc(t.title)}</strong></td>
     ${visFields.map(f => dueDateFieldCell(t, f.id)).join('')}
@@ -1812,6 +2100,7 @@ function setView(view) {
   document.getElementById('swimlaneProjectView').style.display   = view === 'swimlaneProject'  ? '' : 'none';
   document.getElementById('swimlaneProgrammeView').style.display = view === 'swimlaneProgramme' ? '' : 'none';
   document.getElementById('swimlaneAssigneeView').style.display  = view === 'swimlaneAssignee'  ? '' : 'none';
+  document.getElementById('swimlaneCustomFieldView').style.display = view === 'swimlaneCustomField' ? '' : 'none';
   document.getElementById('byDateView').style.display             = view === 'byDate'            ? '' : 'none';
   document.getElementById('dueDatesView').style.display          = view === 'dueDates'         ? '' : 'none';
   document.getElementById('btnTable').classList.toggle('active', view === 'table');
@@ -1819,11 +2108,14 @@ function setView(view) {
   document.getElementById('btnSwimlaneProject').classList.toggle('active', view === 'swimlaneProject');
   document.getElementById('btnSwimlaneProgramme').classList.toggle('active', view === 'swimlaneProgramme');
   document.getElementById('btnSwimlaneAssignee').classList.toggle('active', view === 'swimlaneAssignee');
+  document.getElementById('btnSwimlaneCustomField').classList.toggle('active', view === 'swimlaneCustomField');
   document.getElementById('btnByDate').classList.toggle('active', view === 'byDate');
   document.getElementById('btnDueDates').classList.toggle('active', view === 'dueDates');
   document.getElementById('groupBySelect').disabled = view !== 'table';
   updateLaneFilterBarVisibility(view);
   renderCardFieldsSlot();
+  selectedTaskIds.clear();
+  lastClickedCardId = null;
   renderTasks();
 }
 
@@ -1837,15 +2129,20 @@ function clearFilters() {
     .forEach(id => document.getElementById(id).value = '');
   showUnassignedOnly = false;
   showRecentOnly = false;
+  showCreatedRecentOnly = false;
   showMyTasksOnly = false;
   document.getElementById('btnMyTasks').classList.remove('active');
   document.getElementById('btnUnassigned').classList.remove('active');
   document.getElementById('btnRecentlyUpdated').classList.remove('active');
   document.getElementById('recentDays').value = 5;
+  document.getElementById('btnRecentlyCreated').classList.remove('active');
+  document.getElementById('createdDays').value = 5;
   laneFilterText = '';
   document.getElementById('laneFilterInput').value = '';
   laneHideEmpty = false;
   document.getElementById('laneHideEmptyInput').checked = false;
+  textFilterText = '';
+  document.getElementById('textFilterInput').value = '';
   loadTasks();
 }
 
@@ -1891,12 +2188,18 @@ function renderActiveFiltersBar() {
   if (showRecentOnly) chips.push({ label: `Updated in last ${document.getElementById('recentDays').value || 5} days`, clear: () => {
     showRecentOnly = false; document.getElementById('btnRecentlyUpdated').classList.remove('active'); updateStats(); renderTasks();
   } });
+  if (showCreatedRecentOnly) chips.push({ label: `Created in last ${document.getElementById('createdDays').value || 5} days`, clear: () => {
+    showCreatedRecentOnly = false; document.getElementById('btnRecentlyCreated').classList.remove('active'); updateStats(); renderTasks();
+  } });
 
   if (laneFilterText) chips.push({ label: `Swimlane: "${laneFilterText}"`, clear: () => {
     laneFilterText = ''; document.getElementById('laneFilterInput').value = ''; renderTasks();
   } });
   if (laneHideEmpty) chips.push({ label: 'Non-zero swimlanes only', clear: () => {
     laneHideEmpty = false; document.getElementById('laneHideEmptyInput').checked = false; renderTasks();
+  } });
+  if (textFilterText) chips.push({ label: `Text: "${textFilterText}"`, clear: () => {
+    textFilterText = ''; document.getElementById('textFilterInput').value = ''; renderTasks();
   } });
 
   activeFilterChips = chips;

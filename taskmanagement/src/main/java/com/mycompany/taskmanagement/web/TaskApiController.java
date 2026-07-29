@@ -131,6 +131,14 @@ public class TaskApiController {
         return taskService.updatePhase(id, body.get("phase"), changedBy);
     }
 
+    @PatchMapping("/{id}/custom-field/{fieldNumber}")
+    public Task updateCustomField(@PathVariable Long id,
+                                  @PathVariable int fieldNumber,
+                                  @RequestBody Map<String, String> body,
+                                  @RequestHeader(value = "X-Changed-By", defaultValue = "system") String changedBy) {
+        return taskService.updateCustomField(id, fieldNumber, body.get("value"), changedBy);
+    }
+
     @PostMapping("/bulk")
     public List<Task> bulkCreate(@RequestBody TaskBulkCreateRequest req) {
         return taskService.bulkCreate(req);

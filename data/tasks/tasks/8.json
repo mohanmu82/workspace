@@ -3,9 +3,10 @@
   "title" : "task1",
   "status" : "IN_PROGRESS",
   "priority" : "MEDIUM",
+  "assignee" : "nitin",
   "dueDate" : "2026-07-26T13:00:00",
   "createdAt" : "2026-07-24T20:32:18.401192",
-  "updatedAt" : "2026-07-28T22:48:04.9008386",
+  "updatedAt" : "2026-07-29T17:29:30.8564275",
   "tags" : [ ],
   "programme" : "IceX",
   "project" : "Test Project"

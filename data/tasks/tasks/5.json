@@ -3,8 +3,9 @@
   "title" : "task1",
   "status" : "TODO",
   "priority" : "MEDIUM",
+  "assignee" : "nitin",
   "createdAt" : "2026-07-24T20:32:18.400745",
-  "updatedAt" : "2026-07-24T20:32:18.400745",
+  "updatedAt" : "2026-07-29T17:29:30.8564275",
   "programme" : "IceX",
   "project" : "Test Project"
 }
