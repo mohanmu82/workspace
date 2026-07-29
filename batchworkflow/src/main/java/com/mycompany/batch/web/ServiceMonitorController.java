@@ -10,9 +10,14 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -58,6 +63,79 @@ public class ServiceMonitorController {
         };
         if (result == null) return err("Unknown type: " + type + " (expected http, prometheus, or jolokia)");
         return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Batch variant for dataset loads: dozens/hundreds of targets arrive at once, each of which
+     * is a blocking HTTP call. Runs every check on its own virtual thread so the whole batch
+     * completes in roughly the time of the single slowest target instead of the sum of all of them.
+     */
+    @PostMapping("/checkBatch")
+    public ResponseEntity<Map<String, Object>> checkBatch(@RequestBody Map<String, Object> req) {
+        Object rawTargets = req.get("targets");
+        if (!(rawTargets instanceof List<?> rawList) || rawList.isEmpty()) {
+            return err("targets is required and must be a non-empty array");
+        }
+
+        record Target(String id, String url, String type) {}
+        List<Target> targets = new ArrayList<>();
+        for (Object o : rawList) {
+            if (!(o instanceof Map<?, ?> raw)) continue;
+            @SuppressWarnings("unchecked")
+            Map<String, Object> tm = (Map<String, Object>) raw;
+            String id   = str(tm, "id");
+            String url  = str(tm, "url");
+            String type = str(tm, "type");
+            if (url == null || url.isBlank() || type == null || type.isBlank()) continue;
+            targets.add(new Target(id != null ? id : url, url, type));
+        }
+        if (targets.isEmpty()) return err("No valid targets supplied");
+
+        List<Callable<Map<String, Object>>> tasks = new ArrayList<>(targets.size());
+        for (Target t : targets) {
+            tasks.add(() -> {
+                Map<String, Object> r = switch (t.type()) {
+                    case "http"       -> checkHttp(t.url());
+                    case "prometheus" -> checkPrometheus(t.url());
+                    case "jolokia"    -> checkJolokia(t.url());
+                    default -> {
+                        Map<String, Object> m = new LinkedHashMap<>();
+                        m.put("ok", false);
+                        m.put("status", "DOWN");
+                        m.put("error", "Unknown type: " + t.type());
+                        yield m;
+                    }
+                };
+                Map<String, Object> withId = new LinkedHashMap<>();
+                withId.put("id", t.id());
+                withId.putAll(r);
+                return withId;
+            });
+        }
+
+        List<Map<String, Object>> results = new ArrayList<>(tasks.size());
+        try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            List<Future<Map<String, Object>>> futures = pool.invokeAll(tasks);
+            for (int i = 0; i < futures.size(); i++) {
+                try {
+                    results.add(futures.get(i).get());
+                } catch (Exception e) {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("id", targets.get(i).id());
+                    m.put("ok", false);
+                    m.put("status", "DOWN");
+                    m.put("error", e.getMessage());
+                    results.add(m);
+                }
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return err("Interrupted while checking targets");
+        }
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("results", results);
+        return ResponseEntity.ok(body);
     }
 
     // ── HTTP (status 200 = up) ──────────────────────────────────────────────

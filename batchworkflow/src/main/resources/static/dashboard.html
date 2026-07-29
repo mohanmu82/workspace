@@ -259,8 +259,34 @@
     }
   }
 
-  function checkAll() {
-    targets.forEach(t => checkOne(t));
+  // Batch-checks every target in one round trip; the server fans the calls out across
+  // virtual threads so the whole set comes back in roughly the time of the slowest one.
+  async function checkAll() {
+    if (targets.length === 0) return;
+    targets.forEach(t => checking.add(t.id));
+    renderGrid();
+    try {
+      const res = await fetch('/servicemonitor/checkBatch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targets: targets.map(t => ({ id: t.id, url: t.url, type: t.type })) })
+      });
+      const data = await res.json();
+      const now = Date.now();
+      (data.results || []).forEach(r => {
+        r._checkedAt = now;
+        results.set(r.id, r);
+        checking.delete(r.id);
+      });
+    } catch (e) {
+      const now = Date.now();
+      targets.forEach(t => {
+        results.set(t.id, { ok: false, status: 'DOWN', error: e.message, _checkedAt: now });
+        checking.delete(t.id);
+      });
+    } finally {
+      renderGrid();
+    }
   }
 
   // ── Formatting ───────────────────────────────────────────────────────────
