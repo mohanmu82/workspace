@@ -1,0 +1,9 @@
+[ {
+  "id" : 67,
+  "taskId" : 6,
+  "fieldName" : "status",
+  "oldValue" : "TODO",
+  "newValue" : "IN_PROGRESS",
+  "changedBy" : "system",
+  "changedAt" : "2026-07-29T22:36:24.7548731"
+} ]

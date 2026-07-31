@@ -62,6 +62,8 @@
     <span class="text-light fw-semibold"><i class="bi bi-bar-chart-steps me-1"></i>Timeline</span>
     <a href="dependencies.html" class="btn btn-outline-light btn-sm"><i class="bi bi-link-45deg me-1"></i>Dependencies</a>
     <a href="events.html" class="btn btn-outline-light btn-sm"><i class="bi bi-calendar-week me-1"></i>Events</a>
+    <a href="notes.html" class="btn btn-outline-light btn-sm"><i class="bi bi-sticky me-1"></i>Notes</a>
+    <a href="history.html" class="btn btn-outline-light btn-sm"><i class="bi bi-clock-history me-1"></i>History</a>
     <a href="admin.html" class="btn btn-outline-light btn-sm"><i class="bi bi-gear me-1"></i>Admin</a>
     <a href="api-docs.html" class="btn btn-outline-light btn-sm"><i class="bi bi-code-slash me-1"></i>API Docs</a>
     <button class="btn btn-outline-light btn-sm" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle dark mode"><i class="bi bi-moon-stars" id="themeIcon"></i></button>
@@ -76,6 +78,8 @@
       <small class="text-muted">Project spans, milestones (◆), and task due dates (●) at a glance.</small>
     </div>
   </div>
+
+  <div id="projectFilterBar" class="mb-3"></div>
 
   <div id="loadingIndicator" class="text-center py-4 text-muted" style="display:none"><div class="spinner-border spinner-border-sm"></div> Loading...</div>
   <div id="noResults" class="text-center py-5 text-muted"><i class="bi bi-bar-chart-steps fs-1 d-block mb-2"></i>No projects yet — create one on the Projects page</div>
@@ -98,9 +102,17 @@
 
 <script src="theme.js"></script>
 <script src="tasks-ws.js"></script>
+<script src="filter-bar.js"></script>
 <script>
 let projects = [], allTasks = [], allMilestones = [];
 let rangeStart, rangeEnd;
+let filterBar = null;
+
+const PROJECT_FILTER_FIELDS = [
+  { id: 'name', label: 'Name' }, { id: 'description', label: 'Description' },
+  { id: 'owner', label: 'Owner' }, { id: 'status', label: 'Status' },
+  { id: 'startDate', label: 'Start Date' }, { id: 'endDate', label: 'End Date' },
+];
 
 async function fetchTasks() {
   try {
@@ -111,6 +123,13 @@ async function fetchTasks() {
 }
 
 async function init() {
+  filterBar = FilterBar.init({
+    containerId: 'projectFilterBar',
+    storageKey: 'timelineFilters',
+    fields: () => PROJECT_FILTER_FIELDS,
+    getItems: () => projects,
+    onChange: () => render(),
+  });
   document.getElementById('loadingIndicator').style.display = 'block';
   try {
     const [projRes, taskRes, mileRes] = await Promise.all([
@@ -166,14 +185,15 @@ function pctFor(dateStr) {
 }
 
 function render() {
-  document.getElementById('noResults').style.display = projects.length === 0 ? 'block' : 'none';
-  document.getElementById('ganttWrap').style.display = projects.length === 0 ? 'none' : 'block';
-  if (projects.length === 0) return;
+  const visible = projects.filter(p => !filterBar || filterBar.matches(p));
+  document.getElementById('noResults').style.display = visible.length === 0 ? 'block' : 'none';
+  document.getElementById('ganttWrap').style.display = visible.length === 0 ? 'none' : 'block';
+  if (visible.length === 0) return;
 
   computeRange();
 
   const header = buildHeader();
-  const rows = projects.map(p => buildRow(p)).join('');
+  const rows = visible.map(p => buildRow(p)).join('');
   const todayPct = pctFor(new Date().toISOString().slice(0,10));
 
   document.getElementById('ganttInner').innerHTML = `

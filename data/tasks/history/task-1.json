@@ -13,4 +13,12 @@
   "newValue" : "Test Project",
   "changedBy" : "system",
   "changedAt" : "2026-07-23T17:54:24.5621629"
+}, {
+  "id" : 76,
+  "taskId" : 1,
+  "fieldName" : "status",
+  "oldValue" : "TODO",
+  "newValue" : "IN_PROGRESS",
+  "changedBy" : "system",
+  "changedAt" : "2026-07-29T22:36:24.7763807"
 } ]

@@ -3,6 +3,7 @@ package com.mycompany.taskmanagement.web;
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -29,7 +30,7 @@ public class GlobalExceptionHandler {
         if (status == null) {
             status = HttpStatus.INTERNAL_SERVER_ERROR;
         }
-        return ResponseEntity.status(status).body(errorBody(status, ex.getReason()));
+        return ResponseEntity.status(status).contentType(MediaType.APPLICATION_JSON).body(errorBody(status, ex.getReason()));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -40,22 +41,24 @@ public class GlobalExceptionHandler {
                         (a, b) -> a, LinkedHashMap::new));
         Map<String, Object> body = errorBody(HttpStatus.BAD_REQUEST, "Validation failed");
         body.put("fieldErrors", fieldErrors);
-        return ResponseEntity.badRequest().body(body);
+        return ResponseEntity.badRequest().contentType(MediaType.APPLICATION_JSON).body(body);
     }
 
     @ExceptionHandler(ConstraintViolationException.class)
     public ResponseEntity<Map<String, Object>> handleConstraintViolation(ConstraintViolationException ex) {
-        return ResponseEntity.badRequest().body(errorBody(HttpStatus.BAD_REQUEST, ex.getMessage()));
+        return ResponseEntity.badRequest().contentType(MediaType.APPLICATION_JSON)
+                .body(errorBody(HttpStatus.BAD_REQUEST, ex.getMessage()));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> handleIllegalArgument(IllegalArgumentException ex) {
-        return ResponseEntity.badRequest().body(errorBody(HttpStatus.BAD_REQUEST, ex.getMessage()));
+        return ResponseEntity.badRequest().contentType(MediaType.APPLICATION_JSON)
+                .body(errorBody(HttpStatus.BAD_REQUEST, ex.getMessage()));
     }
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleUnexpected(Exception ex) {
-        return ResponseEntity.internalServerError()
+        return ResponseEntity.internalServerError().contentType(MediaType.APPLICATION_JSON)
                 .body(errorBody(HttpStatus.INTERNAL_SERVER_ERROR, "An unexpected error occurred"));
     }
 

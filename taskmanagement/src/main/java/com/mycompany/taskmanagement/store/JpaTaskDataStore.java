@@ -75,6 +75,16 @@ public class JpaTaskDataStore implements TaskDataStore {
     }
 
     @Override
+    public List<TaskHistory> findRecentHistory(int limit) {
+        return historyRepository.findAllByOrderByChangedAtDesc(PageRequest.of(0, limit));
+    }
+
+    @Override
+    public Optional<TaskHistory> findHistoryById(Long historyId) {
+        return historyRepository.findById(historyId);
+    }
+
+    @Override
     public void saveAllHistory(List<TaskHistory> histories) {
         historyRepository.saveAll(histories);
     }

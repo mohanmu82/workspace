@@ -47,6 +47,8 @@
   button:disabled { background: #9ec5e8; cursor: not-allowed; }
   button.secondary { background: #6c757d; }
   button.secondary:hover { background: #545b62; }
+  button.danger { background: #b02a37; }
+  button.danger:hover { background: #8c222c; }
 
   .status-msg { font-size: 0.82rem; margin-top: 8px; }
   .status-ok  { color: #0a5c36; }
@@ -73,7 +75,17 @@
 
   /* ── Target grid ────────────────────────────────────────────────────── */
   .target-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+  .target-grid.grouped { display: block; }
   .empty-msg { font-size: 0.82rem; color: #888; padding: 18px; text-align: center; }
+
+  .group-section { margin-bottom: 22px; }
+  .group-section:last-child { margin-bottom: 0; }
+  .group-header {
+    font-size: 0.75rem; font-weight: 700; color: #555; text-transform: uppercase;
+    letter-spacing: .04em; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #dde1e7;
+  }
+  .group-count { font-weight: 400; color: #999; text-transform: none; letter-spacing: 0; }
+  .group-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
 
   .svc-card {
     border: 1px solid #dde1e7; border-radius: 8px; padding: 14px 16px; background: #fff;
@@ -170,6 +182,14 @@
       <div class="summary-cell"><div class="lbl">Down</div><div class="val down" id="sumDown">0</div></div>
     </div>
     <div class="field">
+      <label>Group By</label>
+      <select id="groupBySelect">
+        <option value="">No grouping</option>
+        <option value="__status">Status</option>
+        <option value="__type">Type</option>
+      </select>
+    </div>
+    <div class="field">
       <label>Auto Refresh</label>
       <select id="refreshInterval">
         <option value="0">Off</option>
@@ -181,6 +201,9 @@
     </div>
     <div class="field">
       <button class="secondary" onclick="checkAll()">Check All Now</button>
+    </div>
+    <div class="field">
+      <button class="danger" onclick="clearAll()">Clear All</button>
     </div>
   </div>
 </div>
@@ -197,6 +220,8 @@
   const results = new Map();   // id -> last check result
   const checking = new Set();  // ids currently in-flight
   let refreshTimer = null;
+  let groupBy = '';            // '', '__status', '__type', or 'attr:<datasetAttribute>'
+  let lastGroupAttrsSig = null;
 
   function loadTargets() {
     try {
@@ -234,6 +259,16 @@
   function removeTarget(id) {
     targets = targets.filter(t => t.id !== id);
     results.delete(id);
+    saveTargets();
+    renderGrid();
+  }
+
+  function clearAll() {
+    if (targets.length === 0) return;
+    if (!confirm('Remove all ' + targets.length + ' service(s) from the dashboard?')) return;
+    targets = [];
+    results.clear();
+    checking.clear();
     saveTargets();
     renderGrid();
   }
@@ -328,17 +363,82 @@
     return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
 
+  // ── Grouping ─────────────────────────────────────────────────────────────
+  function datasetAttrNames() {
+    const attrs = new Set();
+    targets.forEach(t => { if (t.datasetAttrs) Object.keys(t.datasetAttrs).forEach(k => attrs.add(k)); });
+    return Array.from(attrs).sort();
+  }
+
+  // Rebuilds the "Group By" dropdown's options when the set of available dataset
+  // attributes changes, without touching the DOM (and losing an open dropdown) on
+  // every poll tick when nothing has actually changed.
+  function updateGroupByOptions() {
+    const sortedAttrs = datasetAttrNames();
+    const sig = sortedAttrs.join(' ');
+    if (sig === lastGroupAttrsSig) return;
+    lastGroupAttrsSig = sig;
+
+    const sel = document.getElementById('groupBySelect');
+    const attrOptions = sortedAttrs.map(a =>
+      '<option value="attr:' + escapeHtml(a) + '">' + escapeHtml(a) + '</option>').join('');
+    sel.innerHTML =
+      '<option value="">No grouping</option>' +
+      '<option value="__status">Status</option>' +
+      '<option value="__type">Type</option>' +
+      attrOptions;
+    sel.value = groupBy;
+    if (sel.value !== groupBy) { groupBy = ''; sel.value = ''; }
+  }
+
+  function groupValue(t, r, key) {
+    if (key === '__status') {
+      const isChecking = checking.has(t.id) && !r;
+      return isChecking ? 'Checking' : (r ? (r.status === 'UP' ? 'Up' : 'Down') : 'Checking');
+    }
+    if (key === '__type') {
+      return { http: 'HTTP', prometheus: 'Prometheus', jolokia: 'Jolokia' }[t.type] || t.type;
+    }
+    if (key.startsWith('attr:')) {
+      const attr = key.slice(5);
+      const v = t.datasetAttrs ? t.datasetAttrs[attr] : undefined;
+      return (v == null || v === '') ? '(none)' : String(v);
+    }
+    return '';
+  }
+
   // ── Rendering ────────────────────────────────────────────────────────────
   function renderGrid() {
     const grid = document.getElementById('targetGrid');
+    updateGroupByOptions();
 
     if (targets.length === 0) {
+      grid.classList.remove('grouped');
       grid.innerHTML = '<div class="empty-msg">No targets yet — add a service above to start monitoring it.</div>';
       updateSummary();
       return;
     }
 
-    grid.innerHTML = targets.map(renderCard).join('');
+    if (!groupBy) {
+      grid.classList.remove('grouped');
+      grid.innerHTML = targets.map(renderCard).join('');
+    } else {
+      grid.classList.add('grouped');
+      const groups = new Map();
+      targets.forEach(t => {
+        const key = groupValue(t, results.get(t.id), groupBy);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(t);
+      });
+      const sortedKeys = Array.from(groups.keys()).sort();
+      grid.innerHTML = sortedKeys.map(key =>
+        '<div class="group-section">' +
+          '<div class="group-header">' + escapeHtml(key) + ' <span class="group-count">(' + groups.get(key).length + ')</span></div>' +
+          '<div class="group-cards">' + groups.get(key).map(renderCard).join('') + '</div>' +
+        '</div>'
+      ).join('');
+    }
+
     updateSummary();
   }
 
@@ -434,6 +534,11 @@
   }
   document.getElementById('refreshInterval').addEventListener('change', applyRefreshInterval);
 
+  document.getElementById('groupBySelect').addEventListener('change', (e) => {
+    groupBy = e.target.value;
+    renderGrid();
+  });
+
   // ── Init ─────────────────────────────────────────────────────────────────
   renderGrid();
   if (targets.length > 0) checkAll();
@@ -464,7 +569,7 @@
         const type = ['http', 'prometheus', 'jolokia'].includes(row.type) ? row.type : 'http';
         const id = 'ds-' + row._dataset + '-' + url;
         if (targets.some(t => t.id === id)) return; // already loaded
-        targets.push({ id, name, type, url });
+        targets.push({ id, name, type, url, datasetAttrs: row._row });
         added++;
       });
       saveTargets();

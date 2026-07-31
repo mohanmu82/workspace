@@ -21,6 +21,8 @@ public interface TaskDataStore {
     void deleteCommentsByTaskId(Long taskId);
 
     List<TaskHistory> findHistoryByTaskId(Long taskId);
+    List<TaskHistory> findRecentHistory(int limit);
+    Optional<TaskHistory> findHistoryById(Long historyId);
     void saveAllHistory(List<TaskHistory> histories);
     void deleteHistoryByTaskId(Long taskId);
 

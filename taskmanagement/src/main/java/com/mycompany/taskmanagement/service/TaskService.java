@@ -21,6 +21,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.LocalDateTime;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.List;
@@ -342,6 +343,123 @@ public class TaskService {
 
     public List<TaskHistory> getHistory(Long taskId) {
         return dataStore.findHistoryByTaskId(taskId);
+    }
+
+    public List<TaskHistory> getRecentHistory(int limit) {
+        int safeLimit = Math.max(1, Math.min(limit, 500));
+        return dataStore.findRecentHistory(safeLimit);
+    }
+
+    @Transactional
+    public Task undoHistory(Long historyId, String changedBy) {
+        TaskHistory entry = dataStore.findHistoryById(historyId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "History entry not found: " + historyId));
+        Task existing = getById(entry.getTaskId());
+
+        String currentValue = fieldToString(existing, entry.getFieldName());
+        String targetValue = entry.getOldValue();
+
+        List<TaskHistory> histories = new ArrayList<>();
+        record(histories, existing.getId(), entry.getFieldName(), currentValue, targetValue, changedBy);
+        applyFieldValue(existing, entry.getFieldName(), targetValue);
+
+        if (!histories.isEmpty()) {
+            dataStore.saveAllHistory(histories);
+        }
+        Task saved = dataStore.save(existing);
+        eventPublisher.publishEvent(TaskChangedEvent.updated(saved));
+        return saved;
+    }
+
+    private String fieldToString(Task t, String field) {
+        Object value = switch (field) {
+            case "title" -> t.getTitle();
+            case "description" -> t.getDescription();
+            case "status" -> t.getStatus();
+            case "priority" -> t.getPriority();
+            case "assignee" -> t.getAssignee();
+            case "createdBy" -> t.getCreatedBy();
+            case "dueDate" -> t.getDueDate();
+            case "category" -> t.getCategory();
+            case "tags" -> t.getTags();
+            case "estimatedHours" -> t.getEstimatedHours();
+            case "actualHours" -> t.getActualHours();
+            case "programme" -> t.getProgramme();
+            case "project" -> t.getProject();
+            case "assetClass" -> t.getAssetClass();
+            case "workingGroup" -> t.getWorkingGroup();
+            case "stakeholder" -> t.getStakeholder();
+            case "jira" -> t.getJira();
+            case "links" -> t.getLinks();
+            case "parentTaskId" -> t.getParentTaskId();
+            case "customField1" -> t.getCustomField1();
+            case "customField2" -> t.getCustomField2();
+            case "customField3" -> t.getCustomField3();
+            case "customField4" -> t.getCustomField4();
+            case "customField5" -> t.getCustomField5();
+            case "customField6" -> t.getCustomField6();
+            case "customField7" -> t.getCustomField7();
+            case "customField8" -> t.getCustomField8();
+            case "customField9" -> t.getCustomField9();
+            case "customField10" -> t.getCustomField10();
+            default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot undo field: " + field);
+        };
+        return value != null ? value.toString() : null;
+    }
+
+    private void applyFieldValue(Task t, String field, String value) {
+        try {
+            switch (field) {
+                case "title" -> t.setTitle(value);
+                case "description" -> t.setDescription(value);
+                case "status" -> t.setStatus(value);
+                case "priority" -> t.setPriority(value);
+                case "assignee" -> t.setAssignee(value);
+                case "createdBy" -> t.setCreatedBy(value);
+                case "dueDate" -> t.setDueDate((value == null || value.isBlank()) ? null : LocalDateTime.parse(value));
+                case "category" -> t.setCategory(value);
+                case "tags" -> t.setTags(parseTags(value));
+                case "estimatedHours" -> t.setEstimatedHours((value == null || value.isBlank()) ? null : new java.math.BigDecimal(value));
+                case "actualHours" -> t.setActualHours((value == null || value.isBlank()) ? null : new java.math.BigDecimal(value));
+                case "programme" -> t.setProgramme(value);
+                case "project" -> t.setProject(value);
+                case "assetClass" -> t.setAssetClass(value);
+                case "workingGroup" -> t.setWorkingGroup(value);
+                case "stakeholder" -> t.setStakeholder(value);
+                case "jira" -> t.setJira(value);
+                case "links" -> t.setLinks(value);
+                case "parentTaskId" -> t.setParentTaskId((value == null || value.isBlank()) ? null : Long.parseLong(value));
+                case "customField1" -> t.setCustomField1(value);
+                case "customField2" -> t.setCustomField2(value);
+                case "customField3" -> t.setCustomField3(value);
+                case "customField4" -> t.setCustomField4(value);
+                case "customField5" -> t.setCustomField5(value);
+                case "customField6" -> t.setCustomField6(value);
+                case "customField7" -> t.setCustomField7(value);
+                case "customField8" -> t.setCustomField8(value);
+                case "customField9" -> t.setCustomField9(value);
+                case "customField10" -> t.setCustomField10(value);
+                default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot undo field: " + field);
+            }
+        } catch (ResponseStatusException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot undo field '" + field + "': " + e.getMessage());
+        }
+    }
+
+    // Tags are recorded via List#toString (e.g. "[a, b, c]"); this reverses that best-effort.
+    private List<String> parseTags(String value) {
+        if (value == null || value.isBlank()) return null;
+        String trimmed = value.trim();
+        if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+            trimmed = trimmed.substring(1, trimmed.length() - 1);
+        }
+        if (trimmed.isBlank()) return new ArrayList<>();
+        return Arrays.stream(trimmed.split(",\\s*"))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList());
     }
 
     public TaskDependencyGraphResponse getDependencyGraph() {

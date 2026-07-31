@@ -47,6 +47,8 @@
     <a href="timeline.html" class="btn btn-outline-light btn-sm"><i class="bi bi-bar-chart-steps me-1"></i>Timeline</a>
     <a href="dependencies.html" class="btn btn-outline-light btn-sm"><i class="bi bi-link-45deg me-1"></i>Dependencies</a>
     <a href="events.html" class="btn btn-outline-light btn-sm"><i class="bi bi-calendar-week me-1"></i>Events</a>
+    <a href="notes.html" class="btn btn-outline-light btn-sm"><i class="bi bi-sticky me-1"></i>Notes</a>
+    <a href="history.html" class="btn btn-outline-light btn-sm"><i class="bi bi-clock-history me-1"></i>History</a>
     <span class="text-light fw-semibold"><i class="bi bi-gear me-1"></i>Admin – Field Configuration</span>
     <a href="api-docs.html" class="btn btn-outline-light btn-sm"><i class="bi bi-code-slash me-1"></i>API Docs</a>
     <button class="btn btn-outline-light btn-sm" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle dark mode"><i class="bi bi-moon-stars" id="themeIcon"></i></button>
@@ -66,6 +68,8 @@
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#secClassification">Classification</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#secExternal">External</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#secCustom">Custom Fields</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#secNotes">Notes</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#secBackup">Backup &amp; Restore</button></li>
   </ul>
 
   <div class="tab-content">
@@ -74,6 +78,34 @@
     <div class="tab-pane fade" id="secClassification"></div>
     <div class="tab-pane fade" id="secExternal"></div>
     <div class="tab-pane fade" id="secCustom"></div>
+    <div class="tab-pane fade" id="secNotes"></div>
+    <div class="tab-pane fade" id="secBackup">
+      <div class="field-card">
+        <div class="field-label mb-2"><i class="bi bi-download me-1"></i>Backup all data</div>
+        <p class="text-muted" style="font-size:0.82rem;">
+          Downloads a single .zip containing every task, comment, history entry, project, programme,
+          event, template and field configuration currently on disk.
+        </p>
+        <button class="btn btn-primary btn-sm" id="backupExportBtn" onclick="exportBackup()">
+          <i class="bi bi-file-earmark-zip me-1"></i>Download Backup (.zip)
+        </button>
+      </div>
+
+      <div class="field-card">
+        <div class="field-label mb-2"><i class="bi bi-upload me-1"></i>Restore from backup</div>
+        <p class="text-muted" style="font-size:0.82rem;">
+          Restores data from a previously downloaded backup .zip — use this if the filesystem was wiped
+          out or you're moving to a new environment. Files in the zip overwrite any files already on
+          disk with the same name.
+        </p>
+        <div class="d-flex gap-2 align-items-center">
+          <input type="file" class="form-control form-control-sm" id="backupImportFile" accept=".zip" style="max-width:320px;"/>
+          <button class="btn btn-outline-danger btn-sm" id="backupImportBtn" onclick="importBackup()">
+            <i class="bi bi-arrow-clockwise me-1"></i>Restore
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 
 </div>
@@ -117,6 +149,7 @@ const SECTION_MAP = {
   'secClassification': ['category','programme','project','assetClass','workingGroup'],
   'secExternal':       ['jira','links'],
   'secCustom':         Array.from({length:10}, (_,i) => `customField${i+1}`),
+  'secNotes':          ['note_description','note_assignee', ...Array.from({length:5}, (_,i) => `note_customField${i+1}`)],
 };
 
 const FIELD_META = {
@@ -142,6 +175,12 @@ const FIELD_META = {
 };
 for (let i=1; i<=10; i++) {
   FIELD_META[`customField${i}`] = { label: `Custom Field ${i}`, defaultType: 'textbox' };
+}
+
+FIELD_META.note_description = { label: 'Description', fixedType: 'textarea' };
+FIELD_META.note_assignee    = { label: 'Assignee',     defaultType: 'textbox' };
+for (let i=1; i<=5; i++) {
+  FIELD_META[`note_customField${i}`] = { label: `Note Custom Field ${i}`, defaultType: 'textbox' };
 }
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -513,6 +552,39 @@ async function runSourceTest(label, source) {
   } catch (e) {
     document.getElementById('testModalBody').innerHTML =
       `<div class="p-3 text-danger"><i class="bi bi-exclamation-triangle me-1"></i>${esc(e.message)}</div>`;
+  }
+}
+
+// ── Backup / Restore ─────────────────────────────────────────────────────────
+
+function exportBackup() {
+  window.location.href = '/api/backup/export';
+}
+
+async function importBackup() {
+  const input = document.getElementById('backupImportFile');
+  const file = input.files[0];
+  if (!file) { showToast('Choose a .zip file first', 'warning'); return; }
+  if (!confirm('Restoring will overwrite any existing data files with the same name. Continue?')) return;
+
+  const btn = document.getElementById('backupImportBtn');
+  btn.disabled = true;
+  const formData = new FormData();
+  formData.append('file', file);
+  try {
+    const res = await fetch('/api/backup/import', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast('Restore failed: ' + (data.message || 'Error'), 'danger');
+      return;
+    }
+    showToast('Restore complete — reloading…', 'success');
+    input.value = '';
+    setTimeout(() => location.reload(), 1200);
+  } catch (e) {
+    showToast('Restore failed: ' + e.message, 'danger');
+  } finally {
+    btn.disabled = false;
   }
 }
 

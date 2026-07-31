@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Notes</title>
+  <script>document.documentElement.setAttribute('data-bs-theme', localStorage.getItem('theme') || 'light');</script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"/>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"/>
+  <link rel="stylesheet" href="theme.css"/>
+  <style>
+    body { background: #f4f6f9; font-size: 0.875rem; }
+    .note-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 0.75rem; }
+    .note-card { background:#fff; border:1px solid #dee2e6; border-radius:8px; padding:0.75rem 0.9rem; }
+    .note-card:hover { box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+    .note-desc { white-space: pre-wrap; font-size: 0.82rem; margin-bottom: 0.4rem; max-height: 6.5em; overflow-y: auto; }
+    .note-meta { font-size: 0.72rem; color: #6c757d; }
+    .note-chip { display:inline-block; background:#e9ecef; border-radius:10px; padding:1px 8px; font-size:0.68rem; margin:2px 3px 0 0; }
+    #noResults { display:none; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark bg-dark px-3">
+  <a class="navbar-brand fw-bold" href="index.html"><i class="bi bi-check2-square me-2"></i>Task Manager</a>
+  <div class="d-flex gap-2 align-items-center">
+    <a href="index.html" class="btn btn-outline-light btn-sm"><i class="bi bi-list-task me-1"></i>Tasks</a>
+    <a href="due-dates.html" class="btn btn-outline-light btn-sm"><i class="bi bi-calendar-event me-1"></i>Due Dates</a>
+    <a href="dependencies.html" class="btn btn-outline-light btn-sm"><i class="bi bi-link-45deg me-1"></i>Dependencies</a>
+    <a href="events.html" class="btn btn-outline-light btn-sm"><i class="bi bi-calendar-week me-1"></i>Events</a>
+    <span class="text-light fw-semibold"><i class="bi bi-sticky me-1"></i>Notes</span>
+    <a href="history.html" class="btn btn-outline-light btn-sm"><i class="bi bi-clock-history me-1"></i>History</a>
+    <a href="admin.html" class="btn btn-outline-light btn-sm"><i class="bi bi-gear me-1"></i>Admin</a>
+    <a href="api-docs.html" class="btn btn-outline-light btn-sm"><i class="bi bi-code-slash me-1"></i>API Docs</a>
+    <button class="btn btn-outline-light btn-sm" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle dark mode"><i class="bi bi-moon-stars" id="themeIcon"></i></button>
+  </div>
+</nav>
+
+<div class="container-fluid" style="max-width:1400px; padding:1.5rem 1rem;">
+
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h5 class="mb-0">Notes</h5>
+      <small class="text-muted">Quick notes captured from a conversation — separate from tasks. Spin a note into a Task when it becomes actionable.</small>
+    </div>
+    <button class="btn btn-primary btn-sm" onclick="openNoteModal()"><i class="bi bi-plus-lg me-1"></i>New Note</button>
+  </div>
+
+  <div id="loadingIndicator" class="text-center py-4 text-muted" style="display:none"><div class="spinner-border spinner-border-sm"></div> Loading...</div>
+  <div id="noResults" class="text-center py-5 text-muted"><i class="bi bi-sticky fs-1 d-block mb-2"></i>No notes yet</div>
+
+  <div class="note-grid" id="noteGrid"></div>
+
+</div>
+
+<!-- Add / edit note modal -->
+<div class="modal fade" id="noteModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title" id="noteModalTitle"><i class="bi bi-sticky me-1"></i>New Note</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="noteId"/>
+        <div class="mb-2">
+          <label class="form-label small fw-semibold mb-1">Description</label>
+          <textarea id="noteDescription" class="form-control form-control-sm" rows="4"></textarea>
+        </div>
+        <div class="mb-2">
+          <label class="form-label small fw-semibold mb-1">Assignee</label>
+          <input type="text" id="noteAssignee" class="form-control form-control-sm"/>
+        </div>
+        <div id="noteCustomFields"></div>
+        <div id="noteError" class="text-danger small mt-1" style="display:none"></div>
+      </div>
+      <div class="modal-footer py-2">
+        <button class="btn btn-outline-danger btn-sm me-auto" id="deleteNoteBtn" style="display:none" onclick="deleteNote()"><i class="bi bi-trash me-1"></i>Delete</button>
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary btn-sm" onclick="saveNote()">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Create task from note modal -->
+<div class="modal fade" id="createTaskModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title"><i class="bi bi-diagram-3 me-1"></i>Create Task from Note</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="createTaskNoteId"/>
+        <div class="mb-2">
+          <label class="form-label small fw-semibold mb-1">Task title <span class="text-muted fw-normal">(optional — defaults to the note text)</span></label>
+          <input type="text" id="createTaskTitle" class="form-control form-control-sm" placeholder="Dependency: ..."/>
+        </div>
+        <div class="mb-1">
+          <label class="form-label small fw-semibold mb-1">Existing task that depends on this <span class="text-muted fw-normal">(optional)</span></label>
+          <input list="allTasksDatalist" id="createTaskDependsOn" class="form-control form-control-sm" placeholder="Search task by title or #id..."/>
+          <datalist id="allTasksDatalist"></datalist>
+        </div>
+        <div id="createTaskError" class="text-danger small mt-1" style="display:none"></div>
+      </div>
+      <div class="modal-footer py-2">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary btn-sm" onclick="submitCreateTask()">Create Task</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="theme.js"></script>
+<script>
+let allNotes = [];
+let allTasks = [];
+let fieldConfigs = {};
+let noteModal, createTaskModal;
+const NOTE_CUSTOM_FIELD_COUNT = 5;
+
+async function init() {
+  noteModal = new bootstrap.Modal(document.getElementById('noteModal'));
+  createTaskModal = new bootstrap.Modal(document.getElementById('createTaskModal'));
+  fieldConfigs = await fetch('/api/field-configs').then(r => r.json()).catch(() => ({}));
+  buildCustomFieldInputs();
+  await Promise.all([loadNotes(), loadTasks()]);
+}
+
+function customFieldLabel(i) {
+  const cfg = fieldConfigs[`note_customField${i}`];
+  return (cfg && cfg.displayName) || `Custom Field ${i}`;
+}
+
+function buildCustomFieldInputs() {
+  let html = '';
+  for (let i = 1; i <= NOTE_CUSTOM_FIELD_COUNT; i++) {
+    html += `<div class="mb-2">
+      <label class="form-label small fw-semibold mb-1">${esc(customFieldLabel(i))}</label>
+      <input type="text" id="noteCustomField${i}" class="form-control form-control-sm"/>
+    </div>`;
+  }
+  document.getElementById('noteCustomFields').innerHTML = html;
+}
+
+async function loadNotes() {
+  document.getElementById('loadingIndicator').style.display = 'block';
+  try {
+    const res = await fetch('/api/notes');
+    allNotes = await res.json();
+    render();
+  } catch (e) {
+    console.error(e);
+  } finally {
+    document.getElementById('loadingIndicator').style.display = 'none';
+  }
+}
+
+async function loadTasks() {
+  try {
+    const res = await fetch('/api/tasks?size=500&sortBy=createdAt&sortDir=desc');
+    const data = await res.json();
+    allTasks = data.tasks || [];
+    document.getElementById('allTasksDatalist').innerHTML =
+      allTasks.map(t => `<option value="${escAttr('#' + t.id + ' - ' + t.title)}"></option>`).join('');
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+function render() {
+  document.getElementById('noResults').style.display = allNotes.length === 0 ? 'block' : 'none';
+  document.getElementById('noteGrid').innerHTML = allNotes.map(noteCardHtml).join('');
+}
+
+function noteCardHtml(n) {
+  const chips = [];
+  for (let i = 1; i <= NOTE_CUSTOM_FIELD_COUNT; i++) {
+    const val = n[`customField${i}`];
+    if (val) chips.push(`<span class="note-chip">${esc(customFieldLabel(i))}: ${esc(val)}</span>`);
+  }
+  return `
+  <div class="note-card">
+    <div class="note-desc">${esc(n.description)}</div>
+    <div class="note-meta mb-1">
+      ${n.assignee ? `<i class="bi bi-person me-1"></i>${esc(n.assignee)} &middot; ` : ''}
+      <i class="bi bi-clock-history me-1"></i>Updated ${formatDate(n.updatedAt)}
+    </div>
+    <div class="mb-2">${chips.join('') || ''}</div>
+    <div class="d-flex gap-1">
+      <button class="btn btn-outline-secondary btn-sm" onclick="openNoteModal(${n.id})"><i class="bi bi-pencil"></i></button>
+      <button class="btn btn-outline-primary btn-sm" onclick="openCreateTaskModal(${n.id})"><i class="bi bi-diagram-3 me-1"></i>Create Task</button>
+    </div>
+  </div>`;
+}
+
+function formatDate(s) {
+  if (!s) return '';
+  return new Date(s).toLocaleString();
+}
+
+// ── Add / edit / delete note ────────────────────────────────────────────────
+function openNoteModal(id) {
+  document.getElementById('noteError').style.display = 'none';
+  document.getElementById('noteId').value = '';
+  document.getElementById('noteDescription').value = '';
+  document.getElementById('noteAssignee').value = '';
+  for (let i = 1; i <= NOTE_CUSTOM_FIELD_COUNT; i++) {
+    document.getElementById(`noteCustomField${i}`).value = '';
+  }
+  document.getElementById('deleteNoteBtn').style.display = 'none';
+  document.getElementById('noteModalTitle').innerHTML = '<i class="bi bi-sticky me-1"></i>New Note';
+
+  if (id) {
+    const n = allNotes.find(x => x.id === id);
+    if (n) {
+      document.getElementById('noteId').value = n.id;
+      document.getElementById('noteDescription').value = n.description || '';
+      document.getElementById('noteAssignee').value = n.assignee || '';
+      for (let i = 1; i <= NOTE_CUSTOM_FIELD_COUNT; i++) {
+        document.getElementById(`noteCustomField${i}`).value = n[`customField${i}`] || '';
+      }
+      document.getElementById('deleteNoteBtn').style.display = '';
+      document.getElementById('noteModalTitle').innerHTML = '<i class="bi bi-sticky me-1"></i>Edit Note';
+    }
+  }
+  noteModal.show();
+}
+
+async function saveNote() {
+  const id = document.getElementById('noteId').value;
+  const description = document.getElementById('noteDescription').value.trim();
+  const errEl = document.getElementById('noteError');
+  if (!description) {
+    errEl.textContent = 'Description is required.';
+    errEl.style.display = 'block';
+    return;
+  }
+  const payload = {
+    description,
+    assignee: document.getElementById('noteAssignee').value.trim() || null,
+  };
+  for (let i = 1; i <= NOTE_CUSTOM_FIELD_COUNT; i++) {
+    payload[`customField${i}`] = document.getElementById(`noteCustomField${i}`).value.trim() || null;
+  }
+  try {
+    const res = await fetch(id ? `/api/notes/${id}` : '/api/notes', {
+      method: id ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error(await res.text());
+    noteModal.hide();
+    await loadNotes();
+  } catch (e) {
+    errEl.textContent = 'Could not save note: ' + e.message;
+    errEl.style.display = 'block';
+  }
+}
+
+async function deleteNote() {
+  const id = document.getElementById('noteId').value;
+  if (!id || !confirm('Delete this note?')) return;
+  try {
+    const res = await fetch(`/api/notes/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(await res.text());
+    noteModal.hide();
+    await loadNotes();
+  } catch (e) {
+    alert('Could not delete note: ' + e.message);
+  }
+}
+
+// ── Create task from note ───────────────────────────────────────────────────
+function openCreateTaskModal(noteId) {
+  document.getElementById('createTaskNoteId').value = noteId;
+  document.getElementById('createTaskTitle').value = '';
+  document.getElementById('createTaskDependsOn').value = '';
+  document.getElementById('createTaskError').style.display = 'none';
+  createTaskModal.show();
+}
+
+async function submitCreateTask() {
+  const noteId = document.getElementById('createTaskNoteId').value;
+  const title = document.getElementById('createTaskTitle').value.trim();
+  const dependsOnVal = document.getElementById('createTaskDependsOn').value.trim();
+  const errEl = document.getElementById('createTaskError');
+
+  let dependsOnTaskId = null;
+  if (dependsOnVal) {
+    const match = dependsOnVal.match(/^#?(\d+)/);
+    if (!match || !allTasks.find(t => t.id === parseInt(match[1], 10))) {
+      errEl.textContent = 'Pick a task from the list (start typing to search), or leave it blank.';
+      errEl.style.display = 'block';
+      return;
+    }
+    dependsOnTaskId = parseInt(match[1], 10);
+  }
+
+  try {
+    const res = await fetch(`/api/notes/${noteId}/create-task`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dependsOnTaskId, title: title || null })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const task = await res.json();
+    createTaskModal.hide();
+    location.href = `task-form.html?id=${task.id}`;
+  } catch (e) {
+    errEl.textContent = 'Could not create task: ' + e.message;
+    errEl.style.display = 'block';
+  }
+}
+
+function esc(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function escAttr(s) { return esc(s).replace(/'/g, '&#39;'); }
+
+init();
+</script>
+</body>
+</html>

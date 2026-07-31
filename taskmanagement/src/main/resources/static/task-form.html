@@ -45,6 +45,8 @@
     <a href="timeline.html" class="btn btn-outline-light btn-sm"><i class="bi bi-bar-chart-steps me-1"></i>Timeline</a>
     <a href="dependencies.html" class="btn btn-outline-light btn-sm"><i class="bi bi-link-45deg me-1"></i>Dependencies</a>
     <a href="events.html" class="btn btn-outline-light btn-sm"><i class="bi bi-calendar-week me-1"></i>Events</a>
+    <a href="notes.html" class="btn btn-outline-light btn-sm"><i class="bi bi-sticky me-1"></i>Notes</a>
+    <a href="history.html" class="btn btn-outline-light btn-sm"><i class="bi bi-clock-history me-1"></i>History</a>
     <a href="admin.html" class="btn btn-outline-light btn-sm"><i class="bi bi-gear me-1"></i>Admin</a>
     <a href="api-docs.html" class="btn btn-outline-light btn-sm"><i class="bi bi-code-slash me-1"></i>API Docs</a>
     <button class="btn btn-outline-light btn-sm" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle dark mode"><i class="bi bi-moon-stars" id="themeIcon"></i></button>
@@ -137,7 +139,10 @@
           </div>
           <div class="col-md-4">
             <label class="form-label">Due Date</label>
-            <input type="datetime-local" id="dueDate" class="form-control"/>
+            <div class="input-group">
+              <input type="datetime-local" id="dueDate" class="form-control"/>
+              <button type="button" class="btn btn-outline-secondary" id="clearDueDateBtn" onclick="document.getElementById('dueDate').value=''" title="Clear due date"><i class="bi bi-x-lg"></i></button>
+            </div>
           </div>
           <div class="col-md-4">
             <label class="form-label">Tags <span class="text-muted">(comma-separated)</span></label>
@@ -821,11 +826,31 @@
               <span class="text-success">${esc(h.newValue || '')}</span>
             </span>
           </div>
-          <div class="text-muted small ms-3 text-nowrap">
-            ${esc(h.changedBy || '')} · ${new Date(h.changedAt).toLocaleString()}
+          <div class="text-end ms-3 text-nowrap">
+            <div class="text-muted small">${esc(h.changedBy || '')} · ${new Date(h.changedAt).toLocaleString()}</div>
+            <button class="btn btn-outline-secondary btn-sm mt-1" onclick="undoHistoryChange(${h.id})" title="Revert this change">
+              <i class="bi bi-arrow-counterclockwise me-1"></i>Undo
+            </button>
           </div>
         </div>
       </div>`).join('');
+  }
+
+  async function undoHistoryChange(historyId) {
+    if (!confirm('Undo this change? This will revert the field back to its previous value.')) return;
+    try {
+      const changedBy = getMyName() || 'system';
+      const res = await fetch(`/api/tasks/history/${historyId}/undo`, {
+        method: 'POST',
+        headers: { 'X-Changed-By': changedBy }
+      });
+      if (!res.ok) throw new Error(await res.text());
+      showToast('Change undone', 'success');
+      await loadHistory();
+      await loadTask();
+    } catch (e) {
+      showToast('Could not undo change: ' + e.message, 'danger');
+    }
   }
 
   function confirmDelete() {

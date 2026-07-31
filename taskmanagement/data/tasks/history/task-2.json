@@ -29,4 +29,20 @@
   "newValue" : "[]",
   "changedBy" : "bob",
   "changedAt" : "2026-07-29T17:49:06.5320522"
+}, {
+  "id" : 7,
+  "taskId" : 2,
+  "fieldName" : "assignee",
+  "oldValue" : "bob",
+  "newValue" : "bob-smoketest",
+  "changedBy" : "tester",
+  "changedAt" : "2026-07-30T23:39:39.5438963"
+}, {
+  "id" : 8,
+  "taskId" : 2,
+  "fieldName" : "assignee",
+  "oldValue" : "bob-smoketest",
+  "newValue" : "bob",
+  "changedBy" : "system",
+  "changedAt" : "2026-07-30T23:41:18.3888132"
 } ]

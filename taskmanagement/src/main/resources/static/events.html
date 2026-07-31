@@ -44,6 +44,8 @@
     <a href="phases.html" class="btn btn-outline-light btn-sm"><i class="bi bi-kanban me-1"></i>Phases</a>
     <a href="timeline.html" class="btn btn-outline-light btn-sm"><i class="bi bi-bar-chart-steps me-1"></i>Timeline</a>
     <a href="dependencies.html" class="btn btn-outline-light btn-sm"><i class="bi bi-link-45deg me-1"></i>Dependencies</a>
+    <a href="notes.html" class="btn btn-outline-light btn-sm"><i class="bi bi-sticky me-1"></i>Notes</a>
+    <a href="history.html" class="btn btn-outline-light btn-sm"><i class="bi bi-clock-history me-1"></i>History</a>
     <a href="admin.html" class="btn btn-outline-light btn-sm"><i class="bi bi-gear me-1"></i>Admin</a>
     <a href="api-docs.html" class="btn btn-outline-light btn-sm"><i class="bi bi-code-slash me-1"></i>API Docs</a>
     <button class="btn btn-outline-light btn-sm" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle dark mode"><i class="bi bi-moon-stars" id="themeIcon"></i></button>
@@ -61,6 +63,8 @@
     </div>
     <button class="btn btn-primary btn-sm" onclick="openEventModal()"><i class="bi bi-plus-lg me-1"></i>New Event</button>
   </div>
+
+  <div id="eventFilterBar" class="mb-3"></div>
 
   <div id="loadingIndicator" class="text-center py-4 text-muted" style="display:none"><div class="spinner-border spinner-border-sm"></div> Loading...</div>
 
@@ -125,21 +129,34 @@
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="theme.js"></script>
 <script src="events.js"></script>
+<script src="filter-bar.js"></script>
 <script>
 let allEvents = [];
 let viewYear, viewMonth; // viewMonth is 0-based
 let eventModal;
+let filterBar = null;
 const today = new Date();
 today.setHours(0, 0, 0, 0);
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const DOW_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
+const EVENT_FILTER_FIELDS = [
+  { id: 'title', label: 'Title' }, { id: 'type', label: 'Type' }, { id: 'description', label: 'Description' },
+];
+
 function init() {
   viewYear = today.getFullYear();
   viewMonth = today.getMonth();
   eventModal = new bootstrap.Modal(document.getElementById('eventModal'));
   populateTypeSelect();
+  filterBar = FilterBar.init({
+    containerId: 'eventFilterBar',
+    storageKey: 'eventsFilters',
+    fields: () => EVENT_FILTER_FIELDS,
+    getItems: () => allEvents,
+    onChange: () => render(),
+  });
   loadEvents();
 }
 
@@ -189,7 +206,7 @@ function eventsForDate(d) {
   return allEvents.filter(e => {
     const start = e.startDate.substring(0, 10);
     const end = (e.endDate || e.startDate).substring(0, 10);
-    return key >= start && key <= end;
+    return key >= start && key <= end && (!filterBar || filterBar.matches(e));
   });
 }
 
@@ -230,7 +247,7 @@ function eventChip(e) {
 
 function renderUpcoming() {
   const upcoming = allEvents
-    .filter(e => (e.endDate || e.startDate).substring(0, 10) >= dateKey(today))
+    .filter(e => (e.endDate || e.startDate).substring(0, 10) >= dateKey(today) && (!filterBar || filterBar.matches(e)))
     .sort((a, b) => a.startDate.localeCompare(b.startDate))
     .slice(0, 25);
   document.getElementById('noUpcoming').style.display = upcoming.length === 0 ? 'block' : 'none';

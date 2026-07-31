@@ -1,11 +1,11 @@
 {
   "id" : 7,
   "title" : "task1",
-  "status" : "TODO",
+  "status" : "IN_PROGRESS",
   "priority" : "MEDIUM",
   "assignee" : "nitin",
   "createdAt" : "2026-07-24T20:32:18.401192",
-  "updatedAt" : "2026-07-29T17:29:30.8564275",
+  "updatedAt" : "2026-07-29T22:36:24.7604793",
   "programme" : "IceX",
   "project" : "Test Project"
 }

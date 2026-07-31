@@ -5,4 +5,12 @@
   "newValue" : "2026-07-30T09:00",
   "changedBy" : "system",
   "changedAt" : "2026-07-25T00:06:46.9675335"
+}, {
+  "id" : 68,
+  "taskId" : 13,
+  "fieldName" : "status",
+  "oldValue" : "TODO",
+  "newValue" : "IN_PROGRESS",
+  "changedBy" : "system",
+  "changedAt" : "2026-07-29T22:36:24.7548731"
 } ]

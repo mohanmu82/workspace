@@ -1,12 +1,12 @@
 {
   "id" : 4,
   "title" : "Test",
-  "status" : "TODO",
+  "status" : "IN_PROGRESS",
   "priority" : "MEDIUM",
   "assignee" : "nitin",
   "createdBy" : "Mohan, Muthiah",
   "createdAt" : "2026-07-22T23:48:42.8738996",
-  "updatedAt" : "2026-07-29T17:29:30.8564275",
+  "updatedAt" : "2026-07-29T22:36:24.7773826",
   "tags" : [ ],
   "project" : "Test Project"
 }

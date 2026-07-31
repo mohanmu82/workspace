@@ -71,6 +71,8 @@
     <a href="timeline.html" class="btn btn-outline-light btn-sm"><i class="bi bi-bar-chart-steps me-1"></i>Timeline</a>
     <a href="dependencies.html" class="btn btn-outline-light btn-sm"><i class="bi bi-link-45deg me-1"></i>Dependencies</a>
     <a href="events.html" class="btn btn-outline-light btn-sm"><i class="bi bi-calendar-week me-1"></i>Events</a>
+    <a href="notes.html" class="btn btn-outline-light btn-sm"><i class="bi bi-sticky me-1"></i>Notes</a>
+    <a href="history.html" class="btn btn-outline-light btn-sm"><i class="bi bi-clock-history me-1"></i>History</a>
     <a href="admin.html" class="btn btn-outline-light btn-sm"><i class="bi bi-gear me-1"></i>Admin</a>
     <a href="api-docs.html" class="btn btn-outline-light btn-sm"><i class="bi bi-code-slash me-1"></i>API Docs</a>
     <button class="btn btn-outline-light btn-sm" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle dark mode"><i class="bi bi-moon-stars" id="themeIcon"></i></button>
@@ -104,6 +106,8 @@
     </div>
   </div>
 
+  <div id="taskFilterBar" class="mb-3"></div>
+
   <div id="loadingIndicator" class="text-center py-4 text-muted" style="display:none"><div class="spinner-border spinner-border-sm"></div> Loading...</div>
 
   <div class="cal-wrap">
@@ -125,10 +129,13 @@
 <script src="theme.js"></script>
 <script src="tasks-ws.js"></script>
 <script src="card-fields.js"></script>
+<script src="filter-bar.js"></script>
 <script src="events.js"></script>
 <script>
 let allTasks = [];
 let allEvents = [];
+let fieldConfigs = {};
+let filterBar = null;
 let viewYear, viewMonth; // viewMonth is 0-based
 let viewMode = 'month'; // 'month' | 'weekend' | 'quarter'
 const today = new Date();
@@ -148,11 +155,43 @@ function initCardFields() {
   document.getElementById('cardFieldsSlot').innerHTML = CardFields.renderButton('calendarPage', CAL_CARD_FIELDS);
 }
 
+// Every Task attribute is filterable here, labeled with whatever an admin named it
+// (via the Admin > Field Configuration page) — falls back to the default label if unconfigured.
+const BASE_FILTER_FIELDS = [
+  { id: 'id', label: 'Task ID' }, { id: 'title', label: 'Title' }, { id: 'description', label: 'Description' },
+  { id: 'status', label: 'Status' }, { id: 'priority', label: 'Priority' }, { id: 'assignee', label: 'Assignee' },
+  { id: 'createdBy', label: 'Created By' }, { id: 'stakeholder', label: 'Stakeholder' },
+  { id: 'project', label: 'Project' }, { id: 'programme', label: 'Programme' }, { id: 'category', label: 'Category' },
+  { id: 'workingGroup', label: 'Working Group' }, { id: 'assetClass', label: 'Asset Class' },
+  { id: 'jira', label: 'Jira Ticket' }, { id: 'tags', label: 'Tags' },
+];
+
+function filterableFields() {
+  const base = BASE_FILTER_FIELDS.map(f => {
+    const cfg = fieldConfigs[f.id];
+    return { id: f.id, label: (cfg && cfg.displayName) || f.label };
+  });
+  const custom = Array.from({ length: 10 }, (_, i) => {
+    const n = i + 1;
+    const cfg = fieldConfigs[`customField${n}`];
+    return { id: `customField${n}`, label: (cfg && cfg.displayName) || `Custom Field ${n}` };
+  });
+  return [...base, ...custom];
+}
+
 function init() {
   viewYear = today.getFullYear();
   viewMonth = today.getMonth();
   updateViewModeButtons();
   initCardFields();
+  filterBar = FilterBar.init({
+    containerId: 'taskFilterBar',
+    storageKey: 'calendarFilters',
+    fields: filterableFields,
+    getItems: () => allTasks,
+    onChange: () => render(),
+  });
+  fetch('/api/field-configs').then(r => r.json()).then(fc => { fieldConfigs = fc || {}; filterBar.refresh(); }).catch(() => {});
   loadTasks();
   loadEvents();
 }
@@ -220,7 +259,8 @@ function dateKey(d) {
 
 function visibleTasks() {
   const includeDone = document.getElementById('includeDone').checked;
-  return allTasks.filter(t => includeDone || (t.status !== 'DONE' && t.status !== 'CANCELLED'));
+  return allTasks.filter(t =>
+    (includeDone || (t.status !== 'DONE' && t.status !== 'CANCELLED')) && (!filterBar || filterBar.matches(t)));
 }
 
 function render() {

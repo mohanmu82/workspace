@@ -117,6 +117,8 @@
     <a href="timeline.html" class="btn btn-outline-light btn-sm"><i class="bi bi-bar-chart-steps me-1"></i>Timeline</a>
     <a href="dependencies.html" class="btn btn-outline-light btn-sm"><i class="bi bi-link-45deg me-1"></i>Dependencies</a>
     <a href="events.html" class="btn btn-outline-light btn-sm"><i class="bi bi-calendar-week me-1"></i>Events</a>
+    <a href="notes.html" class="btn btn-outline-light btn-sm"><i class="bi bi-sticky me-1"></i>Notes</a>
+    <a href="history.html" class="btn btn-outline-light btn-sm"><i class="bi bi-clock-history me-1"></i>History</a>
     <a href="admin.html" class="btn btn-outline-light btn-sm"><i class="bi bi-gear me-1"></i>Admin</a>
     <a href="api-docs.html" class="btn btn-outline-light btn-sm"><i class="bi bi-code-slash me-1"></i>API Docs</a>
     <button class="btn btn-outline-light btn-sm" id="whoAmIBtn" onclick="onWhoAmIClick()" title="Set your name (used for My Tasks and to prefill fields)"><i class="bi bi-person-circle"></i></button>
@@ -312,6 +314,9 @@
         <input type="text" id="textFilterInput" class="form-control form-control-sm lane-filter-bar" placeholder="Filter by text (title/description)..." oninput="onTextFilterChange()"/>
       </div>
 
+      <!-- Ad-hoc field/value filters (chips) — applies to every view, same as the sidebar filters -->
+      <div id="taskFilterBar" class="mb-2"></div>
+
       <!-- Table view -->
       <div id="tableView">
         <div class="table-responsive">
@@ -390,21 +395,11 @@
         </div>
       </div>
 
-      <!-- Due Dates view -->
+      <!-- Due Dates view: embeds the full-featured due-dates.html page (drag & drop,
+           dependency chips, ad-hoc filters) in an iframe so only this pane is swapped in —
+           the top navbar and left filter sidebar around it stay exactly where they are. -->
       <div id="dueDatesView" style="display:none">
-        <div class="d-flex justify-content-between align-items-center mb-2">
-          <span id="dueDatesCardFieldsSlot"></span>
-          <div class="form-check">
-            <input class="form-check-input" type="checkbox" id="includeDoneDueDates" onchange="renderTasks()">
-            <label class="form-check-label small" for="includeDoneDueDates">Include Done / Cancelled</label>
-          </div>
-        </div>
-        <div class="table-responsive">
-          <table class="table table-sm table-hover table-bordered bg-white mb-0" style="font-size:0.82rem">
-            <thead class="table-light sticky-top" id="dueDatesThead"></thead>
-            <tbody id="dueDatesTableBody"></tbody>
-          </table>
-        </div>
+        <iframe id="dueDatesFrame" src="about:blank" style="width:100%; height:calc(100vh - 230px); min-height:500px; border:0;"></iframe>
       </div>
 
     </div>
@@ -508,6 +503,7 @@
 <script src="theme.js"></script>
 <script src="tasks-ws.js"></script>
 <script src="card-fields.js"></script>
+<script src="filter-bar.js"></script>
 <script src="events.js"></script>
 <script>
 // ── Column definitions ────────────────────────────────────────────────────────
@@ -566,6 +562,31 @@ let textFilterText = '';
 let activeFilterChips = [];
 let colVisibility = {};
 let fieldConfigs = {};
+let filterBar = null;
+
+// Every Task attribute is filterable here, labeled with whatever an admin named it
+// (via the Admin > Field Configuration page) — falls back to the default label if unconfigured.
+const BASE_FILTER_FIELDS = [
+  { id: 'id', label: 'Task ID' }, { id: 'title', label: 'Title' }, { id: 'description', label: 'Description' },
+  { id: 'status', label: 'Status' }, { id: 'priority', label: 'Priority' }, { id: 'assignee', label: 'Assignee' },
+  { id: 'createdBy', label: 'Created By' }, { id: 'stakeholder', label: 'Stakeholder' },
+  { id: 'project', label: 'Project' }, { id: 'programme', label: 'Programme' }, { id: 'category', label: 'Category' },
+  { id: 'workingGroup', label: 'Working Group' }, { id: 'assetClass', label: 'Asset Class' },
+  { id: 'jira', label: 'Jira Ticket' }, { id: 'tags', label: 'Tags' },
+];
+
+function filterableFields() {
+  const base = BASE_FILTER_FIELDS.map(f => {
+    const cfg = fieldConfigs[f.id];
+    return { id: f.id, label: (cfg && cfg.displayName) || f.label };
+  });
+  const custom = Array.from({ length: 10 }, (_, i) => {
+    const n = i + 1;
+    const cfg = fieldConfigs[`customField${n}`];
+    return { id: `customField${n}`, label: (cfg && cfg.displayName) || `Custom Field ${n}` };
+  });
+  return [...base, ...custom];
+}
 let statusOptions = ['BACKLOG','TODO','IN_PROGRESS','REVIEW','DONE','BLOCKED','CANCELLED'];
 const STATUS_COLORS = {BACKLOG:'#495057',TODO:'#6c757d',IN_PROGRESS:'#0d6efd',REVIEW:'#fd7e14',DONE:'#198754',BLOCKED:'#dc3545',CANCELLED:'#adb5bd'};
 let masterProgrammes = [];
@@ -586,6 +607,13 @@ async function init() {
   initSidebarState();
   initCardFields();
   updateCalViewModeButtons();
+  filterBar = FilterBar.init({
+    containerId: 'taskFilterBar',
+    storageKey: 'indexFilters',
+    fields: filterableFields,
+    getItems: () => allTasks,
+    onChange: () => { currentPage = 1; updateStats(); renderTasks(); },
+  });
   await loadFieldConfigs();
   await loadFilterOptions();
   await loadMasterLists();
@@ -658,25 +686,8 @@ const BOARD_CARD_FIELDS = [
   { id: 'status',   label: 'Status',   default: true },
   ...Array.from({length:10}, (_,i) => ({ id: `customField${i+1}`, label: `Custom Field ${i+1}`, default: false })),
 ];
-const DUE_DATES_FIELDS = [
-  { id: 'status',       label: 'Status',       default: true },
-  { id: 'priority',     label: 'Priority',     default: true },
-  { id: 'assignee',     label: 'Assignee',     default: true },
-  { id: 'project',      label: 'Project',      default: true },
-  { id: 'programme',    label: 'Programme',    default: false },
-  { id: 'phase',        label: 'Phase',        default: false },
-  { id: 'category',     label: 'Category',     default: false },
-  { id: 'workingGroup', label: 'Working Grp',  default: false },
-  { id: 'assetClass',   label: 'Asset Class',  default: false },
-  { id: 'stakeholder',  label: 'Stakeholder',  default: false },
-  { id: 'tags',         label: 'Tags',         default: false },
-  ...Array.from({length:9}, (_,i) => ({ id: `customField${i+2}`, label: `Custom Field ${i+2}`, default: false })),
-];
-
 function initCardFields() {
   CardFields.onChange('board', () => renderTasks());
-  CardFields.onChange('indexDueDates', () => renderDueDates());
-  document.getElementById('dueDatesCardFieldsSlot').innerHTML = CardFields.renderButton('indexDueDates', DUE_DATES_FIELDS);
   renderCardFieldsSlot();
 }
 
@@ -728,7 +739,7 @@ async function loadFieldConfigs() {
   try {
     fieldConfigs = await fetch('/api/field-configs').then(r => r.json());
     // Apply custom display names to column labels / card-field toggle labels
-    [ALL_COLUMNS, BOARD_CARD_FIELDS, DUE_DATES_FIELDS].forEach(fields => {
+    [ALL_COLUMNS, BOARD_CARD_FIELDS].forEach(fields => {
       fields.forEach(f => {
         const cfg = fieldConfigs[f.id];
         if (cfg?.displayName) f.label = cfg.displayName;
@@ -742,6 +753,7 @@ async function loadFieldConfigs() {
   } catch (_) {}
   populateCustomFieldSelect();
   populateGroupByCustomFieldOptions();
+  if (filterBar) filterBar.refresh();
 }
 
 // ── Custom field swimlane picker ────────────────────────────────────────────────
@@ -1137,6 +1149,9 @@ function getFilteredTasks() {
       (t.title || '').toLowerCase().includes(textFilterText) ||
       (t.description || '').toLowerCase().includes(textFilterText));
   }
+  if (filterBar) {
+    tasks = tasks.filter(t => filterBar.matches(t));
+  }
   return tasks;
 }
 
@@ -1163,8 +1178,7 @@ function renderTasks() {
   else if (currentView === 'swimlaneAssignee') renderLaneBoard('assignee', 'swimlaneAssigneeBoard', masterAssignees);
   else if (currentView === 'swimlaneCustomField') renderLaneBoard(selectedCustomFieldKey, 'swimlaneCustomFieldBoard', []);
   else if (currentView === 'byDate') renderByDate();
-  else if (currentView === 'dueDates') renderDueDates();
-  document.getElementById('noResults').style.display = getFilteredTasks().length === 0 ? 'block' : 'none';
+  document.getElementById('noResults').style.display = currentView !== 'dueDates' && getFilteredTasks().length === 0 ? 'block' : 'none';
 }
 
 function getSortedTasks() {
@@ -1986,99 +2000,6 @@ async function setCalDueDate(taskId, dueDate) {
   }
 }
 
-// ── Due Dates ─────────────────────────────────────────────────────────────────
-function dueDateBucketFor(t) {
-  if (!t.dueDate) return 'No Due Date';
-  const due = new Date(t.dueDate);
-  due.setHours(0, 0, 0, 0);
-  const todayMid = new Date(today);
-  todayMid.setHours(0, 0, 0, 0);
-  const diffDays = Math.round((due - todayMid) / 86400000);
-  if (diffDays < 0) return 'Overdue';
-  if (diffDays === 0) return 'Today';
-  if (diffDays === 1) return 'Tomorrow';
-  if (diffDays <= 7) return 'This Week';
-  if (diffDays <= 30) return 'This Month';
-  return 'Later';
-}
-
-function dueDatesVisibleFields() {
-  return DUE_DATES_FIELDS.filter(f => CardFields.isOn('indexDueDates', f.id, f.default));
-}
-
-function renderDueDatesHead() {
-  const widths = { status: '110px', priority: '90px', assignee: '110px', project: '110px', programme: '110px', phase: '90px', category: '110px', workingGroup: '110px', assetClass: '110px', stakeholder: '110px', tags: '140px' };
-  const visFields = dueDatesVisibleFields();
-  const head = document.getElementById('dueDatesThead');
-  head.innerHTML = '<tr>' +
-    '<th style="width:105px">Due Date</th>' +
-    '<th>Title</th>' +
-    visFields.map(f => `<th style="width:${widths[f.id]}">${f.label}</th>`).join('') +
-    '<th style="width:70px">Actions</th>' +
-    '</tr>';
-  return visFields;
-}
-
-function renderDueDates() {
-  const includeDone = document.getElementById('includeDoneDueDates').checked;
-  const tasks = getFilteredTasks()
-    .filter(t => includeDone || (t.status !== 'DONE' && t.status !== 'CANCELLED'))
-    .slice()
-    .sort((a, b) => {
-      const av = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
-      const bv = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
-      return av - bv;
-    });
-
-  const visFields = renderDueDatesHead();
-  const colspan = 3 + visFields.length;
-
-  const buckets = ['Overdue', 'Today', 'Tomorrow', 'This Week', 'This Month', 'Later', 'No Due Date'];
-  const grouped = {};
-  buckets.forEach(b => grouped[b] = []);
-  tasks.forEach(t => grouped[dueDateBucketFor(t)].push(t));
-
-  const tbody = document.getElementById('dueDatesTableBody');
-  tbody.innerHTML = '';
-  buckets.forEach(b => {
-    const gtasks = grouped[b];
-    if (!gtasks.length) return;
-    const headerCls = b === 'Overdue' ? 'overdue-header' : (b === 'Today' ? 'today-header' : '');
-    tbody.innerHTML += `<tr><td colspan="${colspan}" class="group-header ${headerCls}">${b} <span class="badge bg-secondary ms-1">${gtasks.length}</span></td></tr>`;
-    gtasks.forEach(t => tbody.innerHTML += dueDateRow(t, visFields));
-  });
-}
-
-function dueDateFieldCell(t, fieldId) {
-  switch (fieldId) {
-    case 'status':   return `<td><span class="badge badge-status-${esc(t.status)}">${esc(t.status||'')}</span></td>`;
-    case 'priority': return `<td><span class="badge badge-priority-${esc(t.priority)}">${esc(t.priority||'')}</span></td>`;
-    case 'assignee': return `<td>${esc(t.assignee||'')}</td>`;
-    case 'project':  return `<td>${esc(t.project||'')}</td>`;
-    case 'programme':    return `<td>${esc(t.programme||'')}</td>`;
-    case 'phase':         return `<td>${esc(t.customField1||'')}</td>`;
-    case 'category':      return `<td>${esc(t.category||'')}</td>`;
-    case 'workingGroup':  return `<td>${esc(t.workingGroup||'')}</td>`;
-    case 'assetClass':    return `<td>${esc(t.assetClass||'')}</td>`;
-    case 'stakeholder':   return `<td>${esc(t.stakeholder||'')}</td>`;
-    case 'tags':          return `<td>${(t.tags||[]).join(', ')}</td>`;
-    default: return `<td>${esc(t[fieldId]||'')}</td>`;
-  }
-}
-
-function dueDateRow(t, visFields) {
-  const due = t.dueDate ? new Date(t.dueDate) : null;
-  const over = due && due < today && t.status !== 'DONE' && t.status !== 'CANCELLED';
-  return `<tr class="task-row" onclick="openTaskPanel(${t.id})">
-    <td class="${over ? 'overdue' : ''}">${due ? due.toLocaleDateString() : ''}${over ? ' ⚠' : ''}</td>
-    <td><strong>${esc(t.title)}</strong></td>
-    ${visFields.map(f => dueDateFieldCell(t, f.id)).join('')}
-    <td onclick="event.stopPropagation()">
-      ${(t.status !== 'DONE' && t.status !== 'CANCELLED') ? `<button class="btn btn-xs btn-outline-success" style="padding:1px 6px;font-size:0.75rem" onclick="closeTask(${t.id})" title="Close (mark as Done)"><i class="bi bi-check-lg"></i></button>` : ''}
-    </td>
-  </tr>`;
-}
-
 // ── Group tasks ────────────────────────────────────────────────────────────────
 function groupTasks(tasks, field) {
   const groups = {};
@@ -2103,6 +2024,10 @@ function setView(view) {
   document.getElementById('swimlaneCustomFieldView').style.display = view === 'swimlaneCustomField' ? '' : 'none';
   document.getElementById('byDateView').style.display             = view === 'byDate'            ? '' : 'none';
   document.getElementById('dueDatesView').style.display          = view === 'dueDates'         ? '' : 'none';
+  if (view === 'dueDates') {
+    const frame = document.getElementById('dueDatesFrame');
+    if (frame.src === 'about:blank') frame.src = 'due-dates.html?embed=1';
+  }
   document.getElementById('btnTable').classList.toggle('active', view === 'table');
   document.getElementById('btnKanban').classList.toggle('active', view === 'kanban');
   document.getElementById('btnSwimlaneProject').classList.toggle('active', view === 'swimlaneProject');
@@ -2143,6 +2068,7 @@ function clearFilters() {
   document.getElementById('laneHideEmptyInput').checked = false;
   textFilterText = '';
   document.getElementById('textFilterInput').value = '';
+  if (filterBar) filterBar.clear();
   loadTasks();
 }
 

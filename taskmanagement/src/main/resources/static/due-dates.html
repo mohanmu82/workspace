@@ -25,8 +25,45 @@
     .group-header.overdue-header { background: #f8d7da; color: #842029; }
     .group-header.today-header   { background: #fff3cd; color: #664d03; }
     .task-row:hover { cursor: pointer; background: #f0f4ff !important; }
+    .task-row.dragging { opacity: 0.4; }
+    .due-date-cell.drag-over-date { box-shadow: inset 0 0 0 2px #0d6efd; background: #f0f4ff !important; }
+    .task-title-cell.drag-over-dep { box-shadow: inset 0 0 0 2px #6f42c1; background: #f2edfa !important; }
+    .drag-handle-cell { width:24px; text-align:center; color:#adb5bd; cursor:grab; }
+    .drag-handle-cell:active { cursor:grabbing; }
+    .drag-handle-cell:hover { color:#495057; }
     .overdue { color: #dc3545 !important; font-weight: 600; }
+    .conflict-date { color: #dc3545 !important; font-weight: 600; }
     #noResults { display:none; }
+
+    .event-row td { background: #fcf8e3; cursor: pointer; }
+    .event-row:hover td { background: #f9f0c6; }
+    .event-swatch { display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:5px; }
+
+    .filter-bar { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+    .filter-chip { display:inline-flex; align-items:center; gap:4px; background:#e9ecef; border-radius:10px;
+                   padding:2px 4px 2px 8px; font-size:0.75rem; }
+    .filter-chip .filter-chip-remove { border:none; background:none; color:#6c757d; padding:0 2px; line-height:1; cursor:pointer; }
+    .filter-chip .filter-chip-remove:hover { color:#dc3545; }
+    .filter-add-popover { position:absolute; z-index:1040; background:#fff; border:1px solid #dee2e6; border-radius:8px;
+                          box-shadow:0 4px 12px rgba(0,0,0,0.12); padding:0.6rem; width:260px; display:none; }
+
+    /* Freeze the toolbar (filters) and table header while the task list scrolls.
+       Note: .table-responsive's overflow-x:auto forces its overflow-y to compute
+       as auto too (a CSS quirk — this is a documented Bootstrap limitation), which
+       would otherwise hijack position:sticky's scrolling ancestor away from the
+       window. Making it the *deliberate*, bounded scroll region sidesteps that:
+       the toolbar/navbar live outside it (always visible, no sticky math needed)
+       and the sticky thead's top:0 is relative to this real scroll container. */
+    html, body { height: 100%; }
+    body { display: flex; flex-direction: column; overflow: hidden; }
+    nav.navbar { flex: 0 0 auto; }
+    .due-dates-page { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+    .due-dates-toolbar { flex: 0 0 auto; }
+    .due-dates-scroll-area { flex: 1 1 auto; overflow: auto; min-height: 0; }
+
+    .dep-chip { display:inline-flex; align-items:center; gap:3px; background:#e9ecef; border-radius:10px; padding:1px 8px; font-size:0.7rem; margin:1px 3px 1px 0; cursor:pointer; max-width:100%; }
+    .dep-chip:hover { text-decoration:underline; }
+    .dep-chip.conflict-chip { background:#f8d7da; color:#842029; }
   </style>
 </head>
 <body>
@@ -44,26 +81,49 @@
     <a href="timeline.html" class="btn btn-outline-light btn-sm"><i class="bi bi-bar-chart-steps me-1"></i>Timeline</a>
     <a href="dependencies.html" class="btn btn-outline-light btn-sm"><i class="bi bi-link-45deg me-1"></i>Dependencies</a>
     <a href="events.html" class="btn btn-outline-light btn-sm"><i class="bi bi-calendar-week me-1"></i>Events</a>
+    <a href="notes.html" class="btn btn-outline-light btn-sm"><i class="bi bi-sticky me-1"></i>Notes</a>
+    <a href="history.html" class="btn btn-outline-light btn-sm"><i class="bi bi-clock-history me-1"></i>History</a>
     <a href="admin.html" class="btn btn-outline-light btn-sm"><i class="bi bi-gear me-1"></i>Admin</a>
     <a href="api-docs.html" class="btn btn-outline-light btn-sm"><i class="bi bi-code-slash me-1"></i>API Docs</a>
     <button class="btn btn-outline-light btn-sm" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle dark mode"><i class="bi bi-moon-stars" id="themeIcon"></i></button>
   </div>
 </nav>
 
-<div class="container-fluid p-3">
+<div class="container-fluid p-3 due-dates-page">
 
-  <div class="d-flex justify-content-between align-items-center mb-2">
-    <span id="cardFieldsSlot"></span>
-    <div class="form-check mb-0">
-      <input class="form-check-input" type="checkbox" id="includeDone" onchange="renderTasks()">
-      <label class="form-check-label small" for="includeDone">Include Done / Cancelled</label>
+  <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2 due-dates-toolbar" id="dueDatesToolbar">
+    <div class="position-relative">
+      <div class="filter-bar" id="filterBar"></div>
+      <div class="filter-add-popover" id="filterAddPopover">
+        <div class="mb-2">
+          <label class="form-label small fw-semibold mb-1">Field</label>
+          <select class="form-select form-select-sm" id="filterFieldSelect" onchange="onFilterFieldChange()"></select>
+        </div>
+        <div class="mb-2">
+          <label class="form-label small fw-semibold mb-1">Value</label>
+          <input list="filterValueOptions" class="form-control form-control-sm" id="filterValueInput"
+                 onkeydown="if(event.key==='Enter'){event.preventDefault();addFilter();}"/>
+          <datalist id="filterValueOptions"></datalist>
+        </div>
+        <div class="d-flex justify-content-end gap-1">
+          <button class="btn btn-secondary btn-sm" onclick="closeFilterPopover()">Cancel</button>
+          <button class="btn btn-primary btn-sm" onclick="addFilter()">Add</button>
+        </div>
+      </div>
+    </div>
+    <div class="d-flex align-items-center gap-2">
+      <span id="cardFieldsSlot"></span>
+      <div class="form-check mb-0">
+        <input class="form-check-input" type="checkbox" id="includeDone" onchange="renderTasks()">
+        <label class="form-check-label small" for="includeDone">Include Done / Cancelled</label>
+      </div>
     </div>
   </div>
 
   <div id="loadingIndicator" class="text-center py-4 text-muted" style="display:none"><div class="spinner-border spinner-border-sm"></div> Loading...</div>
   <div id="noResults" class="text-center py-5 text-muted"><i class="bi bi-inbox fs-1 d-block mb-2"></i>No tasks found</div>
 
-  <div class="table-responsive">
+  <div class="due-dates-scroll-area">
     <table class="table table-sm table-hover table-bordered bg-white mb-0" style="font-size:0.82rem">
       <thead class="table-light sticky-top" id="tableThead"></thead>
       <tbody id="taskTableBody"></tbody>
@@ -76,10 +136,20 @@
 <script src="theme.js"></script>
 <script src="tasks-ws.js"></script>
 <script src="card-fields.js"></script>
+<script src="events.js"></script>
 <script>
+const embed = new URLSearchParams(location.search).get('embed') === '1';
 let allTasks = [];
+let allEvents = [];
+let fieldConfigs = {};
+let activeFilters = [];           // [{ field, value }]
+let dependsOnMap = {};            // taskId -> [prerequisite taskId, ...] (from dependency graph)
+let tasksById = {};                // taskId -> task (from dependency graph, used for conflict lookups)
+let draggedTaskId = null;
 const today = new Date();
 today.setHours(0, 0, 0, 0);
+
+const FILTERS_STORAGE_KEY = 'dueDatesFilters';
 
 const DUE_DATES_FIELDS = [
   { id: 'status',       label: 'Status',       default: true },
@@ -93,7 +163,45 @@ const DUE_DATES_FIELDS = [
   { id: 'assetClass',   label: 'Asset Class',  default: false },
   { id: 'stakeholder',  label: 'Stakeholder',  default: false },
   { id: 'tags',         label: 'Tags',         default: false },
+  { id: 'dependencies', label: 'Depends On',   default: true },
 ];
+
+// Every Task attribute is filterable here, labeled with whatever an admin named it
+// (via the Admin > Field Configuration page) — falls back to the default label if unconfigured.
+const BASE_FILTER_FIELDS = [
+  { id: 'id', label: 'Task ID' },
+  { id: 'title', label: 'Title' },
+  { id: 'description', label: 'Description' },
+  { id: 'status', label: 'Status' },
+  { id: 'priority', label: 'Priority' },
+  { id: 'assignee', label: 'Assignee' },
+  { id: 'createdBy', label: 'Created By' },
+  { id: 'stakeholder', label: 'Stakeholder' },
+  { id: 'estimatedHours', label: 'Estimated Hours' },
+  { id: 'actualHours', label: 'Actual Hours' },
+  { id: 'project', label: 'Project' },
+  { id: 'programme', label: 'Programme' },
+  { id: 'category', label: 'Category' },
+  { id: 'workingGroup', label: 'Working Group' },
+  { id: 'assetClass', label: 'Asset Class' },
+  { id: 'jira', label: 'Jira Ticket' },
+  { id: 'links', label: 'Links / URLs' },
+  { id: 'parentTaskId', label: 'Parent Task ID' },
+  { id: 'tags', label: 'Tags' },
+];
+
+function filterableFields() {
+  const base = BASE_FILTER_FIELDS.map(f => {
+    const cfg = fieldConfigs[f.id];
+    return { id: f.id, label: (cfg && cfg.displayName) || f.label };
+  });
+  const custom = Array.from({ length: 10 }, (_, i) => {
+    const n = i + 1;
+    const cfg = fieldConfigs[`customField${n}`];
+    return { id: `customField${n}`, label: (cfg && cfg.displayName) || `Custom Field ${n}` };
+  });
+  return [...base, ...custom];
+}
 
 function initCardFields() {
   CardFields.onChange('dueDatesPage', () => renderTasks());
@@ -105,9 +213,10 @@ function visibleFields() {
 }
 
 function renderThead() {
-  const widths = { status: '110px', priority: '90px', assignee: '110px', project: '110px', programme: '110px', phase: '90px', category: '110px', workingGroup: '110px', assetClass: '110px', stakeholder: '110px', tags: '140px' };
+  const widths = { status: '110px', priority: '90px', assignee: '110px', project: '110px', programme: '110px', phase: '90px', category: '110px', workingGroup: '110px', assetClass: '110px', stakeholder: '110px', tags: '140px', dependencies: '200px' };
   const visFields = visibleFields();
   document.getElementById('tableThead').innerHTML = '<tr>' +
+    '<th style="width:24px"></th>' +
     '<th style="width:105px">Due Date</th>' +
     '<th>Title</th>' +
     visFields.map(f => `<th style="width:${widths[f.id]}">${f.label}</th>`).join('') +
@@ -116,8 +225,91 @@ function renderThead() {
   return visFields;
 }
 
+// ── Filters ──────────────────────────────────────────────────────────────────
+
+function loadStoredFilters() {
+  try { activeFilters = JSON.parse(localStorage.getItem(FILTERS_STORAGE_KEY) || '[]'); }
+  catch (e) { activeFilters = []; }
+}
+
+function persistFilters() {
+  localStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(activeFilters));
+}
+
+function renderFilterBar() {
+  const fields = filterableFields();
+  const bar = document.getElementById('filterBar');
+  const chips = activeFilters.map((f, idx) => {
+    const label = (fields.find(x => x.id === f.field) || {}).label || f.field;
+    return `<span class="filter-chip">${esc(label)}: ${esc(f.value)}
+      <button class="filter-chip-remove" title="Remove filter" onclick="removeFilter(${idx})"><i class="bi bi-x"></i></button>
+    </span>`;
+  }).join('');
+  bar.innerHTML = chips + `<button class="btn btn-outline-secondary btn-sm" onclick="toggleFilterPopover()"><i class="bi bi-funnel me-1"></i>Add Filter</button>`;
+}
+
+function toggleFilterPopover() {
+  const pop = document.getElementById('filterAddPopover');
+  const willOpen = pop.style.display !== 'block';
+  if (willOpen) {
+    const sel = document.getElementById('filterFieldSelect');
+    sel.innerHTML = filterableFields().map(f => `<option value="${esc(f.id)}">${esc(f.label)}</option>`).join('');
+    onFilterFieldChange();
+    document.getElementById('filterValueInput').value = '';
+  }
+  pop.style.display = willOpen ? 'block' : 'none';
+}
+
+function closeFilterPopover() {
+  document.getElementById('filterAddPopover').style.display = 'none';
+}
+
+function onFilterFieldChange() {
+  const field = document.getElementById('filterFieldSelect').value;
+  const values = new Set();
+  allTasks.forEach(t => {
+    if (field === 'tags') { (t.tags || []).forEach(v => v && values.add(v)); }
+    else if (t[field]) { values.add(String(t[field])); }
+  });
+  document.getElementById('filterValueOptions').innerHTML =
+    [...values].sort().map(v => `<option value="${escAttr(v)}"></option>`).join('');
+}
+
+function addFilter() {
+  const field = document.getElementById('filterFieldSelect').value;
+  const value = document.getElementById('filterValueInput').value.trim();
+  if (!field || !value) return;
+  activeFilters.push({ field, value });
+  persistFilters();
+  closeFilterPopover();
+  renderFilterBar();
+  renderTasks();
+}
+
+function removeFilter(idx) {
+  activeFilters.splice(idx, 1);
+  persistFilters();
+  renderFilterBar();
+  renderTasks();
+}
+
+function matchesFilters(t) {
+  return activeFilters.every(f => {
+    if (f.field === 'tags') {
+      return (t.tags || []).some(v => (v || '').toLowerCase().includes(f.value.toLowerCase()));
+    }
+    return String(t[f.field] || '').toLowerCase().includes(f.value.toLowerCase());
+  });
+}
+
+// ── Load ─────────────────────────────────────────────────────────────────────
+
 async function init() {
+  // When embedded inside index.html's Due Dates tab, the top navbar there already
+  // provides navigation, so hide this page's own navbar to avoid a duplicate one.
+  if (embed) document.querySelector('nav.navbar').style.display = 'none';
   initCardFields();
+  loadStoredFilters();
   document.getElementById('loadingIndicator').style.display = 'block';
   try {
     let data;
@@ -128,6 +320,22 @@ async function init() {
       data = await res.json();
     }
     allTasks = data.tasks || [];
+
+    const [events, fc, graph] = await Promise.all([
+      fetch('/api/events').then(r => r.json()).catch(() => []),
+      fetch('/api/field-configs').then(r => r.json()).catch(() => ({})),
+      fetch('/api/tasks/dependencies/graph').then(r => r.json()).catch(() => null),
+    ]);
+    allEvents = events || [];
+    fieldConfigs = fc || {};
+    if (graph) {
+      tasksById = {};
+      (graph.tasks || []).forEach(t => tasksById[t.id] = t);
+      dependsOnMap = {};
+      (graph.dependencies || []).forEach(d => (dependsOnMap[d.taskId] ||= []).push(d.dependsOnTaskId));
+    }
+
+    renderFilterBar();
     renderTasks();
   } catch (e) {
     console.error(e);
@@ -138,42 +346,124 @@ async function init() {
 
 TaskWS.onTaskChanged(() => init());
 
-function bucketFor(t) {
-  if (!t.dueDate) return 'No Due Date';
-  const due = new Date(t.dueDate);
-  due.setHours(0, 0, 0, 0);
-  const diffDays = Math.round((due - today) / 86400000);
-  if (diffDays < 0) return 'Overdue';
-  if (diffDays === 0) return 'Today';
-  if (diffDays === 1) return 'Tomorrow';
-  if (diffDays <= 7) return 'This Week';
-  if (diffDays <= 30) return 'This Month';
-  return 'Later';
+// ── Week grouping (tasks + events interleaved) ──────────────────────────────
+
+function startOfWeek(d) {
+  const date = new Date(d);
+  date.setHours(0, 0, 0, 0);
+  const day = date.getDay();
+  const diff = (day === 0 ? -6 : 1) - day; // Monday as the start of the week
+  date.setDate(date.getDate() + diff);
+  return date;
+}
+
+function weekKeyStr(weekStart) {
+  return weekStart.toISOString().substring(0, 10);
+}
+
+function weekLabelStr(weekStart) {
+  const end = new Date(weekStart);
+  end.setDate(end.getDate() + 6);
+  const opts = { month: 'short', day: 'numeric' };
+  return `Week of ${weekStart.toLocaleDateString(undefined, opts)} – ${end.toLocaleDateString(undefined, opts)}`;
+}
+
+function parseDateOnly(s) {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+function buildBuckets(tasks, events) {
+  const map = {};
+  function ensure(key, label, sortKey) {
+    if (!map[key]) map[key] = { key, label, sortKey, items: [] };
+    return map[key];
+  }
+
+  const curWeekStart = startOfWeek(today);
+
+  tasks.forEach(t => {
+    if (!t.dueDate) {
+      ensure('nodate', 'No Due Date', Infinity).items.push({ type: 'task', date: null, data: t });
+      return;
+    }
+    const due = new Date(t.dueDate);
+    if (due < curWeekStart) {
+      ensure('overdue', 'Overdue', -Infinity).items.push({ type: 'task', date: due, data: t });
+    } else {
+      const wk = startOfWeek(due);
+      ensure(weekKeyStr(wk), weekLabelStr(wk), wk.getTime()).items.push({ type: 'task', date: due, data: t });
+    }
+  });
+
+  events.forEach(e => {
+    if (!e.startDate) return;
+    const start = parseDateOnly(e.startDate.substring(0, 10));
+    const end = e.endDate ? parseDateOnly(e.endDate.substring(0, 10)) : start;
+    let wk = startOfWeek(start);
+    const endWk = startOfWeek(end);
+    let guard = 0;
+    while (wk <= endWk && guard < 104) {
+      ensure(weekKeyStr(wk), weekLabelStr(wk), wk.getTime()).items.push({ type: 'event', date: wk, data: e });
+      wk = new Date(wk);
+      wk.setDate(wk.getDate() + 7);
+      guard++;
+    }
+  });
+
+  const buckets = Object.values(map);
+  buckets.sort((a, b) => a.sortKey - b.sortKey);
+  buckets.forEach(b => b.items.sort((x, y) => {
+    if (!x.date && !y.date) return 0;
+    if (!x.date) return 1;
+    if (!y.date) return -1;
+    return x.date - y.date;
+  }));
+  return buckets;
+}
+
+// ── Render ───────────────────────────────────────────────────────────────────
+
+function hasSchedulingConflict(t) {
+  const prereqIds = dependsOnMap[t.id];
+  if (!prereqIds || !t.dueDate) return false;
+  return prereqIds.some(preId => {
+    const pre = tasksById[preId];
+    return pre && pre.dueDate && new Date(pre.dueDate) > new Date(t.dueDate);
+  });
 }
 
 function renderTasks() {
   const includeDone = document.getElementById('includeDone').checked;
-  const tasks = allTasks.filter(t => includeDone || (t.status !== 'DONE' && t.status !== 'CANCELLED'));
+  const tasks = allTasks.filter(t =>
+    (includeDone || (t.status !== 'DONE' && t.status !== 'CANCELLED')) && matchesFilters(t));
 
   const visFields = renderThead();
-  const colspan = 3 + visFields.length;
+  const colspan = 4 + visFields.length;
 
-  const buckets = ['Overdue', 'Today', 'Tomorrow', 'This Week', 'This Month', 'Later', 'No Due Date'];
-  const grouped = {};
-  buckets.forEach(b => grouped[b] = []);
-  tasks.forEach(t => grouped[bucketFor(t)].push(t));
+  const buckets = buildBuckets(tasks, allEvents);
 
   const tbody = document.getElementById('taskTableBody');
   tbody.innerHTML = '';
   buckets.forEach(b => {
-    const gtasks = grouped[b];
-    if (!gtasks.length) return;
-    const headerCls = b === 'Overdue' ? 'overdue-header' : (b === 'Today' ? 'today-header' : '');
-    tbody.innerHTML += `<tr><td colspan="${colspan}" class="group-header ${headerCls}">${b} <span class="badge bg-secondary ms-1">${gtasks.length}</span></td></tr>`;
-    gtasks.forEach(t => tbody.innerHTML += taskRow(t, visFields));
+    if (!b.items.length) return;
+    const headerCls = b.key === 'overdue' ? 'overdue-header' : '';
+    tbody.innerHTML += `<tr><td colspan="${colspan}" class="group-header ${headerCls}">${esc(b.label)} <span class="badge bg-secondary ms-1">${b.items.length}</span></td></tr>`;
+    b.items.forEach(item => {
+      tbody.innerHTML += item.type === 'event' ? eventRow(item.data, colspan) : taskRow(item.data, visFields);
+    });
   });
 
-  document.getElementById('noResults').style.display = tasks.length === 0 ? 'block' : 'none';
+  document.getElementById('noResults').style.display = (tasks.length === 0 && allEvents.length === 0) ? 'block' : 'none';
+  wireRowDragAndDrop();
+}
+
+function openTaskFn(id) {
+  if (embed && window.parent && window.parent.openTaskPanel) {
+    window.parent.openTaskPanel(id);
+  } else {
+    location.href = `task-form.html?id=${id}`;
+  }
 }
 
 function fieldCell(t, fieldId) {
@@ -189,21 +479,149 @@ function fieldCell(t, fieldId) {
     case 'assetClass':    return `<td>${esc(t.assetClass||'')}</td>`;
     case 'stakeholder':   return `<td>${esc(t.stakeholder||'')}</td>`;
     case 'tags':          return `<td>${(t.tags||[]).join(', ')}</td>`;
+    case 'dependencies':  return `<td>${depChipsHtml(t)}</td>`;
     default: return '<td></td>';
   }
+}
+
+function depChipsHtml(t) {
+  const ids = dependsOnMap[t.id] || [];
+  if (!ids.length) return '<span class="text-muted fst-italic" style="font-size:0.72rem">None</span>';
+  return ids.map(id => {
+    const other = tasksById[id];
+    const title = other ? other.title : `#${id}`;
+    const conflict = other && other.dueDate && t.dueDate && new Date(other.dueDate) > new Date(t.dueDate);
+    return `<span class="dep-chip${conflict ? ' conflict-chip' : ''}" title="${escAttr(conflict ? 'Prerequisite is due after this task' : title)}" onclick="event.stopPropagation();openTaskFn(${id})">${conflict ? '<i class="bi bi-exclamation-triangle-fill"></i> ' : ''}#${id} ${esc(title)}</span>`;
+  }).join('');
 }
 
 function taskRow(t, visFields) {
   const due = t.dueDate ? new Date(t.dueDate) : null;
   const over = due && due < today && t.status !== 'DONE' && t.status !== 'CANCELLED';
-  return `<tr class="task-row" onclick="location.href='task-form.html?id=${t.id}'">
-    <td class="${over ? 'overdue' : ''}">${due ? due.toLocaleDateString() : ''}${over ? ' ⚠' : ''}</td>
-    <td><strong>${esc(t.title)}</strong></td>
+  const conflict = hasSchedulingConflict(t);
+  const dateCls = over ? 'overdue' : (conflict ? 'conflict-date' : '');
+  const dateTitle = conflict ? ' title="A prerequisite task is due after this task"' : '';
+  return `<tr class="task-row" data-task-id="${t.id}" data-due-date="${t.dueDate || ''}" onclick="openTaskFn(${t.id})">
+    <td class="drag-handle-cell" draggable="true" title="Drag to another row's Due Date column to copy its date, or Title column to add a dependency" onclick="event.stopPropagation()"><i class="bi bi-grip-vertical"></i></td>
+    <td class="due-date-cell ${dateCls}"${dateTitle} title="Drop a task here to copy this due date">${due ? due.toLocaleDateString() : ''}${over ? ' ⚠' : ''}${conflict ? ' <i class="bi bi-exclamation-triangle-fill"></i>' : ''}</td>
+    <td class="task-title-cell" title="Drop a task here to make it depend on this task"><strong>${esc(t.title)}</strong></td>
     ${visFields.map(f => fieldCell(t, f.id)).join('')}
     <td onclick="event.stopPropagation()">
       ${(t.status !== 'DONE' && t.status !== 'CANCELLED') ? `<button class="btn btn-xs btn-outline-success" style="padding:1px 6px;font-size:0.75rem" onclick="closeTask(${t.id})" title="Close (mark as Done)"><i class="bi bi-check-lg"></i></button>` : ''}
+      ${t.dueDate ? `<button class="btn btn-xs btn-outline-secondary ms-1" style="padding:1px 6px;font-size:0.75rem" onclick="clearDueDate(${t.id})" title="Clear due date"><i class="bi bi-x-circle"></i></button>` : ''}
     </td>
   </tr>`;
+}
+
+function eventRow(e, colspan) {
+  const color = (window.EventTypes && EventTypes.color(e.type)) || '#6c757d';
+  const label = (window.EventTypes && EventTypes.label(e.type)) || e.type || '';
+  const range = e.endDate && e.endDate.substring(0,10) !== e.startDate.substring(0,10)
+    ? `${parseDateOnly(e.startDate.substring(0,10)).toLocaleDateString()} – ${parseDateOnly(e.endDate.substring(0,10)).toLocaleDateString()}`
+    : parseDateOnly(e.startDate.substring(0,10)).toLocaleDateString();
+  return `<tr class="event-row" onclick="location.href='events.html'">
+    <td></td>
+    <td>${range}</td>
+    <td colspan="${colspan - 2}"><span class="event-swatch" style="background:${color}"></span><strong>${esc(e.title)}</strong> <span class="text-muted">· ${esc(label)}</span></td>
+  </tr>`;
+}
+
+// ── Drag one task row onto another: date column copies the due date,
+//    title column adds a dependency (dragged task depends on the drop target) ──
+
+function dropCell(e) {
+  const td = e.target.closest('td');
+  if (!td) return null;
+  if (td.classList.contains('due-date-cell')) return { kind: 'date', td };
+  if (td.classList.contains('task-title-cell')) return { kind: 'dep', td };
+  return null;
+}
+
+function clearDragHighlights(row) {
+  row.querySelectorAll('.drag-over-date, .drag-over-dep').forEach(el => el.classList.remove('drag-over-date', 'drag-over-dep'));
+}
+
+function wireRowDragAndDrop() {
+  document.querySelectorAll('.drag-handle-cell').forEach(handle => {
+    handle.addEventListener('dragstart', e => {
+      const row = handle.closest('.task-row');
+      draggedTaskId = row.dataset.taskId;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', draggedTaskId);
+      row.classList.add('dragging');
+    });
+    handle.addEventListener('dragend', () => {
+      const row = handle.closest('.task-row');
+      row.classList.remove('dragging');
+      clearDragHighlights(row);
+    });
+  });
+
+  document.querySelectorAll('.task-row').forEach(row => {
+    row.addEventListener('dragover', e => {
+      if (row.dataset.taskId === draggedTaskId) return;
+      const cell = dropCell(e);
+      if (!cell) { clearDragHighlights(row); return; }
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      clearDragHighlights(row);
+      cell.td.classList.add(cell.kind === 'date' ? 'drag-over-date' : 'drag-over-dep');
+    });
+    row.addEventListener('dragleave', e => {
+      if (!row.contains(e.relatedTarget)) clearDragHighlights(row);
+    });
+    row.addEventListener('drop', async e => {
+      const cell = dropCell(e);
+      if (!cell) return;
+      e.preventDefault();
+      e.stopPropagation();
+      clearDragHighlights(row);
+      const sourceId = parseInt(e.dataTransfer.getData('text/plain'), 10);
+      const targetId = parseInt(row.dataset.taskId, 10);
+      if (!sourceId || sourceId === targetId) return;
+      if (cell.kind === 'date') {
+        const targetDueDate = row.dataset.dueDate;
+        if (!targetDueDate) return;
+        await setDueDate(sourceId, targetDueDate);
+      } else {
+        await addDependency(sourceId, targetId);
+      }
+    });
+  });
+}
+
+async function addDependency(taskId, dependsOnTaskId) {
+  try {
+    const res = await fetch(`/api/tasks/${taskId}/dependencies`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dependsOnTaskId })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    await init();
+  } catch (e) {
+    console.error(e);
+    alert('Could not add dependency: ' + e.message);
+  }
+}
+
+async function setDueDate(id, dueDate) {
+  try {
+    const res = await fetch(`/api/tasks/${id}/due-date`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'X-Changed-By': (window.getMyName && getMyName()) || 'system' },
+      body: JSON.stringify({ dueDate: dueDate || null })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    await init();
+  } catch (e) {
+    console.error(e);
+    alert('Could not update due date: ' + e.message);
+  }
+}
+
+function clearDueDate(id) {
+  setDueDate(id, null);
 }
 
 async function closeTask(id) {
@@ -225,6 +643,7 @@ function esc(s) {
   if (!s) return '';
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+function escAttr(s) { return esc(s).replace(/'/g, '&#39;'); }
 
 init();
 </script>

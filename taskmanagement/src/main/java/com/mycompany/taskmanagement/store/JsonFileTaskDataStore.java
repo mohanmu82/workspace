@@ -148,6 +148,22 @@ public class JsonFileTaskDataStore implements TaskDataStore {
     }
 
     @Override
+    public List<TaskHistory> findRecentHistory(int limit) {
+        return allHistory().stream()
+                .sorted(Comparator.comparing(
+                        (TaskHistory h) -> h.getChangedAt() != null ? h.getChangedAt() : LocalDateTime.MIN).reversed())
+                .limit(limit)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public Optional<TaskHistory> findHistoryById(Long historyId) {
+        return allHistory().stream()
+                .filter(h -> historyId.equals(h.getId()))
+                .findFirst();
+    }
+
+    @Override
     public void saveAllHistory(List<TaskHistory> histories) {
         histories.stream()
                 .collect(Collectors.groupingBy(TaskHistory::getTaskId))
@@ -268,6 +284,18 @@ public class JsonFileTaskDataStore implements TaskDataStore {
         if (!Files.exists(file)) return new ArrayList<>();
         try { return objectMapper.readValue(file.toFile(), new TypeReference<>() {}); }
         catch (IOException e) { throw new UncheckedIOException(e); }
+    }
+
+    private List<TaskHistory> allHistory() {
+        try (Stream<Path> files = Files.list(historyDir)) {
+            List<TaskHistory> all = new ArrayList<>();
+            for (Path f : files.filter(p -> p.toString().endsWith(".json")).collect(Collectors.toList())) {
+                all.addAll(objectMapper.readValue(f.toFile(), new TypeReference<List<TaskHistory>>() {}));
+            }
+            return all;
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 
     private void writeJson(Path path, Object value) {

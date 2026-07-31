@@ -1,11 +1,11 @@
 {
   "id" : 11,
   "title" : "task1",
-  "status" : "TODO",
+  "status" : "IN_PROGRESS",
   "priority" : "MEDIUM",
   "dueDate" : "2026-07-30T09:00:00",
   "createdAt" : "2026-07-24T20:32:18.401192",
-  "updatedAt" : "2026-07-25T00:06:49.9446656",
+  "updatedAt" : "2026-07-29T22:36:24.7594801",
   "programme" : "IceX",
   "project" : "Test Project"
 }

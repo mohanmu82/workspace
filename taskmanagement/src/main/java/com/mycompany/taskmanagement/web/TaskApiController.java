@@ -295,6 +295,17 @@ public class TaskApiController {
         return taskService.getHistory(id);
     }
 
+    @GetMapping("/history/recent")
+    public List<TaskHistory> getRecentHistory(@RequestParam(defaultValue = "20") int limit) {
+        return taskService.getRecentHistory(limit);
+    }
+
+    @PostMapping("/history/{historyId}/undo")
+    public Task undoHistory(@PathVariable Long historyId,
+                            @RequestHeader(value = "X-Changed-By", defaultValue = "system") String changedBy) {
+        return taskService.undoHistory(historyId, changedBy);
+    }
+
     @GetMapping("/filter-options")
     public Map<String, List<String>> getFilterOptions() {
         return taskService.getFilterOptions();
