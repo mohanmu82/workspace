@@ -54,6 +54,15 @@
   .status-ok  { color: #0a5c36; }
   .status-err { color: #842029; }
 
+  .check-progress { display: flex; align-items: center; gap: 6px; margin-top: 5px; }
+  .check-progress-track { width: 90px; height: 5px; border-radius: 3px; background: #e1e0d9; overflow: hidden; }
+  .check-progress-fill { height: 100%; background: #0078d4; width: 0%; transition: width .15s ease; }
+  #checkProgressLabel { font-size: 0.68rem; color: #666; white-space: nowrap; }
+
+  .sparkline { display: block; }
+  .svc-spark-row { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+  .svc-spark-row .lbl { font-size: 0.62rem; font-weight: 700; color: #999; text-transform: uppercase; letter-spacing: .03em; }
+
   .mono { font-family: Consolas, monospace; }
 
   /* ── Summary strip ──────────────────────────────────────────────────── */
@@ -66,6 +75,16 @@
   .summary-cell .val { font-size: 1.2rem; font-weight: 700; color: #111; margin-top: 2px; }
   .summary-cell .val.up   { color: #0a5c36; }
   .summary-cell .val.down { color: #b02a37; }
+  .summary-cell.down-cell { cursor: pointer; user-select: none; }
+  .summary-cell.down-cell:hover { border-color: #d03b3b; }
+  .summary-cell.down-cell.active-filter { background: #fbdcdc; border-color: #d03b3b; }
+  .summary-cell.down-cell .hint-tag { font-size: 0.62rem; color: #b02a37; font-weight: 700; margin-top: 1px; }
+
+  .chk-inline {
+    display: flex; align-items: center; gap: 6px; font-size: 0.82rem; font-weight: 600;
+    color: #333; padding: 7px 0; white-space: nowrap; cursor: pointer;
+  }
+  .chk-inline input { cursor: pointer; }
 
   /* ── Type badges ─────────────────────────────────────────────────────── */
   .badge { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 0.7rem; font-weight: 700; white-space: nowrap; }
@@ -74,30 +93,39 @@
   .badge-jolokia    { background: #e3defa; color: #3a2c85; }
 
   /* ── Target grid ────────────────────────────────────────────────────── */
-  .target-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+  .target-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
   .target-grid.grouped { display: block; }
   .empty-msg { font-size: 0.82rem; color: #888; padding: 18px; text-align: center; }
+  .filter-note { font-size: 0.75rem; color: #888; font-weight: 400; text-transform: none; letter-spacing: 0; margin-left: 8px; }
 
   /* ── Swimlanes ───────────────────────────────────────────────────────── */
   .group-section {
-    display: flex; align-items: stretch; margin-bottom: 16px;
+    display: flex; align-items: stretch; margin-bottom: 12px;
     background: #f8f9fb; border: 1px solid #dde1e7; border-radius: 8px; overflow: hidden;
   }
   .group-section:last-child { margin-bottom: 0; }
   .group-label {
-    flex: 0 0 170px; max-width: 170px; padding: 14px 16px;
+    flex: 0 0 150px; max-width: 150px; padding: 10px 14px;
     display: flex; flex-direction: column; justify-content: center; gap: 4px;
     background: #eef1f6; border-right: 1px solid #dde1e7;
   }
   .group-label .name {
-    font-size: 0.78rem; font-weight: 700; color: #444; text-transform: uppercase;
+    font-size: 0.76rem; font-weight: 700; color: #444; text-transform: uppercase;
     letter-spacing: .04em; word-break: break-word;
   }
-  .group-count { font-size: 0.7rem; color: #999; font-weight: 400; text-transform: none; letter-spacing: 0; }
+  .group-count { font-size: 0.68rem; color: #999; font-weight: 400; text-transform: none; letter-spacing: 0; }
+
+  /* Default orientation: swimlanes stack cards vertically, one per row. */
   .group-lane {
-    flex: 1; display: flex; gap: 14px; padding: 14px; overflow-x: auto;
+    flex: 1; display: flex; flex-direction: column; gap: 8px; padding: 10px;
   }
-  .group-lane .svc-card { flex: 0 0 280px; }
+  .group-lane .svc-card { width: 100%; }
+
+  /* Horizontal orientation: swimlanes scroll sideways, cards fixed-width. */
+  .group-section.orient-horizontal .group-lane {
+    flex-direction: row; overflow-x: auto; flex-wrap: nowrap;
+  }
+  .group-section.orient-horizontal .group-lane .svc-card { flex: 0 0 220px; width: auto; }
 
   /* ── Config dropdowns (Group By / Card Fields) ──────────────────────── */
   .dropdown-wrap { position: relative; }
@@ -121,54 +149,120 @@
   button.config-btn { background: #fff; color: #333; border: 1px solid #ccc; min-width: 140px; text-align: left; }
   button.config-btn:hover:not(:disabled) { background: #f4f6f9; }
 
-  .svc-extra { border-top: 1px dashed #e1e4ea; padding-top: 6px; }
+  /* ── Group-by drag-and-drop / saved views ───────────────────────────── */
+  .mini-label {
+    font-size: 0.7rem; font-weight: 700; color: #888; text-transform: uppercase;
+    letter-spacing: .04em; margin-bottom: 6px;
+  }
+  .mini-label .hint { font-weight: 400; text-transform: none; letter-spacing: 0; color: #aaa; }
+
+  .groupby-section { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 16px; padding-top: 16px; border-top: 1px solid #eef0f4; }
+  .groupby-col { flex: 1 1 220px; min-width: 200px; }
+  .groupby-dropzone-col { flex: 2 1 320px; }
+  .orientation-col { flex: 0 0 auto; }
+
+  .chip-palette { display: flex; flex-wrap: wrap; gap: 6px; min-height: 30px; }
+  .attr-chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 12px;
+    border-radius: 12px; background: #eef1f6; border: 1px solid #dde1e7; font-size: 0.76rem;
+    color: #333; cursor: grab; user-select: none;
+  }
+  .attr-chip:hover { background: #e4e9f1; border-color: #0078d4; }
+  .attr-chip:active { cursor: grabbing; }
+  .attr-chip .add-hint { color: #999; font-size: 0.85rem; }
+  .chip-palette .empty-note { font-size: 0.78rem; color: #888; padding: 4px 0; }
+
+  .chip-dropzone {
+    display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-height: 30px;
+    padding: 6px; border: 1px dashed #c8ceda; border-radius: 8px; background: #fafbfd;
+  }
+  .chip-dropzone.drag-over { border-color: #0078d4; background: #eaf3fc; }
+  .dropzone-empty { font-size: 0.78rem; color: #999; padding: 4px 6px; }
+
+  .group-chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px 4px 12px;
+    border-radius: 12px; background: #cfe2ff; border: 1px solid #9fc3f5; font-size: 0.76rem;
+    font-weight: 600; color: #084298; cursor: grab; user-select: none;
+  }
+  .group-chip:active { cursor: grabbing; }
+  .group-chip .lvl-idx { font-size: 0.66rem; font-weight: 700; color: #4d7ec2; }
+  .group-chip .remove {
+    background: none; border: none; color: #4d7ec2; font-size: 0.9rem; cursor: pointer; line-height: 1; padding: 0;
+  }
+  .group-chip .remove:hover { color: #b02a37; }
+  .group-chip .chevron { color: #9fc3f5; font-size: 0.7rem; }
+
+  .orient-toggle { display: flex; border: 1px solid #ccc; border-radius: 4px; overflow: hidden; }
+  .orient-btn {
+    background: #fff; color: #333; border: none; border-radius: 0; padding: 6px 12px;
+    font-size: 0.78rem; font-weight: 600;
+  }
+  .orient-btn:hover:not(:disabled) { background: #f4f6f9; }
+  .orient-btn.active { background: #0078d4; color: #fff; }
+  .orient-btn + .orient-btn { border-left: 1px solid #ccc; }
+
+  .views-section { margin-top: 16px; padding-top: 16px; border-top: 1px solid #eef0f4; }
+  .view-chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 12px;
+    border-radius: 12px; background: #eceff3; font-size: 0.76rem;
+  }
+  .view-chip button.apply {
+    border: none; background: none; cursor: pointer; font-size: 0.76rem; font-weight: 600; color: #084298; padding: 0;
+  }
+  .view-chip button.apply:hover { text-decoration: underline; }
+  .view-chip button.remove {
+    border: none; background: none; color: #aaa; cursor: pointer; font-size: 0.9rem; padding: 0; line-height: 1;
+  }
+  .view-chip button.remove:hover { color: #d03b3b; }
+
+  .svc-extra { border-top: 1px dashed #e1e4ea; padding-top: 4px; }
 
   .svc-card {
-    border: 1px solid #dde1e7; border-radius: 8px; padding: 14px 16px; background: #fff;
-    display: flex; flex-direction: column; gap: 8px; position: relative;
+    border: 1px solid #dde1e7; border-radius: 6px; padding: 8px 10px; background: #fff;
+    display: flex; flex-direction: column; gap: 5px; position: relative;
   }
-  .svc-card.up   { border-left: 4px solid #0ca30c; }
-  .svc-card.down { border-left: 4px solid #d03b3b; }
-  .svc-card.checking { border-left: 4px solid #cfd4da; }
+  .svc-card.up   { border-left: 3px solid #0ca30c; }
+  .svc-card.down { border-left: 3px solid #d03b3b; }
+  .svc-card.checking { border-left: 3px solid #cfd4da; }
 
-  .svc-head { display: flex; align-items: flex-start; gap: 8px; }
-  .svc-name { font-size: 0.95rem; font-weight: 700; color: #111; flex: 1; word-break: break-word; }
+  .svc-head { display: flex; align-items: flex-start; gap: 6px; }
+  .svc-name { font-size: 0.8rem; font-weight: 700; color: #111; flex: 1; word-break: break-word; }
   .svc-remove {
-    background: none; border: none; color: #aaa; font-size: 1rem; padding: 0 2px; cursor: pointer;
+    background: none; border: none; color: #aaa; font-size: 0.9rem; padding: 0 2px; cursor: pointer;
     line-height: 1; font-weight: 400;
   }
   .svc-remove:hover { color: #d03b3b; background: none; }
 
-  .svc-badges { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-  .pill { display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 10px; font-size: 0.7rem; font-weight: 700; }
+  .svc-badges { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; }
+  .pill { display: inline-flex; align-items: center; gap: 3px; padding: 1px 7px; border-radius: 9px; font-size: 0.62rem; font-weight: 700; }
   .pill-up       { background: #d3f3e6; color: #0a6b47; }
   .pill-down     { background: #fbdcdc; color: #92251f; }
   .pill-checking { background: #eceff3; color: #666; }
-  .pill-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; display: inline-block; }
+  .pill-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; display: inline-block; }
 
-  .svc-url { font-size: 0.72rem; color: #888; word-break: break-all; }
+  .svc-url { font-size: 0.66rem; color: #888; word-break: break-all; }
   .svc-url a { color: #888; text-decoration: none; }
   .svc-url a:hover { text-decoration: underline; color: #0078d4; }
 
-  .svc-meta { font-size: 0.75rem; color: #666; }
+  .svc-meta { font-size: 0.68rem; color: #666; }
 
-  .svc-metrics { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
-  .metric-row { display: flex; justify-content: space-between; font-size: 0.78rem; }
+  .svc-metrics { display: flex; flex-direction: column; gap: 3px; margin-top: 1px; }
+  .metric-row { display: flex; justify-content: space-between; font-size: 0.68rem; }
   .metric-row .k { color: #666; }
   .metric-row .v { font-weight: 600; color: #222; font-variant-numeric: tabular-nums; }
 
-  .meter-track { width: 100%; height: 6px; border-radius: 3px; background: #e1e0d9; overflow: hidden; margin-top: 2px; }
-  .meter-fill  { height: 100%; border-radius: 3px; background: #2a78d6; transition: width .2s ease; }
+  .meter-track { width: 100%; height: 4px; border-radius: 2px; background: #e1e0d9; overflow: hidden; margin-top: 1px; }
+  .meter-fill  { height: 100%; border-radius: 2px; background: #2a78d6; transition: width .2s ease; }
   .meter-fill.good     { background: #0ca30c; }
   .meter-fill.warning  { background: #fab219; }
   .meter-fill.critical { background: #d03b3b; }
 
-  .svc-error { font-size: 0.75rem; color: #b02a37; word-break: break-word; }
+  .svc-error { font-size: 0.68rem; color: #b02a37; word-break: break-word; }
 
-  .svc-footer { display: flex; justify-content: space-between; align-items: center; margin-top: auto; padding-top: 4px; }
-  .svc-footer button { padding: 4px 12px; font-size: 0.72rem; background: #f0f2f5; color: #444; }
+  .svc-footer { display: flex; justify-content: space-between; align-items: center; margin-top: auto; padding-top: 2px; }
+  .svc-footer button { padding: 3px 10px; font-size: 0.66rem; background: #f0f2f5; color: #444; }
   .svc-footer button:hover { background: #e4e8ef; }
-  .svc-checked-at { font-size: 0.68rem; color: #aaa; }
+  .svc-checked-at { font-size: 0.62rem; color: #aaa; }
 </style>
 </head>
 <body>
@@ -199,6 +293,26 @@
       <input type="text" id="newUrl" placeholder="http://host:port/actuator/health" style="width:100%" onkeydown="if(event.key==='Enter')addTarget()">
     </div>
     <div class="field">
+      <label>Auth</label>
+      <select id="newAuthType" onchange="onNewAuthTypeChange()">
+        <option value="">None</option>
+        <option value="basic">Basic</option>
+        <option value="bearer">Bearer</option>
+      </select>
+    </div>
+    <div class="field" id="newAuthBasicFields" style="display:none">
+      <label>Username</label>
+      <input type="text" id="newUsername" placeholder="username" style="width:120px">
+    </div>
+    <div class="field" id="newAuthBasicFields2" style="display:none">
+      <label>Password</label>
+      <input type="password" id="newPassword" placeholder="password" style="width:120px">
+    </div>
+    <div class="field" id="newAuthBearerFields" style="display:none">
+      <label>Token</label>
+      <input type="text" id="newToken" placeholder="token" style="width:160px">
+    </div>
+    <div class="field">
       <button onclick="addTarget()">Add Target</button>
     </div>
   </div>
@@ -211,16 +325,54 @@
 </div>
 
 <div class="card">
+  <div class="card-title">Alerts <span class="filter-note">— fires a webhook when a service transitions UP/DOWN, shared across everyone viewing this dashboard</span></div>
+  <div class="input-row">
+    <div class="field">
+      <label>&nbsp;</label>
+      <label class="chk-inline"><input type="checkbox" id="alertEnabledChk" onchange="markAlertDirty()"> Enabled</label>
+    </div>
+    <div class="field" style="flex:2;min-width:320px">
+      <label>Webhook URL</label>
+      <input type="text" id="alertWebhookUrl" placeholder="https://hooks.slack.com/services/…" style="width:100%" oninput="markAlertDirty()">
+    </div>
+    <div class="field">
+      <label>Format</label>
+      <select id="alertFormat" onchange="markAlertDirty()">
+        <option value="slack">Slack</option>
+        <option value="generic">Generic JSON</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Cooldown (sec)</label>
+      <input type="text" id="alertCooldown" placeholder="300" style="width:80px" oninput="markAlertDirty()">
+    </div>
+    <div class="field">
+      <button type="button" class="secondary" onclick="testAlertWebhook()">Test Webhook</button>
+    </div>
+    <div class="field">
+      <button type="button" id="alertSaveBtn" onclick="saveAlertConfig()">Save</button>
+    </div>
+  </div>
+  <div id="alertStatusMsg" class="status-msg"></div>
+</div>
+
+<div class="card">
   <div class="input-row" style="margin-bottom:0">
     <div class="summary-row" style="flex:1">
       <div class="summary-cell"><div class="lbl">Targets</div><div class="val" id="sumTotal">0</div></div>
       <div class="summary-cell"><div class="lbl">Up</div><div class="val up" id="sumUp">0</div></div>
-      <div class="summary-cell"><div class="lbl">Down</div><div class="val down" id="sumDown">0</div></div>
+      <div class="summary-cell down-cell" id="downCell" onclick="toggleDownOnly()" title="Click to show only services that are down">
+        <div class="lbl">Down</div><div class="val down" id="sumDown">0</div>
+        <div class="hint-tag" id="downFilterHint" style="visibility:hidden">filtering</div>
+      </div>
     </div>
-    <div class="field dropdown-wrap">
-      <label>Group By</label>
-      <button type="button" class="secondary config-btn" id="groupByBtn" onclick="toggleDropdown('groupByPanel')">No grouping</button>
-      <div id="groupByPanel" class="dropdown-panel"></div>
+    <div class="field" style="min-width:180px">
+      <label>Search</label>
+      <input type="text" id="searchBox" placeholder="Name or URL…" oninput="onSearchInput()">
+    </div>
+    <div class="field">
+      <label>&nbsp;</label>
+      <label class="chk-inline"><input type="checkbox" id="prodOnlyChk" checked onchange="onProdOnlyChange()"> Prod only</label>
     </div>
     <div class="field dropdown-wrap">
       <label>Card Fields</label>
@@ -238,16 +390,53 @@
       </select>
     </div>
     <div class="field">
-      <button class="secondary" onclick="checkAll()">Check All Now</button>
+      <button class="secondary" id="checkAllBtn" onclick="checkAll()">Check All Now</button>
+      <div class="check-progress" id="checkProgress" style="display:none">
+        <div class="check-progress-track"><div class="check-progress-fill" id="checkProgressFill"></div></div>
+        <span id="checkProgressLabel"></span>
+      </div>
     </div>
     <div class="field">
       <button class="danger" onclick="clearAll()">Clear All</button>
     </div>
   </div>
+
+  <div class="groupby-section">
+    <div class="groupby-col">
+      <div class="mini-label">Attributes <span class="hint">— drag onto Group By, or click to add</span></div>
+      <div id="attrPalette" class="chip-palette"></div>
+    </div>
+    <div class="groupby-col groupby-dropzone-col">
+      <div class="mini-label">Group By / Drill Down <span class="hint">— order sets the drilldown depth; drag chips to reorder</span></div>
+      <div id="groupDropzone" class="chip-dropzone"
+           ondragover="onDropzoneDragOver(event)" ondragleave="onDropzoneDragLeave(event)" ondrop="onDropzoneDrop(event)">
+        <div class="dropzone-empty" id="dropzoneEmpty">No grouping — drop an attribute here</div>
+      </div>
+    </div>
+    <div class="groupby-col orientation-col" id="orientationCol" style="display:none">
+      <div class="mini-label">Swimlane Orientation</div>
+      <div class="orient-toggle">
+        <button type="button" id="orientVertBtn" class="orient-btn active" onclick="setOrientation('vertical')">Vertical</button>
+        <button type="button" id="orientHorizBtn" class="orient-btn" onclick="setOrientation('horizontal')">Horizontal</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="views-section">
+    <div class="mini-label">Saved Views <span class="hint">— filter + group by + orientation, shared across everyone viewing this dashboard</span></div>
+    <div class="input-row" style="margin-bottom:8px">
+      <div class="field" style="min-width:180px">
+        <input type="text" id="viewNameInput" placeholder="View name">
+      </div>
+      <button type="button" class="secondary" onclick="saveCurrentView()">Save Current View</button>
+      <span class="status-msg" id="viewStatusMsg"></span>
+    </div>
+    <div id="viewChips" class="chip-palette"></div>
+  </div>
 </div>
 
 <div class="card">
-  <div class="card-title">Services</div>
+  <div class="card-title">Services<span class="filter-note" id="svcFilterNote"></span></div>
   <div id="targetGrid" class="target-grid"></div>
 </div>
 
@@ -256,13 +445,22 @@
   const STORAGE_KEY = 'serviceDashboard.targets';
   const GROUPBY_KEY = 'serviceDashboard.groupByKeys';
   const CARDFIELDS_KEY = 'serviceDashboard.cardFields';
+  const ORIENTATION_KEY = 'serviceDashboard.orientation';
+  const PRODONLY_KEY = 'serviceDashboard.prodOnly';
+  const VIEW_PAGE = 'serviceDashboard';
+
   let targets = loadTargets();
   const results = new Map();   // id -> last check result
   const checking = new Set();  // ids currently in-flight
   let refreshTimer = null;
-  let groupByKeys = loadGroupByKeys(); // array of '__status' | '__type' | 'attr:<datasetAttribute>' — grouped/combined in order
-  let cardFields = loadCardFields();   // array of dataset attribute names shown as extra rows on each card
+  let groupByKeys = loadGroupByKeys();   // ordered ['__status' | '__type' | 'attr:<datasetAttribute>', ...] — compound drilldown, built via drag-and-drop
+  let cardFields = loadCardFields();     // array of dataset attribute names shown as extra rows on each card
+  let orientation = loadOrientation();   // 'vertical' (stacked lanes) | 'horizontal' (side-scrolling lanes)
+  let prodOnly = loadProdOnly();         // filters the grid to datasetAttrs.ICEENV === 'PROD' (targets without that attr always shown)
+  let searchQuery = '';                  // live text filter on name/url, not persisted
+  let downOnly = false;                  // quick "exceptions only" toggle, not persisted
   let lastAttrsSig = null;
+  let savedViews = [];                   // server-side saved (filter + group-by + orientation) views, shared across everyone
 
   function loadGroupByKeys() {
     try {
@@ -279,6 +477,17 @@
     } catch { return []; }
   }
   function saveCardFields() { localStorage.setItem(CARDFIELDS_KEY, JSON.stringify(cardFields)); }
+
+  function loadOrientation() {
+    return localStorage.getItem(ORIENTATION_KEY) === 'horizontal' ? 'horizontal' : 'vertical';
+  }
+  function saveOrientation() { localStorage.setItem(ORIENTATION_KEY, orientation); }
+
+  function loadProdOnly() {
+    const raw = localStorage.getItem(PRODONLY_KEY);
+    return raw === null ? true : raw === 'true';
+  }
+  function saveProdOnly() { localStorage.setItem(PRODONLY_KEY, String(prodOnly)); }
 
   function loadTargets() {
     try {
@@ -297,20 +506,44 @@
     el.className = 'status-msg' + (cls ? ' ' + cls : '');
   }
 
+  function onNewAuthTypeChange() {
+    const type = document.getElementById('newAuthType').value;
+    document.getElementById('newAuthBasicFields').style.display  = type === 'basic'  ? '' : 'none';
+    document.getElementById('newAuthBasicFields2').style.display = type === 'basic'  ? '' : 'none';
+    document.getElementById('newAuthBearerFields').style.display = type === 'bearer' ? '' : 'none';
+  }
+
   function addTarget() {
     const name = document.getElementById('newName').value.trim();
     const type = document.getElementById('newType').value;
     const url  = document.getElementById('newUrl').value.trim();
     if (!url) { setAddStatus('URL is required.', 'status-err'); return; }
 
-    const target = { id: 't' + Date.now() + Math.random().toString(36).slice(2, 7), name: name || url, type, url };
+    const authType = document.getElementById('newAuthType').value;
+    let auth = null;
+    if (authType === 'basic') {
+      auth = { authType: 'basic', username: document.getElementById('newUsername').value.trim(), password: document.getElementById('newPassword').value };
+    } else if (authType === 'bearer') {
+      auth = { authType: 'bearer', token: document.getElementById('newToken').value.trim() };
+    }
+
+    const target = { id: 't' + Date.now() + Math.random().toString(36).slice(2, 7), name: name || url, type, url, auth };
     targets.push(target);
     saveTargets();
     document.getElementById('newName').value = '';
     document.getElementById('newUrl').value = '';
+    document.getElementById('newUsername').value = '';
+    document.getElementById('newPassword').value = '';
+    document.getElementById('newToken').value = '';
     setAddStatus('');
     renderGrid();
     checkOne(target);
+  }
+
+  // Auth fields to splice into a /servicemonitor request body for this target, if any.
+  function authFields(target) {
+    const a = target.auth;
+    return a ? { authType: a.authType, username: a.username, password: a.password, token: a.token } : {};
   }
 
   function removeTarget(id) {
@@ -322,7 +555,6 @@
 
   function clearAll() {
     if (targets.length === 0) return;
-    if (!confirm('Remove all ' + targets.length + ' service(s) from the dashboard?')) return;
     targets = [];
     results.clear();
     checking.clear();
@@ -331,6 +563,16 @@
   }
 
   // ── Fetch + normalize ─────────────────────────────────────────────────────
+  // Records a result, firing an alert first if this is a status transition from the previous
+  // known result — must run before overwriting `results`, since that's the only place the
+  // "previous" value is available.
+  function applyResult(target, data) {
+    data._checkedAt = Date.now();
+    const previous = results.get(target.id);
+    results.set(target.id, data);
+    maybeAlert(target, previous, data);
+  }
+
   async function checkOne(target) {
     checking.add(target.id);
     renderGrid();
@@ -338,46 +580,99 @@
       const res = await fetch('/servicemonitor/check', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: target.url, type: target.type })
+        body: JSON.stringify({ url: target.url, type: target.type, ...authFields(target) })
       });
       const data = await res.json();
-      data._checkedAt = Date.now();
-      results.set(target.id, data);
+      applyResult(target, data);
     } catch (e) {
-      results.set(target.id, { ok: false, status: 'DOWN', error: e.message, _checkedAt: Date.now() });
+      applyResult(target, { ok: false, status: 'DOWN', error: e.message });
     } finally {
       checking.delete(target.id);
       renderGrid();
     }
   }
 
-  // Batch-checks every target in one round trip; the server fans the calls out across
-  // virtual threads so the whole set comes back in roughly the time of the slowest one.
+  // Throttles renderGrid() during a streaming batch — at hundreds of targets, re-rendering the
+  // whole grid on every single incoming result (rather than every ~250ms) makes the page jank
+  // instead of feeling live.
+  let lastGridRenderAt = 0;
+  function maybeRenderGrid(force) {
+    const now = Date.now();
+    if (force || now - lastGridRenderAt > 250) {
+      lastGridRenderAt = now;
+      renderGrid();
+    }
+  }
+
+  // Streams results via SSE as each target finishes, instead of waiting for the whole batch —
+  // at hundreds of targets that wait can be many seconds of a blank "checking…" grid. A plain
+  // EventSource can't POST a body, so this drives the same wire format by hand: fetch() + a
+  // manual reader over the text/event-stream response.
   async function checkAll() {
     if (targets.length === 0) return;
+    const byId = new Map(targets.map(t => [t.id, t]));
     targets.forEach(t => checking.add(t.id));
     renderGrid();
+
+    const btn = document.getElementById('checkAllBtn');
+    const progressWrap  = document.getElementById('checkProgress');
+    const progressFill  = document.getElementById('checkProgressFill');
+    const progressLabel = document.getElementById('checkProgressLabel');
+    btn.disabled = true;
+    progressWrap.style.display = 'flex';
+    progressFill.style.width = '0%';
+    progressLabel.textContent = '0 / ' + targets.length;
+
+    function handleEvent(eventName, data) {
+      if (eventName === 'result') {
+        const t = byId.get(data.id);
+        checking.delete(data.id);
+        if (t) applyResult(t, data);
+        maybeRenderGrid(false);
+      } else if (eventName === 'progress') {
+        const pct = data.total > 0 ? Math.round((data.checked / data.total) * 100) : 0;
+        progressFill.style.width = pct + '%';
+        progressLabel.textContent = data.checked + ' / ' + data.total;
+      }
+    }
+
     try {
-      const res = await fetch('/servicemonitor/checkBatch', {
+      const res = await fetch('/servicemonitor/checkBatchStream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ targets: targets.map(t => ({ id: t.id, url: t.url, type: t.type })) })
+        body: JSON.stringify({ targets: targets.map(t => ({ id: t.id, url: t.url, type: t.type, ...authFields(t) })) })
       });
-      const data = await res.json();
-      const now = Date.now();
-      (data.results || []).forEach(r => {
-        r._checkedAt = now;
-        results.set(r.id, r);
-        checking.delete(r.id);
-      });
+      if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf('\n\n')) !== -1) {
+          const rawEvent = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          let eventName = 'message', dataStr = '';
+          rawEvent.split('\n').forEach(line => {
+            if (line.startsWith('event:')) eventName = line.slice(6).trim();
+            else if (line.startsWith('data:')) dataStr += line.slice(5).trim();
+          });
+          if (!dataStr) continue;
+          try { handleEvent(eventName, JSON.parse(dataStr)); } catch { /* ignore malformed chunk */ }
+        }
+      }
     } catch (e) {
-      const now = Date.now();
       targets.forEach(t => {
-        results.set(t.id, { ok: false, status: 'DOWN', error: e.message, _checkedAt: now });
-        checking.delete(t.id);
+        if (checking.has(t.id)) applyResult(t, { ok: false, status: 'DOWN', error: e.message });
       });
     } finally {
-      renderGrid();
+      checking.clear();
+      btn.disabled = false;
+      progressWrap.style.display = 'none';
+      maybeRenderGrid(true);
     }
   }
 
@@ -420,6 +715,23 @@
     return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
 
+  // Recent-history strip: one bar per past check, colored by status (green/red/gray) so a
+  // flaky service reads instantly as "mostly up, blipped once" vs. "just went down" — a plain
+  // latency line would bury that distinction under noise, and with a status pill right next to
+  // it a legend would only repeat what's already on the card.
+  function renderSparkline(hist) {
+    const barW = 4, gap = 2, h = 14;
+    const totalW = hist.length * (barW + gap) - gap;
+    const bars = hist.map((p, i) => {
+      const x = i * (barW + gap);
+      const color = p.status === 'UP' ? '#0ca30c' : (p.status === 'DOWN' ? '#d03b3b' : '#cfd4da');
+      const when = p.ts ? new Date(p.ts).toLocaleTimeString() : '';
+      const titleText = when + ' — ' + (p.status || 'unknown') + (p.latencyMs != null ? ' — ' + p.latencyMs + ' ms' : '');
+      return '<rect x="' + x + '" y="0" width="' + barW + '" height="' + h + '" rx="1" fill="' + color + '"><title>' + escapeHtml(titleText) + '</title></rect>';
+    }).join('');
+    return '<svg class="sparkline" width="' + totalW + '" height="' + h + '" viewBox="0 0 ' + totalW + ' ' + h + '" role="img" aria-label="Recent check history">' + bars + '</svg>';
+  }
+
   // ── Grouping ─────────────────────────────────────────────────────────────
   function datasetAttrNames() {
     const attrs = new Set();
@@ -427,9 +739,9 @@
     return Array.from(attrs).sort();
   }
 
-  // Rebuilds the "Group By" / "Card Fields" dropdown panels when the set of available
-  // dataset attributes changes, without touching the DOM (and losing an open dropdown)
-  // on every poll tick when nothing has actually changed.
+  // Rebuilds the attribute palette / Group-By dropzone / "Card Fields" dropdown when the set
+  // of available dataset attributes changes, without touching the DOM (and losing an in-progress
+  // drag or an open dropdown) on every poll tick when nothing has actually changed.
   function updateDynamicPanels() {
     const sortedAttrs = datasetAttrNames();
     const sig = sortedAttrs.join(' ');
@@ -441,7 +753,8 @@
     saveGroupByKeys();
     saveCardFields();
 
-    renderGroupByPanel(sortedAttrs);
+    renderAttrPalette(sortedAttrs);
+    renderDropzone();
     renderCardFieldsPanel(sortedAttrs);
   }
 
@@ -457,35 +770,115 @@
     }
   });
 
-  function renderGroupByPanel(sortedAttrs) {
+  // ── Group By: drag-and-drop attribute palette + ordered drilldown dropzone ─────────────
+  function labelForGroupKey(k) { return k === '__status' ? 'Status' : k === '__type' ? 'Type' : k.slice(5); }
+
+  function renderAttrPalette(sortedAttrs) {
+    const el = document.getElementById('attrPalette');
     const builtIns = [{ value: '__status', label: 'Status' }, { value: '__type', label: 'Type' }];
     const attrOpts = sortedAttrs.map(a => ({ value: 'attr:' + a, label: a }));
-    const optHtml = (o) =>
-      '<label class="opt"><input type="checkbox" value="' + escapeHtml(o.value) + '"' +
-      (groupByKeys.includes(o.value) ? ' checked' : '') +
-      ' onchange="toggleGroupByKey(\'' + escapeHtml(o.value) + '\', this.checked)"> ' + escapeHtml(o.label) + '</label>';
+    const available = builtIns.concat(attrOpts).filter(o => !groupByKeys.includes(o.value));
 
-    let html = builtIns.map(optHtml).join('');
-    if (attrOpts.length > 0) {
-      html += '<div class="opt-group-title">Dataset Attributes</div>' + attrOpts.map(optHtml).join('');
+    if (available.length === 0) {
+      el.innerHTML = '<div class="empty-note">Every available attribute is already used for grouping.</div>';
+      return;
     }
-    document.getElementById('groupByPanel').innerHTML = html;
-    updateGroupByBtnLabel();
+    el.innerHTML = available.map(o =>
+      '<span class="attr-chip" draggable="true" data-key="' + escapeHtml(o.value) + '" ' +
+      'ondragstart="onPaletteDragStart(event, \'' + escapeHtml(o.value) + '\')" ' +
+      'onclick="addGroupByKey(\'' + escapeHtml(o.value) + '\')" ' +
+      'title="Drag onto Group By, or click to add">' + escapeHtml(o.label) +
+      '<span class="add-hint">+</span></span>'
+    ).join('');
   }
 
-  function toggleGroupByKey(key, checked) {
-    if (checked) { if (!groupByKeys.includes(key)) groupByKeys.push(key); }
-    else { groupByKeys = groupByKeys.filter(k => k !== key); }
+  function renderDropzone() {
+    const zone = document.getElementById('groupDropzone');
+    if (groupByKeys.length === 0) {
+      zone.innerHTML = '<div class="dropzone-empty" id="dropzoneEmpty">No grouping — drop an attribute here</div>';
+    } else {
+      zone.innerHTML = groupByKeys.map((k, idx) =>
+        (idx > 0 ? '<span class="chevron">&rsaquo;</span>' : '') +
+        '<span class="group-chip" draggable="true" data-idx="' + idx + '" ' +
+        'ondragstart="onChipDragStart(event, ' + idx + ')" ' +
+        'ondragover="onChipDragOver(event)" ' +
+        'ondrop="onChipDrop(event, ' + idx + ')" ' +
+        'title="Drag to reorder">' +
+        '<span class="lvl-idx">' + (idx + 1) + '</span>' + escapeHtml(labelForGroupKey(k)) +
+        '<button type="button" class="remove" title="Remove" onclick="event.stopPropagation(); removeGroupByKey(\'' + escapeHtml(k) + '\')">&times;</button>' +
+        '</span>'
+      ).join('');
+    }
+    document.getElementById('orientationCol').style.display = groupByKeys.length > 0 ? '' : 'none';
+  }
+
+  function addGroupByKey(key) {
+    if (groupByKeys.includes(key)) return;
+    groupByKeys.push(key);
     saveGroupByKeys();
-    updateGroupByBtnLabel();
+    renderAttrPalette(datasetAttrNames());
+    renderDropzone();
     renderGrid();
   }
 
-  function updateGroupByBtnLabel() {
-    const btn = document.getElementById('groupByBtn');
-    if (groupByKeys.length === 0) { btn.textContent = 'No grouping'; return; }
-    const labelFor = k => k === '__status' ? 'Status' : k === '__type' ? 'Type' : k.slice(5);
-    btn.textContent = groupByKeys.map(labelFor).join(' + ');
+  function removeGroupByKey(key) {
+    groupByKeys = groupByKeys.filter(k => k !== key);
+    saveGroupByKeys();
+    renderAttrPalette(datasetAttrNames());
+    renderDropzone();
+    renderGrid();
+  }
+
+  function reorderGroupByKey(fromIdx, toIdx) {
+    if (fromIdx === toIdx || fromIdx < 0 || fromIdx >= groupByKeys.length) return;
+    const [moved] = groupByKeys.splice(fromIdx, 1);
+    groupByKeys.splice(toIdx, 0, moved);
+    saveGroupByKeys();
+    renderDropzone();
+    renderGrid();
+  }
+
+  function onPaletteDragStart(e, key) {
+    e.dataTransfer.setData('text/x-groupby-key', key);
+    e.dataTransfer.effectAllowed = 'copy';
+  }
+
+  function onChipDragStart(e, idx) {
+    e.dataTransfer.setData('text/x-groupby-reorder', String(idx));
+    e.dataTransfer.effectAllowed = 'move';
+  }
+
+  function onChipDragOver(e) { e.preventDefault(); }
+
+  function onChipDrop(e, toIdx) {
+    e.preventDefault();
+    e.stopPropagation();
+    const reorderData = e.dataTransfer.getData('text/x-groupby-reorder');
+    if (reorderData !== '') { reorderGroupByKey(Number(reorderData), toIdx); return; }
+    const key = e.dataTransfer.getData('text/x-groupby-key');
+    if (key) addGroupByKey(key);
+  }
+
+  function onDropzoneDragOver(e) {
+    e.preventDefault();
+    document.getElementById('groupDropzone').classList.add('drag-over');
+  }
+  function onDropzoneDragLeave() {
+    document.getElementById('groupDropzone').classList.remove('drag-over');
+  }
+  function onDropzoneDrop(e) {
+    e.preventDefault();
+    document.getElementById('groupDropzone').classList.remove('drag-over');
+    const key = e.dataTransfer.getData('text/x-groupby-key');
+    if (key) addGroupByKey(key);
+  }
+
+  function setOrientation(o) {
+    orientation = o === 'horizontal' ? 'horizontal' : 'vertical';
+    saveOrientation();
+    document.getElementById('orientVertBtn').classList.toggle('active', orientation === 'vertical');
+    document.getElementById('orientHorizBtn').classList.toggle('active', orientation === 'horizontal');
+    renderGrid();
   }
 
   function renderCardFieldsPanel(sortedAttrs) {
@@ -515,6 +908,68 @@
     btn.textContent = cardFields.length === 0 ? 'Configure…' : cardFields.length + ' field' + (cardFields.length > 1 ? 's' : '') + ' shown';
   }
 
+  // ── Filters: search, prod-only, exceptions-only ─────────────────────────────
+  function getAttrCI(attrs, name) {
+    if (!attrs) return undefined;
+    const key = Object.keys(attrs).find(k => k.toLowerCase() === name.toLowerCase());
+    return key ? attrs[key] : undefined;
+  }
+
+  // Targets without an ICEENV attribute (e.g. manually added ones) are never hidden by this
+  // filter — it only narrows down services that actually carry an environment tag.
+  function passesProdFilter(t) {
+    if (!prodOnly) return true;
+    if (!t.datasetAttrs) return true;
+    const v = getAttrCI(t.datasetAttrs, 'ICEENV');
+    if (v == null || v === '') return true;
+    return String(v).toUpperCase() === 'PROD';
+  }
+
+  function passesSearch(t) {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return t.name.toLowerCase().includes(q) || t.url.toLowerCase().includes(q);
+  }
+
+  function passesDownFilter(t) {
+    if (!downOnly) return true;
+    const r = results.get(t.id);
+    return !!r && r.status !== 'UP';
+  }
+
+  function visibleTargets() {
+    return targets.filter(t => passesProdFilter(t) && passesSearch(t) && passesDownFilter(t));
+  }
+
+  function onSearchInput() {
+    searchQuery = document.getElementById('searchBox').value.trim();
+    renderGrid();
+  }
+
+  function onProdOnlyChange() {
+    prodOnly = document.getElementById('prodOnlyChk').checked;
+    saveProdOnly();
+    renderGrid();
+  }
+
+  function toggleDownOnly() {
+    downOnly = !downOnly;
+    document.getElementById('downCell').classList.toggle('active-filter', downOnly);
+    document.getElementById('downFilterHint').style.visibility = downOnly ? 'visible' : 'hidden';
+    renderGrid();
+  }
+
+  // Down services surface first within any list so exceptions are the first thing seen.
+  function stateRank(t) {
+    const r = results.get(t.id);
+    if (checking.has(t.id) && !r) return 1;
+    if (!r) return 1;
+    return r.status === 'UP' ? 2 : 0;
+  }
+  function sortByException(list) {
+    return list.slice().sort((a, b) => stateRank(a) - stateRank(b));
+  }
+
   function groupValue(t, r, key) {
     if (key === '__status') {
       const isChecking = checking.has(t.id) && !r;
@@ -542,29 +997,42 @@
     const grid = document.getElementById('targetGrid');
     updateDynamicPanels();
 
+    const vis = visibleTargets();
+    const note = document.getElementById('svcFilterNote');
+    note.textContent = (targets.length === 0 || vis.length === targets.length)
+      ? '' : ' (' + vis.length + ' of ' + targets.length + ' shown)';
+
     if (targets.length === 0) {
       grid.classList.remove('grouped');
-      grid.innerHTML = '<div class="empty-msg">No targets yet — add a service above to start monitoring it.</div>';
+      grid.innerHTML = '<div class="empty-msg">No targets yet — add a service above, or load some from a dataset.</div>';
+      updateSummary();
+      return;
+    }
+
+    if (vis.length === 0) {
+      grid.classList.remove('grouped');
+      grid.innerHTML = '<div class="empty-msg">No services match the current filters.</div>';
       updateSummary();
       return;
     }
 
     if (groupByKeys.length === 0) {
       grid.classList.remove('grouped');
-      grid.innerHTML = targets.map(renderCard).join('');
+      grid.innerHTML = sortByException(vis).map(renderCard).join('');
     } else {
       grid.classList.add('grouped');
       const groups = new Map();
-      targets.forEach(t => {
+      vis.forEach(t => {
         const key = computeGroupKey(t, results.get(t.id), groupByKeys);
         if (!groups.has(key)) groups.set(key, []);
         groups.get(key).push(t);
       });
       const sortedKeys = Array.from(groups.keys()).sort();
+      const orientClass = orientation === 'horizontal' ? ' orient-horizontal' : '';
       grid.innerHTML = sortedKeys.map(key => {
-        const lane = groups.get(key);
+        const lane = sortByException(groups.get(key));
         return (
-          '<div class="group-section">' +
+          '<div class="group-section' + orientClass + '">' +
             '<div class="group-label">' +
               '<div class="name">' + escapeHtml(key) + '</div>' +
               '<div class="count">' + lane.length + ' service' + (lane.length !== 1 ? 's' : '') + '</div>' +
@@ -599,6 +1067,11 @@
 
     let errorHtml = '';
     if (r && r.error) errorHtml = '<div class="svc-error">' + escapeHtml(r.error) + '</div>';
+
+    let sparkHtml = '';
+    if (r && r.history && r.history.length > 1) {
+      sparkHtml = '<div class="svc-spark-row"><span class="lbl">Trend</span>' + renderSparkline(r.history) + '</div>';
+    }
 
     let metricsHtml = '';
     if (r && r.metrics && Object.keys(r.metrics).length > 0) {
@@ -646,6 +1119,7 @@
         '<div class="svc-url"><a href="' + escapeHtml(t.url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(t.url) + '</a></div>' +
         metaHtml +
         errorHtml +
+        sparkHtml +
         metricsHtml +
         extraHtml +
         '<div class="svc-footer">' +
@@ -679,10 +1153,182 @@
   }
   document.getElementById('refreshInterval').addEventListener('change', applyRefreshInterval);
 
+  // ── Alerts: webhook config (shared server-side) + transition detection ─────────────────
+  let alertConfigCache = null;
+
+  function setAlertStatus(msg, cls) {
+    const el = document.getElementById('alertStatusMsg');
+    el.textContent = msg || '';
+    el.className = 'status-msg' + (cls ? ' ' + cls : '');
+  }
+
+  function markAlertDirty() { setAlertStatus('Unsaved changes — click Save to apply.', ''); }
+
+  function readAlertFormFromUI() {
+    return {
+      enabled: document.getElementById('alertEnabledChk').checked,
+      webhookUrl: document.getElementById('alertWebhookUrl').value.trim(),
+      format: document.getElementById('alertFormat').value,
+      cooldownSeconds: parseInt(document.getElementById('alertCooldown').value, 10) || 300
+    };
+  }
+
+  async function loadAlertConfig() {
+    try {
+      const res = await fetch('/servicemonitor/alertconfig');
+      alertConfigCache = await res.json();
+    } catch (e) {
+      alertConfigCache = null;
+      return;
+    }
+    document.getElementById('alertEnabledChk').checked = !!alertConfigCache.enabled;
+    document.getElementById('alertWebhookUrl').value = alertConfigCache.webhookUrl || '';
+    document.getElementById('alertFormat').value = alertConfigCache.format || 'slack';
+    document.getElementById('alertCooldown').value = alertConfigCache.cooldownSeconds != null ? alertConfigCache.cooldownSeconds : 300;
+  }
+
+  async function saveAlertConfig() {
+    const cfg = readAlertFormFromUI();
+    try {
+      const res = await fetch('/servicemonitor/alertconfig', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cfg)
+      });
+      const data = await res.json();
+      if (!res.ok) { setAlertStatus(data.error || 'Failed to save.', 'status-err'); return; }
+      alertConfigCache = data;
+      setAlertStatus('Saved.', 'status-ok');
+    } catch (e) {
+      setAlertStatus('Failed to save: ' + e.message, 'status-err');
+    }
+  }
+
+  async function testAlertWebhook() {
+    const cfg = readAlertFormFromUI();
+    if (!cfg.webhookUrl) { setAlertStatus('Enter a webhook URL first.', 'status-err'); return; }
+    setAlertStatus('Sending test…', '');
+    try {
+      const res = await fetch('/servicemonitor/alertconfig/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cfg)
+      });
+      const data = await res.json();
+      if (!res.ok) { setAlertStatus(data.error || 'Test failed.', 'status-err'); return; }
+      setAlertStatus('Test sent (HTTP ' + data.statusCode + ').', 'status-ok');
+    } catch (e) {
+      setAlertStatus('Test failed: ' + e.message, 'status-err');
+    }
+  }
+
+  // Fires only on an actual UP<->DOWN transition (never on the first-ever check of a target,
+  // since there's no "previous" to transition from) — the server enforces cooldown per key so
+  // several open dashboard tabs polling the same targets don't multiply the noise.
+  function maybeAlert(target, previous, data) {
+    if (!alertConfigCache || !alertConfigCache.enabled) return;
+    if (!previous || !previous.status || !data || !data.status) return;
+    if (previous.status === data.status) return;
+
+    fetch('/servicemonitor/alert', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        key: target.type + '|' + target.url,
+        name: target.name, url: target.url, type: target.type,
+        status: data.status, previousStatus: previous.status, error: data.error, latencyMs: data.latencyMs
+      })
+    }).catch(() => {});
+  }
+
+  // ── Saved Views: filter + group-by + orientation, persisted server-side (shared) ───────
+  function setViewStatus(msg, cls) {
+    const el = document.getElementById('viewStatusMsg');
+    el.textContent = msg || '';
+    el.className = 'status-msg' + (cls ? ' ' + cls : '');
+  }
+
+  async function loadSavedViews() {
+    try {
+      const res = await fetch('/dashboardview?page=' + encodeURIComponent(VIEW_PAGE));
+      savedViews = await res.json();
+    } catch (e) {
+      savedViews = [];
+    }
+    renderViewChips();
+  }
+
+  function renderViewChips() {
+    const el = document.getElementById('viewChips');
+    if (!savedViews.length) { el.innerHTML = '<div class="empty-note">No saved views yet — set up a filter and grouping, then save it below.</div>'; return; }
+    el.innerHTML = savedViews.map(v =>
+      '<span class="view-chip">' +
+        '<button type="button" class="apply" onclick="applyView(\'' + escapeHtml(v.name) + '\')">' + escapeHtml(v.name) + '</button>' +
+        '<button type="button" class="remove" title="Delete" onclick="deleteView(\'' + escapeHtml(v.name) + '\')">&times;</button>' +
+      '</span>'
+    ).join('');
+  }
+
+  async function saveCurrentView() {
+    const name = document.getElementById('viewNameInput').value.trim();
+    if (!name) { setViewStatus('Enter a view name.', 'status-err'); return; }
+
+    const view = { name, page: VIEW_PAGE, groupByKeys: groupByKeys.slice(), orientation, search: searchQuery, prodOnly };
+    try {
+      const res = await fetch('/dashboardview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(view)
+      });
+      const data = await res.json();
+      if (!res.ok) { setViewStatus(data.error || 'Failed to save view.', 'status-err'); return; }
+      document.getElementById('viewNameInput').value = '';
+      setViewStatus('View "' + name + '" saved.', 'status-ok');
+      await loadSavedViews();
+    } catch (e) {
+      setViewStatus('Failed to save view: ' + e.message, 'status-err');
+    }
+  }
+
+  function applyView(name) {
+    const v = savedViews.find(x => x.name === name);
+    if (!v) return;
+
+    groupByKeys = (v.groupByKeys || []).slice();
+    orientation = v.orientation === 'horizontal' ? 'horizontal' : 'vertical';
+    searchQuery = v.search || '';
+    prodOnly = v.prodOnly !== false;
+    saveGroupByKeys();
+    saveOrientation();
+    saveProdOnly();
+
+    document.getElementById('searchBox').value = searchQuery;
+    document.getElementById('prodOnlyChk').checked = prodOnly;
+    document.getElementById('orientVertBtn').classList.toggle('active', orientation === 'vertical');
+    document.getElementById('orientHorizBtn').classList.toggle('active', orientation === 'horizontal');
+
+    lastAttrsSig = null; // force the palette/dropzone to rebuild against the restored groupByKeys
+    renderGrid();
+    setViewStatus('Applied view "' + name + '".', 'status-ok');
+  }
+
+  async function deleteView(name) {
+    try {
+      await fetch('/dashboardview/' + encodeURIComponent(name) + '?page=' + encodeURIComponent(VIEW_PAGE), { method: 'DELETE' });
+    } catch (e) { /* ignore */ }
+    savedViews = savedViews.filter(v => v.name !== name);
+    renderViewChips();
+  }
+
   // ── Init ─────────────────────────────────────────────────────────────────
+  document.getElementById('prodOnlyChk').checked = prodOnly;
+  document.getElementById('orientVertBtn').classList.toggle('active', orientation === 'vertical');
+  document.getElementById('orientHorizBtn').classList.toggle('active', orientation === 'horizontal');
   renderGrid();
   if (targets.length > 0) checkAll();
   applyRefreshInterval();
+  loadSavedViews();
+  loadAlertConfig();
 
   StaticDatasetWidget.mount({
     containerId: 'dsWidget',
@@ -699,8 +1345,15 @@
           ]
         } }
     ],
-    loadLabel: 'Load Targets',
-    onLoad(rows) {
+    loadLabel: 'Add to Services',
+    showLabel: 'Show Services',
+    autoSelectFirstDataset: true,
+    onLoad(rows, meta) {
+      if (meta && meta.replace) {
+        targets = [];
+        results.clear();
+        checking.clear();
+      }
       let added = 0;
       rows.forEach(row => {
         const url = row.url != null ? String(row.url) : '';
@@ -715,7 +1368,7 @@
       saveTargets();
       renderGrid();
       checkAll();
-      return 'Added ' + added + ' target(s).';
+      return (meta && meta.replace ? 'Loaded ' : 'Added ') + added + ' target(s).';
     }
   });
 </script>

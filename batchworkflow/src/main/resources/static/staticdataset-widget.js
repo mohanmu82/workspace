@@ -120,6 +120,7 @@
 
     const fields = opts.fields || [];
     const loadLabel = opts.loadLabel || 'Load';
+    const showLabel = opts.showLabel || null;
 
     const state = {
       datasetName: null,
@@ -153,6 +154,7 @@
       </div>
       <div class="sdw-row" style="margin-top:6px">
         <button type="button" class="sdw-btn" data-action="load">${escapeHtml(loadLabel)}</button>
+        ${showLabel ? '<button type="button" class="sdw-btn sdw-secondary" data-action="load-replace">' + escapeHtml(showLabel) + '</button>' : ''}
       </div>
       <div class="sdw-status" data-role="status"></div>
     `;
@@ -320,7 +322,7 @@
       renderFavorites();
     }
 
-    function doLoad() {
+    function doLoad(replace) {
       if (!state.datasetName) { setStatus('Select a dataset first.', 'sdw-err'); return; }
 
       const mapping = {};
@@ -354,7 +356,7 @@
 
       let result;
       try {
-        result = opts.onLoad ? opts.onLoad(mappedRows) : undefined;
+        result = opts.onLoad ? opts.onLoad(mappedRows, { replace: !!replace }) : undefined;
       } catch (e) {
         setStatus('onLoad handler failed: ' + e.message, 'sdw-err');
         return;
@@ -386,7 +388,9 @@
       } else if (action === 'delete-favorite') {
         deleteFavorite(fav);
       } else if (action === 'load') {
-        doLoad();
+        doLoad(false);
+      } else if (action === 'load-replace') {
+        doLoad(true);
       }
     });
 
@@ -419,6 +423,10 @@
         el.dataset.innerHTML = '<option value="">-- select a dataset --</option>' +
           list.map(d => '<option value="' + escapeHtml(d.name) + '">' + escapeHtml(d.name) +
                          ' (' + d.count + ' rows)</option>').join('');
+        if (opts.autoSelectFirstDataset && list.length > 0 && !el.dataset.value) {
+          el.dataset.value = list[0].name;
+          onDatasetChange();
+        }
       } catch (e) { /* static dataset feature optional — ignore */ }
     })();
 

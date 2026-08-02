@@ -503,6 +503,7 @@
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="auth.js"></script>
 <script src="theme.js"></script>
+<script src="share.js"></script>
 <script src="tasks-ws.js"></script>
 <script src="card-fields.js"></script>
 <script src="filter-bar.js"></script>
@@ -619,8 +620,26 @@ async function init() {
   await loadFieldConfigs();
   await loadFilterOptions();
   await loadMasterLists();
+  applyUrlFilters();
   loadEvents();
   await loadTasks();
+}
+
+// Allows deep-linking straight into a filtered task list, e.g.
+// index.html?project=Alpha to land pre-filtered on a single project.
+function applyUrlFilters() {
+  const params = new URLSearchParams(window.location.search);
+  const project = params.get('project');
+  if (project) {
+    const sel = document.getElementById('filterProject');
+    if (![...sel.options].some(o => o.value === project)) {
+      const o = document.createElement('option');
+      o.value = project;
+      o.textContent = project;
+      sel.appendChild(o);
+    }
+    sel.value = project;
+  }
 }
 
 async function loadEvents() {

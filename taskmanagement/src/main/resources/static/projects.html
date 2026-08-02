@@ -202,6 +202,7 @@
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="auth.js"></script>
 <script src="theme.js"></script>
+<script src="share.js"></script>
 <script src="card-fields.js"></script>
 <script src="filter-bar.js"></script>
 <script>
@@ -327,6 +328,7 @@ function projectCard(p) {
           <i class="bi bi-chevron-${expanded ? 'up' : 'down'} me-1"></i>${expanded ? 'Hide' : 'Milestones & Tasks'}
         </button>
         <div>
+          <a class="btn btn-outline-secondary btn-sm" href="index.html?project=${encodeURIComponent(p.name)}" title="View all tasks for this project"><i class="bi bi-list-task"></i></a>
           <button class="btn btn-outline-primary btn-sm" onclick="openProjectModal(${p.id})" title="Edit"><i class="bi bi-pencil"></i></button>
           <button class="btn btn-outline-danger btn-sm" onclick="confirmDeleteProject(${p.id}, '${escAttr(p.name)}')" title="Delete"><i class="bi bi-trash"></i></button>
         </div>
@@ -347,7 +349,7 @@ function projectCard(p) {
               ${tasks.slice(0, 25).map(t => miniTaskRow(t)).join('')}
             </tbody>
           </table>
-          ${total > 25 ? `<div class="mini-stat mt-1">+${total-25} more — view in Tasks list</div>` : ''}
+          ${total > 25 ? `<div class="mini-stat mt-1">+${total-25} more — <a href="index.html?project=${encodeURIComponent(p.name)}">view in Tasks list</a></div>` : ''}
         </div>`}
       </div>
     </div>

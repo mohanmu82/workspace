@@ -1,0 +1,6 @@
+{
+  "webhookUrl" : "",
+  "format" : "slack",
+  "enabled" : false,
+  "cooldownSeconds" : 300
+}

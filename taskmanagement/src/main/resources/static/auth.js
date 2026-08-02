@@ -36,7 +36,8 @@
 
   function redirectToLogin() {
     const back = encodeURIComponent(location.href);
-    location.href = authConfig.jwtUrl + '?' + authConfig.redirectParam + '=' + back;
+    const sep = authConfig.jwtUrl.includes('?') ? '&' : '?';
+    location.href = authConfig.jwtUrl + sep + authConfig.redirectParam + '=' + back;
   }
 
   function renderBadge() {
