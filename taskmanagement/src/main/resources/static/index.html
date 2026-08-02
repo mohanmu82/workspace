@@ -119,10 +119,11 @@
     <a href="events.html" class="btn btn-outline-light btn-sm"><i class="bi bi-calendar-week me-1"></i>Events</a>
     <a href="notes.html" class="btn btn-outline-light btn-sm"><i class="bi bi-sticky me-1"></i>Notes</a>
     <a href="history.html" class="btn btn-outline-light btn-sm"><i class="bi bi-clock-history me-1"></i>History</a>
-    <a href="admin.html" class="btn btn-outline-light btn-sm"><i class="bi bi-gear me-1"></i>Admin</a>
+    <a href="admin.html" class="btn btn-outline-light btn-sm admin-only"><i class="bi bi-gear me-1"></i>Admin</a>
     <a href="api-docs.html" class="btn btn-outline-light btn-sm"><i class="bi bi-code-slash me-1"></i>API Docs</a>
     <button class="btn btn-outline-light btn-sm" id="whoAmIBtn" onclick="onWhoAmIClick()" title="Set your name (used for My Tasks and to prefill fields)"><i class="bi bi-person-circle"></i></button>
     <button class="btn btn-outline-light btn-sm" onclick="openShortcutsModal()" title="Keyboard shortcuts (?)"><i class="bi bi-keyboard"></i></button>
+    <span id="userBadge" class="text-light small me-2"></span>
     <button class="btn btn-outline-light btn-sm" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle dark mode"><i class="bi bi-moon-stars" id="themeIcon"></i></button>
   </div>
 </nav>
@@ -500,6 +501,7 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="auth.js"></script>
 <script src="theme.js"></script>
 <script src="tasks-ws.js"></script>
 <script src="card-fields.js"></script>
@@ -2037,6 +2039,10 @@ function setView(view) {
   document.getElementById('btnByDate').classList.toggle('active', view === 'byDate');
   document.getElementById('btnDueDates').classList.toggle('active', view === 'dueDates');
   document.getElementById('groupBySelect').disabled = view !== 'table';
+  // The Due Dates tab embeds due-dates.html in an iframe, which has its own full-featured
+  // "Add Filter" bar — showing this page's outer one too would just be a second, inert
+  // "Add Filter" control (it has no effect on the iframe's content).
+  document.getElementById('taskFilterBar').style.display = view === 'dueDates' ? 'none' : '';
   updateLaneFilterBarVisibility(view);
   renderCardFieldsSlot();
   selectedTaskIds.clear();

@@ -54,7 +54,8 @@
     <a href="events.html" class="btn btn-outline-light btn-sm"><i class="bi bi-calendar-week me-1"></i>Events</a>
     <a href="notes.html" class="btn btn-outline-light btn-sm"><i class="bi bi-sticky me-1"></i>Notes</a>
     <a href="history.html" class="btn btn-outline-light btn-sm"><i class="bi bi-clock-history me-1"></i>History</a>
-    <a href="admin.html" class="btn btn-outline-light btn-sm"><i class="bi bi-gear me-1"></i>Admin</a>
+    <a href="admin.html" class="btn btn-outline-light btn-sm admin-only"><i class="bi bi-gear me-1"></i>Admin</a>
+    <span id="userBadge" class="text-light small me-2"></span>
     <button class="btn btn-outline-light btn-sm" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle dark mode"><i class="bi bi-moon-stars" id="themeIcon"></i></button>
   </div>
 </nav>
@@ -105,6 +106,7 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="auth.js"></script>
 <script src="theme.js"></script>
 <script src="tasks-ws.js"></script>
 <script src="card-fields.js"></script>

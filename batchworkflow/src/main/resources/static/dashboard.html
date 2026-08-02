@@ -78,14 +78,50 @@
   .target-grid.grouped { display: block; }
   .empty-msg { font-size: 0.82rem; color: #888; padding: 18px; text-align: center; }
 
-  .group-section { margin-bottom: 22px; }
-  .group-section:last-child { margin-bottom: 0; }
-  .group-header {
-    font-size: 0.75rem; font-weight: 700; color: #555; text-transform: uppercase;
-    letter-spacing: .04em; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #dde1e7;
+  /* ── Swimlanes ───────────────────────────────────────────────────────── */
+  .group-section {
+    display: flex; align-items: stretch; margin-bottom: 16px;
+    background: #f8f9fb; border: 1px solid #dde1e7; border-radius: 8px; overflow: hidden;
   }
-  .group-count { font-weight: 400; color: #999; text-transform: none; letter-spacing: 0; }
-  .group-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+  .group-section:last-child { margin-bottom: 0; }
+  .group-label {
+    flex: 0 0 170px; max-width: 170px; padding: 14px 16px;
+    display: flex; flex-direction: column; justify-content: center; gap: 4px;
+    background: #eef1f6; border-right: 1px solid #dde1e7;
+  }
+  .group-label .name {
+    font-size: 0.78rem; font-weight: 700; color: #444; text-transform: uppercase;
+    letter-spacing: .04em; word-break: break-word;
+  }
+  .group-count { font-size: 0.7rem; color: #999; font-weight: 400; text-transform: none; letter-spacing: 0; }
+  .group-lane {
+    flex: 1; display: flex; gap: 14px; padding: 14px; overflow-x: auto;
+  }
+  .group-lane .svc-card { flex: 0 0 280px; }
+
+  /* ── Config dropdowns (Group By / Card Fields) ──────────────────────── */
+  .dropdown-wrap { position: relative; }
+  .dropdown-panel {
+    display: none; position: absolute; top: 100%; left: 0; margin-top: 4px;
+    background: #fff; border: 1px solid #ccc; border-radius: 6px;
+    box-shadow: 0 4px 14px rgba(0,0,0,.14); padding: 8px; min-width: 210px;
+    max-height: 260px; overflow-y: auto; z-index: 20;
+  }
+  .dropdown-panel.open { display: block; }
+  .dropdown-panel label.opt {
+    display: flex; align-items: center; gap: 6px; font-size: 0.8rem; font-weight: 400;
+    text-transform: none; letter-spacing: 0; color: #333; padding: 4px 6px; border-radius: 4px; cursor: pointer;
+  }
+  .dropdown-panel label.opt:hover { background: #f0f2f5; }
+  .dropdown-panel .opt-group-title {
+    font-size: 0.68rem; font-weight: 700; color: #999; text-transform: uppercase;
+    letter-spacing: .04em; padding: 6px 6px 2px;
+  }
+  .dropdown-panel .empty-note { font-size: 0.78rem; color: #888; padding: 6px; max-width: 220px; }
+  button.config-btn { background: #fff; color: #333; border: 1px solid #ccc; min-width: 140px; text-align: left; }
+  button.config-btn:hover:not(:disabled) { background: #f4f6f9; }
+
+  .svc-extra { border-top: 1px dashed #e1e4ea; padding-top: 6px; }
 
   .svc-card {
     border: 1px solid #dde1e7; border-radius: 8px; padding: 14px 16px; background: #fff;
@@ -181,13 +217,15 @@
       <div class="summary-cell"><div class="lbl">Up</div><div class="val up" id="sumUp">0</div></div>
       <div class="summary-cell"><div class="lbl">Down</div><div class="val down" id="sumDown">0</div></div>
     </div>
-    <div class="field">
+    <div class="field dropdown-wrap">
       <label>Group By</label>
-      <select id="groupBySelect">
-        <option value="">No grouping</option>
-        <option value="__status">Status</option>
-        <option value="__type">Type</option>
-      </select>
+      <button type="button" class="secondary config-btn" id="groupByBtn" onclick="toggleDropdown('groupByPanel')">No grouping</button>
+      <div id="groupByPanel" class="dropdown-panel"></div>
+    </div>
+    <div class="field dropdown-wrap">
+      <label>Card Fields</label>
+      <button type="button" class="secondary config-btn" id="cardFieldsBtn" onclick="toggleDropdown('cardFieldsPanel')">Configure…</button>
+      <div id="cardFieldsPanel" class="dropdown-panel"></div>
     </div>
     <div class="field">
       <label>Auto Refresh</label>
@@ -216,12 +254,31 @@
 <script src="staticdataset-widget.js"></script>
 <script>
   const STORAGE_KEY = 'serviceDashboard.targets';
+  const GROUPBY_KEY = 'serviceDashboard.groupByKeys';
+  const CARDFIELDS_KEY = 'serviceDashboard.cardFields';
   let targets = loadTargets();
   const results = new Map();   // id -> last check result
   const checking = new Set();  // ids currently in-flight
   let refreshTimer = null;
-  let groupBy = '';            // '', '__status', '__type', or 'attr:<datasetAttribute>'
-  let lastGroupAttrsSig = null;
+  let groupByKeys = loadGroupByKeys(); // array of '__status' | '__type' | 'attr:<datasetAttribute>' — grouped/combined in order
+  let cardFields = loadCardFields();   // array of dataset attribute names shown as extra rows on each card
+  let lastAttrsSig = null;
+
+  function loadGroupByKeys() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(GROUPBY_KEY) || '[]');
+      return Array.isArray(raw) ? raw : [];
+    } catch { return []; }
+  }
+  function saveGroupByKeys() { localStorage.setItem(GROUPBY_KEY, JSON.stringify(groupByKeys)); }
+
+  function loadCardFields() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(CARDFIELDS_KEY) || '[]');
+      return Array.isArray(raw) ? raw : [];
+    } catch { return []; }
+  }
+  function saveCardFields() { localStorage.setItem(CARDFIELDS_KEY, JSON.stringify(cardFields)); }
 
   function loadTargets() {
     try {
@@ -370,25 +427,92 @@
     return Array.from(attrs).sort();
   }
 
-  // Rebuilds the "Group By" dropdown's options when the set of available dataset
-  // attributes changes, without touching the DOM (and losing an open dropdown) on
-  // every poll tick when nothing has actually changed.
-  function updateGroupByOptions() {
+  // Rebuilds the "Group By" / "Card Fields" dropdown panels when the set of available
+  // dataset attributes changes, without touching the DOM (and losing an open dropdown)
+  // on every poll tick when nothing has actually changed.
+  function updateDynamicPanels() {
     const sortedAttrs = datasetAttrNames();
-    const sig = sortedAttrs.join(' ');
-    if (sig === lastGroupAttrsSig) return;
-    lastGroupAttrsSig = sig;
+    const sig = sortedAttrs.join(' ');
+    if (sig === lastAttrsSig) return;
+    lastAttrsSig = sig;
 
-    const sel = document.getElementById('groupBySelect');
-    const attrOptions = sortedAttrs.map(a =>
-      '<option value="attr:' + escapeHtml(a) + '">' + escapeHtml(a) + '</option>').join('');
-    sel.innerHTML =
-      '<option value="">No grouping</option>' +
-      '<option value="__status">Status</option>' +
-      '<option value="__type">Type</option>' +
-      attrOptions;
-    sel.value = groupBy;
-    if (sel.value !== groupBy) { groupBy = ''; sel.value = ''; }
+    groupByKeys = groupByKeys.filter(k => k === '__status' || k === '__type' || sortedAttrs.includes(k.slice(5)));
+    cardFields = cardFields.filter(f => sortedAttrs.includes(f));
+    saveGroupByKeys();
+    saveCardFields();
+
+    renderGroupByPanel(sortedAttrs);
+    renderCardFieldsPanel(sortedAttrs);
+  }
+
+  function toggleDropdown(id) {
+    document.querySelectorAll('.dropdown-panel').forEach(p => {
+      if (p.id !== id) p.classList.remove('open');
+    });
+    document.getElementById(id).classList.toggle('open');
+  }
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.dropdown-wrap')) {
+      document.querySelectorAll('.dropdown-panel').forEach(p => p.classList.remove('open'));
+    }
+  });
+
+  function renderGroupByPanel(sortedAttrs) {
+    const builtIns = [{ value: '__status', label: 'Status' }, { value: '__type', label: 'Type' }];
+    const attrOpts = sortedAttrs.map(a => ({ value: 'attr:' + a, label: a }));
+    const optHtml = (o) =>
+      '<label class="opt"><input type="checkbox" value="' + escapeHtml(o.value) + '"' +
+      (groupByKeys.includes(o.value) ? ' checked' : '') +
+      ' onchange="toggleGroupByKey(\'' + escapeHtml(o.value) + '\', this.checked)"> ' + escapeHtml(o.label) + '</label>';
+
+    let html = builtIns.map(optHtml).join('');
+    if (attrOpts.length > 0) {
+      html += '<div class="opt-group-title">Dataset Attributes</div>' + attrOpts.map(optHtml).join('');
+    }
+    document.getElementById('groupByPanel').innerHTML = html;
+    updateGroupByBtnLabel();
+  }
+
+  function toggleGroupByKey(key, checked) {
+    if (checked) { if (!groupByKeys.includes(key)) groupByKeys.push(key); }
+    else { groupByKeys = groupByKeys.filter(k => k !== key); }
+    saveGroupByKeys();
+    updateGroupByBtnLabel();
+    renderGrid();
+  }
+
+  function updateGroupByBtnLabel() {
+    const btn = document.getElementById('groupByBtn');
+    if (groupByKeys.length === 0) { btn.textContent = 'No grouping'; return; }
+    const labelFor = k => k === '__status' ? 'Status' : k === '__type' ? 'Type' : k.slice(5);
+    btn.textContent = groupByKeys.map(labelFor).join(' + ');
+  }
+
+  function renderCardFieldsPanel(sortedAttrs) {
+    const panel = document.getElementById('cardFieldsPanel');
+    if (sortedAttrs.length === 0) {
+      panel.innerHTML = '<div class="empty-note">Load targets from a dataset to expose extra attributes you can pin to each card.</div>';
+    } else {
+      panel.innerHTML = sortedAttrs.map(a =>
+        '<label class="opt"><input type="checkbox" value="' + escapeHtml(a) + '"' +
+        (cardFields.includes(a) ? ' checked' : '') +
+        ' onchange="toggleCardField(\'' + escapeHtml(a) + '\', this.checked)"> ' + escapeHtml(a) + '</label>'
+      ).join('');
+    }
+    updateCardFieldsBtnLabel();
+  }
+
+  function toggleCardField(attr, checked) {
+    if (checked) { if (!cardFields.includes(attr)) cardFields.push(attr); }
+    else { cardFields = cardFields.filter(a => a !== attr); }
+    saveCardFields();
+    updateCardFieldsBtnLabel();
+    renderGrid();
+  }
+
+  function updateCardFieldsBtnLabel() {
+    const btn = document.getElementById('cardFieldsBtn');
+    btn.textContent = cardFields.length === 0 ? 'Configure…' : cardFields.length + ' field' + (cardFields.length > 1 ? 's' : '') + ' shown';
   }
 
   function groupValue(t, r, key) {
@@ -407,10 +531,16 @@
     return '';
   }
 
+  // Combines every selected Group By key into one compound swimlane key, e.g.
+  // grouping by Status + region yields lanes like "Up › us-east".
+  function computeGroupKey(t, r, keys) {
+    return keys.map(k => groupValue(t, r, k)).join(' › ');
+  }
+
   // ── Rendering ────────────────────────────────────────────────────────────
   function renderGrid() {
     const grid = document.getElementById('targetGrid');
-    updateGroupByOptions();
+    updateDynamicPanels();
 
     if (targets.length === 0) {
       grid.classList.remove('grouped');
@@ -419,24 +549,30 @@
       return;
     }
 
-    if (!groupBy) {
+    if (groupByKeys.length === 0) {
       grid.classList.remove('grouped');
       grid.innerHTML = targets.map(renderCard).join('');
     } else {
       grid.classList.add('grouped');
       const groups = new Map();
       targets.forEach(t => {
-        const key = groupValue(t, results.get(t.id), groupBy);
+        const key = computeGroupKey(t, results.get(t.id), groupByKeys);
         if (!groups.has(key)) groups.set(key, []);
         groups.get(key).push(t);
       });
       const sortedKeys = Array.from(groups.keys()).sort();
-      grid.innerHTML = sortedKeys.map(key =>
-        '<div class="group-section">' +
-          '<div class="group-header">' + escapeHtml(key) + ' <span class="group-count">(' + groups.get(key).length + ')</span></div>' +
-          '<div class="group-cards">' + groups.get(key).map(renderCard).join('') + '</div>' +
-        '</div>'
-      ).join('');
+      grid.innerHTML = sortedKeys.map(key => {
+        const lane = groups.get(key);
+        return (
+          '<div class="group-section">' +
+            '<div class="group-label">' +
+              '<div class="name">' + escapeHtml(key) + '</div>' +
+              '<div class="count">' + lane.length + ' service' + (lane.length !== 1 ? 's' : '') + '</div>' +
+            '</div>' +
+            '<div class="group-lane">' + lane.map(renderCard).join('') + '</div>' +
+          '</div>'
+        );
+      }).join('');
     }
 
     updateSummary();
@@ -489,6 +625,14 @@
       metricsHtml = '<div class="svc-metrics">' + rows.join('') + '</div>';
     }
 
+    let extraHtml = '';
+    if (cardFields.length > 0 && t.datasetAttrs) {
+      const rows = cardFields
+        .filter(f => t.datasetAttrs[f] != null && t.datasetAttrs[f] !== '')
+        .map(f => '<div class="metric-row"><span class="k">' + escapeHtml(f) + '</span><span class="v">' + escapeHtml(t.datasetAttrs[f]) + '</span></div>');
+      if (rows.length > 0) extraHtml = '<div class="svc-metrics svc-extra">' + rows.join('') + '</div>';
+    }
+
     return (
       '<div class="svc-card ' + state + '">' +
         '<div class="svc-head">' +
@@ -503,6 +647,7 @@
         metaHtml +
         errorHtml +
         metricsHtml +
+        extraHtml +
         '<div class="svc-footer">' +
           '<button onclick="checkOneById(\'' + t.id + '\')">Recheck</button>' +
           '<span class="svc-checked-at">' + (r ? timeAgo(r._checkedAt) : '') + '</span>' +
@@ -533,11 +678,6 @@
     if (ms > 0) refreshTimer = setInterval(checkAll, ms);
   }
   document.getElementById('refreshInterval').addEventListener('change', applyRefreshInterval);
-
-  document.getElementById('groupBySelect').addEventListener('change', (e) => {
-    groupBy = e.target.value;
-    renderGrid();
-  });
 
   // ── Init ─────────────────────────────────────────────────────────────────
   renderGrid();

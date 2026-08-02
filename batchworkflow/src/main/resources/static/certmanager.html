@@ -205,6 +205,30 @@
   </div>
 </div>
 
+<!-- ===== View Certificate from File ===== -->
+<div class="card">
+  <div class="card-title">View Certificate from File</div>
+  <div class="row">
+    <input type="text" id="certFilePath" placeholder="C:\work\workspace\taskmanagement\src\main\resources\cert.pem"
+           onkeydown="if(event.key==='Enter') viewCertFile()">
+    <button id="certFileBtn" onclick="viewCertFile()">View Certificate</button>
+  </div>
+  <div id="certFileStatus" class="status-msg"></div>
+  <div id="certFileResult" style="display:none;"></div>
+</div>
+
+<!-- ===== View Public Key from File ===== -->
+<div class="card">
+  <div class="card-title">View Public Key from File</div>
+  <div class="row">
+    <input type="text" id="pubKeyFilePath" placeholder="C:\work\workspace\taskmanagement\src\main\resources\mykey_public.pem"
+           onkeydown="if(event.key==='Enter') viewPublicKeyFile()">
+    <button id="pubKeyFileBtn" onclick="viewPublicKeyFile()">View Public Key</button>
+  </div>
+  <div id="pubKeyFileStatus" class="status-msg"></div>
+  <div id="pubKeyFileResult" style="display:none;"></div>
+</div>
+
 <!-- ===== URL Inspector ===== -->
 <div class="card">
   <div class="card-title">URL / TLS Inspector</div>
@@ -309,6 +333,110 @@
       return trustSortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
     });
     renderTrust(sorted);
+  }
+
+  /* ===================================================================
+   * View Certificate from File
+   * =================================================================== */
+
+  async function viewCertFile() {
+    const path = document.getElementById('certFilePath').value.trim();
+    if (!path) { setStatus('certFileStatus', 'Enter a file path.', true); return; }
+
+    const btn = document.getElementById('certFileBtn');
+    btn.disabled = true;
+    setStatus('certFileStatus', 'Reading…');
+    document.getElementById('certFileResult').style.display = 'none';
+
+    try {
+      const r = await fetch('/certmanager/certfile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path })
+      });
+      const j = await r.json();
+      if (!r.ok || j.error) { setStatus('certFileStatus', j.error || 'Could not read certificate.', true); btn.disabled = false; return; }
+
+      renderCertFile(j);
+      setStatus('certFileStatus', 'Certificate loaded.');
+      document.getElementById('certFileResult').style.display = '';
+    } catch (e) {
+      setStatus('certFileStatus', e.message, true);
+    }
+    btn.disabled = false;
+  }
+
+  function renderCertFile(c) {
+    const exp  = c.isExpired ? '<span class="badge badge-err" style="margin-left:6px">Expired</span>' : '<span class="badge badge-ok" style="margin-left:6px">Valid</span>';
+    const ca   = c.isCA ? '<span class="badge badge-ca" style="margin-left:4px">CA</span>' : '';
+    const self = c.isSelfSigned ? '<span class="badge badge-self" style="margin-left:4px">Self-signed</span>' : '';
+    const sans = c.subjectAltNames ? c.subjectAltNames.join(', ') : '';
+
+    document.getElementById('certFileResult').innerHTML = `
+      <details open>
+        <summary>
+          <span class="chevron">&#9658;</span>
+          ${escHtml(c.subjectCN || c.subject)}${exp}${ca}${self}
+        </summary>
+        <div class="cert-detail">
+          <span class="k">Path</span>           <span class="v">${escHtml(c.path)}</span>
+          <span class="k">Subject</span>        <span class="v">${escHtml(c.subject)}</span>
+          <span class="k">Subject CN</span>     <span class="v">${escHtml(c.subjectCN)}</span>
+          <span class="k">Subject O</span>      <span class="v">${escHtml(c.subjectO)}</span>
+          <span class="k">Issuer</span>         <span class="v">${escHtml(c.issuer)}</span>
+          <span class="k">Issuer CN</span>      <span class="v">${escHtml(c.issuerCN)}</span>
+          <span class="k">Issuer O</span>       <span class="v">${escHtml(c.issuerO)}</span>
+          <span class="k">Valid From</span>     <span class="v">${escHtml(c.validFrom)}</span>
+          <span class="k">Valid To</span>       <span class="v">${escHtml(c.validTo)}</span>
+          <span class="k">Serial Number</span>  <span class="v" style="font-family:monospace">${escHtml(c.serialNumber)}</span>
+          <span class="k">Sig Algorithm</span>  <span class="v">${escHtml(c.sigAlg)}</span>
+          <span class="k">Key Bits</span>       <span class="v">${c.keyBits || '—'}</span>
+          ${sans ? `<span class="k">SANs</span><span class="v">${escHtml(sans)}</span>` : ''}
+          <span class="k">SHA-256</span>        <span class="v" style="font-family:monospace;font-size:0.75rem">${escHtml(c.sha256Fingerprint)}</span>
+          <span class="k">SHA-1</span>          <span class="v" style="font-family:monospace;font-size:0.75rem">${escHtml(c.sha1Fingerprint)}</span>
+        </div>
+      </details>`;
+  }
+
+  /* ===================================================================
+   * View Public Key from File
+   * =================================================================== */
+
+  async function viewPublicKeyFile() {
+    const path = document.getElementById('pubKeyFilePath').value.trim();
+    if (!path) { setStatus('pubKeyFileStatus', 'Enter a file path.', true); return; }
+
+    const btn = document.getElementById('pubKeyFileBtn');
+    btn.disabled = true;
+    setStatus('pubKeyFileStatus', 'Reading…');
+    document.getElementById('pubKeyFileResult').style.display = 'none';
+
+    try {
+      const r = await fetch('/certmanager/publickeyfile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path })
+      });
+      const j = await r.json();
+      if (!r.ok || j.error) { setStatus('pubKeyFileStatus', j.error || 'Could not read public key.', true); btn.disabled = false; return; }
+
+      document.getElementById('pubKeyFileResult').innerHTML = `
+        <div class="info-grid">
+          <div class="info-cell"><div class="lbl">Path</div><div class="val">${escHtml(j.path)}</div></div>
+          <div class="info-cell"><div class="lbl">Algorithm</div><div class="val">${escHtml(j.algorithm)}</div></div>
+          <div class="info-cell"><div class="lbl">Key Bits</div><div class="val">${j.keyBits || '—'}</div></div>
+          <div class="info-cell" style="grid-column:1/-1"><div class="lbl">SHA-256 Fingerprint</div><div class="val" style="font-family:monospace;font-size:0.78rem">${escHtml(j.sha256Fingerprint)}</div></div>
+          <div class="info-cell" style="grid-column:1/-1">
+            <div class="lbl">Public Key (PEM)</div>
+            <pre style="white-space:pre-wrap;word-break:break-all;font-size:0.75rem;margin-top:4px">${escHtml(j.publicKeyPem)}</pre>
+          </div>
+        </div>`;
+      setStatus('pubKeyFileStatus', 'Public key loaded.');
+      document.getElementById('pubKeyFileResult').style.display = '';
+    } catch (e) {
+      setStatus('pubKeyFileStatus', e.message, true);
+    }
+    btn.disabled = false;
   }
 
   /* ===================================================================

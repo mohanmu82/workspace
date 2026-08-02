@@ -51,6 +51,7 @@
     <a href="history.html" class="btn btn-outline-light btn-sm"><i class="bi bi-clock-history me-1"></i>History</a>
     <span class="text-light fw-semibold"><i class="bi bi-gear me-1"></i>Admin – Field Configuration</span>
     <a href="api-docs.html" class="btn btn-outline-light btn-sm"><i class="bi bi-code-slash me-1"></i>API Docs</a>
+    <span id="userBadge" class="text-light small me-2"></span>
     <button class="btn btn-outline-light btn-sm" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle dark mode"><i class="bi bi-moon-stars" id="themeIcon"></i></button>
   </div>
 </nav>
@@ -70,6 +71,7 @@
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#secCustom">Custom Fields</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#secNotes">Notes</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#secBackup">Backup &amp; Restore</button></li>
+    <li class="nav-item admin-only" style="display:none"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#secAccess">Access</button></li>
   </ul>
 
   <div class="tab-content">
@@ -106,6 +108,57 @@
         </div>
       </div>
     </div>
+
+    <div class="tab-pane fade" id="secAccess">
+      <div class="field-card">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div class="field-label"><i class="bi bi-tags me-1"></i>User Info Attributes</div>
+          <button class="btn btn-primary btn-sm" onclick="addAttributeRow()"><i class="bi bi-plus-lg me-1"></i>Add Attribute</button>
+        </div>
+        <p class="text-muted" style="font-size:0.82rem;">
+          Extra fields (firstName, lastName, nickname, orgUnit, team, ...) pulled from
+          <code>auth.user-detail-url</code> when a user is looked up below. The JSONPath is applied to
+          that endpoint's JSON response; if it doesn't resolve, the default value is used instead.
+          Values can always be edited by hand afterward.
+        </p>
+        <div class="table-responsive">
+          <table class="table table-sm table-hover align-middle mb-2">
+            <thead class="table-light">
+              <tr>
+                <th style="font-size:0.75rem">Key</th>
+                <th style="font-size:0.75rem">Label</th>
+                <th style="font-size:0.75rem">JSONPath</th>
+                <th style="font-size:0.75rem">Default Value</th>
+                <th style="font-size:0.75rem"></th>
+              </tr>
+            </thead>
+            <tbody id="attributeConfigTableBody"></tbody>
+          </table>
+        </div>
+        <button class="btn btn-outline-primary btn-sm" onclick="saveAttributeConfigs()">
+          <i class="bi bi-save me-1"></i>Save Attributes
+        </button>
+      </div>
+
+      <div class="field-card">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div class="field-label"><i class="bi bi-people me-1"></i>User Access</div>
+          <button class="btn btn-primary btn-sm" onclick="addAccessRow()"><i class="bi bi-plus-lg me-1"></i>Add User</button>
+        </div>
+        <p class="text-muted" style="font-size:0.82rem;">
+          Grant per-user permissions by userid (the "BRID" claim from the SSO JWT). Users not listed here,
+          not active, and not configured under <code>auth.admin-userids</code>, cannot access the application
+          at all. For a new user, enter the BRID and click <i class="bi bi-search"></i> to pull their info from
+          <code>auth.user-detail-url</code> before saving.
+        </p>
+        <div class="table-responsive">
+          <table class="table table-sm table-hover align-middle mb-0">
+            <thead class="table-light" id="accessTableHead"></thead>
+            <tbody id="accessTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </div>
 
 </div>
@@ -139,6 +192,7 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="auth.js"></script>
 <script src="theme.js"></script>
 <script>
 // ── Field definitions ────────────────────────────────────────────────────────
@@ -200,6 +254,186 @@ async function init() {
     const container = document.getElementById(sectionId);
     if (container) container.innerHTML = fieldIds.map(fid => buildFieldCard(fid)).join('');
   });
+  loadAccessTab();
+}
+
+// ── User Info Attributes ────────────────────────────────────────────────────
+
+let attributeConfigs = [];
+
+async function loadAttributeConfigs() {
+  try {
+    const res = await fetch('/api/user-info-config');
+    attributeConfigs = res.ok ? await res.json() : [];
+  } catch (_) {
+    attributeConfigs = [];
+  }
+  renderAttributeConfigTable();
+}
+
+function renderAttributeConfigTable() {
+  const body = document.getElementById('attributeConfigTableBody');
+  if (!body) return;
+  body.innerHTML = attributeConfigs.map((c, i) => `<tr data-idx="${i}">
+    <td><input type="text" class="form-control form-control-sm" style="max-width:120px" value="${esc(c.key||'')}" id="ak-${i}" placeholder="key"/></td>
+    <td><input type="text" class="form-control form-control-sm" style="max-width:140px" value="${esc(c.label||'')}" id="al-${i}" placeholder="label"/></td>
+    <td><input type="text" class="form-control form-control-sm" style="max-width:200px" value="${esc(c.jsonPath||'')}" id="ap-${i}" placeholder="$.firstName"/></td>
+    <td><input type="text" class="form-control form-control-sm" style="max-width:140px" value="${esc(c.defaultValue||'')}" id="ad-${i}" placeholder="default"/></td>
+    <td class="text-end"><button class="btn btn-outline-danger btn-sm" title="Remove" onclick="removeAttributeRow(${i})"><i class="bi bi-trash"></i></button></td>
+  </tr>`).join('');
+}
+
+function addAttributeRow() {
+  attributeConfigs.push({ key: '', label: '', jsonPath: '', defaultValue: '' });
+  renderAttributeConfigTable();
+}
+
+function removeAttributeRow(i) {
+  attributeConfigs.splice(i, 1);
+  renderAttributeConfigTable();
+}
+
+async function saveAttributeConfigs() {
+  const configs = attributeConfigs.map((c, i) => ({
+    key: document.getElementById(`ak-${i}`).value.trim(),
+    label: document.getElementById(`al-${i}`).value.trim(),
+    jsonPath: document.getElementById(`ap-${i}`).value.trim(),
+    defaultValue: document.getElementById(`ad-${i}`).value,
+  })).filter(c => c.key);
+  try {
+    const res = await fetch('/api/user-info-config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(configs)
+    });
+    if (!res.ok) throw new Error(await res.text());
+    attributeConfigs = await res.json();
+    renderAttributeConfigTable();
+    renderAccessTableHead();
+    renderAccessTable();
+    showToast('Attributes saved', 'success');
+  } catch (e) {
+    showToast('Error: ' + e.message, 'danger');
+  }
+}
+
+// ── User Access ──────────────────────────────────────────────────────────────
+
+let accessList = [];
+
+async function loadAccessTab() {
+  await loadAttributeConfigs();
+  try {
+    const res = await fetch('/api/user-access');
+    accessList = res.ok ? await res.json() : [];
+  } catch (_) {
+    accessList = [];
+  }
+  renderAccessTableHead();
+  renderAccessTable();
+}
+
+function renderAccessTableHead() {
+  const head = document.getElementById('accessTableHead');
+  if (!head) return;
+  head.innerHTML = `<tr>
+    <th style="font-size:0.75rem">User ID</th>
+    <th style="font-size:0.75rem" class="text-center">Active</th>
+    ${attributeConfigs.map(c => `<th style="font-size:0.75rem">${esc(c.label||c.key)}</th>`).join('')}
+    <th style="font-size:0.75rem" class="text-center">Read</th>
+    <th style="font-size:0.75rem" class="text-center">Create</th>
+    <th style="font-size:0.75rem" class="text-center">Update</th>
+    <th style="font-size:0.75rem" class="text-center">Delete</th>
+    <th style="font-size:0.75rem"></th>
+  </tr>`;
+}
+
+function renderAccessTable() {
+  const body = document.getElementById('accessTableBody');
+  if (!body) return;
+  body.innerHTML = accessList.map((a, i) => accessRowHtml(a, i)).join('');
+}
+
+function accessRowHtml(a, i) {
+  const existing = !!a.userId;
+  const attrs = a.attributes || {};
+  return `<tr data-idx="${i}">
+    <td>
+      <div class="d-flex gap-1">
+        <input type="text" class="form-control form-control-sm" style="max-width:150px" value="${esc(a.userId||'')}" ${existing?'readonly':''} id="uid-${i}" placeholder="userid"/>
+        ${!existing ? `<button class="btn btn-outline-secondary btn-sm" title="Look up from auth.user-detail-url" onclick="lookupAccessRow(${i})"><i class="bi bi-search"></i></button>` : ''}
+      </div>
+    </td>
+    <td class="text-center"><input type="checkbox" id="ac-${i}" ${a.active!==false?'checked':''}/></td>
+    ${attributeConfigs.map(c => `<td><input type="text" class="form-control form-control-sm" style="max-width:130px" value="${esc(attrs[c.key]||'')}" id="attr-${c.key}-${i}"/></td>`).join('')}
+    <td class="text-center"><input type="checkbox" id="cr-${i}" ${a.canRead?'checked':''}/></td>
+    <td class="text-center"><input type="checkbox" id="cc-${i}" ${a.canCreate?'checked':''}/></td>
+    <td class="text-center"><input type="checkbox" id="cu-${i}" ${a.canUpdate?'checked':''}/></td>
+    <td class="text-center"><input type="checkbox" id="cd-${i}" ${a.canDelete?'checked':''}/></td>
+    <td class="text-end">
+      <button class="btn btn-outline-primary btn-sm" title="Save" onclick="saveAccessRow(${i})"><i class="bi bi-save"></i></button>
+      ${existing ? `<button class="btn btn-outline-danger btn-sm ms-1" title="Revoke" onclick="deleteAccessRow(${i})"><i class="bi bi-trash"></i></button>` : ''}
+    </td>
+  </tr>`;
+}
+
+function addAccessRow() {
+  accessList.push({ userId: '', active: true, attributes: {}, canRead: true, canCreate: false, canUpdate: false, canDelete: false });
+  renderAccessTable();
+}
+
+async function lookupAccessRow(i) {
+  const userId = document.getElementById(`uid-${i}`).value.trim();
+  if (!userId) { showToast('Enter a User ID first', 'warning'); return; }
+  try {
+    const res = await fetch(`/api/user-access/lookup/${encodeURIComponent(userId)}`);
+    if (!res.ok) throw new Error(await res.text());
+    accessList[i].attributes = await res.json();
+    renderAccessTable();
+    showToast('Attributes pulled — review and save', 'success');
+  } catch (e) {
+    showToast('Lookup failed: ' + e.message, 'danger');
+  }
+}
+
+async function saveAccessRow(i) {
+  const userId = document.getElementById(`uid-${i}`).value.trim();
+  if (!userId) { showToast('User ID is required', 'warning'); return; }
+  const attributes = {};
+  attributeConfigs.forEach(c => {
+    const el = document.getElementById(`attr-${c.key}-${i}`);
+    if (el) attributes[c.key] = el.value;
+  });
+  const body = {
+    active:    document.getElementById(`ac-${i}`).checked,
+    attributes,
+    canRead:   document.getElementById(`cr-${i}`).checked,
+    canCreate: document.getElementById(`cc-${i}`).checked,
+    canUpdate: document.getElementById(`cu-${i}`).checked,
+    canDelete: document.getElementById(`cd-${i}`).checked,
+  };
+  try {
+    const res = await fetch(`/api/user-access/${encodeURIComponent(userId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) throw new Error(await res.text());
+    accessList[i] = await res.json();
+    renderAccessTable();
+    showToast('Saved', 'success');
+  } catch (e) {
+    showToast('Error: ' + e.message, 'danger');
+  }
+}
+
+async function deleteAccessRow(i) {
+  const userId = accessList[i].userId;
+  if (!confirm(`Revoke access for "${userId}"?`)) return;
+  await fetch(`/api/user-access/${encodeURIComponent(userId)}`, { method: 'DELETE' });
+  accessList.splice(i, 1);
+  renderAccessTable();
+  showToast('Access revoked', 'secondary');
 }
 
 // ── Card builder ─────────────────────────────────────────────────────────────

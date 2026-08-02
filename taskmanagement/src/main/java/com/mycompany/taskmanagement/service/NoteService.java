@@ -16,7 +16,6 @@ import java.util.List;
 public class NoteService {
 
     private static final String DEPENDENCY_PREFIX = "Dependency: ";
-    private static final int TITLE_SNIPPET_LENGTH = 80;
 
     private final NoteDataStore dataStore;
     private final TaskService taskService;
@@ -39,6 +38,7 @@ public class NoteService {
     @Transactional
     public Note update(Long id, Note updated) {
         Note existing = getById(id);
+        existing.setTitle(updated.getTitle());
         existing.setDescription(updated.getDescription());
         existing.setAssignee(updated.getAssignee());
         existing.setCustomField1(updated.getCustomField1());
@@ -62,7 +62,7 @@ public class NoteService {
     public Task createTaskFromNote(Long noteId, Long dependsOnTaskId, String title) {
         Note note = getById(noteId);
 
-        String resolvedTitle = (title != null && !title.isBlank()) ? title.trim() : snippet(note.getDescription());
+        String resolvedTitle = (title != null && !title.isBlank()) ? title.trim() : note.getTitle();
         Task task = new Task();
         task.setTitle(DEPENDENCY_PREFIX + resolvedTitle);
         task.setDescription(note.getDescription());
@@ -73,15 +73,5 @@ public class NoteService {
             taskService.addDependency(dependsOnTaskId, created.getId());
         }
         return created;
-    }
-
-    private String snippet(String description) {
-        if (description == null || description.isBlank()) {
-            return "Note";
-        }
-        String trimmed = description.trim();
-        return trimmed.length() > TITLE_SNIPPET_LENGTH
-                ? trimmed.substring(0, TITLE_SNIPPET_LENGTH) + "..."
-                : trimmed;
     }
 }

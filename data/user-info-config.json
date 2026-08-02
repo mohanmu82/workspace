@@ -1,0 +1,26 @@
+[ {
+  "key" : "firstName",
+  "label" : "First Name",
+  "jsonPath" : "$.firstName",
+  "defaultValue" : ""
+}, {
+  "key" : "lastName",
+  "label" : "Last Name",
+  "jsonPath" : "$.lastName",
+  "defaultValue" : ""
+}, {
+  "key" : "nickname",
+  "label" : "Nickname",
+  "jsonPath" : "$.nickname",
+  "defaultValue" : ""
+}, {
+  "key" : "orgUnit",
+  "label" : "Org Unit",
+  "jsonPath" : "$.orgUnit",
+  "defaultValue" : ""
+}, {
+  "key" : "team",
+  "label" : "Team",
+  "jsonPath" : "$.team",
+  "defaultValue" : ""
+} ]

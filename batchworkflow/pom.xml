@@ -13,7 +13,7 @@
 
     <groupId>com.mycompany</groupId>
     <artifactId>batchworkflow</artifactId>
-    <version>1.0.34</version>
+    <version>1.0.35</version>
     <name>batchworkflow</name>
     <description>Batch HTTP fetch and XPath extraction service</description>
 
@@ -95,6 +95,13 @@
             <groupId>com.networknt</groupId>
             <artifactId>json-schema-validator</artifactId>
             <version>1.4.3</version>
+        </dependency>
+
+        <!-- BouncyCastle - self-signed X.509 certificate generation for the Key Manager screen -->
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcpkix-jdk18on</artifactId>
+            <version>1.78.1</version>
         </dependency>
     </dependencies>
 

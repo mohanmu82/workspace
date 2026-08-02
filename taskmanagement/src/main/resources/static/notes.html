@@ -30,24 +30,28 @@
     <a href="events.html" class="btn btn-outline-light btn-sm"><i class="bi bi-calendar-week me-1"></i>Events</a>
     <span class="text-light fw-semibold"><i class="bi bi-sticky me-1"></i>Notes</span>
     <a href="history.html" class="btn btn-outline-light btn-sm"><i class="bi bi-clock-history me-1"></i>History</a>
-    <a href="admin.html" class="btn btn-outline-light btn-sm"><i class="bi bi-gear me-1"></i>Admin</a>
+    <a href="admin.html" class="btn btn-outline-light btn-sm admin-only"><i class="bi bi-gear me-1"></i>Admin</a>
     <a href="api-docs.html" class="btn btn-outline-light btn-sm"><i class="bi bi-code-slash me-1"></i>API Docs</a>
+    <span id="userBadge" class="text-light small me-2"></span>
     <button class="btn btn-outline-light btn-sm" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle dark mode"><i class="bi bi-moon-stars" id="themeIcon"></i></button>
   </div>
 </nav>
 
 <div class="container-fluid" style="max-width:1400px; padding:1.5rem 1rem;">
 
-  <div class="d-flex justify-content-between align-items-center mb-3">
+  <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
     <div>
       <h5 class="mb-0">Notes</h5>
       <small class="text-muted">Quick notes captured from a conversation — separate from tasks. Spin a note into a Task when it becomes actionable.</small>
     </div>
-    <button class="btn btn-primary btn-sm" onclick="openNoteModal()"><i class="bi bi-plus-lg me-1"></i>New Note</button>
+    <div class="d-flex align-items-center gap-2">
+      <input type="text" id="noteSearchInput" class="form-control form-control-sm" style="width:260px" placeholder="Search by title or custom field..." oninput="onNoteSearchInput()"/>
+      <button class="btn btn-primary btn-sm" onclick="openNoteModal()"><i class="bi bi-plus-lg me-1"></i>New Note</button>
+    </div>
   </div>
 
   <div id="loadingIndicator" class="text-center py-4 text-muted" style="display:none"><div class="spinner-border spinner-border-sm"></div> Loading...</div>
-  <div id="noResults" class="text-center py-5 text-muted"><i class="bi bi-sticky fs-1 d-block mb-2"></i>No notes yet</div>
+  <div id="noResults" class="text-center py-5 text-muted" style="display:none"><i class="bi bi-sticky fs-1 d-block mb-2"></i><span id="noResultsText">No notes yet</span></div>
 
   <div class="note-grid" id="noteGrid"></div>
 
@@ -64,11 +68,15 @@
       <div class="modal-body">
         <input type="hidden" id="noteId"/>
         <div class="mb-2">
-          <label class="form-label small fw-semibold mb-1">Description</label>
+          <label class="form-label small fw-semibold mb-1">Title <span class="text-danger">*</span></label>
+          <input type="text" id="noteTitle" class="form-control form-control-sm"/>
+        </div>
+        <div class="mb-2">
+          <label class="form-label small fw-semibold mb-1" id="noteDescriptionLabel">Description</label>
           <textarea id="noteDescription" class="form-control form-control-sm" rows="4"></textarea>
         </div>
         <div class="mb-2">
-          <label class="form-label small fw-semibold mb-1">Assignee</label>
+          <label class="form-label small fw-semibold mb-1" id="noteAssigneeLabel">Assignee</label>
           <input type="text" id="noteAssignee" class="form-control form-control-sm"/>
         </div>
         <div id="noteCustomFields"></div>
@@ -94,7 +102,7 @@
       <div class="modal-body">
         <input type="hidden" id="createTaskNoteId"/>
         <div class="mb-2">
-          <label class="form-label small fw-semibold mb-1">Task title <span class="text-muted fw-normal">(optional — defaults to the note text)</span></label>
+          <label class="form-label small fw-semibold mb-1">Task title <span class="text-muted fw-normal">(optional — defaults to the note's title)</span></label>
           <input type="text" id="createTaskTitle" class="form-control form-control-sm" placeholder="Dependency: ..."/>
         </div>
         <div class="mb-1">
@@ -113,12 +121,14 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="auth.js"></script>
 <script src="theme.js"></script>
 <script>
 let allNotes = [];
 let allTasks = [];
 let fieldConfigs = {};
 let noteModal, createTaskModal;
+let searchText = '';
 const NOTE_CUSTOM_FIELD_COUNT = 5;
 
 async function init() {
@@ -138,11 +148,81 @@ function buildCustomFieldInputs() {
   let html = '';
   for (let i = 1; i <= NOTE_CUSTOM_FIELD_COUNT; i++) {
     html += `<div class="mb-2">
-      <label class="form-label small fw-semibold mb-1">${esc(customFieldLabel(i))}</label>
+      <label class="form-label small fw-semibold mb-1" id="noteCustomFieldLabel${i}">${esc(customFieldLabel(i))}</label>
       <input type="text" id="noteCustomField${i}" class="form-control form-control-sm"/>
     </div>`;
   }
   document.getElementById('noteCustomFields').innerHTML = html;
+  applyNoteFieldTypes();
+}
+
+// Field configs for Assignee / Custom Fields (keys note_assignee, note_customField1..5) can be
+// switched to a select box with static/http/file/entity-sourced options via Admin > Field
+// Configuration, same as any Task field — so the Notes form honors that the same way
+// task-form.html does, instead of always rendering a plain text input.
+function noteFieldElementId(configKey) {
+  if (configKey === 'note_assignee') return 'noteAssignee';
+  const m = configKey.match(/^note_customField(\d+)$/);
+  return m ? `noteCustomField${m[1]}` : null;
+}
+
+async function applyNoteFieldTypes() {
+  const labelIds = { note_description: 'noteDescriptionLabel', note_assignee: 'noteAssigneeLabel' };
+  Object.entries(labelIds).forEach(([key, labelId]) => {
+    const displayName = fieldConfigs[key]?.displayName;
+    const labelEl = document.getElementById(labelId);
+    if (displayName && labelEl) labelEl.textContent = displayName;
+  });
+
+  const fieldKeys = ['note_assignee', ...Array.from({ length: NOTE_CUSTOM_FIELD_COUNT }, (_, i) => `note_customField${i + 1}`)];
+  const httpFields = [];
+  fieldKeys.forEach(key => {
+    const cfg = fieldConfigs[key];
+    const elId = noteFieldElementId(key);
+    if (!cfg || !elId) return;
+    if (cfg.fieldType === 'select') {
+      const source = cfg.source;
+      if (source?.type === 'static' && source.staticOptions) {
+        applyNoteSelectOptions(elId, source.staticOptions.map(o => ({ name: o, value: o })));
+      } else if (source?.type === 'http' || source?.type === 'file' || source?.type === 'entity') {
+        httpFields.push([key, elId]);
+      }
+    }
+  });
+  await Promise.all(httpFields.map(async ([key, elId]) => {
+    try {
+      const options = await fetch(`/api/field-options/${key}`).then(r => r.json());
+      if (Array.isArray(options)) applyNoteSelectOptions(elId, options);
+    } catch (_) {}
+  }));
+}
+
+function applyNoteSelectOptions(elId, options) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  if (el.tagName === 'SELECT') {
+    const cur = el.value;
+    el.innerHTML = '';
+    options.forEach(opt => {
+      const o = document.createElement('option');
+      o.value = opt.value; o.textContent = opt.name;
+      el.appendChild(o);
+    });
+    el.value = cur;
+  } else {
+    const select = document.createElement('select');
+    select.id = el.id;
+    select.className = el.className.replace('form-control', 'form-select');
+    const blank = document.createElement('option');
+    blank.value = ''; blank.textContent = '-- Select --';
+    select.appendChild(blank);
+    options.forEach(opt => {
+      const o = document.createElement('option');
+      o.value = opt.value; o.textContent = opt.name;
+      select.appendChild(o);
+    });
+    el.parentNode.replaceChild(select, el);
+  }
 }
 
 async function loadNotes() {
@@ -158,6 +238,17 @@ async function loadNotes() {
   }
 }
 
+function onNoteSearchInput() {
+  searchText = document.getElementById('noteSearchInput').value.trim().toLowerCase();
+  render();
+}
+
+function matchesSearch(n) {
+  if (!searchText) return true;
+  const haystack = [n.title, n.customField1, n.customField2, n.customField3, n.customField4, n.customField5];
+  return haystack.some(v => (v || '').toLowerCase().includes(searchText));
+}
+
 async function loadTasks() {
   try {
     const res = await fetch('/api/tasks?size=500&sortBy=createdAt&sortDir=desc');
@@ -171,8 +262,14 @@ async function loadTasks() {
 }
 
 function render() {
-  document.getElementById('noResults').style.display = allNotes.length === 0 ? 'block' : 'none';
-  document.getElementById('noteGrid').innerHTML = allNotes.map(noteCardHtml).join('');
+  const filtered = allNotes
+    .filter(matchesSearch)
+    .slice()
+    .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  document.getElementById('noResults').style.display = filtered.length === 0 ? 'block' : 'none';
+  document.getElementById('noResultsText').textContent =
+    allNotes.length === 0 ? 'No notes yet' : 'No notes match your search';
+  document.getElementById('noteGrid').innerHTML = filtered.map(noteCardHtml).join('');
 }
 
 function noteCardHtml(n) {
@@ -183,6 +280,7 @@ function noteCardHtml(n) {
   }
   return `
   <div class="note-card">
+    <div class="fw-semibold mb-1">${esc(n.title)}</div>
     <div class="note-desc">${esc(n.description)}</div>
     <div class="note-meta mb-1">
       ${n.assignee ? `<i class="bi bi-person me-1"></i>${esc(n.assignee)} &middot; ` : ''}
@@ -205,6 +303,7 @@ function formatDate(s) {
 function openNoteModal(id) {
   document.getElementById('noteError').style.display = 'none';
   document.getElementById('noteId').value = '';
+  document.getElementById('noteTitle').value = '';
   document.getElementById('noteDescription').value = '';
   document.getElementById('noteAssignee').value = '';
   for (let i = 1; i <= NOTE_CUSTOM_FIELD_COUNT; i++) {
@@ -217,6 +316,7 @@ function openNoteModal(id) {
     const n = allNotes.find(x => x.id === id);
     if (n) {
       document.getElementById('noteId').value = n.id;
+      document.getElementById('noteTitle').value = n.title || '';
       document.getElementById('noteDescription').value = n.description || '';
       document.getElementById('noteAssignee').value = n.assignee || '';
       for (let i = 1; i <= NOTE_CUSTOM_FIELD_COUNT; i++) {
@@ -231,14 +331,21 @@ function openNoteModal(id) {
 
 async function saveNote() {
   const id = document.getElementById('noteId').value;
+  const title = document.getElementById('noteTitle').value.trim();
   const description = document.getElementById('noteDescription').value.trim();
   const errEl = document.getElementById('noteError');
+  if (!title) {
+    errEl.textContent = 'Title is required.';
+    errEl.style.display = 'block';
+    return;
+  }
   if (!description) {
     errEl.textContent = 'Description is required.';
     errEl.style.display = 'block';
     return;
   }
   const payload = {
+    title,
     description,
     assignee: document.getElementById('noteAssignee').value.trim() || null,
   };

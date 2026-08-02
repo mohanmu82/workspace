@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Key Manager</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #f4f6f9;
+      color: #222;
+      padding: 28px 28px 48px;
+    }
+
+    header { margin-bottom: 28px; }
+    header h1 { font-size: 1.3rem; font-weight: 700; }
+    header p  { font-size: 0.82rem; color: #666; margin-top: 4px; }
+    .back     { font-size: 0.8rem; color: #0078d4; text-decoration: none; }
+    .back:hover { text-decoration: underline; }
+
+    .card {
+      background: #fff;
+      border: 1px solid #dde1e7;
+      border-radius: 8px;
+      padding: 20px 22px;
+      margin-bottom: 22px;
+    }
+
+    .card-title { font-size: 0.95rem; font-weight: 700; margin-bottom: 14px; color: #111; }
+    .card-subtitle { font-size: 0.78rem; color: #888; margin: -8px 0 14px; }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+      gap: 12px 14px;
+      margin-bottom: 14px;
+    }
+    .field { display: flex; flex-direction: column; gap: 4px; }
+    .field.span2 { grid-column: span 2; }
+    .field label {
+      font-size: 0.72rem; font-weight: 700; color: #666;
+      text-transform: uppercase; letter-spacing: .04em;
+    }
+    .field .hint { font-size: 0.7rem; color: #999; font-weight: 400; text-transform: none; letter-spacing: 0; }
+
+    input[type=text], input[type=password], input[type=number], select {
+      padding: 7px 10px; font-size: 0.85rem; border: 1px solid #ccc; border-radius: 4px;
+      font-family: inherit; background: #fff; width: 100%;
+    }
+    input:focus, select:focus { outline: none; border-color: #0078d4; }
+
+    button {
+      padding: 7px 18px; font-size: 0.85rem; font-weight: 600; border: none;
+      border-radius: 4px; cursor: pointer; background: #0078d4; color: #fff; white-space: nowrap;
+    }
+    button:hover:not(:disabled) { background: #005fa3; }
+    button:disabled { background: #9ec5e8; cursor: not-allowed; }
+    button.secondary { background: #6c757d; }
+    button.secondary:hover { background: #545b62; }
+    button.download { background: #0a5c36; }
+    button.download:hover { background: #084a2b; }
+
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+    .status-msg { font-size: 0.82rem; margin-top: 8px; }
+    .status-ok  { color: #0a5c36; }
+    .status-err { color: #842029; }
+
+    .section-divider { border: none; border-top: 1px dashed #e1e4ea; margin: 16px 0; }
+
+    /* Result panel */
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .info-cell {
+      background: #f8f9fb; border: 1px solid #dde1e7; border-radius: 6px; padding: 10px 14px;
+    }
+    .info-cell .lbl { font-size: 0.72rem; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 3px; }
+    .info-cell .val { font-size: 0.85rem; font-weight: 600; color: #111; word-break: break-all; }
+    .info-cell.wide { grid-column: 1 / -1; }
+
+    /* Table */
+    .tbl-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    th {
+      background: #f0f2f5; border: 1px solid #dde1e7; padding: 7px 10px;
+      text-align: left; font-weight: 600; white-space: nowrap;
+    }
+    td { border: 1px solid #dde1e7; padding: 6px 10px; vertical-align: top; word-break: break-word; }
+    tr:nth-child(even) td { background: #fafbfc; }
+
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.72rem; font-weight: 600; white-space: nowrap; }
+    .badge-ok   { background: #d1e7dd; color: #0a5c36; }
+    .badge-err  { background: #f8d7da; color: #842029; }
+    .badge-type { background: #e2d9f3; color: #4a2d7a; }
+
+    .mono { font-family: Consolas, monospace; }
+  </style>
+</head>
+<body>
+
+<header>
+  <a class="back" href="index.html">&#8592; Home</a>
+  <h1>Key Manager</h1>
+  <p>Generate RSA/EC key pairs wrapped in a self-signed certificate, download them as a PKCS12 keystore or a standalone public key, and browse the contents of any keystore on the server.</p>
+</header>
+
+<!-- ===== Generate Key Pair ===== -->
+<div class="card">
+  <div class="card-title">Generate Key Pair</div>
+  <div class="card-subtitle">Creates a fresh key pair plus a self-signed certificate wrapping the public key, so it can be stored in a keystore entry.</div>
+
+  <div class="form-grid">
+    <div class="field">
+      <label>Alias</label>
+      <input type="text" id="genAlias" value="mykey">
+    </div>
+    <div class="field">
+      <label>Algorithm</label>
+      <select id="genAlgorithm" onchange="toggleAlgFields()">
+        <option value="RSA" selected>RSA</option>
+        <option value="EC">EC (Elliptic Curve)</option>
+      </select>
+    </div>
+    <div class="field" id="rsaSizeField">
+      <label>Key Size</label>
+      <select id="genKeySize">
+        <option value="2048" selected>2048</option>
+        <option value="3072">3072</option>
+        <option value="4096">4096</option>
+      </select>
+    </div>
+    <div class="field" id="ecCurveField" style="display:none">
+      <label>Curve</label>
+      <select id="genCurve">
+        <option value="secp256r1" selected>secp256r1 (P-256)</option>
+        <option value="secp384r1">secp384r1 (P-384)</option>
+        <option value="secp521r1">secp521r1 (P-521)</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Validity (days)</label>
+      <input type="number" id="genValidity" value="365" min="1">
+    </div>
+    <div class="field">
+      <label>Keystore Type</label>
+      <select id="genKeystoreType">
+        <option value="PKCS12" selected>PKCS12</option>
+        <option value="JKS">JKS</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="form-grid">
+    <div class="field">
+      <label>Common Name (CN)</label>
+      <input type="text" id="genCn" placeholder="localhost">
+    </div>
+    <div class="field">
+      <label>Organization (O)</label>
+      <input type="text" id="genO" placeholder="My Company">
+    </div>
+    <div class="field">
+      <label>Organizational Unit (OU)</label>
+      <input type="text" id="genOu" placeholder="Engineering">
+    </div>
+    <div class="field">
+      <label>Locality (L)</label>
+      <input type="text" id="genL" placeholder="City">
+    </div>
+    <div class="field">
+      <label>State (ST)</label>
+      <input type="text" id="genSt" placeholder="State">
+    </div>
+    <div class="field">
+      <label>Country (C)</label>
+      <input type="text" id="genC" placeholder="US" maxlength="2">
+    </div>
+    <div class="field span2">
+      <label>Subject Alternative Names <span class="hint">(comma-separated DNS names / IPs)</span></label>
+      <input type="text" id="genSan" placeholder="app.example.com, app-1.example.com, 10.0.0.5">
+    </div>
+  </div>
+
+  <div class="form-grid">
+    <div class="field">
+      <label>Keystore Password</label>
+      <input type="password" id="genKsPassword" placeholder="min. 6 characters for PKCS12">
+    </div>
+    <div class="field">
+      <label>Key Password <span class="hint">(optional)</span></label>
+      <input type="password" id="genKeyPassword" placeholder="same as keystore password">
+    </div>
+  </div>
+
+  <div class="row">
+    <button id="genBtn" onclick="generateKeyPair()">Generate Key Pair</button>
+  </div>
+  <div id="genStatus" class="status-msg"></div>
+
+  <div id="genResult" style="display:none">
+    <hr class="section-divider">
+    <div class="info-grid">
+      <div class="info-cell"><div class="lbl">Alias</div><div class="val" id="resAlias">—</div></div>
+      <div class="info-cell"><div class="lbl">Algorithm</div><div class="val" id="resAlgorithm">—</div></div>
+      <div class="info-cell"><div class="lbl">Key Spec</div><div class="val" id="resKeySpec">—</div></div>
+      <div class="info-cell"><div class="lbl">Valid From</div><div class="val" id="resNotBefore">—</div></div>
+      <div class="info-cell"><div class="lbl">Valid To</div><div class="val" id="resNotAfter">—</div></div>
+      <div class="info-cell"><div class="lbl">Serial Number</div><div class="val mono" id="resSerial">—</div></div>
+      <div class="info-cell wide"><div class="lbl">Subject</div><div class="val" id="resSubject">—</div></div>
+      <div class="info-cell wide"><div class="lbl">Subject Alternative Names</div><div class="val" id="resSan">—</div></div>
+      <div class="info-cell wide"><div class="lbl">SHA-256 Fingerprint</div><div class="val mono" id="resFingerprint" style="font-size:0.75rem">—</div></div>
+    </div>
+    <div class="row">
+      <button class="download" id="dlKeystoreBtn">Download Keystore</button>
+      <button class="download" id="dlPublicKeyBtn">Download Public Key (.pem)</button>
+      <button class="secondary" id="dlCertBtn">Download Certificate (.pem)</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== List Keystore Contents ===== -->
+<div class="card">
+  <div class="card-title">List Keystore Contents</div>
+  <div class="card-subtitle">Reads a keystore file on the server and lists its entries. Private key material is never returned.</div>
+
+  <div class="form-grid">
+    <div class="field span2">
+      <label>Keystore Path</label>
+      <input type="text" id="listPath" placeholder="C:\work\workspace\taskmanagement\src\main\resources\keystore.p12"
+             onkeydown="if(event.key==='Enter') listKeystore()">
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input type="password" id="listPassword" placeholder="changeit">
+    </div>
+    <div class="field">
+      <label>Type</label>
+      <select id="listType">
+        <option value="PKCS12" selected>PKCS12</option>
+        <option value="JKS">JKS</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="row">
+    <button id="listBtn" onclick="listKeystore()">List Keys</button>
+  </div>
+  <div id="listStatus" class="status-msg"></div>
+
+  <div id="listResult" style="display:none">
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Alias</th>
+            <th>Entry Type</th>
+            <th>Subject CN</th>
+            <th>SAN</th>
+            <th>Issuer CN</th>
+            <th>Valid From</th>
+            <th>Valid To</th>
+            <th>Status</th>
+            <th>Key Alg</th>
+            <th>Key Bits</th>
+            <th>Chain Len</th>
+            <th>Created</th>
+          </tr>
+        </thead>
+        <tbody id="listBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+  let lastGenResult = null;
+
+  function toggleAlgFields() {
+    const isEc = document.getElementById('genAlgorithm').value === 'EC';
+    document.getElementById('rsaSizeField').style.display = isEc ? 'none' : '';
+    document.getElementById('ecCurveField').style.display = isEc ? '' : 'none';
+  }
+
+  function setStatus(id, msg, isErr) {
+    const el = document.getElementById(id);
+    el.textContent = msg || '';
+    el.className = 'status-msg' + (isErr ? ' status-err' : (msg ? ' status-ok' : ''));
+  }
+
+  function escHtml(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function downloadBase64(filename, base64, mime) {
+    const bytes = atob(base64);
+    const arr = new Uint8Array(bytes.length);
+    for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+    downloadBlob(filename, new Blob([arr], { type: mime || 'application/octet-stream' }));
+  }
+
+  function downloadText(filename, text, mime) {
+    downloadBlob(filename, new Blob([text], { type: mime || 'text/plain' }));
+  }
+
+  function downloadBlob(filename, blob) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function generateKeyPair() {
+    const btn = document.getElementById('genBtn');
+    const alg = document.getElementById('genAlgorithm').value;
+    const payload = {
+      alias: document.getElementById('genAlias').value.trim() || 'mykey',
+      algorithm: alg,
+      keySize: document.getElementById('genKeySize').value,
+      curve: document.getElementById('genCurve').value,
+      validityDays: parseInt(document.getElementById('genValidity').value, 10) || 365,
+      keystoreType: document.getElementById('genKeystoreType').value,
+      commonName: document.getElementById('genCn').value.trim(),
+      organization: document.getElementById('genO').value.trim(),
+      organizationUnit: document.getElementById('genOu').value.trim(),
+      locality: document.getElementById('genL').value.trim(),
+      state: document.getElementById('genSt').value.trim(),
+      country: document.getElementById('genC').value.trim(),
+      subjectAltNames: document.getElementById('genSan').value.trim(),
+      keystorePassword: document.getElementById('genKsPassword').value,
+      keyPassword: document.getElementById('genKeyPassword').value
+    };
+
+    if (!payload.keystorePassword) { setStatus('genStatus', 'Keystore password is required.', true); return; }
+
+    btn.disabled = true;
+    document.getElementById('genResult').style.display = 'none';
+    setStatus('genStatus', 'Generating…');
+
+    try {
+      const r = await fetch('/keymanager/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const j = await r.json();
+      if (!r.ok || j.error) { setStatus('genStatus', j.error || 'Generation failed.', true); btn.disabled = false; return; }
+
+      lastGenResult = j;
+      document.getElementById('resAlias').textContent = j.alias;
+      document.getElementById('resAlgorithm').textContent = j.algorithm;
+      document.getElementById('resKeySpec').textContent = j.keySpec;
+      document.getElementById('resNotBefore').textContent = j.notBefore;
+      document.getElementById('resNotAfter').textContent = j.notAfter;
+      document.getElementById('resSerial').textContent = j.serialNumber;
+      document.getElementById('resSubject').textContent = j.subject;
+      document.getElementById('resSan').textContent = (j.subjectAltNames && j.subjectAltNames.length) ? j.subjectAltNames.join(', ') : '—';
+      document.getElementById('resFingerprint').textContent = j.sha256Fingerprint;
+      document.getElementById('genResult').style.display = '';
+      setStatus('genStatus', 'Key pair generated.');
+    } catch (e) {
+      setStatus('genStatus', e.message, true);
+    }
+    btn.disabled = false;
+  }
+
+  document.getElementById('dlKeystoreBtn').addEventListener('click', () => {
+    if (!lastGenResult) return;
+    downloadBase64(lastGenResult.keystoreFileName, lastGenResult.keystoreBase64, 'application/x-pkcs12');
+  });
+  document.getElementById('dlPublicKeyBtn').addEventListener('click', () => {
+    if (!lastGenResult) return;
+    downloadText(lastGenResult.publicKeyFileName, lastGenResult.publicKeyPem, 'application/x-pem-file');
+  });
+  document.getElementById('dlCertBtn').addEventListener('click', () => {
+    if (!lastGenResult) return;
+    downloadText(lastGenResult.certificateFileName, lastGenResult.certificatePem, 'application/x-pem-file');
+  });
+
+  async function listKeystore() {
+    const btn = document.getElementById('listBtn');
+    const path = document.getElementById('listPath').value.trim();
+    if (!path) { setStatus('listStatus', 'Keystore path is required.', true); return; }
+
+    const payload = {
+      path,
+      password: document.getElementById('listPassword').value,
+      type: document.getElementById('listType').value
+    };
+
+    btn.disabled = true;
+    document.getElementById('listResult').style.display = 'none';
+    setStatus('listStatus', 'Loading…');
+
+    try {
+      const r = await fetch('/keymanager/list', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const j = await r.json();
+      if (!r.ok || j.error) { setStatus('listStatus', j.error || 'Could not list keystore.', true); btn.disabled = false; return; }
+
+      renderList(j.data || []);
+      setStatus('listStatus', `Loaded ${j.data.length} entr${j.data.length === 1 ? 'y' : 'ies'}.`);
+      document.getElementById('listResult').style.display = '';
+    } catch (e) {
+      setStatus('listStatus', e.message, true);
+    }
+    btn.disabled = false;
+  }
+
+  function renderList(entries) {
+    const tbody = document.getElementById('listBody');
+    if (!entries.length) {
+      tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;color:#888">No entries.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = entries.map(e => {
+      const status = e.subject
+        ? (e.isExpired ? '<span class="badge badge-err">Expired</span>' : '<span class="badge badge-ok">Valid</span>')
+        : '';
+      return `<tr>
+        <td>${escHtml(e.alias)}</td>
+        <td><span class="badge badge-type">${escHtml(e.entryType)}</span></td>
+        <td>${escHtml(e.subjectCN || '—')}</td>
+        <td>${escHtml((e.subjectAltNames && e.subjectAltNames.length) ? e.subjectAltNames.join(', ') : '—')}</td>
+        <td>${escHtml(e.issuerCN || '—')}</td>
+        <td style="white-space:nowrap">${escHtml(e.validFrom || '—')}</td>
+        <td style="white-space:nowrap">${escHtml(e.validTo || '—')}</td>
+        <td>${status}</td>
+        <td>${escHtml(e.keyAlgorithm || '—')}</td>
+        <td>${e.keyBits || '—'}</td>
+        <td>${e.chainLength || 0}</td>
+        <td style="white-space:nowrap">${escHtml(e.creationDate || '—')}</td>
+      </tr>`;
+    }).join('');
+  }
+</script>
+</body>
+</html>

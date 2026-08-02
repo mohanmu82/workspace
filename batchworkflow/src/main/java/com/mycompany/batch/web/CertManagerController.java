@@ -1,21 +1,40 @@
 package com.mycompany.batch.web;
 
+import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
+import org.bouncycastle.cert.X509CertificateHolder;
+import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.openssl.PEMKeyPair;
+import org.bouncycastle.openssl.PEMParser;
+import org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import javax.net.ssl.*;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.StringReader;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.security.KeyFactory;
 import java.security.KeyStore;
 import java.security.MessageDigest;
+import java.security.PublicKey;
+import java.security.Security;
+import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.security.spec.X509EncodedKeySpec;
 import java.text.SimpleDateFormat;
 import java.time.Duration;
 import java.util.*;
@@ -23,6 +42,12 @@ import java.util.*;
 @RestController
 @RequestMapping("/certmanager")
 public class CertManagerController {
+
+    static {
+        if (Security.getProvider("BC") == null) {
+            Security.addProvider(new BouncyCastleProvider());
+        }
+    }
 
     // -------------------------------------------------------------------------
     // GET /certmanager/trustcerts — list all certs in the JVM default trust store
@@ -86,6 +111,110 @@ public class CertManagerController {
         }
 
         return ResponseEntity.ok(result);
+    }
+
+    // -------------------------------------------------------------------------
+    // POST /certmanager/certfile — read a certificate (PEM or DER) from a path
+    // on the server's file system and return its details.
+    // -------------------------------------------------------------------------
+
+    @PostMapping("/certfile")
+    public ResponseEntity<Map<String, Object>> certFile(@RequestBody Map<String, Object> req) {
+        String path = str(req, "path", "").trim();
+        if (path.isBlank()) return badRequest("File path is required.");
+        File file = new File(path);
+        if (!file.isFile()) return badRequest("File not found: " + path);
+
+        try (FileInputStream fis = new FileInputStream(file)) {
+            CertificateFactory cf = CertificateFactory.getInstance("X.509");
+            X509Certificate cert = (X509Certificate) cf.generateCertificate(fis);
+            Map<String, Object> resp = certToMap(cert, true);
+            resp.put("path", path);
+            return ResponseEntity.ok(resp);
+        } catch (Exception e) {
+            return badRequest("Could not read certificate: " + e.getMessage());
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // POST /certmanager/publickeyfile — read a public key (PEM SubjectPublicKeyInfo,
+    // raw DER, or a certificate to pull the public key out of) from a path on the
+    // server's file system and return its details.
+    // -------------------------------------------------------------------------
+
+    @PostMapping("/publickeyfile")
+    public ResponseEntity<Map<String, Object>> publicKeyFile(@RequestBody Map<String, Object> req) {
+        String path = str(req, "path", "").trim();
+        if (path.isBlank()) return badRequest("File path is required.");
+        File file = new File(path);
+        if (!file.isFile()) return badRequest("File not found: " + path);
+
+        try {
+            PublicKey pk = readPublicKey(file);
+            Map<String, Object> resp = new LinkedHashMap<>();
+            resp.put("path", path);
+            resp.put("algorithm", pk.getAlgorithm());
+            resp.put("keyBits", publicKeyBits(pk));
+            resp.put("sha256Fingerprint", hexFp(MessageDigest.getInstance("SHA-256").digest(pk.getEncoded())));
+            resp.put("publicKeyPem", toPem("PUBLIC KEY", pk.getEncoded()));
+            return ResponseEntity.ok(resp);
+        } catch (Exception e) {
+            return badRequest("Could not read public key: " + e.getMessage());
+        }
+    }
+
+    private PublicKey readPublicKey(File file) throws Exception {
+        byte[] bytes = Files.readAllBytes(file.toPath());
+        String text = new String(bytes, StandardCharsets.UTF_8);
+
+        if (text.contains("-----BEGIN")) {
+            try (PEMParser parser = new PEMParser(new StringReader(text))) {
+                Object obj = parser.readObject();
+                JcaPEMKeyConverter converter = new JcaPEMKeyConverter().setProvider("BC");
+                if (obj instanceof SubjectPublicKeyInfo spki) return converter.getPublicKey(spki);
+                if (obj instanceof PEMKeyPair kp) return converter.getPublicKey(kp.getPublicKeyInfo());
+                if (obj instanceof X509CertificateHolder holder)
+                    return new JcaX509CertificateConverter().setProvider("BC").getCertificate(holder).getPublicKey();
+                throw new IllegalArgumentException("Unsupported PEM content: " +
+                        (obj != null ? obj.getClass().getSimpleName() : "empty file"));
+            }
+        }
+
+        X509EncodedKeySpec spec = new X509EncodedKeySpec(bytes);
+        for (String alg : new String[]{"RSA", "EC"}) {
+            try {
+                return KeyFactory.getInstance(alg).generatePublic(spec);
+            } catch (Exception ignored) {}
+        }
+        throw new IllegalArgumentException("Unsupported public key format or algorithm.");
+    }
+
+    private int publicKeyBits(PublicKey pk) {
+        try {
+            if (pk instanceof java.security.interfaces.RSAPublicKey r) return r.getModulus().bitLength();
+            if (pk instanceof java.security.interfaces.ECPublicKey e) return e.getParams().getOrder().bitLength();
+        } catch (Exception ignored) {}
+        return 0;
+    }
+
+    private String toPem(String type, byte[] der) {
+        String b64 = Base64.getEncoder().encodeToString(der);
+        StringBuilder sb = new StringBuilder();
+        sb.append("-----BEGIN ").append(type).append("-----\n");
+        for (int i = 0; i < b64.length(); i += 64) {
+            sb.append(b64, i, Math.min(i + 64, b64.length())).append('\n');
+        }
+        sb.append("-----END ").append(type).append("-----\n");
+        return sb.toString();
+    }
+
+    private String str(Map<String, Object> req, String key, String def) {
+        Object v = req.get(key);
+        return v != null ? String.valueOf(v) : def;
+    }
+
+    private ResponseEntity<Map<String, Object>> badRequest(String message) {
+        return ResponseEntity.badRequest().body(Map.of("error", message));
     }
 
     // -------------------------------------------------------------------------

@@ -18,6 +18,10 @@ public class Note {
     private Long id;
 
     @NotBlank
+    @Column(nullable = false, length = 255)
+    private String title;
+
+    @NotBlank
     @Column(columnDefinition = "TEXT", nullable = false)
     private String description;
 

@@ -45,7 +45,7 @@ public class JsonFileNoteDataStore implements NoteDataStore {
     @Override
     public List<Note> findAll() {
         List<Note> all = loadAllNotes();
-        all.sort(java.util.Comparator.comparing(Note::getCreatedAt, java.util.Comparator.nullsLast(java.util.Comparator.reverseOrder())));
+        all.sort(java.util.Comparator.comparing(Note::getUpdatedAt, java.util.Comparator.nullsLast(java.util.Comparator.reverseOrder())));
         return all;
     }
 

@@ -18,7 +18,7 @@ public class JpaNoteDataStore implements NoteDataStore {
 
     @Override
     public List<Note> findAll() {
-        return noteRepository.findAllByOrderByCreatedAtDesc();
+        return noteRepository.findAllByOrderByUpdatedAtDesc();
     }
 
     @Override

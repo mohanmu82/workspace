@@ -83,8 +83,9 @@
     <a href="events.html" class="btn btn-outline-light btn-sm"><i class="bi bi-calendar-week me-1"></i>Events</a>
     <a href="notes.html" class="btn btn-outline-light btn-sm"><i class="bi bi-sticky me-1"></i>Notes</a>
     <a href="history.html" class="btn btn-outline-light btn-sm"><i class="bi bi-clock-history me-1"></i>History</a>
-    <a href="admin.html" class="btn btn-outline-light btn-sm"><i class="bi bi-gear me-1"></i>Admin</a>
+    <a href="admin.html" class="btn btn-outline-light btn-sm admin-only"><i class="bi bi-gear me-1"></i>Admin</a>
     <a href="api-docs.html" class="btn btn-outline-light btn-sm"><i class="bi bi-code-slash me-1"></i>API Docs</a>
+    <span id="userBadge" class="text-light small me-2"></span>
     <button class="btn btn-outline-light btn-sm" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle dark mode"><i class="bi bi-moon-stars" id="themeIcon"></i></button>
   </div>
 </nav>
@@ -133,6 +134,7 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="auth.js"></script>
 <script src="theme.js"></script>
 <script src="tasks-ws.js"></script>
 <script src="card-fields.js"></script>
@@ -151,13 +153,12 @@ today.setHours(0, 0, 0, 0);
 
 const FILTERS_STORAGE_KEY = 'dueDatesFilters';
 
-const DUE_DATES_FIELDS = [
+const DUE_DATES_BASE_FIELDS = [
   { id: 'status',       label: 'Status',       default: true },
   { id: 'priority',     label: 'Priority',     default: true },
   { id: 'assignee',     label: 'Assignee',     default: true },
   { id: 'project',      label: 'Project',      default: true },
   { id: 'programme',    label: 'Programme',    default: false },
-  { id: 'phase',        label: 'Phase',        default: false },
   { id: 'category',     label: 'Category',     default: false },
   { id: 'workingGroup', label: 'Working Grp',  default: false },
   { id: 'assetClass',   label: 'Asset Class',  default: false },
@@ -165,6 +166,19 @@ const DUE_DATES_FIELDS = [
   { id: 'tags',         label: 'Tags',         default: false },
   { id: 'dependencies', label: 'Depends On',   default: true },
 ];
+
+// Custom Fields 1-10 are added dynamically (labeled via Admin > Field Configuration, same
+// as everywhere else) so this tab can show them like the Kanban/swim-lane "By ..." views
+// already let you toggle on a card via Display > Custom Field N — previously only Custom
+// Field 1 (as "Phase") was ever available here.
+function dueDatesFields() {
+  const custom = Array.from({ length: 10 }, (_, i) => {
+    const n = i + 1;
+    const cfg = fieldConfigs[`customField${n}`];
+    return { id: `customField${n}`, label: (cfg && cfg.displayName) || (n === 1 ? 'Phase' : `Custom Field ${n}`), default: n === 1 };
+  });
+  return [...DUE_DATES_BASE_FIELDS, ...custom];
+}
 
 // Every Task attribute is filterable here, labeled with whatever an admin named it
 // (via the Admin > Field Configuration page) — falls back to the default label if unconfigured.
@@ -205,21 +219,21 @@ function filterableFields() {
 
 function initCardFields() {
   CardFields.onChange('dueDatesPage', () => renderTasks());
-  document.getElementById('cardFieldsSlot').innerHTML = CardFields.renderButton('dueDatesPage', DUE_DATES_FIELDS);
+  document.getElementById('cardFieldsSlot').innerHTML = CardFields.renderButton('dueDatesPage', dueDatesFields());
 }
 
 function visibleFields() {
-  return DUE_DATES_FIELDS.filter(f => CardFields.isOn('dueDatesPage', f.id, f.default));
+  return dueDatesFields().filter(f => CardFields.isOn('dueDatesPage', f.id, f.default));
 }
 
 function renderThead() {
-  const widths = { status: '110px', priority: '90px', assignee: '110px', project: '110px', programme: '110px', phase: '90px', category: '110px', workingGroup: '110px', assetClass: '110px', stakeholder: '110px', tags: '140px', dependencies: '200px' };
+  const widths = { status: '110px', priority: '90px', assignee: '110px', project: '110px', programme: '110px', category: '110px', workingGroup: '110px', assetClass: '110px', stakeholder: '110px', tags: '140px', dependencies: '200px' };
   const visFields = visibleFields();
   document.getElementById('tableThead').innerHTML = '<tr>' +
     '<th style="width:24px"></th>' +
     '<th style="width:105px">Due Date</th>' +
     '<th>Title</th>' +
-    visFields.map(f => `<th style="width:${widths[f.id]}">${f.label}</th>`).join('') +
+    visFields.map(f => `<th style="width:${widths[f.id] || '110px'}">${f.label}</th>`).join('') +
     '<th style="width:70px">Actions</th>' +
     '</tr>';
   return visFields;
@@ -308,7 +322,6 @@ async function init() {
   // When embedded inside index.html's Due Dates tab, the top navbar there already
   // provides navigation, so hide this page's own navbar to avoid a duplicate one.
   if (embed) document.querySelector('nav.navbar').style.display = 'none';
-  initCardFields();
   loadStoredFilters();
   document.getElementById('loadingIndicator').style.display = 'block';
   try {
@@ -335,6 +348,7 @@ async function init() {
       (graph.dependencies || []).forEach(d => (dependsOnMap[d.taskId] ||= []).push(d.dependsOnTaskId));
     }
 
+    initCardFields();
     renderFilterBar();
     renderTasks();
   } catch (e) {
@@ -467,13 +481,13 @@ function openTaskFn(id) {
 }
 
 function fieldCell(t, fieldId) {
+  if (/^customField\d+$/.test(fieldId)) return `<td>${esc(t[fieldId] || '')}</td>`;
   switch (fieldId) {
     case 'status':   return `<td><span class="badge badge-status-${esc(t.status)}">${esc(t.status||'')}</span></td>`;
     case 'priority': return `<td><span class="badge badge-priority-${esc(t.priority)}">${esc(t.priority||'')}</span></td>`;
     case 'assignee': return `<td>${esc(t.assignee||'')}</td>`;
     case 'project':  return `<td>${esc(t.project||'')}</td>`;
     case 'programme':    return `<td>${esc(t.programme||'')}</td>`;
-    case 'phase':         return `<td>${esc(t.customField1||'')}</td>`;
     case 'category':      return `<td>${esc(t.category||'')}</td>`;
     case 'workingGroup':  return `<td>${esc(t.workingGroup||'')}</td>`;
     case 'assetClass':    return `<td>${esc(t.assetClass||'')}</td>`;
