@@ -80,6 +80,25 @@
   .summary-cell.down-cell.active-filter { background: #fbdcdc; border-color: #d03b3b; }
   .summary-cell.down-cell .hint-tag { font-size: 0.62rem; color: #b02a37; font-weight: 700; margin-top: 1px; }
 
+  /* ── Group summary strip: one column per active Group By value, count on top ──────────── */
+  .group-summary-row {
+    display: none; gap: 10px; flex-wrap: wrap; align-items: stretch;
+    margin-top: 12px; padding-top: 12px; border-top: 1px solid #eef0f4;
+  }
+  .group-summary-cell {
+    background: #f8f9fb; border: 1px solid #dde1e7; border-radius: 6px;
+    padding: 6px 14px; min-width: 74px; text-align: center;
+  }
+  .group-summary-cell .val { font-size: 1.15rem; font-weight: 700; color: #111; font-variant-numeric: tabular-nums; }
+  .group-summary-cell .lbl {
+    font-size: 0.66rem; font-weight: 700; color: #888; text-transform: uppercase;
+    letter-spacing: .03em; margin-top: 2px; word-break: break-word;
+  }
+  .group-summary-cell.up   .val { color: #0a5c36; }
+  .group-summary-cell.up   { border-color: #b6e6cd; background: #f2fbf5; }
+  .group-summary-cell.down .val { color: #b02a37; }
+  .group-summary-cell.down { border-color: #f3bcbc; background: #fdf3f3; }
+
   .chk-inline {
     display: flex; align-items: center; gap: 6px; font-size: 0.82rem; font-weight: 600;
     color: #333; padding: 7px 0; white-space: nowrap; cursor: pointer;
@@ -94,38 +113,36 @@
 
   /* ── Target grid ────────────────────────────────────────────────────── */
   .target-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
-  .target-grid.grouped { display: block; }
+  .target-grid.grouped { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px; }
   .empty-msg { font-size: 0.82rem; color: #888; padding: 18px; text-align: center; }
   .filter-note { font-size: 0.75rem; color: #888; font-weight: 400; text-transform: none; letter-spacing: 0; margin-left: 8px; }
 
-  /* ── Swimlanes ───────────────────────────────────────────────────────── */
+  /* ── Swimlanes: one column per group, header on top ─────────────────── */
   .group-section {
-    display: flex; align-items: stretch; margin-bottom: 12px;
+    display: flex; flex-direction: column; flex: 1 1 240px; min-width: 220px; max-width: 320px;
     background: #f8f9fb; border: 1px solid #dde1e7; border-radius: 8px; overflow: hidden;
   }
-  .group-section:last-child { margin-bottom: 0; }
   .group-label {
-    flex: 0 0 150px; max-width: 150px; padding: 10px 14px;
-    display: flex; flex-direction: column; justify-content: center; gap: 4px;
-    background: #eef1f6; border-right: 1px solid #dde1e7;
+    padding: 8px 12px; display: flex; align-items: baseline; gap: 6px;
+    background: #eef1f6; border-bottom: 1px solid #dde1e7;
   }
   .group-label .name {
     font-size: 0.76rem; font-weight: 700; color: #444; text-transform: uppercase;
     letter-spacing: .04em; word-break: break-word;
   }
-  .group-count { font-size: 0.68rem; color: #999; font-weight: 400; text-transform: none; letter-spacing: 0; }
+  .group-label .count { font-size: 0.68rem; color: #999; font-weight: 400; text-transform: none; letter-spacing: 0; white-space: nowrap; }
 
-  /* Default orientation: swimlanes stack cards vertically, one per row. */
+  /* Default orientation: cards stack vertically down the column. */
   .group-lane {
     flex: 1; display: flex; flex-direction: column; gap: 8px; padding: 10px;
   }
   .group-lane .svc-card { width: 100%; }
 
-  /* Horizontal orientation: swimlanes scroll sideways, cards fixed-width. */
+  /* Horizontal orientation: cards flow left-to-right, scrolling within the column. */
   .group-section.orient-horizontal .group-lane {
     flex-direction: row; overflow-x: auto; flex-wrap: nowrap;
   }
-  .group-section.orient-horizontal .group-lane .svc-card { flex: 0 0 220px; width: auto; }
+  .group-section.orient-horizontal .group-lane .svc-card { flex: 0 0 130px; width: auto; }
 
   /* ── Config dropdowns (Group By / Card Fields) ──────────────────────── */
   .dropdown-wrap { position: relative; }
@@ -263,6 +280,74 @@
   .svc-footer button { padding: 3px 10px; font-size: 0.66rem; background: #f0f2f5; color: #444; }
   .svc-footer button:hover { background: #e4e8ef; }
   .svc-checked-at { font-size: 0.62rem; color: #aaa; }
+
+  /* ── Collapsible cards (Add Target, Alerts) — hidden by default, click header to expand ── */
+  .card-title.collapsible {
+    cursor: pointer; display: flex; align-items: center; justify-content: space-between;
+    user-select: none; gap: 10px;
+  }
+  .card-title.collapsible:hover { color: #0078d4; }
+  .card-title.collapsible .chevron {
+    font-size: 0.7rem; color: #888; transition: transform .15s ease; flex: none;
+  }
+  .card-title.collapsible.expanded .chevron { transform: rotate(90deg); }
+  .collapsible-body { display: none; margin-top: 12px; }
+  .collapsible-body.expanded { display: block; }
+
+  /* ── Main split: Group By / Drilldown (left) + Services (right), resizable ─────────────── */
+  .main-split { display: flex; align-items: flex-start; gap: 0; }
+  .split-left { flex: 0 0 auto; width: 300px; min-width: 220px; max-width: 560px; }
+  .split-left .card { height: 100%; }
+  .split-handle {
+    flex: 0 0 auto; width: 12px; align-self: stretch; cursor: col-resize;
+    position: relative; margin: 0 -2px;
+  }
+  .split-handle::after {
+    content: ''; position: absolute; left: 5px; top: 8px; bottom: 8px; width: 2px;
+    background: #dde1e7; border-radius: 1px;
+  }
+  .split-handle:hover::after, .split-handle.dragging::after { background: #0078d4; }
+  .split-right { flex: 1 1 auto; min-width: 0; }
+
+  /* Left-panel grouping controls stack vertically in the narrower column. */
+  .split-left .groupby-section {
+    display: flex; flex-direction: column; gap: 16px; margin-top: 0; padding-top: 0; border-top: none;
+  }
+  .split-left .groupby-col, .split-left .groupby-dropzone-col, .split-left .orientation-col { flex: none; min-width: 0; }
+  .split-left .views-section { margin-top: 16px; padding-top: 16px; border-top: 1px solid #eef0f4; }
+
+  /* ── Minimal cards: name + status color by default, everything else opt-in ─────────────── */
+  .target-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 6px; }
+  .svc-card { padding: 6px 8px; gap: 4px; border-left-width: 4px; }
+  .svc-card.up       { background: #f3fbf5; }
+  .svc-card.down     { background: #fdf3f3; }
+  .svc-card.checking { background: #fff; }
+  .svc-head { gap: 4px; }
+  .svc-name { font-size: 0.76rem; }
+
+  .view-toggle-field .orient-toggle { white-space: nowrap; }
+
+  /* ── Table view ──────────────────────────────────────────────────────── */
+  .table-wrap { overflow-x: auto; }
+  .svc-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+  .svc-table th, .svc-table td { padding: 6px 10px; border-bottom: 1px solid #eef0f4; text-align: left; white-space: nowrap; }
+  .svc-table thead tr:first-child th {
+    background: #f8f9fb; font-size: 0.68rem; text-transform: uppercase; letter-spacing: .03em;
+    color: #666; font-weight: 700;
+  }
+  .svc-table tr.filter-row th { background: #fff; padding: 4px 8px; }
+  .svc-table tr.filter-row input, .svc-table tr.filter-row select {
+    width: 100%; font-size: 0.72rem; padding: 3px 5px; border: 1px solid #ccc; border-radius: 3px; font-family: inherit;
+  }
+  .svc-table tbody tr:hover { background: #f8f9fb; }
+  .svc-table td.url-cell a { color: #0078d4; text-decoration: none; }
+  .svc-table td.url-cell a:hover { text-decoration: underline; }
+  .svc-table td.empty-msg { text-align: center; white-space: normal; }
+  .status-cell { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+  .status-dot.up       { background: #0ca30c; }
+  .status-dot.down     { background: #d03b3b; }
+  .status-dot.checking { background: #cfd4da; }
 </style>
 </head>
 <body>
@@ -274,49 +359,54 @@
 </header>
 
 <div class="card">
-  <div class="card-title">Add Target</div>
-  <div class="input-row">
-    <div class="field" style="flex:1;min-width:160px">
-      <label>Name</label>
-      <input type="text" id="newName" placeholder="order-service">
-    </div>
-    <div class="field">
-      <label>Type</label>
-      <select id="newType">
-        <option value="http">HTTP (status 200)</option>
-        <option value="prometheus">Prometheus</option>
-        <option value="jolokia">Jolokia</option>
-      </select>
-    </div>
-    <div class="field" style="flex:2;min-width:260px">
-      <label>URL</label>
-      <input type="text" id="newUrl" placeholder="http://host:port/actuator/health" style="width:100%" onkeydown="if(event.key==='Enter')addTarget()">
-    </div>
-    <div class="field">
-      <label>Auth</label>
-      <select id="newAuthType" onchange="onNewAuthTypeChange()">
-        <option value="">None</option>
-        <option value="basic">Basic</option>
-        <option value="bearer">Bearer</option>
-      </select>
-    </div>
-    <div class="field" id="newAuthBasicFields" style="display:none">
-      <label>Username</label>
-      <input type="text" id="newUsername" placeholder="username" style="width:120px">
-    </div>
-    <div class="field" id="newAuthBasicFields2" style="display:none">
-      <label>Password</label>
-      <input type="password" id="newPassword" placeholder="password" style="width:120px">
-    </div>
-    <div class="field" id="newAuthBearerFields" style="display:none">
-      <label>Token</label>
-      <input type="text" id="newToken" placeholder="token" style="width:160px">
-    </div>
-    <div class="field">
-      <button onclick="addTarget()">Add Target</button>
-    </div>
+  <div class="card-title collapsible" onclick="toggleCollapsible('addTargetBody', this)">
+    <span>Add Target</span>
+    <span class="chevron">&#9656;</span>
   </div>
-  <div id="addStatusMsg" class="status-msg"></div>
+  <div id="addTargetBody" class="collapsible-body">
+    <div class="input-row">
+      <div class="field" style="flex:1;min-width:160px">
+        <label>Name</label>
+        <input type="text" id="newName" placeholder="order-service">
+      </div>
+      <div class="field">
+        <label>Type</label>
+        <select id="newType">
+          <option value="http">HTTP (status 200)</option>
+          <option value="prometheus">Prometheus</option>
+          <option value="jolokia">Jolokia</option>
+        </select>
+      </div>
+      <div class="field" style="flex:2;min-width:260px">
+        <label>URL</label>
+        <input type="text" id="newUrl" placeholder="http://host:port/actuator/health" style="width:100%" onkeydown="if(event.key==='Enter')addTarget()">
+      </div>
+      <div class="field">
+        <label>Auth</label>
+        <select id="newAuthType" onchange="onNewAuthTypeChange()">
+          <option value="">None</option>
+          <option value="basic">Basic</option>
+          <option value="bearer">Bearer</option>
+        </select>
+      </div>
+      <div class="field" id="newAuthBasicFields" style="display:none">
+        <label>Username</label>
+        <input type="text" id="newUsername" placeholder="username" style="width:120px">
+      </div>
+      <div class="field" id="newAuthBasicFields2" style="display:none">
+        <label>Password</label>
+        <input type="password" id="newPassword" placeholder="password" style="width:120px">
+      </div>
+      <div class="field" id="newAuthBearerFields" style="display:none">
+        <label>Token</label>
+        <input type="text" id="newToken" placeholder="token" style="width:160px">
+      </div>
+      <div class="field">
+        <button onclick="addTarget()">Add Target</button>
+      </div>
+    </div>
+    <div id="addStatusMsg" class="status-msg"></div>
+  </div>
 </div>
 
 <div class="card">
@@ -325,119 +415,153 @@
 </div>
 
 <div class="card">
-  <div class="card-title">Alerts <span class="filter-note">— fires a webhook when a service transitions UP/DOWN, shared across everyone viewing this dashboard</span></div>
-  <div class="input-row">
-    <div class="field">
-      <label>&nbsp;</label>
-      <label class="chk-inline"><input type="checkbox" id="alertEnabledChk" onchange="markAlertDirty()"> Enabled</label>
-    </div>
-    <div class="field" style="flex:2;min-width:320px">
-      <label>Webhook URL</label>
-      <input type="text" id="alertWebhookUrl" placeholder="https://hooks.slack.com/services/…" style="width:100%" oninput="markAlertDirty()">
-    </div>
-    <div class="field">
-      <label>Format</label>
-      <select id="alertFormat" onchange="markAlertDirty()">
-        <option value="slack">Slack</option>
-        <option value="generic">Generic JSON</option>
-      </select>
-    </div>
-    <div class="field">
-      <label>Cooldown (sec)</label>
-      <input type="text" id="alertCooldown" placeholder="300" style="width:80px" oninput="markAlertDirty()">
-    </div>
-    <div class="field">
-      <button type="button" class="secondary" onclick="testAlertWebhook()">Test Webhook</button>
-    </div>
-    <div class="field">
-      <button type="button" id="alertSaveBtn" onclick="saveAlertConfig()">Save</button>
-    </div>
+  <div class="card-title collapsible" onclick="toggleCollapsible('alertsBody', this)">
+    <span>Alerts <span class="filter-note">— fires a webhook when a service transitions UP/DOWN, shared across everyone viewing this dashboard</span></span>
+    <span class="chevron">&#9656;</span>
   </div>
-  <div id="alertStatusMsg" class="status-msg"></div>
-</div>
-
-<div class="card">
-  <div class="input-row" style="margin-bottom:0">
-    <div class="summary-row" style="flex:1">
-      <div class="summary-cell"><div class="lbl">Targets</div><div class="val" id="sumTotal">0</div></div>
-      <div class="summary-cell"><div class="lbl">Up</div><div class="val up" id="sumUp">0</div></div>
-      <div class="summary-cell down-cell" id="downCell" onclick="toggleDownOnly()" title="Click to show only services that are down">
-        <div class="lbl">Down</div><div class="val down" id="sumDown">0</div>
-        <div class="hint-tag" id="downFilterHint" style="visibility:hidden">filtering</div>
+  <div id="alertsBody" class="collapsible-body">
+    <div class="input-row">
+      <div class="field">
+        <label>&nbsp;</label>
+        <label class="chk-inline"><input type="checkbox" id="alertEnabledChk" onchange="markAlertDirty()"> Enabled</label>
+      </div>
+      <div class="field" style="flex:2;min-width:320px">
+        <label>Webhook URL</label>
+        <input type="text" id="alertWebhookUrl" placeholder="https://hooks.slack.com/services/…" style="width:100%" oninput="markAlertDirty()">
+      </div>
+      <div class="field">
+        <label>Format</label>
+        <select id="alertFormat" onchange="markAlertDirty()">
+          <option value="slack">Slack</option>
+          <option value="generic">Generic JSON</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Cooldown (sec)</label>
+        <input type="text" id="alertCooldown" placeholder="300" style="width:80px" oninput="markAlertDirty()">
+      </div>
+      <div class="field">
+        <button type="button" class="secondary" onclick="testAlertWebhook()">Test Webhook</button>
+      </div>
+      <div class="field">
+        <button type="button" id="alertSaveBtn" onclick="saveAlertConfig()">Save</button>
       </div>
     </div>
-    <div class="field" style="min-width:180px">
-      <label>Search</label>
-      <input type="text" id="searchBox" placeholder="Name or URL…" oninput="onSearchInput()">
-    </div>
-    <div class="field">
-      <label>&nbsp;</label>
-      <label class="chk-inline"><input type="checkbox" id="prodOnlyChk" checked onchange="onProdOnlyChange()"> Prod only</label>
-    </div>
-    <div class="field dropdown-wrap">
-      <label>Card Fields</label>
-      <button type="button" class="secondary config-btn" id="cardFieldsBtn" onclick="toggleDropdown('cardFieldsPanel')">Configure…</button>
-      <div id="cardFieldsPanel" class="dropdown-panel"></div>
-    </div>
-    <div class="field">
-      <label>Auto Refresh</label>
-      <select id="refreshInterval">
-        <option value="0">Off</option>
-        <option value="5000">5s</option>
-        <option value="10000" selected>10s</option>
-        <option value="30000">30s</option>
-        <option value="60000">60s</option>
-      </select>
-    </div>
-    <div class="field">
-      <button class="secondary" id="checkAllBtn" onclick="checkAll()">Check All Now</button>
-      <div class="check-progress" id="checkProgress" style="display:none">
-        <div class="check-progress-track"><div class="check-progress-fill" id="checkProgressFill"></div></div>
-        <span id="checkProgressLabel"></span>
-      </div>
-    </div>
-    <div class="field">
-      <button class="danger" onclick="clearAll()">Clear All</button>
-    </div>
-  </div>
-
-  <div class="groupby-section">
-    <div class="groupby-col">
-      <div class="mini-label">Attributes <span class="hint">— drag onto Group By, or click to add</span></div>
-      <div id="attrPalette" class="chip-palette"></div>
-    </div>
-    <div class="groupby-col groupby-dropzone-col">
-      <div class="mini-label">Group By / Drill Down <span class="hint">— order sets the drilldown depth; drag chips to reorder</span></div>
-      <div id="groupDropzone" class="chip-dropzone"
-           ondragover="onDropzoneDragOver(event)" ondragleave="onDropzoneDragLeave(event)" ondrop="onDropzoneDrop(event)">
-        <div class="dropzone-empty" id="dropzoneEmpty">No grouping — drop an attribute here</div>
-      </div>
-    </div>
-    <div class="groupby-col orientation-col" id="orientationCol" style="display:none">
-      <div class="mini-label">Swimlane Orientation</div>
-      <div class="orient-toggle">
-        <button type="button" id="orientVertBtn" class="orient-btn active" onclick="setOrientation('vertical')">Vertical</button>
-        <button type="button" id="orientHorizBtn" class="orient-btn" onclick="setOrientation('horizontal')">Horizontal</button>
-      </div>
-    </div>
-  </div>
-
-  <div class="views-section">
-    <div class="mini-label">Saved Views <span class="hint">— filter + group by + orientation, shared across everyone viewing this dashboard</span></div>
-    <div class="input-row" style="margin-bottom:8px">
-      <div class="field" style="min-width:180px">
-        <input type="text" id="viewNameInput" placeholder="View name">
-      </div>
-      <button type="button" class="secondary" onclick="saveCurrentView()">Save Current View</button>
-      <span class="status-msg" id="viewStatusMsg"></span>
-    </div>
-    <div id="viewChips" class="chip-palette"></div>
+    <div id="alertStatusMsg" class="status-msg"></div>
   </div>
 </div>
 
-<div class="card">
-  <div class="card-title">Services<span class="filter-note" id="svcFilterNote"></span></div>
-  <div id="targetGrid" class="target-grid"></div>
+<div class="main-split" id="mainSplit">
+  <div class="split-left" id="splitLeft">
+    <div class="card">
+      <div class="card-title">Group By / Drill Down</div>
+      <div class="groupby-section">
+        <div class="groupby-col">
+          <div class="mini-label">Attributes <span class="hint">— drag onto Group By, or click to add</span></div>
+          <div id="attrPalette" class="chip-palette"></div>
+        </div>
+        <div class="groupby-col groupby-dropzone-col">
+          <div class="mini-label">Group By / Drill Down <span class="hint">— order sets the drilldown depth; drag chips to reorder</span></div>
+          <div id="groupDropzone" class="chip-dropzone"
+               ondragover="onDropzoneDragOver(event)" ondragleave="onDropzoneDragLeave(event)" ondrop="onDropzoneDrop(event)">
+            <div class="dropzone-empty" id="dropzoneEmpty">No grouping — drop an attribute here</div>
+          </div>
+        </div>
+        <div class="groupby-col orientation-col" id="orientationCol" style="display:none">
+          <div class="mini-label">Swimlane Orientation</div>
+          <div class="orient-toggle">
+            <button type="button" id="orientVertBtn" class="orient-btn active" onclick="setOrientation('vertical')">Vertical</button>
+            <button type="button" id="orientHorizBtn" class="orient-btn" onclick="setOrientation('horizontal')">Horizontal</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="views-section">
+        <div class="mini-label">Saved Views <span class="hint">— filter + group by + orientation, shared across everyone viewing this dashboard</span></div>
+        <div class="input-row" style="margin-bottom:8px">
+          <div class="field" style="min-width:180px">
+            <input type="text" id="viewNameInput" placeholder="View name">
+          </div>
+          <button type="button" class="secondary" onclick="saveCurrentView()">Save Current View</button>
+          <span class="status-msg" id="viewStatusMsg"></span>
+        </div>
+        <div id="viewChips" class="chip-palette"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="split-handle" id="splitHandle" title="Drag to resize"></div>
+
+  <div class="split-right" id="splitRight">
+    <div class="card">
+      <div class="input-row" style="margin-bottom:0">
+        <div class="summary-row" style="flex:1">
+          <div class="summary-cell"><div class="lbl">Targets</div><div class="val" id="sumTotal">0</div></div>
+          <div class="summary-cell"><div class="lbl">Up</div><div class="val up" id="sumUp">0</div></div>
+          <div class="summary-cell down-cell" id="downCell" onclick="toggleDownOnly()" title="Click to show only services that are down">
+            <div class="lbl">Down</div><div class="val down" id="sumDown">0</div>
+            <div class="hint-tag" id="downFilterHint" style="visibility:hidden">filtering</div>
+          </div>
+        </div>
+        <div class="field" style="min-width:180px">
+          <label>Search</label>
+          <input type="text" id="searchBox" placeholder="Name or URL…" oninput="onSearchInput()">
+        </div>
+        <div class="field">
+          <label>&nbsp;</label>
+          <label class="chk-inline"><input type="checkbox" id="prodOnlyChk" checked onchange="onProdOnlyChange()"> Prod only</label>
+        </div>
+        <div class="field dropdown-wrap">
+          <label>Card Fields</label>
+          <button type="button" class="secondary config-btn" id="cardFieldsBtn" onclick="toggleDropdown('cardFieldsPanel')">Configure…</button>
+          <div id="cardFieldsPanel" class="dropdown-panel"></div>
+        </div>
+        <div class="field view-toggle-field">
+          <label>View</label>
+          <div class="orient-toggle">
+            <button type="button" id="viewCardsBtn" class="orient-btn active" onclick="setViewMode('cards')">Cards</button>
+            <button type="button" id="viewTableBtn" class="orient-btn" onclick="setViewMode('table')">Table</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>Auto Refresh</label>
+          <select id="refreshInterval">
+            <option value="0" selected>Off</option>
+            <option value="5000">5s</option>
+            <option value="10000">10s</option>
+            <option value="30000">30s</option>
+            <option value="60000">60s</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Timeout (ms, max 3000)</label>
+          <input type="number" id="timeoutInput" min="200" max="3000" step="100" style="width:90px" onchange="onTimeoutInput()">
+        </div>
+        <div class="field">
+          <button class="secondary" id="checkAllBtn" onclick="checkAll()">Check All Now</button>
+          <div class="check-progress" id="checkProgress" style="display:none">
+            <div class="check-progress-track"><div class="check-progress-fill" id="checkProgressFill"></div></div>
+            <span id="checkProgressLabel"></span>
+          </div>
+        </div>
+        <div class="field">
+          <button class="danger" onclick="clearAll()">Clear All</button>
+        </div>
+      </div>
+      <div class="group-summary-row" id="groupSummaryRow"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Services<span class="filter-note" id="svcFilterNote"></span></div>
+      <div id="targetGrid" class="target-grid"></div>
+      <div id="targetTableWrap" class="table-wrap" style="display:none">
+        <table class="svc-table" id="targetTable">
+          <thead id="svcTableHead"></thead>
+          <tbody id="svcTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script src="staticdataset-widget.js"></script>
@@ -447,7 +571,25 @@
   const CARDFIELDS_KEY = 'serviceDashboard.cardFields';
   const ORIENTATION_KEY = 'serviceDashboard.orientation';
   const PRODONLY_KEY = 'serviceDashboard.prodOnly';
+  const VIEWMODE_KEY = 'serviceDashboard.viewMode';
+  const SPLIT_WIDTH_KEY = 'serviceDashboard.splitWidth';
+  const TIMEOUT_KEY = 'serviceDashboard.timeoutMs';
+  const MIN_TIMEOUT_MS = 200;
+  const MAX_TIMEOUT_MS = 3000;
   const VIEW_PAGE = 'serviceDashboard';
+
+  // Built-in (non-dataset-attribute) fields a card can optionally show — everything here is
+  // opt-in via "Card Fields" so the default card is just the name + a status color, not a wall
+  // of text.
+  const BUILTIN_CARD_FIELDS = [
+    { key: 'type', label: 'Type' },
+    { key: 'url', label: 'URL' },
+    { key: 'statusText', label: 'Status Text' },
+    { key: 'meta', label: 'HTTP Code / Latency' },
+    { key: 'error', label: 'Error' },
+    { key: 'trend', label: 'Trend Sparkline' },
+    { key: 'metrics', label: 'Metrics (heap/pid/uptime/threads/cpu)' }
+  ];
 
   let targets = loadTargets();
   const results = new Map();   // id -> last check result
@@ -457,10 +599,16 @@
   let cardFields = loadCardFields();     // array of dataset attribute names shown as extra rows on each card
   let orientation = loadOrientation();   // 'vertical' (stacked lanes) | 'horizontal' (side-scrolling lanes)
   let prodOnly = loadProdOnly();         // filters the grid to datasetAttrs.ICEENV === 'PROD' (targets without that attr always shown)
+  let timeoutMs = loadTimeoutMs();       // per-check HTTP timeout sent to the server, capped at MAX_TIMEOUT_MS both here and server-side
   let searchQuery = '';                  // live text filter on name/url, not persisted
   let downOnly = false;                  // quick "exceptions only" toggle, not persisted
   let lastAttrsSig = null;
   let savedViews = [];                   // server-side saved (filter + group-by + orientation) views, shared across everyone
+  let viewMode = loadViewMode();         // 'cards' | 'table'
+  let tableFilters = {};                 // column key -> filter text, not persisted
+  let lastTableVis = [];                 // targets currently backing the table (pre column-filter)
+  let lastTableCols = [];                // columns backing the currently-rendered table head
+  let lastTableColsSig = null;           // used to avoid rebuilding <thead> (and losing filter focus) when columns haven't changed
 
   function loadGroupByKeys() {
     try {
@@ -488,6 +636,35 @@
     return raw === null ? true : raw === 'true';
   }
   function saveProdOnly() { localStorage.setItem(PRODONLY_KEY, String(prodOnly)); }
+
+  function loadViewMode() {
+    return localStorage.getItem(VIEWMODE_KEY) === 'table' ? 'table' : 'cards';
+  }
+  function saveViewMode() { localStorage.setItem(VIEWMODE_KEY, viewMode); }
+
+  function loadTimeoutMs() {
+    const v = parseInt(localStorage.getItem(TIMEOUT_KEY), 10);
+    return Number.isFinite(v) ? Math.max(MIN_TIMEOUT_MS, Math.min(MAX_TIMEOUT_MS, v)) : MAX_TIMEOUT_MS;
+  }
+  function saveTimeoutMs() { localStorage.setItem(TIMEOUT_KEY, String(timeoutMs)); }
+
+  function onTimeoutInput() {
+    const el = document.getElementById('timeoutInput');
+    let v = parseInt(el.value, 10);
+    if (!Number.isFinite(v)) v = MAX_TIMEOUT_MS;
+    v = Math.max(MIN_TIMEOUT_MS, Math.min(MAX_TIMEOUT_MS, v));
+    timeoutMs = v;
+    el.value = v;
+    saveTimeoutMs();
+  }
+
+  function setViewMode(mode) {
+    viewMode = mode === 'table' ? 'table' : 'cards';
+    saveViewMode();
+    document.getElementById('viewCardsBtn').classList.toggle('active', viewMode === 'cards');
+    document.getElementById('viewTableBtn').classList.toggle('active', viewMode === 'table');
+    renderGrid();
+  }
 
   function loadTargets() {
     try {
@@ -580,7 +757,7 @@
       const res = await fetch('/servicemonitor/check', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: target.url, type: target.type, ...authFields(target) })
+        body: JSON.stringify({ url: target.url, type: target.type, timeoutMs, ...authFields(target) })
       });
       const data = await res.json();
       applyResult(target, data);
@@ -640,7 +817,7 @@
       const res = await fetch('/servicemonitor/checkBatchStream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ targets: targets.map(t => ({ id: t.id, url: t.url, type: t.type, ...authFields(t) })) })
+        body: JSON.stringify({ timeoutMs, targets: targets.map(t => ({ id: t.id, url: t.url, type: t.type, ...authFields(t) })) })
       });
       if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
 
@@ -749,13 +926,19 @@
     lastAttrsSig = sig;
 
     groupByKeys = groupByKeys.filter(k => k === '__status' || k === '__type' || sortedAttrs.includes(k.slice(5)));
-    cardFields = cardFields.filter(f => sortedAttrs.includes(f));
+    cardFields = cardFields.filter(f => f.startsWith('attr:') ? sortedAttrs.includes(f.slice(5)) : BUILTIN_CARD_FIELDS.some(b => b.key === f));
     saveGroupByKeys();
     saveCardFields();
 
     renderAttrPalette(sortedAttrs);
     renderDropzone();
     renderCardFieldsPanel(sortedAttrs);
+  }
+
+  function toggleCollapsible(bodyId, headerEl) {
+    const body = document.getElementById(bodyId);
+    const expanded = body.classList.toggle('expanded');
+    headerEl.classList.toggle('expanded', expanded);
   }
 
   function toggleDropdown(id) {
@@ -883,15 +1066,24 @@
 
   function renderCardFieldsPanel(sortedAttrs) {
     const panel = document.getElementById('cardFieldsPanel');
-    if (sortedAttrs.length === 0) {
-      panel.innerHTML = '<div class="empty-note">Load targets from a dataset to expose extra attributes you can pin to each card.</div>';
-    } else {
-      panel.innerHTML = sortedAttrs.map(a =>
-        '<label class="opt"><input type="checkbox" value="' + escapeHtml(a) + '"' +
-        (cardFields.includes(a) ? ' checked' : '') +
-        ' onchange="toggleCardField(\'' + escapeHtml(a) + '\', this.checked)"> ' + escapeHtml(a) + '</label>'
+    const builtinHtml =
+      '<div class="opt-group-title">Details</div>' +
+      BUILTIN_CARD_FIELDS.map(f =>
+        '<label class="opt"><input type="checkbox" value="' + escapeHtml(f.key) + '"' +
+        (cardFields.includes(f.key) ? ' checked' : '') +
+        ' onchange="toggleCardField(\'' + escapeHtml(f.key) + '\', this.checked)"> ' + escapeHtml(f.label) + '</label>'
+      ).join('');
+
+    let attrHtml = '';
+    if (sortedAttrs.length > 0) {
+      attrHtml = '<div class="opt-group-title">Attributes</div>' + sortedAttrs.map(a =>
+        '<label class="opt"><input type="checkbox" value="attr:' + escapeHtml(a) + '"' +
+        (cardFields.includes('attr:' + a) ? ' checked' : '') +
+        ' onchange="toggleCardField(\'attr:' + escapeHtml(a) + '\', this.checked)"> ' + escapeHtml(a) + '</label>'
       ).join('');
     }
+
+    panel.innerHTML = builtinHtml + attrHtml;
     updateCardFieldsBtnLabel();
   }
 
@@ -992,15 +1184,64 @@
     return keys.map(k => groupValue(t, r, k)).join(' › ');
   }
 
+  // Buckets the (already-filtered) visible targets by the current Group By keys — shared by the
+  // swimlane card view and the group summary strip so they never disagree. Groups with zero
+  // members simply never appear (there's nothing to add them from), which is what makes an empty
+  // status like "Down" drop out of the summary on its own.
+  function computeGroups(vis) {
+    const groups = new Map();
+    vis.forEach(t => {
+      const key = computeGroupKey(t, results.get(t.id), groupByKeys);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(t);
+    });
+    return Array.from(groups.keys()).sort().map(key => [key, groups.get(key)]);
+  }
+
+  // Compact per-group counts shown at the top of the Services panel (no grouping = hidden) so a
+  // filter or a status flip is visible without scrolling into the swimlanes below.
+  function renderGroupSummary(vis) {
+    const wrap = document.getElementById('groupSummaryRow');
+    if (groupByKeys.length === 0) {
+      wrap.style.display = 'none';
+      wrap.innerHTML = '';
+      return;
+    }
+    const groups = computeGroups(vis);
+    const isStatusOnly = groupByKeys.length === 1 && groupByKeys[0] === '__status';
+    wrap.style.display = 'flex';
+    wrap.innerHTML = groups.map(([key, lane]) => {
+      const stateCls = isStatusOnly ? (key === 'Up' ? ' up' : (key === 'Down' ? ' down' : '')) : '';
+      return (
+        '<div class="group-summary-cell' + stateCls + '">' +
+          '<div class="val">' + lane.length + '</div>' +
+          '<div class="lbl">' + escapeHtml(key) + '</div>' +
+        '</div>'
+      );
+    }).join('');
+  }
+
   // ── Rendering ────────────────────────────────────────────────────────────
   function renderGrid() {
     const grid = document.getElementById('targetGrid');
+    const tableWrap = document.getElementById('targetTableWrap');
     updateDynamicPanels();
 
     const vis = visibleTargets();
     const note = document.getElementById('svcFilterNote');
     note.textContent = (targets.length === 0 || vis.length === targets.length)
       ? '' : ' (' + vis.length + ' of ' + targets.length + ' shown)';
+    renderGroupSummary(vis);
+
+    if (viewMode === 'table') {
+      grid.style.display = 'none';
+      tableWrap.style.display = '';
+      renderTable(vis);
+      updateSummary();
+      return;
+    }
+    grid.style.display = '';
+    tableWrap.style.display = 'none';
 
     if (targets.length === 0) {
       grid.classList.remove('grouped');
@@ -1021,21 +1262,15 @@
       grid.innerHTML = sortByException(vis).map(renderCard).join('');
     } else {
       grid.classList.add('grouped');
-      const groups = new Map();
-      vis.forEach(t => {
-        const key = computeGroupKey(t, results.get(t.id), groupByKeys);
-        if (!groups.has(key)) groups.set(key, []);
-        groups.get(key).push(t);
-      });
-      const sortedKeys = Array.from(groups.keys()).sort();
+      const groups = computeGroups(vis);
       const orientClass = orientation === 'horizontal' ? ' orient-horizontal' : '';
-      grid.innerHTML = sortedKeys.map(key => {
-        const lane = sortByException(groups.get(key));
+      grid.innerHTML = groups.map(([key, groupTargets]) => {
+        const lane = sortByException(groupTargets);
         return (
           '<div class="group-section' + orientClass + '">' +
             '<div class="group-label">' +
-              '<div class="name">' + escapeHtml(key) + '</div>' +
-              '<div class="count">' + lane.length + ' service' + (lane.length !== 1 ? 's' : '') + '</div>' +
+              '<span class="name">' + escapeHtml(key) + '</span>' +
+              '<span class="count">(' + lane.length + ' service' + (lane.length !== 1 ? 's' : '') + ')</span>' +
             '</div>' +
             '<div class="group-lane">' + lane.map(renderCard).join('') + '</div>' +
           '</div>'
@@ -1046,35 +1281,54 @@
     updateSummary();
   }
 
+  // Minimal by default: just the name and a status color (border + background tint on
+  // .svc-card). Everything else here is opt-in through the "Card Fields" dropdown so the grid
+  // stays scannable at a glance instead of turning into a wall of per-card text.
   function renderCard(t) {
     const r = results.get(t.id);
     const isChecking = checking.has(t.id) && !r;
     const state = isChecking ? 'checking' : (r ? (r.status === 'UP' ? 'up' : 'down') : 'checking');
 
-    const pillCls = state === 'up' ? 'pill-up' : (state === 'down' ? 'pill-down' : 'pill-checking');
-    const pillText = state === 'up' ? 'UP' : (state === 'down' ? 'DOWN' : 'checking…');
+    let badgeHtml = '';
+    if (cardFields.includes('type')) {
+      const typeBadge = { http: 'badge-http', prometheus: 'badge-prometheus', jolokia: 'badge-jolokia' }[t.type] || 'badge-http';
+      const typeLabel = { http: 'HTTP', prometheus: 'Prometheus', jolokia: 'Jolokia' }[t.type] || t.type;
+      badgeHtml = '<span class="badge ' + typeBadge + '">' + typeLabel + '</span>';
+    }
 
-    const typeBadge = { http: 'badge-http', prometheus: 'badge-prometheus', jolokia: 'badge-jolokia' }[t.type] || 'badge-http';
-    const typeLabel = { http: 'HTTP', prometheus: 'Prometheus', jolokia: 'Jolokia' }[t.type] || t.type;
+    let statusTextHtml = '';
+    if (cardFields.includes('statusText')) {
+      const pillCls = state === 'up' ? 'pill-up' : (state === 'down' ? 'pill-down' : 'pill-checking');
+      const pillText = state === 'up' ? 'UP' : (state === 'down' ? 'DOWN' : 'checking…');
+      statusTextHtml = '<span class="pill ' + pillCls + '"><span class="pill-dot"></span>' + pillText + '</span>';
+    }
+
+    let badgesRowHtml = '';
+    if (badgeHtml || statusTextHtml) badgesRowHtml = '<div class="svc-badges">' + badgeHtml + statusTextHtml + '</div>';
+
+    let urlHtml = '';
+    if (cardFields.includes('url')) {
+      urlHtml = '<div class="svc-url"><a href="' + escapeHtml(t.url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(t.url) + '</a></div>';
+    }
 
     let metaHtml = '';
-    if (r) {
+    if (cardFields.includes('meta') && r) {
       const parts = [];
       if (r.statusCode != null) parts.push('HTTP ' + r.statusCode);
       if (r.latencyMs != null) parts.push(r.latencyMs + ' ms');
-      metaHtml = '<div class="svc-meta">' + parts.join(' · ') + '</div>';
+      if (parts.length > 0) metaHtml = '<div class="svc-meta">' + parts.join(' · ') + '</div>';
     }
 
     let errorHtml = '';
-    if (r && r.error) errorHtml = '<div class="svc-error">' + escapeHtml(r.error) + '</div>';
+    if (cardFields.includes('error') && r && r.error) errorHtml = '<div class="svc-error">' + escapeHtml(r.error) + '</div>';
 
     let sparkHtml = '';
-    if (r && r.history && r.history.length > 1) {
+    if (cardFields.includes('trend') && r && r.history && r.history.length > 1) {
       sparkHtml = '<div class="svc-spark-row"><span class="lbl">Trend</span>' + renderSparkline(r.history) + '</div>';
     }
 
     let metricsHtml = '';
-    if (r && r.metrics && Object.keys(r.metrics).length > 0) {
+    if (cardFields.includes('metrics') && r && r.metrics && Object.keys(r.metrics).length > 0) {
       const rows = [];
       const met = r.metrics;
 
@@ -1095,28 +1349,26 @@
       if (met.threadsLive != null) rows.push('<div class="metric-row"><span class="k">Threads</span><span class="v">' + met.threadsLive + '</span></div>');
       if (met.cpuUsage != null && met.cpuUsage >= 0) rows.push('<div class="metric-row"><span class="k">CPU</span><span class="v">' + (met.cpuUsage * 100).toFixed(1) + '%</span></div>');
 
-      metricsHtml = '<div class="svc-metrics">' + rows.join('') + '</div>';
+      if (rows.length > 0) metricsHtml = '<div class="svc-metrics">' + rows.join('') + '</div>';
     }
 
     let extraHtml = '';
-    if (cardFields.length > 0 && t.datasetAttrs) {
-      const rows = cardFields
+    const attrFields = cardFields.filter(f => f.startsWith('attr:')).map(f => f.slice(5));
+    if (attrFields.length > 0 && t.datasetAttrs) {
+      const rows = attrFields
         .filter(f => t.datasetAttrs[f] != null && t.datasetAttrs[f] !== '')
         .map(f => '<div class="metric-row"><span class="k">' + escapeHtml(f) + '</span><span class="v">' + escapeHtml(t.datasetAttrs[f]) + '</span></div>');
       if (rows.length > 0) extraHtml = '<div class="svc-metrics svc-extra">' + rows.join('') + '</div>';
     }
 
     return (
-      '<div class="svc-card ' + state + '">' +
+      '<div class="svc-card ' + state + '" title="' + (state === 'up' ? 'Up' : state === 'down' ? 'Down' : 'Checking…') + '">' +
         '<div class="svc-head">' +
           '<div class="svc-name">' + escapeHtml(t.name) + '</div>' +
           '<button class="svc-remove" title="Remove" onclick="removeTarget(\'' + t.id + '\')">&times;</button>' +
         '</div>' +
-        '<div class="svc-badges">' +
-          '<span class="badge ' + typeBadge + '">' + typeLabel + '</span>' +
-          '<span class="pill ' + pillCls + '"><span class="pill-dot"></span>' + pillText + '</span>' +
-        '</div>' +
-        '<div class="svc-url"><a href="' + escapeHtml(t.url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(t.url) + '</a></div>' +
+        badgesRowHtml +
+        urlHtml +
         metaHtml +
         errorHtml +
         sparkHtml +
@@ -1133,6 +1385,119 @@
   function checkOneById(id) {
     const t = targets.find(x => x.id === id);
     if (t) checkOne(t);
+  }
+
+  // ── Table view: same filtered target set as the card grid, plus per-column filters covering
+  // every base field and every discovered dataset attribute. Rebuilding just the <tbody> on a
+  // filter keystroke (renderTableBody) keeps the filter inputs from losing focus; the full
+  // <thead> only gets rebuilt when the set of columns actually changes.
+  const TABLE_BASE_COLUMNS = [
+    { key: 'name', label: 'Name' },
+    { key: 'status', label: 'Status' },
+    { key: 'type', label: 'Type' },
+    { key: 'url', label: 'URL' }
+  ];
+
+  // HTTP Code / Latency / Error columns ride the same "Card Fields" toggle ('meta' / 'error')
+  // used by the card view, so there's one config surface for both view modes rather than two.
+  function tableColumns() {
+    const cols = TABLE_BASE_COLUMNS.slice();
+    if (cardFields.includes('meta'))  cols.push({ key: 'httpCode', label: 'HTTP Code' }, { key: 'latencyMs', label: 'Latency (ms)' });
+    if (cardFields.includes('error')) cols.push({ key: 'error', label: 'Error' });
+    return cols.concat(datasetAttrNames().map(a => ({ key: 'attr:' + a, label: a })));
+  }
+
+  function cellValue(t, r, key) {
+    if (key === 'name') return t.name;
+    if (key === 'status') {
+      const isChecking = checking.has(t.id) && !r;
+      return isChecking ? 'Checking' : (r ? (r.status === 'UP' ? 'Up' : 'Down') : 'Checking');
+    }
+    if (key === 'type') return { http: 'HTTP', prometheus: 'Prometheus', jolokia: 'Jolokia' }[t.type] || t.type;
+    if (key === 'url') return t.url;
+    if (key === 'httpCode') return r && r.statusCode != null ? String(r.statusCode) : '';
+    if (key === 'latencyMs') return r && r.latencyMs != null ? String(r.latencyMs) : '';
+    if (key === 'error') return r && r.error ? r.error : '';
+    if (key.startsWith('attr:')) {
+      const v = t.datasetAttrs ? t.datasetAttrs[key.slice(5)] : undefined;
+      return v == null ? '' : String(v);
+    }
+    return '';
+  }
+
+  function matchesTableFilters(t, r, cols) {
+    return cols.every(c => {
+      const f = (tableFilters[c.key] || '').trim().toLowerCase();
+      if (!f) return true;
+      return String(cellValue(t, r, c.key)).toLowerCase().includes(f);
+    });
+  }
+
+  function renderTable(vis) {
+    const cols = tableColumns();
+    const sig = cols.map(c => c.key).join('|');
+    lastTableVis = vis;
+    lastTableCols = cols;
+
+    if (sig !== lastTableColsSig) {
+      lastTableColsSig = sig;
+      const head = document.getElementById('svcTableHead');
+      head.innerHTML =
+        '<tr>' + cols.map(c => '<th>' + escapeHtml(c.label) + '</th>').join('') + '</tr>' +
+        '<tr class="filter-row">' + cols.map(c => {
+          if (c.key === 'status') {
+            return '<th><select onchange="onTableFilterChange(\'status\', this.value)">' +
+              '<option value="">All</option><option value="up">Up</option><option value="down">Down</option><option value="checking">Checking</option>' +
+              '</select></th>';
+          }
+          if (c.key === 'type') {
+            return '<th><select onchange="onTableFilterChange(\'type\', this.value)">' +
+              '<option value="">All</option><option value="http">HTTP</option><option value="prometheus">Prometheus</option><option value="jolokia">Jolokia</option>' +
+              '</select></th>';
+          }
+          return '<th><input type="text" placeholder="Filter…" value="' + escapeHtml(tableFilters[c.key] || '') +
+            '" oninput="onTableFilterChange(\'' + c.key + '\', this.value)"></th>';
+        }).join('') + '</tr>';
+    }
+
+    renderTableBody();
+  }
+
+  function onTableFilterChange(key, value) {
+    tableFilters[key] = value;
+    renderTableBody();
+  }
+
+  function renderTableBody() {
+    const cols = lastTableCols;
+    const body = document.getElementById('svcTableBody');
+    const rows = sortByException(lastTableVis).filter(t => matchesTableFilters(t, results.get(t.id), cols));
+
+    if (rows.length === 0) {
+      body.innerHTML = '<tr><td class="empty-msg" colspan="' + cols.length + '">No services match the current filters.</td></tr>';
+      return;
+    }
+
+    body.innerHTML = rows.map(t => {
+      const r = results.get(t.id);
+      const isChecking = checking.has(t.id) && !r;
+      const state = isChecking ? 'checking' : (r ? (r.status === 'UP' ? 'up' : 'down') : 'checking');
+      return '<tr>' + cols.map(c => {
+        if (c.key === 'name') return '<td>' + escapeHtml(t.name) + '</td>';
+        if (c.key === 'status') {
+          const label = state === 'up' ? 'Up' : (state === 'down' ? 'Down' : 'Checking');
+          return '<td><span class="status-cell"><span class="status-dot ' + state + '"></span>' + label + '</span></td>';
+        }
+        if (c.key === 'url') {
+          return '<td class="url-cell"><a href="' + escapeHtml(t.url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(t.url) + '</a></td>';
+        }
+        if (c.key === 'error') {
+          const err = cellValue(t, r, c.key);
+          return '<td' + (err ? ' class="svc-error"' : '') + ' style="white-space:normal">' + escapeHtml(err) + '</td>';
+        }
+        return '<td>' + escapeHtml(cellValue(t, r, c.key)) + '</td>';
+      }).join('') + '</tr>';
+    }).join('');
   }
 
   function updateSummary() {
@@ -1320,10 +1685,48 @@
     renderViewChips();
   }
 
+  // ── Split panel: drag the handle between Group By (left) and Services (right) ──────────
+  function loadSplitWidth() {
+    const v = parseInt(localStorage.getItem(SPLIT_WIDTH_KEY), 10);
+    return Number.isFinite(v) && v >= 220 && v <= 560 ? v : 300;
+  }
+
+  function initSplitter() {
+    const mainSplit = document.getElementById('mainSplit');
+    const left = document.getElementById('splitLeft');
+    const handle = document.getElementById('splitHandle');
+    left.style.width = loadSplitWidth() + 'px';
+
+    let dragging = false;
+    handle.addEventListener('mousedown', (e) => {
+      dragging = true;
+      handle.classList.add('dragging');
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      const rect = mainSplit.getBoundingClientRect();
+      const w = Math.max(220, Math.min(560, e.clientX - rect.left));
+      left.style.width = w + 'px';
+    });
+    window.addEventListener('mouseup', () => {
+      if (!dragging) return;
+      dragging = false;
+      handle.classList.remove('dragging');
+      document.body.style.userSelect = '';
+      localStorage.setItem(SPLIT_WIDTH_KEY, parseInt(left.style.width, 10));
+    });
+  }
+
   // ── Init ─────────────────────────────────────────────────────────────────
   document.getElementById('prodOnlyChk').checked = prodOnly;
+  document.getElementById('timeoutInput').value = timeoutMs;
   document.getElementById('orientVertBtn').classList.toggle('active', orientation === 'vertical');
   document.getElementById('orientHorizBtn').classList.toggle('active', orientation === 'horizontal');
+  document.getElementById('viewCardsBtn').classList.toggle('active', viewMode === 'cards');
+  document.getElementById('viewTableBtn').classList.toggle('active', viewMode === 'table');
+  initSplitter();
   renderGrid();
   if (targets.length > 0) checkAll();
   applyRefreshInterval();

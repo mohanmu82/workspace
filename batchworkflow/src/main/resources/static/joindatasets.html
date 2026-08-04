@@ -20,7 +20,8 @@
         .nav a { font-size: 13px; color: #0052cc; text-decoration: none; margin-right: 12px; }
         .nav a:hover { text-decoration: underline; }
 
-        h1 { font-size: 20px; font-weight: 600; margin-bottom: 16px; }
+        h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+        .subtitle { font-size: 13px; color: #5e6c84; margin-bottom: 16px; }
 
         .panel {
             background: #fff;
@@ -37,6 +38,14 @@
             text-transform: uppercase;
             letter-spacing: 0.5px;
             margin-bottom: 12px;
+        }
+        .panel-title .hint {
+            font-weight: 400;
+            text-transform: none;
+            letter-spacing: 0;
+            color: #8993a4;
+            font-size: 12px;
+            margin-left: 4px;
         }
 
         .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
@@ -58,41 +67,54 @@
         .status-bar.error { color: #de350b; }
         .status-bar.ok    { color: #006644; }
 
-        /* Dataset table */
-        .ds-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-        .ds-table th {
-            background: #f4f5f7; padding: 8px 12px; text-align: left;
-            border-bottom: 2px solid #dfe1e6; font-size: 11px; font-weight: 700;
-            color: #5e6c84; text-transform: uppercase; letter-spacing: 0.4px;
+        select {
+            padding: 8px 10px; font-size: 13px; border: 1px solid #ccc; border-radius: 4px;
+            min-width: 220px; outline: none; background: #fff;
         }
-        .ds-table td { padding: 8px 12px; border-bottom: 1px solid #f0f1f3; vertical-align: middle; }
-        .ds-table tr:last-child td { border-bottom: none; }
-        .ds-table tr:hover td { background: #fafbfc; }
+        select:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.25); }
 
-        .ds-link { font-weight: 600; font-size: 14px; color: #0052cc; text-decoration: none; }
-        .ds-link:hover { text-decoration: underline; }
-        .ds-key  { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; color: #0052cc; }
-        .ds-fk   { font-size: 12px; color: #5e6c84; }
-        .ds-fk-arrow { color: #b3bac5; margin: 0 4px; }
-        .col-list { display: flex; flex-wrap: wrap; gap: 4px; }
         .col-chip {
             padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 500;
             background: #f4f5f7; border: 1px solid #dfe1e6; white-space: nowrap;
             cursor: grab; user-select: none;
         }
         .col-chip:hover { background: #ebecf0; }
-        .col-chip.numeric { background: #e3fcef; border-color: #57d9a3; color: #006644; }
-        .ds-time { font-size: 11px; color: #5e6c84; white-space: nowrap; }
 
-        /* Status badges */
-        .badge-status {
-            display: inline-flex; align-items: center; gap: 5px;
-            padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600;
+        /* Dataset join cards */
+        #dsCardsRow { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
+        .ds-card {
+            border: 1px solid #dfe1e6; border-radius: 6px; padding: 0 0 10px;
+            background: #fff; min-width: 230px; flex: 1 1 230px; overflow: hidden;
         }
-        .badge-status.idle    { background: #f4f5f7; color: #5e6c84; border: 1px solid #dfe1e6; }
-        .badge-status.loading { background: #fff0b3; color: #7a4600; border: 1px solid #ffab00; }
-        .badge-status.ok      { background: #e3fcef; color: #006644; border: 1px solid #57d9a3; }
-        .badge-status.error   { background: #ffebe6; color: #de350b; border: 1px solid #ff7452; }
+        .ds-card-header {
+            display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+            border-bottom: 1px solid rgba(0,0,0,0.08);
+        }
+        .ds-card-name { font-weight: 700; font-size: 13px; flex: 1; word-break: break-word; }
+        .ds-card-count { font-size: 11px; color: #42526e; white-space: nowrap; }
+        .ds-card-remove {
+            background: none; border: none; cursor: pointer; color: #5e6c84;
+            font-size: 14px; line-height: 1; padding: 2px 4px; border-radius: 3px;
+        }
+        .ds-card-remove:hover { color: #de350b; background: rgba(222,53,11,0.08); }
+        .ds-card-chips { display: flex; flex-wrap: wrap; gap: 5px; padding: 10px; }
+        .join-key-chip { cursor: grab; }
+        .join-key-chip.chip-drop-target {
+            border-color: #4c9aff !important; background: #e9f0ff !important;
+            box-shadow: 0 0 0 2px rgba(76,154,255,.35);
+        }
+
+        /* Join edges */
+        #joinEdgesList { display: flex; flex-wrap: wrap; gap: 8px; }
+        .join-edge-chip {
+            display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px;
+            border-radius: 14px; font-size: 12px; background: #e9f0ff;
+            border: 1px solid #4c9aff; color: #0052cc; font-family: "Cascadia Code", Consolas, monospace;
+        }
+        .join-edge-chip .rm { cursor: pointer; font-weight: 700; opacity: .65; font-family: sans-serif; }
+        .join-edge-chip .rm:hover { opacity: 1; }
+
+        .empty-hint { font-size: 12px; color: #b3bac5; font-style: italic; }
 
         /* Filter column palette */
         #filterColPalette {
@@ -160,7 +182,7 @@
         .chart-modal-header button { background:none; border:none; font-size:18px; cursor:pointer; color:#5e6c84; padding:2px 6px; border-radius:4px; }
         .chart-modal-header button:hover { background:#f4f5f7; }
 
-        /* Inline Pivot Builder */
+        /* Inline Group-By / Aggregate Builder */
         #pivotBuilderSection {
             display: none;
             border: 1px solid #dfe1e6;
@@ -266,50 +288,39 @@
 
 <div class="nav">
     <a href="/">&larr; Batch Runner</a>
+    <a href="/staticdatasets.html">Static Datasets</a>
     <a href="/templates.html">Templates</a>
     <a href="/comparedatasets.html">Compare</a>
 </div>
 <h1>Join Datasets</h1>
+<div class="subtitle">Pull in one or more static datasets, drag a column onto a column in another dataset to outer-join them, then filter and group/aggregate the result.</div>
 
-<!-- Panel 1: Select joindataset -->
+<!-- Panel 1: Select datasets -->
 <div class="panel">
-    <div class="panel-title">Join Dataset</div>
+    <div class="panel-title">1. Select Datasets</div>
     <div class="toolbar">
-        <select id="jdSelect" onchange="onJoinDatasetSelect()" style="padding:8px 10px;font-size:14px;border:1px solid #ccc;border-radius:4px;min-width:240px;outline:none">
-            <option value="">— select a join dataset —</option>
+        <select id="staticDsSelect">
+            <option value="">— select a static dataset —</option>
         </select>
-        <button class="secondary" onclick="reloadJoinDatasets()">Reload</button>
-    </div>
-</div>
-
-<!-- Panel 2: Datasets inside selected joindataset -->
-<div id="datasetsPanel" class="panel" style="display:none">
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
-        <span class="panel-title" id="datasetsPanelTitle" style="margin-bottom:0">Datasets</span>
-        <button class="secondary sm" onclick="loadAll()">Load All</button>
-        <button class="primary sm" id="searchAllBtn" onclick="executeSearch()" disabled>&#9654; Search / Join</button>
+        <button class="primary sm" onclick="addSelectedDataset()">+ Add to Canvas</button>
+        <button class="secondary sm" onclick="loadStaticDatasetList()">Reload List</button>
         <span style="flex:1"></span>
-        <button class="secondary sm" onclick="openAddDatasetModal()">+ Add Dataset</button>
+        <button class="secondary sm" id="clearAllBtn" style="display:none" onclick="clearAllDatasets()">Clear All</button>
     </div>
-    <table class="ds-table" id="dsTable">
-        <thead>
-            <tr>
-                <th>Dataset</th>
-                <th>Unique Key</th>
-                <th>Foreign Keys</th>
-                <th>Columns</th>
-                <th>Last Loaded</th>
-                <th>Status</th>
-                <th style="width:90px">Action</th>
-            </tr>
-        </thead>
-        <tbody id="dsTableBody"></tbody>
-    </table>
 </div>
 
-<!-- Panel 3: Search controls -->
-<div id="searchPanel" class="panel" style="display:none">
-    <div class="panel-title">Search &amp; Filter</div>
+<!-- Panel 2: Join keys -->
+<div id="joinPanel" class="panel" style="display:none">
+    <div class="panel-title">2. Join Keys <span class="hint">&mdash; drag a column chip from one dataset onto a column chip in a different dataset to outer-join them</span></div>
+    <div id="dsCardsRow"></div>
+    <div id="joinStatusMsg" style="font-size:12px;color:#5e6c84;margin-bottom:8px"></div>
+    <div class="panel-title" style="margin-top:4px;margin-bottom:8px">Defined Joins</div>
+    <div id="joinEdgesList"></div>
+</div>
+
+<!-- Panel 3: Filter -->
+<div id="filterPanel" class="panel" style="display:none">
+    <div class="panel-title">3. Filter Joined Data</div>
 
     <!-- Draggable column palette -->
     <div id="filterColPalette">
@@ -321,9 +332,8 @@
 
     <div class="toolbar" style="margin-top:8px;gap:8px">
         <button class="secondary sm" onclick="addFilterRow()">+ Add Filter</button>
-        <button class="primary" id="searchBtn" onclick="executeSearch()" disabled>&#9654; Search</button>
-        <button class="secondary" onclick="clearFilters()">Clear Filters</button>
-        <button class="secondary" onclick="clearGrid()">Clear Results</button>
+        <button class="primary" onclick="applyFiltersAndRender()">Apply Filters</button>
+        <button class="secondary" onclick="clearFiltersAndRender()">Clear Filters</button>
         <span style="flex:1"></span>
         <label style="font-size:12px;color:#5e6c84;display:flex;align-items:center;gap:4px">
             Quick filter:
@@ -348,31 +358,31 @@
     </div>
     <div id="colChooserBar"><span class="chooser-lbl">Columns:</span></div>
 
-    <!-- Inline Pivot Builder -->
+    <!-- Inline Group-By / Aggregate Builder -->
     <div id="pivotBuilderSection">
         <div class="piv-builder-header">
-            <span class="piv-builder-title">&#8644; Pivot Builder</span>
+            <span class="piv-builder-title">&#8644; Group By &amp; Aggregate</span>
             <button class="secondary sm" onclick="resetInlinePivot()">Reset</button>
             <span style="font-size:12px;color:#5e6c84" id="pivotResultInfo"></span>
         </div>
         <!-- Available columns by dataset -->
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
             <input type="text" id="pivotColSearch" placeholder="Search columns…" oninput="onPivotSearch(this.value)">
-            <span style="font-size:11px;color:#5e6c84">Click to add to Row Groups &bull; drag to any zone</span>
+            <span style="font-size:11px;color:#5e6c84">Click to add to Group By &bull; drag to any zone &bull; set an aggregation key per value column</span>
         </div>
         <div id="pivotBuilderAvail"></div>
         <!-- Three drop zones -->
         <div class="piv-zones-row">
             <div class="piv-zone-col">
-                <div class="piv-zone-label">Row Groups</div>
+                <div class="piv-zone-label">Group By</div>
                 <div id="iPivRowGroupsZone" class="pivot-drop-zone" data-hint="Drag columns here…"></div>
             </div>
             <div class="piv-zone-col">
-                <div class="piv-zone-label">Pivot Columns</div>
+                <div class="piv-zone-label">Pivot Columns (optional)</div>
                 <div id="iPivPivColsZone" class="pivot-drop-zone" data-hint="Drag columns here (optional)…"></div>
             </div>
             <div class="piv-zone-col">
-                <div class="piv-zone-label">Values</div>
+                <div class="piv-zone-label">Values &amp; Aggregation Key</div>
                 <div id="iPivValuesZone" class="pivot-drop-zone" data-hint="Drag columns here (default: count)…"></div>
             </div>
         </div>
@@ -393,38 +403,7 @@
     </div>
 </div>
 
-<!-- Add Dataset Modal -->
-<div id="addDatasetModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:2000;align-items:center;justify-content:center">
-  <div style="background:#fff;border-radius:8px;padding:24px;width:580px;max-width:95vw;box-shadow:0 8px 32px rgba(0,0,0,.25);display:flex;flex-direction:column;gap:14px">
-    <div style="display:flex;justify-content:space-between;align-items:center">
-      <h3 style="font-size:15px;font-weight:600;margin:0">Add Dataset to <span id="addDsJdName" style="color:#0052cc"></span></h3>
-      <button onclick="closeAddDatasetModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#5e6c84;line-height:1">&#10005;</button>
-    </div>
-    <div style="display:flex;flex-direction:column;gap:6px">
-      <label style="font-size:11px;font-weight:700;color:#5e6c84;text-transform:uppercase;letter-spacing:.4px">Dataset Name</label>
-      <input id="addDsName" type="text" placeholder="e.g. MYDATA" style="padding:7px 10px;border:1px solid #ccc;border-radius:4px;font-size:13px;outline:none">
-    </div>
-    <div style="display:flex;flex-direction:column;gap:6px">
-      <label style="font-size:11px;font-weight:700;color:#5e6c84;text-transform:uppercase;letter-spacing:.4px">
-        Request (JSON) &mdash; or <code style="font-size:11px;background:#f4f5f7;padding:1px 5px;border-radius:3px">{"templateName":"myTemplate"}</code>
-      </label>
-      <textarea id="addDsRequest" rows="7" style="font-family:Consolas,monospace;font-size:12px;padding:8px;border:1px solid #ccc;border-radius:4px;resize:vertical;outline:none"></textarea>
-    </div>
-    <div style="display:flex;flex-direction:column;gap:6px">
-      <label style="font-size:11px;font-weight:700;color:#5e6c84;text-transform:uppercase;letter-spacing:.4px">
-        Unique Key columns <span style="font-weight:400;text-transform:none;letter-spacing:0">(comma or newline separated)</span>
-      </label>
-      <textarea id="addDsUniqueKey" rows="2" style="font-family:Consolas,monospace;font-size:12px;padding:8px;border:1px solid #ccc;border-radius:4px;resize:vertical;outline:none" placeholder="COL1, COL2"></textarea>
-    </div>
-    <div id="addDsStatus" style="font-size:12px;min-height:16px;color:#5e6c84"></div>
-    <div style="display:flex;gap:8px;justify-content:flex-end">
-      <button class="secondary" onclick="closeAddDatasetModal()">Cancel</button>
-      <button class="primary" onclick="submitAddDataset()">Add Dataset</button>
-    </div>
-  </div>
-</div>
-
-<!-- Copy toast -->
+<!-- Copy toast / cell link menu -->
 <div id="cellLinkMenu" style="display:none;position:fixed;z-index:9999;background:#fff;border:1px solid #dfe1e6;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:4px 0;min-width:140px">
     <div onclick="_doCellCopy()" onmouseenter="this.style.background='#f4f5f7'" onmouseleave="this.style.background=''" style="padding:7px 14px;cursor:pointer;font-size:13px">&#128203; Copy</div>
     <div onclick="_doCellOpen()" onmouseenter="this.style.background='#f4f5f7'" onmouseleave="this.style.background=''" style="padding:7px 14px;cursor:pointer;font-size:13px">&#128279; Open Link</div>
@@ -435,12 +414,15 @@
 // -------------------------------------------------------------------------
 // State
 // -------------------------------------------------------------------------
-let currentConfig     = null;
-let loadedDatasetInfo = {};
-let loadingDatasets   = new Set();
-let rawGridData       = [];
+let allStaticDatasets = [];   // [{name, source, count, ...}] from /staticdataset
+let loadedDs          = {};   // dsName -> { attributes: [...], rows: [...] }
+let selectedDsNames   = [];   // order of addition — drives color index
+let joinEdges         = [];   // [{ a:{ds,col}, b:{ds,col} }]
+let joinedRows        = [];   // raw outer-join result (pre-filter)
+let rawGridData        = [];  // post-filter data actually shown in the grid
+let _dragChip          = null; // {ds,col} while dragging a join-key chip
 
-// Dataset colors — one per dataset, consistent across grid + pivot builder
+// Dataset colors — one per dataset, consistent across cards + grid + pivot builder
 const DS_COLORS = [
     { bg: '#e3f2fd', border: '#90caf9' },
     { bg: '#e8f5e9', border: '#a5d6a7' },
@@ -458,269 +440,337 @@ function dsColor(idx) {
     return DS_COLORS[idx % DS_COLORS.length];
 }
 
-// Build map: colName → dataset index (first dataset that owns it wins)
-function buildColumnDatasetMap() {
+// Map a column name (possibly renamed by the join, e.g. "OTHERDS_col") to the
+// index of the dataset that owns it, for coloring grid cells / palette chips.
+function buildColumnDatasetMap(cols) {
     const map = {};
-    (currentConfig?.datasets || []).forEach((ds, idx) => {
-        (loadedDatasetInfo[ds.name]?.columns || []).forEach(col => {
-            if (!(col in map)) map[col] = idx;
-        });
+    (cols || []).forEach(col => {
+        let idx = selectedDsNames.findIndex(ds => (loadedDs[ds].attributes || []).includes(col));
+        if (idx === -1) {
+            idx = selectedDsNames.findIndex(ds =>
+                col.startsWith(ds + '_') && (loadedDs[ds].attributes || []).includes(col.slice(ds.length + 1)));
+        }
+        if (idx !== -1) map[col] = idx;
     });
     return map;
 }
 
 // -------------------------------------------------------------------------
-// Join Dataset list
+// Static dataset list / selection
 // -------------------------------------------------------------------------
 
-async function reloadJoinDatasets() {
-    const sel = document.getElementById('jdSelect');
-    while (sel.options.length > 1) sel.remove(1);
+async function loadStaticDatasetList() {
+    const sel = document.getElementById('staticDsSelect');
+    sel.innerHTML = '<option value="">— select a static dataset —</option>';
     try {
-        const res  = await fetch('/batch/joindataset');
-        const data = await res.json();
-        (data.data || []).forEach(name => {
+        const res = await fetch('/staticdataset');
+        allStaticDatasets = await res.json();
+        allStaticDatasets.forEach(d => {
             const opt = document.createElement('option');
-            opt.value = name; opt.textContent = name;
+            opt.value = d.name;
+            opt.textContent = d.name + ' (' + (d.count || 0).toLocaleString() + ' rows)';
+            if (selectedDsNames.includes(d.name)) opt.disabled = true;
             sel.appendChild(opt);
         });
-        setStatus('');
     } catch (e) {
-        setStatus('Failed to load join datasets: ' + e.message, 'error');
+        setStatus('Failed to load static datasets: ' + e.message, 'error');
     }
 }
 
-async function onJoinDatasetSelect() {
-    const name = document.getElementById('jdSelect').value;
-    if (!name) {
-        document.getElementById('datasetsPanel').style.display = 'none';
-        document.getElementById('searchPanel').style.display = 'none';
-        currentConfig = null; loadedDatasetInfo = {}; clearGrid();
-        return;
-    }
-    setStatus('Loading config…');
+async function addSelectedDataset() {
+    const sel = document.getElementById('staticDsSelect');
+    const name = sel.value;
+    if (!name) return;
+    await addDataset(name);
+    sel.value = '';
+}
+
+async function addDataset(name) {
+    if (!name || selectedDsNames.includes(name)) return;
+    setStatus('Loading ' + name + '…');
     try {
-        const res  = await fetch('/batch/joindataset/' + encodeURIComponent(name));
-        currentConfig = await res.json();
-        loadedDatasetInfo = {};
-        loadingDatasets.clear();
-        await syncServerLoadedState();
-        renderDatasetTable();
-        document.getElementById('datasetsPanel').style.display = '';
-        document.getElementById('searchPanel').style.display = '';
-        setStatus('');
-        clearGrid();
-    } catch (e) {
-        setStatus('Failed to load config: ' + e.message, 'error');
-    }
-}
-
-async function syncServerLoadedState() {
-    if (!currentConfig) return;
-    const jdName = currentConfig.name;
-    await Promise.all((currentConfig.datasets || []).map(async ds => {
-        try {
-            const res = await fetch(`/batch/joindataset/${encodeURIComponent(jdName)}/dataset/${encodeURIComponent(ds.name)}`);
-            const info = await res.json();
-            if (info.loaded) {
-                loadedDatasetInfo[ds.name] = {
-                    count: info.count,
-                    loadedTime: info.loadedTime,
-                    columns: info.columns || []
-                };
-            }
-        } catch (_) {}
-    }));
-    updateFilterPalette();
-}
-
-// -------------------------------------------------------------------------
-// Dataset table rendering
-// -------------------------------------------------------------------------
-
-function renderDatasetTable() {
-    if (!currentConfig) return;
-    const datasets = currentConfig.datasets || [];
-    const jdName   = currentConfig.name;
-    document.getElementById('datasetsPanelTitle').textContent =
-        'Datasets in "' + jdName + '" (' + datasets.length + ')';
-
-    const tbody = document.getElementById('dsTableBody');
-    tbody.innerHTML = '';
-
-    datasets.forEach((ds, dsIdx) => {
-        const tr = document.createElement('tr');
-        tr.id = 'ds-row-' + ds.name;
-
-        // Name (link to standalone view)
-        const tdName = document.createElement('td');
-        const viewUrl = `/joindatasets.html?jd=${encodeURIComponent(jdName)}&ds=${encodeURIComponent(ds.name)}`;
-        tdName.innerHTML = `<a class="ds-link" href="${esc(viewUrl)}" target="_blank" title="View standalone">${esc(ds.name)}</a>`;
-        tr.appendChild(tdName);
-
-        // Unique key
-        const tdKey = document.createElement('td');
-        tdKey.innerHTML = `<span class="ds-key">${(ds.uniqueKey || []).join(', ')}</span>`;
-        tr.appendChild(tdKey);
-
-        // Foreign keys
-        const tdFk = document.createElement('td');
-        if (ds.foreignKey && ds.foreignKey.length) {
-            tdFk.innerHTML = ds.foreignKey.map(fk =>
-                `<div class="ds-fk"><span class="ds-key">${esc(fk.column)}</span><span class="ds-fk-arrow">→</span>${esc(fk.reference.dataset)}.${esc(fk.reference.column)}</div>`
-            ).join('');
-        } else {
-            tdFk.innerHTML = '<span style="color:#b3bac5;font-size:12px">—</span>';
-        }
-        tr.appendChild(tdFk);
-
-        // Columns (draggable chips) — colored by dataset
-        const { bg, border } = dsColor(dsIdx);
-        const tdCols = document.createElement('td');
-        tdCols.innerHTML = `<div class="col-list">${(ds.columns || []).map(c =>
-            `<span class="col-chip${c.type === 'number' ? ' numeric' : ''}"
-                   draggable="true"
-                   style="background:${bg};border-color:${border}"
-                   title="${esc(c.attribute)}"
-                   ondragstart="event.dataTransfer.setData('text/plain','${esc(c.name)}')">${esc(c.name)}</span>`
-        ).join('')}</div>`;
-        tr.appendChild(tdCols);
-
-        // Last loaded
-        const tdTime = document.createElement('td');
-        tdTime.id = 'ds-time-' + ds.name;
-        tdTime.className = 'ds-time';
-        const preloaded = loadedDatasetInfo[ds.name];
-        tdTime.textContent = preloaded ? preloaded.loadedTime : '—';
-        tr.appendChild(tdTime);
-
-        // Status
-        const tdStatus = document.createElement('td');
-        tdStatus.id = 'ds-status-' + ds.name;
-        if (preloaded) {
-            tdStatus.innerHTML = `<span class="badge-status ok">✓ ${preloaded.count.toLocaleString()} rows</span>`;
-        } else {
-            tdStatus.innerHTML = '<span class="badge-status idle">Not loaded</span>';
-        }
-        tr.appendChild(tdStatus);
-
-        // Action
-        const tdAction = document.createElement('td');
-        const btn = document.createElement('button');
-        btn.className = 'secondary sm';
-        btn.id = 'ds-btn-' + ds.name;
-        btn.textContent = preloaded ? 'Reload' : 'Load';
-        btn.onclick = () => loadDataset(ds);
-        tdAction.appendChild(btn);
-        tr.appendChild(tdAction);
-
-        tbody.appendChild(tr);
-    });
-
-    updateSearchBtn();
-}
-
-function setDatasetStatus(name, type, msg) {
-    const el = document.getElementById('ds-status-' + name);
-    if (!el) return;
-    el.innerHTML = `<span class="badge-status ${type}">${esc(msg)}</span>`;
-}
-
-function setDatasetBtnLabel(name, label) {
-    const btn = document.getElementById('ds-btn-' + name);
-    if (btn) btn.textContent = label;
-}
-
-function setDatasetLoadedTime(name, time) {
-    const el = document.getElementById('ds-time-' + name);
-    if (el) el.textContent = time || '—';
-}
-
-// -------------------------------------------------------------------------
-// Dataset loading (server-side)
-// -------------------------------------------------------------------------
-
-async function loadDataset(ds) {
-    if (loadingDatasets.has(ds.name)) return;
-    loadingDatasets.add(ds.name);
-    setDatasetStatus(ds.name, 'loading', 'Loading…');
-    setDatasetBtnLabel(ds.name, '…');
-    const btn = document.getElementById('ds-btn-' + ds.name);
-    if (btn) btn.disabled = true;
-
-    const jdName = currentConfig.name;
-
-    try {
-        const res  = await fetch(
-            `/batch/joindataset/${encodeURIComponent(jdName)}/load/${encodeURIComponent(ds.name)}`,
-            { method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(ds.request) });
+        const res = await fetch('/staticdataset/' + encodeURIComponent(name) + '/data');
         const body = await res.json();
         if (!res.ok) {
-            const msg = body.Errors?.[0]?.message || res.statusText;
-            setDatasetStatus(ds.name, 'error', '✗ ' + msg);
-            setStatus('Error loading ' + ds.name + ': ' + msg, 'error');
-        } else {
-            loadedDatasetInfo[ds.name] = {
-                count: body.count,
-                loadedTime: body.loadedTime,
-                columns: body.columns || []
-            };
-            setDatasetStatus(ds.name, 'ok', '✓ ' + body.count.toLocaleString() + ' rows');
-            setDatasetLoadedTime(ds.name, body.loadedTime);
-            setStatus('Loaded ' + ds.name + ': ' + body.count.toLocaleString() + ' rows.', 'ok');
-            updateFilterPalette();
+            setStatus('Failed to load ' + name + ': ' + (body.error || res.statusText), 'error');
+            return;
         }
+        loadedDs[name] = { attributes: body.attributes || [], rows: body.rows || [] };
+        selectedDsNames.push(name);
+        setStatus('Loaded ' + name + ': ' + (body.rows || []).length.toLocaleString() + ' rows.', 'ok');
+        renderDatasetCards();
+        document.getElementById('joinPanel').style.display = '';
+        document.getElementById('clearAllBtn').style.display = '';
+        loadStaticDatasetList();
+        recomputeAll();
     } catch (e) {
-        setDatasetStatus(ds.name, 'error', '✗ ' + e.message);
-        setStatus('Error loading ' + ds.name + ': ' + e.message, 'error');
-    } finally {
-        loadingDatasets.delete(ds.name);
-        if (btn) { btn.disabled = false; btn.textContent = 'Reload'; }
-        updateSearchBtn();
+        setStatus('Failed to load ' + name + ': ' + e.message, 'error');
     }
 }
 
-async function loadAll() {
-    if (!currentConfig) return;
-    for (const ds of currentConfig.datasets) {
-        await loadDataset(ds);
+function removeDataset(name) {
+    selectedDsNames = selectedDsNames.filter(n => n !== name);
+    delete loadedDs[name];
+    joinEdges = joinEdges.filter(e => e.a.ds !== name && e.b.ds !== name);
+    renderDatasetCards();
+    renderJoinEdges();
+    if (!selectedDsNames.length) {
+        document.getElementById('joinPanel').style.display = 'none';
+        document.getElementById('clearAllBtn').style.display = 'none';
     }
+    loadStaticDatasetList();
+    recomputeAll();
 }
 
-function updateSearchBtn() {
-    const anyLoaded = Object.keys(loadedDatasetInfo).length > 0;
-    document.getElementById('searchAllBtn').disabled = !anyLoaded;
-    document.getElementById('searchBtn').disabled    = !anyLoaded;
+function clearAllDatasets() {
+    selectedDsNames = [];
+    loadedDs = {};
+    joinEdges = [];
+    renderDatasetCards();
+    renderJoinEdges();
+    document.getElementById('joinPanel').style.display = 'none';
+    document.getElementById('clearAllBtn').style.display = 'none';
+    clearFilters();
+    loadStaticDatasetList();
+    recomputeAll();
 }
 
 // -------------------------------------------------------------------------
-// Filter column palette
+// Dataset cards + drag-and-drop join key creation
+// -------------------------------------------------------------------------
+
+function renderDatasetCards() {
+    const row = document.getElementById('dsCardsRow');
+    row.innerHTML = '';
+    selectedDsNames.forEach((name, idx) => {
+        const { bg, border } = dsColor(idx);
+
+        const card = document.createElement('div');
+        card.className = 'ds-card';
+        card.style.borderColor = border;
+
+        const header = document.createElement('div');
+        header.className = 'ds-card-header';
+        header.style.background = bg;
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'ds-card-name';
+        nameSpan.textContent = name;
+        header.appendChild(nameSpan);
+
+        const countSpan = document.createElement('span');
+        countSpan.className = 'ds-card-count';
+        countSpan.textContent = (loadedDs[name].rows || []).length.toLocaleString() + ' rows';
+        header.appendChild(countSpan);
+
+        const rmBtn = document.createElement('button');
+        rmBtn.className = 'ds-card-remove';
+        rmBtn.innerHTML = '&#10005;';
+        rmBtn.title = 'Remove dataset';
+        rmBtn.onclick = () => removeDataset(name);
+        header.appendChild(rmBtn);
+
+        card.appendChild(header);
+
+        const chips = document.createElement('div');
+        chips.className = 'ds-card-chips';
+        (loadedDs[name].attributes || []).forEach(col => {
+            const chip = document.createElement('span');
+            chip.className = 'col-chip join-key-chip';
+            chip.style.cssText = 'background:' + bg + ';border-color:' + border;
+            chip.textContent = col;
+            chip.draggable = true;
+            chip.title = 'Drag onto a column in another dataset to join';
+
+            chip.addEventListener('dragstart', e => {
+                _dragChip = { ds: name, col };
+                e.dataTransfer.effectAllowed = 'link';
+                e.dataTransfer.setData('text/plain', name + '.' + col);
+            });
+            chip.addEventListener('dragend', () => { _dragChip = null; });
+            chip.addEventListener('dragover', e => {
+                if (_dragChip && _dragChip.ds !== name) {
+                    e.preventDefault();
+                    chip.classList.add('chip-drop-target');
+                }
+            });
+            chip.addEventListener('dragleave', () => chip.classList.remove('chip-drop-target'));
+            chip.addEventListener('drop', e => {
+                e.preventDefault();
+                chip.classList.remove('chip-drop-target');
+                if (_dragChip && _dragChip.ds !== name) {
+                    addJoinEdge(_dragChip, { ds: name, col });
+                }
+                _dragChip = null;
+            });
+
+            chips.appendChild(chip);
+        });
+        card.appendChild(chips);
+
+        row.appendChild(card);
+    });
+}
+
+// -------------------------------------------------------------------------
+// Join edges
+// -------------------------------------------------------------------------
+
+function addJoinEdge(a, b) {
+    // Only one join key pair per dataset pair — a new drop replaces the old one.
+    joinEdges = joinEdges.filter(e =>
+        !((e.a.ds === a.ds && e.b.ds === b.ds) || (e.a.ds === b.ds && e.b.ds === a.ds)));
+    joinEdges.push({ a, b });
+    renderJoinEdges();
+    recomputeAll();
+    setStatus('Joined ' + a.ds + '.' + a.col + ' ⇄ ' + b.ds + '.' + b.col + ' (outer join).', 'ok');
+}
+
+function renderJoinEdges() {
+    const el = document.getElementById('joinEdgesList');
+    el.innerHTML = '';
+    if (!joinEdges.length) {
+        el.innerHTML = '<span class="empty-hint">No joins defined yet — drag a column chip onto a column chip in a different dataset above.</span>';
+        return;
+    }
+    joinEdges.forEach((edge, i) => {
+        const chip = document.createElement('span');
+        chip.className = 'join-edge-chip';
+        chip.innerHTML = esc(edge.a.ds) + '.' + esc(edge.a.col) + ' &#8644; ' +
+                          esc(edge.b.ds) + '.' + esc(edge.b.col) +
+                          ' <span class="rm" title="Remove join">&#215;</span>';
+        chip.querySelector('.rm').addEventListener('click', () => {
+            joinEdges.splice(i, 1);
+            renderJoinEdges();
+            recomputeAll();
+        });
+        el.appendChild(chip);
+    });
+}
+
+function renderJoinStatus(unjoined) {
+    const el = document.getElementById('joinStatusMsg');
+    if (selectedDsNames.length <= 1) { el.textContent = ''; return; }
+    if (!unjoined || !unjoined.length) {
+        el.textContent = '✓ All ' + selectedDsNames.length + ' datasets joined (' + joinedRows.length.toLocaleString() + ' row(s)).';
+        el.style.color = '#006644';
+    } else {
+        el.textContent = '⚠ Not joined yet: ' + unjoined.join(', ') +
+            ' — drag a column from ' + (unjoined.length > 1 ? 'one of these' : 'it') + ' onto a column in a joined dataset.';
+        el.style.color = '#de350b';
+    }
+}
+
+// -------------------------------------------------------------------------
+// Join computation (client-side, case-insensitive full outer join, chained)
+// -------------------------------------------------------------------------
+
+function computeJoin() {
+    if (!selectedDsNames.length) { joinedRows = []; return []; }
+    if (selectedDsNames.length === 1) {
+        joinedRows = loadedDs[selectedDsNames[0]].rows.map(r => Object.assign({}, r));
+        return [];
+    }
+
+    const base = selectedDsNames[0];
+    const joinedSet = new Set([base]);
+    const renameMap = { [base]: {} };
+    (loadedDs[base].attributes || []).forEach(c => { renameMap[base][c] = c; });
+    const resultCols = new Set(loadedDs[base].attributes || []);
+    let result = loadedDs[base].rows.map(r => Object.assign({}, r));
+
+    let changed = true;
+    while (changed) {
+        changed = false;
+        for (const edge of joinEdges) {
+            let joinedSide, newSide;
+            if (joinedSet.has(edge.a.ds) && !joinedSet.has(edge.b.ds)) { joinedSide = edge.a; newSide = edge.b; }
+            else if (joinedSet.has(edge.b.ds) && !joinedSet.has(edge.a.ds)) { joinedSide = edge.b; newSide = edge.a; }
+            else continue;
+
+            const joinedFinalCol = (renameMap[joinedSide.ds] || {})[joinedSide.col] || joinedSide.col;
+
+            // Precompute final column names for the incoming dataset before merging,
+            // so unmatched (outer) right-side rows get renamed consistently too.
+            const dsRenameMap = {};
+            (loadedDs[newSide.ds].attributes || []).forEach(col => {
+                if (col === newSide.col) { dsRenameMap[col] = joinedFinalCol; return; }
+                const finalKey = resultCols.has(col) ? newSide.ds + '_' + col : col;
+                dsRenameMap[col] = finalKey;
+                resultCols.add(finalKey);
+            });
+            renameMap[newSide.ds] = dsRenameMap;
+
+            const newDsRows = loadedDs[newSide.ds].rows;
+            const idx = new Map();
+            newDsRows.forEach(r => {
+                const k = String(r[newSide.col] != null ? r[newSide.col] : '').toLowerCase();
+                if (!idx.has(k)) idx.set(k, []);
+                idx.get(k).push(r);
+            });
+
+            const matchedRight = new Set();
+            const newResult = [];
+            for (const row of result) {
+                const k = String(row[joinedFinalCol] != null ? row[joinedFinalCol] : '').toLowerCase();
+                const matches = idx.get(k);
+                if (matches && matches.length) {
+                    matches.forEach(m => {
+                        matchedRight.add(m);
+                        const merged = Object.assign({}, row);
+                        Object.keys(m).forEach(key => {
+                            if (key === newSide.col) return; // duplicate join key column — already present
+                            merged[dsRenameMap[key] || key] = m[key];
+                        });
+                        newResult.push(merged);
+                    });
+                } else {
+                    newResult.push(Object.assign({}, row));
+                }
+            }
+            newDsRows.forEach(r => {
+                if (!matchedRight.has(r)) {
+                    const rightOnly = {};
+                    Object.keys(r).forEach(key => {
+                        rightOnly[dsRenameMap[key] || key] = r[key];
+                    });
+                    newResult.push(rightOnly);
+                }
+            });
+
+            result = newResult;
+            joinedSet.add(newSide.ds);
+            changed = true;
+        }
+    }
+
+    joinedRows = result;
+    return selectedDsNames.filter(n => !joinedSet.has(n));
+}
+
+// -------------------------------------------------------------------------
+// Filter columns palette + filter rows (client-side over joinedRows)
 // -------------------------------------------------------------------------
 
 function updateFilterPalette() {
     const palette = document.getElementById('filterColPalette');
-    const seen = new Set();
-    const cols = [];
-    (currentConfig?.datasets || []).forEach(ds => {
-        (loadedDatasetInfo[ds.name]?.columns || []).forEach(c => {
-            if (!seen.has(c)) { seen.add(c); cols.push(c); }
-        });
-    });
-
     while (palette.children.length > 1) palette.removeChild(palette.lastChild);
+
+    const colSet = new Set();
+    joinedRows.forEach(r => Object.keys(r).forEach(k => colSet.add(k)));
+    const cols = [...colSet];
 
     if (!cols.length) { palette.style.display = 'none'; return; }
     palette.style.display = 'flex';
 
-    const dsMap = buildColumnDatasetMap();
+    const dsMap = buildColumnDatasetMap(cols);
     cols.forEach(col => {
         const chip = document.createElement('span');
         chip.className = 'col-chip';
         const dsIdx = dsMap[col];
         if (dsIdx !== undefined) {
             const { bg, border } = dsColor(dsIdx);
-            chip.style.cssText = `background:${bg};border-color:${border}`;
+            chip.style.cssText = 'background:' + bg + ';border-color:' + border;
         }
         chip.textContent = col;
         chip.draggable = true;
@@ -728,10 +778,6 @@ function updateFilterPalette() {
         palette.appendChild(chip);
     });
 }
-
-// -------------------------------------------------------------------------
-// Filter rows
-// -------------------------------------------------------------------------
 
 let _filterIdx = 0;
 
@@ -788,40 +834,67 @@ function clearFilters() {
     _filterIdx = 0;
 }
 
-// -------------------------------------------------------------------------
-// Server-side search
-// -------------------------------------------------------------------------
+function clearFiltersAndRender() {
+    clearFilters();
+    applyFiltersAndRender();
+}
 
-async function executeSearch(datasetFilter) {
-    if (!currentConfig) { setStatus('No joindataset selected.', 'error'); return; }
-    const jdName = currentConfig.name;
+function compareNum(a, b) {
+    const na = parseFloat(a), nb = parseFloat(b);
+    if (!isNaN(na) && !isNaN(nb)) return na - nb;
+    return String(a).localeCompare(String(b));
+}
 
-    const datasets = datasetFilter || Object.keys(loadedDatasetInfo);
-    if (!datasets.length) { setStatus('No loaded datasets — load at least one first.', 'error'); return; }
+function matchStringOp(op, strVal, fVal) {
+    const sl = strVal.toLowerCase(), fl = (fVal || '').toLowerCase();
+    switch (op) {
+        case 'equals':             return sl === fl;
+        case 'notEquals':          return sl !== fl;
+        case 'startsWith':         return sl.startsWith(fl);
+        case 'endsWith':           return sl.endsWith(fl);
+        case 'contains':           return sl.includes(fl);
+        case 'notContains':        return !sl.includes(fl);
+        case 'greaterThan':        return compareNum(strVal, fVal) > 0;
+        case 'lessThan':           return compareNum(strVal, fVal) < 0;
+        case 'greaterThanOrEqual': return compareNum(strVal, fVal) >= 0;
+        case 'lessThanOrEqual':    return compareNum(strVal, fVal) <= 0;
+        case 'regex':              try { return new RegExp(fVal).test(strVal); } catch (e) { return false; }
+        case 'blank':              return strVal.trim() === '';
+        case 'notBlank':           return strVal.trim() !== '';
+        default:                   return true;
+    }
+}
 
+function matchesFilter(row, filter) {
+    const col = filter.column, op = filter.op;
+    if (!col || !op) return true;
+    const raw = row[col];
+    const strVal = raw != null ? String(raw) : '';
+    return matchStringOp(op, strVal, filter.value || '');
+}
+
+function applyFiltersAndRender() {
     const filters = [...document.querySelectorAll('#filterRows .filter-row')].map(row => ({
         column: row.querySelector('.fr-col').value.trim(),
         op:     row.querySelector('.fr-op').value,
         value:  row.querySelector('.fr-val').value
     })).filter(f => f.column);
 
-    setStatus('Searching…');
-    try {
-        const res  = await fetch(
-            `/batch/joindataset/${encodeURIComponent(jdName)}/search`,
-            { method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ datasets, joinAll: true, filters }) });
-        const body = await res.json();
-        if (!res.ok) {
-            const msg = body.Errors?.[0]?.message || res.statusText;
-            setStatus('Search error: ' + msg, 'error'); return;
-        }
-        const data = body.data || [];
-        loadGridData(data);
-        setStatus(data.length.toLocaleString() + ' row(s) returned.', 'ok');
-    } catch (e) {
-        setStatus('Search error: ' + e.message, 'error');
-    }
+    const filtered = filters.length
+        ? joinedRows.filter(row => filters.every(f => matchesFilter(row, f)))
+        : joinedRows;
+
+    loadGridData(filtered);
+    setStatus(filtered.length.toLocaleString() + ' row(s)' +
+        (filters.length ? ' after ' + filters.length + ' filter(s).' : '.'), 'ok');
+}
+
+function recomputeAll() {
+    const unjoined = computeJoin();
+    renderJoinStatus(unjoined);
+    updateFilterPalette();
+    document.getElementById('filterPanel').style.display = selectedDsNames.length ? '' : 'none';
+    applyFiltersAndRender();
 }
 
 // -------------------------------------------------------------------------
@@ -954,15 +1027,19 @@ function loadGridData(rows) {
     if (!rows || !rows.length) { clearGrid(); return; }
     rawGridData = rows;
     _showRawInGrid(rows);
-    _initPivotBuilder(Object.keys(rows[0]));
+    const colSet = new Set();
+    rows.forEach(r => Object.keys(r).forEach(k => colSet.add(k)));
+    _initPivotBuilder([...colSet]);
     document.getElementById('gridSection').style.display = 'block';
     document.getElementById('quickFilter').value = '';
     jdGrid.setGridOption('quickFilterText', '');
 }
 
 function _showRawInGrid(rows) {
-    const cols = Object.keys(rows[0]);
-    const dsMap = buildColumnDatasetMap();
+    const colSet = new Set();
+    rows.forEach(r => Object.keys(r).forEach(k => colSet.add(k)));
+    const cols = [...colSet];
+    const dsMap = buildColumnDatasetMap(cols);
     jdGrid.setGridOption('columnDefs', cols.map(k => {
         const dsIdx = dsMap[k];
         const style = dsIdx !== undefined ? { background: dsColor(dsIdx).bg } : {};
@@ -1085,7 +1162,7 @@ function generateChartColors(n) {
 }
 
 // -------------------------------------------------------------------------
-// Inline Pivot Builder
+// Inline Group-By / Aggregate Builder
 // -------------------------------------------------------------------------
 let iPivRowGrps  = [];
 let iPivPivCols  = [];
@@ -1099,8 +1176,13 @@ let _pivotAvailDatasets = [];
 let _pivotColFilter     = '';
 const PIVOT_MAX_COLS    = 10;
 
-const AGG_OPTS   = ['count','sum','avg','min','max','dcount','getdistinct','first','last'];
-const AGG_LABELS = { count:'count', sum:'sum', avg:'avg', min:'min', max:'max', dcount:'dcount (distinct)', getdistinct:'get distinct', first:'first', last:'last' };
+const AGG_OPTS   = ['keepIfConsistent','sum','max','min','count','avg','append','appendDistinct','dcount','first','last'];
+const AGG_LABELS = {
+    keepIfConsistent: 'keep if consistent',
+    sum: 'sum', max: 'max', min: 'min', count: 'count', avg: 'avg',
+    append: 'append', appendDistinct: 'append distinct',
+    dcount: 'distinct count', first: 'first', last: 'last'
+};
 
 function _initPivotBuilder(cols) {
     iPivRowGrps = []; iPivPivCols = []; iPivValues = [];
@@ -1108,8 +1190,8 @@ function _initPivotBuilder(cols) {
     const searchInput = document.getElementById('pivotColSearch');
     if (searchInput) searchInput.value = '';
 
-    const dsMap = buildColumnDatasetMap();
-    _pivotAvailDatasets = currentConfig?.datasets || [];
+    const dsMap = buildColumnDatasetMap(cols);
+    _pivotAvailDatasets = selectedDsNames.map(n => ({ name: n }));
 
     _pivotAvailGroups = {};
     cols.forEach(col => {
@@ -1201,7 +1283,7 @@ function _makeAvailChip(col, bg, border) {
         setTimeout(() => chip.classList.add('dragging'), 0);
     });
     chip.addEventListener('dragend', () => chip.classList.remove('dragging'));
-    chip.title = 'Click to add to Row Groups; drag to any zone';
+    chip.title = 'Click to add to Group By; drag to any zone';
     chip.addEventListener('click', () => {
         if (!iPivRowGrps.find(r => r.col === col)) {
             iPivRowGrps.push({ col });
@@ -1243,7 +1325,7 @@ function _handleIPivDrop(targetArr, isValues) {
     // Add to target
     if (isValues) {
         if (!iPivValues.find(v => v.col === col)) {
-            iPivValues.push({ col, agg: 'count' });
+            iPivValues.push({ col, agg: 'keepIfConsistent' });
         }
     } else {
         if (!targetArr.find(v => v.col === col)) {
@@ -1339,7 +1421,7 @@ function applyInlinePivot() {
     }
 
     const { headers, rows } = _computePivot(rawGridData, iPivRowGrps, iPivPivCols, iPivValues);
-    const dsMap = buildColumnDatasetMap();
+    const dsMap = buildColumnDatasetMap(headers);
     const rgCols = new Set(iPivRowGrps.map(r => r.col));
 
     jdGrid.setGridOption('columnDefs', headers.map(h => {
@@ -1359,7 +1441,7 @@ function _showIPivColMenu(col, anchor) {
     const menu = document.createElement('div');
     menu.style.cssText = 'position:fixed;background:#fff;border:1px solid #dfe1e6;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.18);z-index:9999;min-width:180px;padding:4px 0;font-size:13px';
     [
-        { label: '↓ Row Group',    action: () => { if (!iPivRowGrps.find(r => r.col === col)) { iPivRowGrps.push({ col }); _refreshIPivZones(); applyInlinePivot(); } } },
+        { label: '↓ Group By',     action: () => { if (!iPivRowGrps.find(r => r.col === col)) { iPivRowGrps.push({ col }); _refreshIPivZones(); applyInlinePivot(); } } },
         { label: '→ Pivot Column', action: () => { if (!iPivPivCols.find(r => r.col === col)) { iPivPivCols.push({ col }); _refreshIPivZones(); applyInlinePivot(); } } },
         { label: '# Count',        action: () => { iPivValues.push({ col, agg: 'count' });     _refreshIPivZones(); applyInlinePivot(); } },
         { label: '∑ Sum',          action: () => { iPivValues.push({ col, agg: 'sum' });       _refreshIPivZones(); applyInlinePivot(); } },
@@ -1400,8 +1482,8 @@ function _computePivot(data, rowGrps, pivCols, values) {
     });
 
     const headers = [...rgKeys];
-    if (pcKeys.length) sortedPivKeys.forEach(pk => values.forEach(v => headers.push(`${pk} › ${v.col} [${v.agg}]`)));
-    else values.forEach(v => headers.push(`${v.col} [${v.agg}]`));
+    if (pcKeys.length) sortedPivKeys.forEach(pk => values.forEach(v => headers.push(`${pk} › ${v.col} [${AGG_LABELS[v.agg] || v.agg}]`)));
+    else values.forEach(v => headers.push(`${v.col} [${AGG_LABELS[v.agg] || v.agg}]`));
 
     const resultRows = [];
     for (const entry of groups.values()) {
@@ -1409,10 +1491,10 @@ function _computePivot(data, rowGrps, pivCols, values) {
         if (pcKeys.length) {
             sortedPivKeys.forEach(pk => {
                 const sub = entry._rows.filter(r => pcKeys.map(c => String(r[c] ?? '')).join(' | ') === pk);
-                values.forEach(v => { outRow[`${pk} › ${v.col} [${v.agg}]`] = _agg(sub.map(r => r[v.col]), v.agg); });
+                values.forEach(v => { outRow[`${pk} › ${v.col} [${AGG_LABELS[v.agg] || v.agg}]`] = _agg(sub.map(r => r[v.col]), v.agg); });
             });
         } else {
-            values.forEach(v => { outRow[`${v.col} [${v.agg}]`] = _agg(entry._rows.map(r => r[v.col]), v.agg); });
+            values.forEach(v => { outRow[`${v.col} [${AGG_LABELS[v.agg] || v.agg}]`] = _agg(entry._rows.map(r => r[v.col]), v.agg); });
         }
         resultRows.push(outRow);
     }
@@ -1422,16 +1504,24 @@ function _computePivot(data, rowGrps, pivCols, values) {
 function _agg(vals, type) {
     const nums = vals.map(v => parseFloat(v)).filter(v => !isNaN(v));
     switch (type) {
-        case 'sum':         return nums.length ? nums.reduce((a, b) => a + b, 0) : null;
-        case 'avg':         return nums.length ? +(nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(4) : null;
-        case 'min':         return nums.length ? Math.min(...nums) : null;
-        case 'max':         return nums.length ? Math.max(...nums) : null;
-        case 'count':       return vals.length;
-        case 'dcount':      return new Set(vals.map(v => String(v ?? ''))).size;
-        case 'getdistinct': return [...new Set(vals.map(v => String(v ?? '')))].filter(v => v).sort().join(', ');
-        case 'first':       return vals.length ? vals[0] : null;
-        case 'last':        return vals.length ? vals[vals.length - 1] : null;
-        default:            return vals.length;
+        case 'sum':              return nums.length ? nums.reduce((a, b) => a + b, 0) : null;
+        case 'avg':               return nums.length ? +(nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(4) : null;
+        case 'min':               return nums.length ? Math.min(...nums) : null;
+        case 'max':               return nums.length ? Math.max(...nums) : null;
+        case 'count':             return vals.length;
+        case 'dcount':            return new Set(vals.map(v => String(v ?? ''))).size;
+        case 'append':            return vals.filter(v => v != null && v !== '').join(', ');
+        case 'appendDistinct':    return [...new Set(vals.filter(v => v != null && v !== '').map(String))].sort().join(', ');
+        case 'first':             return vals.length ? vals[0] : null;
+        case 'last':              return vals.length ? vals[vals.length - 1] : null;
+        case 'keepIfConsistent': {
+            const nonNull = vals.filter(v => v != null && v !== '');
+            const uniq = new Set(nonNull.map(String));
+            if (uniq.size === 0) return null;
+            if (uniq.size === 1) return nonNull[0];
+            return '⚠ mixed (' + uniq.size + ')';
+        }
+        default: return vals.length;
     }
 }
 
@@ -1486,32 +1576,6 @@ function doCopyHtml() {
 }
 
 // -------------------------------------------------------------------------
-// Standalone view mode  (?jd=xxx&ds=yyy)
-// -------------------------------------------------------------------------
-
-async function checkViewMode() {
-    const params = new URLSearchParams(location.search);
-    const jdParam = params.get('jd');
-    const dsParam = params.get('ds');
-    if (!jdParam) return;
-    const sel = document.getElementById('jdSelect');
-    if (!sel.querySelector(`option[value="${CSS.escape(jdParam)}"]`)) return;
-    sel.value = jdParam;
-    await onJoinDatasetSelect();
-    if (!dsParam || !currentConfig) return;
-    const dsConf = (currentConfig.datasets || []).find(d => d.name === dsParam);
-    if (!dsConf) return;
-    const banner = document.createElement('div');
-    banner.style.cssText = 'background:#e9f0ff;border:1px solid #4c9aff;border-radius:4px;padding:8px 14px;font-size:13px;color:#0052cc;margin-bottom:12px;display:flex;align-items:center;gap:8px';
-    banner.innerHTML = `<span>&#128203;</span> <strong>Standalone view:</strong> ${esc(dsParam)} from <em>${esc(jdParam)}</em>`;
-    document.querySelector('h1').after(banner);
-    if (!loadedDatasetInfo[dsParam]) {
-        await loadDataset(dsConf);
-    }
-    await executeSearch([dsParam]);
-}
-
-// -------------------------------------------------------------------------
 // Utility
 // -------------------------------------------------------------------------
 function esc(s) {
@@ -1519,72 +1583,16 @@ function esc(s) {
 }
 
 // -------------------------------------------------------------------------
-// Add Dataset modal
-// -------------------------------------------------------------------------
-
-function openAddDatasetModal() {
-    if (!currentConfig) { setStatus('Select a join dataset first.', 'error'); return; }
-    document.getElementById('addDsJdName').textContent = currentConfig.name;
-    document.getElementById('addDsName').value = '';
-    document.getElementById('addDsRequest').value = JSON.stringify(
-        { operation: 'filereader', debugMode: 0, inputSource: 'FILE', inputFilePath: '${DATADIR}/.txt' },
-        null, 2);
-    document.getElementById('addDsUniqueKey').value = '';
-    document.getElementById('addDsStatus').textContent = '';
-    document.getElementById('addDatasetModal').style.display = 'flex';
-}
-
-function closeAddDatasetModal() {
-    document.getElementById('addDatasetModal').style.display = 'none';
-}
-
-async function submitAddDataset() {
-    const name = document.getElementById('addDsName').value.trim();
-    if (!name) { setAddDsStatus('Dataset name is required.', 'error'); return; }
-
-    let request;
-    try {
-        request = JSON.parse(document.getElementById('addDsRequest').value);
-    } catch (e) {
-        setAddDsStatus('Request JSON is invalid: ' + e.message, 'error'); return;
-    }
-
-    const ukText = document.getElementById('addDsUniqueKey').value.trim();
-    const uniqueKey = ukText ? ukText.split(/[,\n]/).map(s => s.trim()).filter(Boolean) : [];
-
-    const jdName = currentConfig.name;
-    setAddDsStatus('Saving…');
-    try {
-        const res = await fetch(
-            `/batch/joindataset/${encodeURIComponent(jdName)}/dataset`,
-            { method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ name, request, uniqueKey }) });
-        const body = await res.json();
-        if (!res.ok) {
-            setAddDsStatus('Error: ' + (body.Errors?.[0]?.message || res.statusText), 'error'); return;
-        }
-        setAddDsStatus('Dataset added!', 'ok');
-        setTimeout(async () => {
-            closeAddDatasetModal();
-            await onJoinDatasetSelect();
-        }, 700);
-    } catch (e) {
-        setAddDsStatus('Error: ' + e.message, 'error');
-    }
-}
-
-function setAddDsStatus(msg, type) {
-    const el = document.getElementById('addDsStatus');
-    el.textContent = msg;
-    el.style.color = type === 'error' ? '#de350b' : type === 'ok' ? '#006644' : '#5e6c84';
-}
-
-// -------------------------------------------------------------------------
-// Boot
+// Boot — optional ?ds=name1,name2 preselects and loads static datasets
 // -------------------------------------------------------------------------
 async function boot() {
-    await reloadJoinDatasets();
-    await checkViewMode();
+    await loadStaticDatasetList();
+    const params = new URLSearchParams(location.search);
+    const dsParam = params.get('ds');
+    if (dsParam) {
+        const names = dsParam.split(',').map(s => s.trim()).filter(Boolean);
+        for (const n of names) { await addDataset(n); }
+    }
 }
 boot();
 </script>

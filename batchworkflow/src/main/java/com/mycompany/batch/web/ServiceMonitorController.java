@@ -62,6 +62,12 @@ public class ServiceMonitorController {
 
     private static final int HISTORY_CAP = 30;
 
+    /** Per-request timeout is caller-supplied but capped here — the page never lets a single
+     *  check hang the UI (or a batch) longer than a few seconds. */
+    private static final long DEFAULT_TIMEOUT_MS = 3000;
+    private static final long MAX_TIMEOUT_MS = 3000;
+    private static final long MIN_TIMEOUT_MS = 200;
+
     private final ObjectMapper objectMapper;
     private final Map<String, Deque<Map<String, Object>>> history = new ConcurrentHashMap<>();
 
@@ -77,7 +83,7 @@ public class ServiceMonitorController {
         if (type == null || type.isBlank()) return err("type is required");
 
         String authHeader = buildAuth(str(req, "authType"), str(req, "username"), str(req, "password"), str(req, "token"));
-        Map<String, Object> result = runCheck(type, url, authHeader);
+        Map<String, Object> result = runCheck(type, url, authHeader, timeoutMs(req));
         if (result == null) return err("Unknown type: " + type + " (expected http, prometheus, or jolokia)");
         return ResponseEntity.ok(result);
     }
@@ -93,9 +99,10 @@ public class ServiceMonitorController {
     public ResponseEntity<Map<String, Object>> checkBatch(@RequestBody Map<String, Object> req) {
         List<Target> targets = parseTargets(req.get("targets"));
         if (targets.isEmpty()) return err("targets is required and must be a non-empty array of valid entries");
+        long timeoutMs = timeoutMs(req);
 
         List<Callable<Map<String, Object>>> tasks = new ArrayList<>(targets.size());
-        for (Target t : targets) tasks.add(() -> buildResult(t));
+        for (Target t : targets) tasks.add(() -> buildResult(t, timeoutMs));
 
         List<Map<String, Object>> results = new ArrayList<>(tasks.size());
         try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
@@ -141,6 +148,7 @@ public class ServiceMonitorController {
             emitter.complete();
             return emitter;
         }
+        long timeoutMs = timeoutMs(req);
 
         AtomicBoolean cancelled = new AtomicBoolean(false);
         ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor();
@@ -151,7 +159,7 @@ public class ServiceMonitorController {
 
         Threads.startDaemon(() -> {
             CompletionService<Map<String, Object>> cs = new ExecutorCompletionService<>(pool);
-            for (Target t : targets) cs.submit(() -> buildResult(t));
+            for (Target t : targets) cs.submit(() -> buildResult(t, timeoutMs));
 
             int total = targets.size();
             int done  = 0;
@@ -199,8 +207,8 @@ public class ServiceMonitorController {
         return targets;
     }
 
-    private Map<String, Object> buildResult(Target t) {
-        Map<String, Object> r = runCheck(t.type(), t.url(), t.authHeader());
+    private Map<String, Object> buildResult(Target t, long timeoutMs) {
+        Map<String, Object> r = runCheck(t.type(), t.url(), t.authHeader(), timeoutMs);
         if (r == null) {
             r = new LinkedHashMap<>();
             r.put("ok", false);
@@ -213,12 +221,20 @@ public class ServiceMonitorController {
         return withId;
     }
 
+    /** Clamps the caller-supplied timeout to [MIN_TIMEOUT_MS, MAX_TIMEOUT_MS] — the page's own
+     *  timeout input enforces the same 3s ceiling, this is the server-side backstop. */
+    private long timeoutMs(Map<String, Object> req) {
+        Object raw = req.get("timeoutMs");
+        long ms = raw instanceof Number n ? n.longValue() : DEFAULT_TIMEOUT_MS;
+        return Math.max(MIN_TIMEOUT_MS, Math.min(MAX_TIMEOUT_MS, ms));
+    }
+
     // ── Dispatch + history recording, shared by /check, /checkBatch, /checkBatchStream ──────
-    private Map<String, Object> runCheck(String type, String url, String authHeader) {
+    private Map<String, Object> runCheck(String type, String url, String authHeader, long timeoutMs) {
         Map<String, Object> m = switch (type) {
-            case "http"       -> checkHttp(url, authHeader);
-            case "prometheus" -> checkPrometheus(url, authHeader);
-            case "jolokia"    -> checkJolokia(url, authHeader);
+            case "http"       -> checkHttp(url, authHeader, timeoutMs);
+            case "prometheus" -> checkPrometheus(url, authHeader, timeoutMs);
+            case "jolokia"    -> checkJolokia(url, authHeader, timeoutMs);
             default -> null;
         };
         if (m == null) return null;
@@ -243,22 +259,24 @@ public class ServiceMonitorController {
     }
 
     // ── HTTP (status 200 = up) ──────────────────────────────────────────────
-    private Map<String, Object> checkHttp(String url, String authHeader) {
+    private Map<String, Object> checkHttp(String url, String authHeader, long timeoutMs) {
         long start = System.currentTimeMillis();
         Map<String, Object> m = new LinkedHashMap<>();
         try {
             HttpRequest.Builder b = HttpRequest.newBuilder()
                     .uri(URI.create(url))
-                    .timeout(Duration.ofSeconds(15))
+                    .timeout(Duration.ofMillis(timeoutMs))
                     .GET();
             if (authHeader != null) b.header("Authorization", authHeader);
             HttpResponse<Void> resp = HTTP.send(b.build(), HttpResponse.BodyHandlers.discarding());
             long latency = System.currentTimeMillis() - start;
+            boolean up = resp.statusCode() == 200;
             m.put("ok", true);
-            m.put("status", resp.statusCode() == 200 ? "UP" : "DOWN");
+            m.put("status", up ? "UP" : "DOWN");
             m.put("statusCode", resp.statusCode());
             m.put("latencyMs", latency);
             m.put("metrics", Map.of());
+            if (!up) m.put("error", "Unexpected HTTP status: " + resp.statusCode());
         } catch (Exception e) {
             m.put("ok", false);
             m.put("status", "DOWN");
@@ -269,13 +287,13 @@ public class ServiceMonitorController {
     }
 
     // ── Prometheus text-exposition ──────────────────────────────────────────
-    private Map<String, Object> checkPrometheus(String url, String authHeader) {
+    private Map<String, Object> checkPrometheus(String url, String authHeader, long timeoutMs) {
         long start = System.currentTimeMillis();
         Map<String, Object> m = new LinkedHashMap<>();
         try {
             HttpRequest.Builder b = HttpRequest.newBuilder()
                     .uri(URI.create(url))
-                    .timeout(Duration.ofSeconds(15))
+                    .timeout(Duration.ofMillis(timeoutMs))
                     .header("Accept", "text/plain,application/openmetrics-text;q=0.9,*/*;q=0.8")
                     .GET();
             if (authHeader != null) b.header("Authorization", authHeader);
@@ -287,6 +305,7 @@ public class ServiceMonitorController {
             m.put("statusCode", resp.statusCode());
             m.put("latencyMs", latency);
             m.put("metrics", up ? parsePrometheusMetrics(resp.body()) : Map.of());
+            if (!up) m.put("error", "Unexpected HTTP status: " + resp.statusCode());
         } catch (Exception e) {
             m.put("ok", false);
             m.put("status", "DOWN");
@@ -356,7 +375,7 @@ public class ServiceMonitorController {
     }
 
     // ── Jolokia (JMX-over-HTTP) ─────────────────────────────────────────────
-    private Map<String, Object> checkJolokia(String baseUrl, String authHeader) {
+    private Map<String, Object> checkJolokia(String baseUrl, String authHeader, long timeoutMs) {
         long start = System.currentTimeMillis();
         String base = baseUrl.replaceAll("/+$", "");
         Map<String, Object> m = new LinkedHashMap<>();
@@ -368,7 +387,7 @@ public class ServiceMonitorController {
             ));
             HttpRequest.Builder b = HttpRequest.newBuilder()
                     .uri(URI.create(base))
-                    .timeout(Duration.ofSeconds(15))
+                    .timeout(Duration.ofMillis(timeoutMs))
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(body));
             if (authHeader != null) b.header("Authorization", authHeader);
@@ -381,6 +400,7 @@ public class ServiceMonitorController {
                 m.put("statusCode", resp.statusCode());
                 m.put("latencyMs", latency);
                 m.put("metrics", Map.of());
+                m.put("error", "Unexpected HTTP status: " + resp.statusCode());
                 return m;
             }
 
@@ -415,6 +435,7 @@ public class ServiceMonitorController {
             m.put("statusCode", resp.statusCode());
             m.put("latencyMs", latency);
             m.put("metrics", metrics);
+            if (!anyOk) m.put("error", "No Jolokia attributes returned a 200 status");
         } catch (Exception e) {
             m.put("ok", false);
             m.put("status", "DOWN");

@@ -6,7 +6,7 @@
 <title>Solace Listener</title>
 <script src="https://cdn.jsdelivr.net/npm/solclientjs@10.18.3/lib-browser/solclient.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@31/dist/ag-grid-community.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jsonpath-plus@10.4.0/dist/index-browser-umd.min.cjs"></script>
+<script src="https://unpkg.com/jsonpath-plus@10.4.0/dist/index-browser-umd.min.cjs"></script>
 <script src="staticdataset-widget.js"></script>
 <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -494,8 +494,8 @@
             <div class="paused-banner" id="pausedbadge-${state.id}" style="display:none"></div>
             <div class="card-grid ag-theme-alpine" id="grid-${state.id}"></div>
         `;
-        document.getElementById('title-' + state.id).textContent = state.vpn + '  /  ' + state.topic;
         document.getElementById('listenersGrid').appendChild(card);
+        document.getElementById('title-' + state.id).textContent = state.vpn + '  /  ' + state.topic;
 
         const gridOptions = {
             columnDefs: [
