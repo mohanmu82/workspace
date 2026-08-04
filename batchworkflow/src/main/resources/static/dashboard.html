@@ -33,7 +33,7 @@
     font-size: 0.72rem; font-weight: 700; color: #666;
     text-transform: uppercase; letter-spacing: .04em;
   }
-  input[type=text], select {
+  input[type=text], input[type=number], select {
     padding: 7px 10px; font-size: 0.85rem; border: 1px solid #ccc; border-radius: 4px;
     font-family: inherit; background: #fff;
   }
@@ -534,8 +534,8 @@
           </select>
         </div>
         <div class="field">
-          <label>Timeout (ms, max 3000)</label>
-          <input type="number" id="timeoutInput" min="200" max="3000" step="100" style="width:90px" onchange="onTimeoutInput()">
+          <label>Timeout (ms)</label>
+          <input type="number" id="timeoutInput" min="200" step="100" style="width:90px" onchange="onTimeoutInput()">
         </div>
         <div class="field">
           <button class="secondary" id="checkAllBtn" onclick="checkAll()">Check All Now</button>
@@ -575,7 +575,7 @@
   const SPLIT_WIDTH_KEY = 'serviceDashboard.splitWidth';
   const TIMEOUT_KEY = 'serviceDashboard.timeoutMs';
   const MIN_TIMEOUT_MS = 200;
-  const MAX_TIMEOUT_MS = 3000;
+  const DEFAULT_TIMEOUT_MS = 3000;
   const VIEW_PAGE = 'serviceDashboard';
 
   // Built-in (non-dataset-attribute) fields a card can optionally show — everything here is
@@ -599,7 +599,7 @@
   let cardFields = loadCardFields();     // array of dataset attribute names shown as extra rows on each card
   let orientation = loadOrientation();   // 'vertical' (stacked lanes) | 'horizontal' (side-scrolling lanes)
   let prodOnly = loadProdOnly();         // filters the grid to datasetAttrs.ICEENV === 'PROD' (targets without that attr always shown)
-  let timeoutMs = loadTimeoutMs();       // per-check HTTP timeout sent to the server, capped at MAX_TIMEOUT_MS both here and server-side
+  let timeoutMs = loadTimeoutMs();       // per-check HTTP timeout sent to the server, floored at MIN_TIMEOUT_MS both here and server-side
   let searchQuery = '';                  // live text filter on name/url, not persisted
   let downOnly = false;                  // quick "exceptions only" toggle, not persisted
   let lastAttrsSig = null;
@@ -644,15 +644,15 @@
 
   function loadTimeoutMs() {
     const v = parseInt(localStorage.getItem(TIMEOUT_KEY), 10);
-    return Number.isFinite(v) ? Math.max(MIN_TIMEOUT_MS, Math.min(MAX_TIMEOUT_MS, v)) : MAX_TIMEOUT_MS;
+    return Number.isFinite(v) ? Math.max(MIN_TIMEOUT_MS, v) : DEFAULT_TIMEOUT_MS;
   }
   function saveTimeoutMs() { localStorage.setItem(TIMEOUT_KEY, String(timeoutMs)); }
 
   function onTimeoutInput() {
     const el = document.getElementById('timeoutInput');
     let v = parseInt(el.value, 10);
-    if (!Number.isFinite(v)) v = MAX_TIMEOUT_MS;
-    v = Math.max(MIN_TIMEOUT_MS, Math.min(MAX_TIMEOUT_MS, v));
+    if (!Number.isFinite(v)) v = DEFAULT_TIMEOUT_MS;
+    v = Math.max(MIN_TIMEOUT_MS, v);
     timeoutMs = v;
     el.value = v;
     saveTimeoutMs();

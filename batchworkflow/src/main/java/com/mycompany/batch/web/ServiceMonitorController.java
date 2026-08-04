@@ -62,10 +62,9 @@ public class ServiceMonitorController {
 
     private static final int HISTORY_CAP = 30;
 
-    /** Per-request timeout is caller-supplied but capped here — the page never lets a single
-     *  check hang the UI (or a batch) longer than a few seconds. */
+    /** Per-request timeout is caller-supplied, floored here so a near-zero value can't spin
+     *  the checker in a tight retry loop. */
     private static final long DEFAULT_TIMEOUT_MS = 3000;
-    private static final long MAX_TIMEOUT_MS = 3000;
     private static final long MIN_TIMEOUT_MS = 200;
 
     private final ObjectMapper objectMapper;
@@ -221,12 +220,11 @@ public class ServiceMonitorController {
         return withId;
     }
 
-    /** Clamps the caller-supplied timeout to [MIN_TIMEOUT_MS, MAX_TIMEOUT_MS] — the page's own
-     *  timeout input enforces the same 3s ceiling, this is the server-side backstop. */
+    /** Floors the caller-supplied timeout at MIN_TIMEOUT_MS — no upper bound. */
     private long timeoutMs(Map<String, Object> req) {
         Object raw = req.get("timeoutMs");
         long ms = raw instanceof Number n ? n.longValue() : DEFAULT_TIMEOUT_MS;
-        return Math.max(MIN_TIMEOUT_MS, Math.min(MAX_TIMEOUT_MS, ms));
+        return Math.max(MIN_TIMEOUT_MS, ms);
     }
 
     // ── Dispatch + history recording, shared by /check, /checkBatch, /checkBatchStream ──────
