@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Logs Dashboard</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+               background: #f4f5f7; color: #172b4d; padding: 24px; }
+        .nav { margin-bottom: 18px; }
+        .nav a { font-size: 13px; color: #0052cc; text-decoration: none; }
+        .nav a:hover { text-decoration: underline; }
+        h1 { font-size: 20px; font-weight: 600; margin-bottom: 16px; }
+
+        .panel { background: #fff; border: 1px solid #dfe1e6; border-radius: 6px;
+                 padding: 16px; margin-bottom: 14px; }
+        .panel-title { font-size: 12px; font-weight: 700; text-transform: uppercase;
+                       letter-spacing: .5px; margin-bottom: 12px; color: #5e6c84; }
+
+        .form-grid { display: grid; grid-template-columns: 1fr 140px; gap: 12px; margin-bottom: 12px; align-items: end; }
+        .form-group { display: flex; flex-direction: column; gap: 4px; }
+        .form-group label { font-size: 11px; font-weight: 600; color: #5e6c84;
+                            text-transform: uppercase; letter-spacing: .4px; }
+        .form-group input { padding: 7px 10px; font-size: 13px; border: 1px solid #ccc;
+                            border-radius: 4px; outline: none; font-family: inherit; }
+        .form-group input:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.25); }
+
+        .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        button { padding: 7px 16px; font-size: 13px; font-weight: 500; border: none;
+                 border-radius: 4px; cursor: pointer; white-space: nowrap; }
+        button.primary   { background: #0052cc; color: #fff; }
+        button.primary:hover  { background: #0065ff; }
+        button.secondary { background: #fff; color: #0052cc; border: 1px solid #0052cc; }
+        button.secondary:hover { background: #e9f0ff; }
+        button:disabled  { opacity: .45; cursor: not-allowed; }
+
+        .status-bar { font-size: 13px; color: #5e6c84; min-height: 20px; margin-top: 10px; }
+        .status-bar.ok      { color: #006644; }
+        .status-bar.error   { color: #de350b; }
+        .status-bar.warning { color: #7a4600; }
+
+        .summary { display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 14px; }
+        .stat { background: #fff; border: 1px solid #dfe1e6; border-radius: 6px;
+                padding: 12px 18px; min-width: 140px; }
+        .stat .num { font-size: 22px; font-weight: 700; }
+        .stat .lbl { font-size: 11px; color: #5e6c84; text-transform: uppercase; letter-spacing: .4px; margin-top: 2px; }
+        .stat.issues .num { color: #de350b; }
+        .stat.clean .num { color: #006644; }
+
+        #results { display: none; }
+
+        .file-card { background: #fff; border: 1px solid #dfe1e6; border-radius: 6px;
+                     margin-bottom: 10px; overflow: hidden; }
+        .file-header { display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+                       cursor: pointer; background: #fafbfc; }
+        .file-header:hover { background: #f0f2f5; }
+        .file-header .caret { font-size: 11px; color: #5e6c84; transition: transform .15s; width: 10px; }
+        .file-header.open .caret { transform: rotate(90deg); }
+        .file-path { font-family: "Cascadia Code", "Fira Code", Consolas, "Courier New", monospace;
+                     font-size: 12.5px; flex: 1; word-break: break-all; }
+        .file-meta { font-size: 11px; color: #5e6c84; white-space: nowrap; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px;
+                 font-weight: 700; color: #fff; margin-left: 8px; }
+        .badge.zero { background: #6b778c; }
+        .badge.some { background: #de350b; }
+
+        .match-list { display: none; border-top: 1px solid #dfe1e6; }
+        .match-list.open { display: block; }
+        .match-row { display: flex; gap: 10px; padding: 6px 14px; font-family: "Cascadia Code",
+                     "Fira Code", Consolas, "Courier New", monospace; font-size: 12px;
+                     border-top: 1px solid #f4f5f7; align-items: flex-start; }
+        .match-row:first-child { border-top: none; }
+        .match-row .ln { color: #97a0af; min-width: 50px; text-align: right; flex-shrink: 0; }
+        .match-row .lvl { flex-shrink: 0; min-width: 68px; font-weight: 700; }
+        .match-row .lvl.CRITICAL { color: #de350b; }
+        .match-row .lvl.ERROR    { color: #ff5630; }
+        .match-row .lvl.EXCEPTION{ color: #6554c0; }
+        .match-row .txt { white-space: pre-wrap; word-break: break-all; color: #172b4d; }
+        .more-note { padding: 6px 14px; font-size: 11px; color: #5e6c84; font-style: italic; }
+
+        .empty-note { padding: 30px; text-align: center; color: #5e6c84; font-size: 13px; }
+    </style>
+</head>
+<body>
+<div class="nav"><a href="/">&larr; Batch Runner</a></div>
+<h1>Logs Dashboard</h1>
+
+<div class="panel">
+    <div class="panel-title">Scan Logs</div>
+    <div class="form-grid">
+        <div class="form-group">
+            <label>Top-Level Log Path (unix)</label>
+            <input type="text" id="rootPath" placeholder="/var/log/myapp" />
+        </div>
+        <div class="form-group">
+            <label>Look Back (minutes)</label>
+            <input type="number" id="minutesBack" value="15" min="1" max="1440" />
+        </div>
+    </div>
+    <div class="toolbar">
+        <button class="primary" id="btnScan" onclick="scan()">Scan</button>
+        <button class="secondary" id="btnExpandAll" onclick="expandAll()" style="display:none">Expand All</button>
+        <button class="secondary" id="btnCollapseAll" onclick="collapseAll()" style="display:none">Collapse All</button>
+    </div>
+    <div id="statusBar" class="status-bar"></div>
+</div>
+
+<div id="summary" class="summary" style="display:none">
+    <div class="stat"><div class="num" id="statFiles">0</div><div class="lbl">Recently Changed Files</div></div>
+    <div class="stat"><div class="num" id="statScanned">0</div><div class="lbl">Total Files Under Path</div></div>
+    <div class="stat issues"><div class="num" id="statIssues">0</div><div class="lbl">Issues Found</div></div>
+    <div class="stat clean"><div class="num" id="statClean">0</div><div class="lbl">Clean Files</div></div>
+</div>
+
+<div id="results"></div>
+
+<script>
+    async function scan() {
+        const rootPath    = document.getElementById('rootPath').value.trim();
+        const minutesBack = parseInt(document.getElementById('minutesBack').value, 10) || 15;
+
+        if (!rootPath) {
+            setStatus('Enter a top-level log path', 'error');
+            return;
+        }
+
+        setStatus('Scanning…', 'warning');
+        setBtn(true);
+        document.getElementById('summary').style.display = 'none';
+        document.getElementById('results').style.display = 'none';
+        document.getElementById('btnExpandAll').style.display = 'none';
+        document.getElementById('btnCollapseAll').style.display = 'none';
+
+        try {
+            const res = await fetch('/logsdashboard/scan', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ rootPath, minutesBack })
+            });
+            const body = await res.json();
+            if (!res.ok) {
+                setStatus('Error: ' + (body.error || res.statusText), 'error');
+                return;
+            }
+            render(body);
+            setStatus(
+                'Scanned ' + body.totalFilesUnderPath.toLocaleString() + ' file(s) under ' + body.rootPath +
+                ' — ' + body.recentFileCount.toLocaleString() + ' changed in the last ' + body.minutesBack + ' min',
+                body.totalIssueCount > 0 ? 'error' : 'ok'
+            );
+        } catch (e) {
+            setStatus('Request failed: ' + e.message, 'error');
+        } finally {
+            setBtn(false);
+        }
+    }
+
+    function render(body) {
+        const files = body.files || [];
+        document.getElementById('statFiles').textContent   = body.recentFileCount.toLocaleString();
+        document.getElementById('statScanned').textContent = body.totalFilesUnderPath.toLocaleString();
+        document.getElementById('statIssues').textContent  = body.totalIssueCount.toLocaleString();
+        document.getElementById('statClean').textContent   = files.filter(f => !f.issueCount).length.toLocaleString();
+        document.getElementById('summary').style.display = 'flex';
+
+        const container = document.getElementById('results');
+        container.innerHTML = '';
+        container.style.display = 'block';
+
+        if (!files.length) {
+            container.innerHTML = '<div class="file-card"><div class="empty-note">No files under this path were changed in the look-back window.</div></div>';
+            return;
+        }
+
+        document.getElementById('btnExpandAll').style.display = 'inline-block';
+        document.getElementById('btnCollapseAll').style.display = 'inline-block';
+
+        // Files with issues first, then by most recently modified (already sorted by server).
+        const sorted = [...files].sort((a, b) => (b.issueCount > 0) - (a.issueCount > 0));
+
+        sorted.forEach((f, idx) => {
+            const card = document.createElement('div');
+            card.className = 'file-card';
+
+            const header = document.createElement('div');
+            header.className = 'file-header';
+            header.onclick = () => toggle(idx);
+
+            const badgeClass = f.issueCount > 0 ? 'some' : 'zero';
+            header.innerHTML =
+                '<span class="caret" id="caret-' + idx + '">&#9654;</span>' +
+                '<span class="file-path">' + escHtml(f.path) + '</span>' +
+                '<span class="file-meta">' + fmtTime(f.lastModified) + ' &middot; ' + fmtSize(f.sizeBytes) + '</span>' +
+                '<span class="badge ' + badgeClass + '">' + f.issueCount + (f.issueCount === 1 ? ' issue' : ' issues') + '</span>';
+
+            const list = document.createElement('div');
+            list.className = 'match-list';
+            list.id = 'matches-' + idx;
+
+            if (f.error) {
+                list.innerHTML = '<div class="more-note">' + escHtml(f.error) + '</div>';
+            } else if (!f.matches.length) {
+                list.innerHTML = '<div class="more-note">No CRITICAL / ERROR / exception lines found.</div>';
+            } else {
+                f.matches.forEach(m => {
+                    const row = document.createElement('div');
+                    row.className = 'match-row';
+                    row.innerHTML =
+                        '<span class="ln">' + m.lineNumber + '</span>' +
+                        '<span class="lvl ' + m.level + '">' + m.level + '</span>' +
+                        '<span class="txt">' + escHtml(m.text) + '</span>';
+                    list.appendChild(row);
+                });
+                if (f.issueCount > f.matches.length) {
+                    const note = document.createElement('div');
+                    note.className = 'more-note';
+                    note.textContent = '+' + (f.issueCount - f.matches.length) + ' more issue(s) not shown';
+                    list.appendChild(note);
+                }
+            }
+
+            card.appendChild(header);
+            card.appendChild(list);
+            container.appendChild(card);
+
+            if (f.issueCount > 0) {
+                header.classList.add('open');
+                list.classList.add('open');
+            }
+        });
+    }
+
+    function toggle(idx) {
+        document.getElementById('matches-' + idx).classList.toggle('open');
+        document.getElementById('caret-' + idx).parentElement.classList.toggle('open');
+    }
+
+    function expandAll() {
+        document.querySelectorAll('.match-list').forEach(el => el.classList.add('open'));
+        document.querySelectorAll('.file-header').forEach(el => el.classList.add('open'));
+    }
+
+    function collapseAll() {
+        document.querySelectorAll('.match-list').forEach(el => el.classList.remove('open'));
+        document.querySelectorAll('.file-header').forEach(el => el.classList.remove('open'));
+    }
+
+    function setStatus(msg, type) {
+        const el = document.getElementById('statusBar');
+        el.textContent = msg;
+        el.className = 'status-bar ' + (type || '');
+    }
+
+    function setBtn(scanning) {
+        document.getElementById('btnScan').disabled = scanning;
+    }
+
+    function fmtTime(iso) {
+        if (!iso) return '';
+        try { return new Date(iso).toLocaleString(); } catch (e) { return iso; }
+    }
+
+    function fmtSize(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    function escHtml(s) {
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    document.getElementById('rootPath').addEventListener('keydown', e => {
+        if (e.key === 'Enter') scan();
+    });
+</script>
+</body>
+</html>

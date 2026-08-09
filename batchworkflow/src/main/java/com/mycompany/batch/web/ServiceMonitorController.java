@@ -375,7 +375,7 @@ public class ServiceMonitorController {
     // ── Jolokia (JMX-over-HTTP) ─────────────────────────────────────────────
     private Map<String, Object> checkJolokia(String baseUrl, String authHeader, long timeoutMs) {
         long start = System.currentTimeMillis();
-        String base = baseUrl.replaceAll("/+$", "");
+        String base = baseUrl.trim();
         Map<String, Object> m = new LinkedHashMap<>();
         try {
             String body = objectMapper.writeValueAsString(List.of(

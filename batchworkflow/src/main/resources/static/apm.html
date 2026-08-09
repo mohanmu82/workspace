@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>APM</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', sans-serif;
+    background: #f4f6f9;
+    color: #222;
+    padding: 28px 28px 48px;
+  }
+  header { margin-bottom: 22px; }
+  header h1 { font-size: 1.3rem; font-weight: 700; }
+  header p  { font-size: 0.82rem; color: #666; margin-top: 4px; }
+  .back     { font-size: 0.8rem; color: #0078d4; text-decoration: none; }
+  .back:hover { text-decoration: underline; }
+
+  .card {
+    background: #fff;
+    border: 1px solid #dde1e7;
+    border-radius: 8px;
+    padding: 20px 22px;
+    margin-bottom: 20px;
+  }
+  .card-title { font-size: 0.95rem; font-weight: 700; margin-bottom: 12px; color: #111; }
+
+  .input-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 10px; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label {
+    font-size: 0.72rem; font-weight: 700; color: #666;
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  input[type=text], input[type=password], input[type=number], select {
+    padding: 7px 10px; font-size: 0.85rem; border: 1px solid #ccc; border-radius: 4px;
+    font-family: inherit; background: #fff;
+  }
+  input:focus, select:focus { outline: none; border-color: #0078d4; }
+
+  button {
+    padding: 7px 18px; font-size: 0.85rem; font-weight: 600; border: none;
+    border-radius: 4px; cursor: pointer; background: #0078d4; color: #fff; white-space: nowrap;
+  }
+  button:hover:not(:disabled) { background: #005fa3; }
+  button:disabled { background: #9ec5e8; cursor: not-allowed; }
+  button.secondary { background: #6c757d; }
+  button.secondary:hover:not(:disabled) { background: #545b62; }
+  button.danger { background: #b3261e; }
+  button.danger:hover:not(:disabled) { background: #8c1d17; }
+
+  .status-msg { font-size: 0.82rem; margin-top: 8px; }
+  .status-ok  { color: #0a5c36; }
+  .status-err { color: #842029; }
+
+  .mono { font-family: Consolas, monospace; }
+
+  .reg-banner {
+    display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 6px;
+    font-size: 0.82rem; margin-bottom: 16px; border: 1px solid #dde1e7;
+  }
+  .reg-banner.on  { background: #eaf7ef; border-color: #b8e2c6; color: #0a5c36; }
+  .reg-banner.off { background: #f5f5f5; color: #666; }
+  .reg-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: #9aa0a6; }
+  .reg-banner.on .reg-dot { background: #1e9e51; }
+
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+  .stat-tile {
+    background: #fff; border: 1px solid #dde1e7; border-radius: 8px; padding: 14px 16px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .stat-tile .val { font-size: 1.4rem; font-weight: 700; color: #111; }
+  .stat-tile .lbl { font-size: 0.72rem; color: #666; text-transform: uppercase; letter-spacing: .03em; }
+
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 0.7rem; font-weight: 700; white-space: nowrap; }
+  .badge-2xx { background: #d3f3e6; color: #0a6b47; }
+  .badge-3xx { background: #dbe9fa; color: #184f95; }
+  .badge-4xx { background: #fbebc9; color: #8a5a00; }
+  .badge-5xx { background: #fadbdb; color: #842029; }
+  .badge-fwd-ok   { background: #d3f3e6; color: #0a6b47; }
+  .badge-fwd-fail { background: #fadbdb; color: #842029; }
+
+  .tbl-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+  th {
+    background: #fafbfc; border-bottom: 1px solid #eef0f3; padding: 6px 12px; text-align: left;
+    font-weight: 600; white-space: nowrap; position: sticky; top: 0;
+  }
+  td { border-bottom: 1px solid #f2f3f5; padding: 6px 12px; vertical-align: middle; }
+  tr:nth-child(even) td { background: #fcfcfc; }
+  tr.err-row td { background: #fff6f6; }
+  td.err-cell { color: #842029; font-size: 0.75rem; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .empty-msg { font-size: 0.82rem; color: #888; padding: 18px; text-align: center; }
+  .count-note { font-size: 0.78rem; color: #666; }
+</style>
+</head>
+<body>
+
+<header>
+  <a class="back" href="index.html">&#8592; Home</a>
+  <h1>APM</h1>
+  <p>Register an Elastic APM server here and every HTTP transaction this app handles gets forwarded to it (as an intake v2 transaction event). Unregister to stop. The request log below persists across visits until the app restarts.</p>
+</header>
+
+<div class="card">
+  <div class="card-title">Registration</div>
+  <div class="input-row">
+    <div class="field" style="flex:2; min-width:260px">
+      <label>APM Server URL</label>
+      <input type="text" id="serverUrl" placeholder="https://my-apm-server:8200" style="width:100%">
+    </div>
+    <div class="field" style="flex:1; min-width:160px">
+      <label>Service Name</label>
+      <input type="text" id="serviceName" placeholder="batchworkflow" style="width:100%">
+    </div>
+    <div class="field" style="flex:1; min-width:120px">
+      <label>Environment</label>
+      <input type="text" id="environment" placeholder="development" style="width:100%">
+    </div>
+  </div>
+  <div class="input-row">
+    <div class="field" style="flex:1; min-width:200px">
+      <label>Secret Token (optional)</label>
+      <input type="password" id="secretToken" placeholder="only if server requires it" style="width:100%">
+    </div>
+    <div class="field" style="flex:1; min-width:200px">
+      <label>API Key (optional, alternative to secret token)</label>
+      <input type="password" id="apiKey" placeholder="id:apiKey base64" style="width:100%">
+    </div>
+    <div class="field" style="flex:1; min-width:120px">
+      <label>Service Version</label>
+      <input type="text" id="serviceVersion" placeholder="1.0.0" style="width:100%">
+    </div>
+  </div>
+  <div class="input-row">
+    <button id="registerBtn" onclick="registerApm()">Register</button>
+    <button id="unregisterBtn" class="danger" onclick="unregisterApm()" disabled>Unregister</button>
+  </div>
+  <div id="statusMsg" class="status-msg"></div>
+
+  <div id="regBanner" class="reg-banner off" style="margin-top:14px">
+    <span class="reg-dot"></span>
+    <span id="regBannerText">Not registered — transactions are not being forwarded.</span>
+  </div>
+
+  <div class="stat-grid" id="statGrid" style="margin-top:14px"></div>
+</div>
+
+<div class="card">
+  <div class="card-title">Forwarded Requests</div>
+  <div class="input-row">
+    <div class="field" style="flex:2; min-width:200px">
+      <label>Path contains</label>
+      <input type="text" id="filterQ" placeholder="/batch/run" style="width:100%">
+    </div>
+    <div class="field">
+      <label>Method</label>
+      <select id="filterMethod">
+        <option value="">All</option>
+        <option>GET</option>
+        <option>POST</option>
+        <option>PUT</option>
+        <option>DELETE</option>
+        <option>PATCH</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Status Code</label>
+      <input type="number" id="filterStatus" placeholder="e.g. 500" style="width:100px">
+    </div>
+    <div class="field">
+      <label>Forwarding</label>
+      <select id="filterType">
+        <option value="">All</option>
+        <option value="forwarded">Forwarded OK</option>
+        <option value="failed">Failed to forward</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Auto Refresh</label>
+      <select id="refreshInterval">
+        <option value="0">Off</option>
+        <option value="5000" selected>5s</option>
+        <option value="10000">10s</option>
+        <option value="30000">30s</option>
+      </select>
+    </div>
+    <div class="field" style="flex-direction:row;gap:8px">
+      <button onclick="loadRequests()">Refresh</button>
+    </div>
+  </div>
+  <div class="count-note" id="countNote"></div>
+  <div class="tbl-wrap" style="margin-top:10px">
+    <table>
+      <thead>
+        <tr>
+          <th>Time</th><th>Method</th><th>Path</th><th>Status</th><th>Latency</th><th>Forwarded</th>
+        </tr>
+      </thead>
+      <tbody id="reqBody"></tbody>
+    </table>
+    <div id="reqEmpty" class="empty-msg" style="display:none">No requests recorded yet.</div>
+  </div>
+</div>
+
+<script>
+  let refreshTimer = null;
+
+  function setStatus(msg, type) {
+    const el = document.getElementById('statusMsg');
+    el.textContent = msg;
+    el.className = 'status-msg' + (type ? ' ' + type : '');
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function statTile(label, value) {
+    return '<div class="stat-tile"><div class="val">' + escapeHtml(value) + '</div><div class="lbl">' + escapeHtml(label) + '</div></div>';
+  }
+
+  function statusBadgeClass(code) {
+    if (code >= 500) return 'badge-5xx';
+    if (code >= 400) return 'badge-4xx';
+    if (code >= 300) return 'badge-3xx';
+    return 'badge-2xx';
+  }
+
+  function applyStatus(data) {
+    const banner = document.getElementById('regBanner');
+    const bannerText = document.getElementById('regBannerText');
+    const registerBtn = document.getElementById('registerBtn');
+    const unregisterBtn = document.getElementById('unregisterBtn');
+
+    if (data.registered) {
+      banner.className = 'reg-banner on';
+      bannerText.textContent = 'Registered to ' + data.serverUrl + ' since ' + new Date(data.registeredAt).toLocaleString() + '.';
+      registerBtn.disabled = true;
+      unregisterBtn.disabled = false;
+      if (!document.getElementById('serverUrl').value) document.getElementById('serverUrl').value = data.serverUrl;
+      if (!document.getElementById('serviceName').value) document.getElementById('serviceName').value = data.serviceName || '';
+      if (!document.getElementById('environment').value) document.getElementById('environment').value = data.environment || '';
+      if (!document.getElementById('serviceVersion').value) document.getElementById('serviceVersion').value = data.serviceVersion || '';
+    } else {
+      banner.className = 'reg-banner off';
+      bannerText.textContent = 'Not registered — transactions are not being forwarded.';
+      registerBtn.disabled = false;
+      unregisterBtn.disabled = true;
+    }
+
+    const tiles = [
+      statTile('Forwarded', (data.forwardedCount || 0).toLocaleString()),
+      statTile('Failed', (data.failedCount || 0).toLocaleString()),
+      statTile('Buffered', (data.bufferedCount || 0).toLocaleString())
+    ];
+    document.getElementById('statGrid').innerHTML = tiles.join('');
+  }
+
+  async function loadStatus() {
+    try {
+      const res = await fetch('/apm/status');
+      const data = await res.json();
+      applyStatus(data);
+    } catch (e) {
+      // status refresh failures shouldn't blank out the form; leave prior state as-is
+    }
+  }
+
+  async function registerApm() {
+    const serverUrl = document.getElementById('serverUrl').value.trim();
+    if (!serverUrl) { setStatus('Enter an APM Server URL first.', 'status-err'); return; }
+
+    const body = {
+      serverUrl,
+      serviceName: document.getElementById('serviceName').value.trim(),
+      serviceVersion: document.getElementById('serviceVersion').value.trim(),
+      environment: document.getElementById('environment').value.trim(),
+      secretToken: document.getElementById('secretToken').value.trim(),
+      apiKey: document.getElementById('apiKey').value.trim()
+    };
+
+    document.getElementById('registerBtn').disabled = true;
+    setStatus('Registering…');
+    try {
+      const res = await fetch('/apm/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setStatus('Register failed: ' + (data.error || ('HTTP ' + res.status)), 'status-err');
+        document.getElementById('registerBtn').disabled = false;
+        return;
+      }
+      applyStatus(data);
+      setStatus('Registered. Transactions will now be forwarded to ' + data.serverUrl + '.', 'status-ok');
+      loadRequests();
+    } catch (e) {
+      setStatus('Register failed: ' + e.message, 'status-err');
+      document.getElementById('registerBtn').disabled = false;
+    }
+  }
+
+  async function unregisterApm() {
+    document.getElementById('unregisterBtn').disabled = true;
+    setStatus('Unregistering…');
+    try {
+      const res = await fetch('/apm/unregister', { method: 'POST' });
+      const data = await res.json();
+      applyStatus(data);
+      setStatus('Unregistered. Forwarding stopped; previously recorded requests are still listed below.', 'status-ok');
+    } catch (e) {
+      setStatus('Unregister failed: ' + e.message, 'status-err');
+      document.getElementById('unregisterBtn').disabled = false;
+    }
+  }
+
+  function renderRequests(list) {
+    const body = document.getElementById('reqBody');
+    const empty = document.getElementById('reqEmpty');
+    document.getElementById('countNote').textContent = list.length + ' request' + (list.length === 1 ? '' : 's') + ' shown';
+
+    if (list.length === 0) {
+      body.innerHTML = '';
+      empty.style.display = 'block';
+      return;
+    }
+    empty.style.display = 'none';
+
+    body.innerHTML = list.map(e => {
+      const forwarded = !!e.forwarded;
+      const rowCls = forwarded ? '' : ' class="err-row"';
+      const fwdBadge = forwarded
+        ? '<span class="badge badge-fwd-ok">forwarded</span>'
+        : '<span class="badge badge-fwd-fail">failed</span>';
+      const errHtml = (!forwarded && e.forwardError)
+        ? '<div class="err-cell" title="' + escapeHtml(e.forwardError) + '">' + escapeHtml(e.forwardError) + '</div>'
+        : '';
+      return '<tr' + rowCls + '>' +
+        '<td class="mono">' + escapeHtml(new Date(e.ts).toLocaleTimeString()) + '</td>' +
+        '<td class="mono">' + escapeHtml(e.method) + '</td>' +
+        '<td class="mono">' + escapeHtml(e.path) + '</td>' +
+        '<td><span class="badge ' + statusBadgeClass(e.statusCode) + '">' + e.statusCode + '</span></td>' +
+        '<td class="mono">' + e.latencyMs + ' ms</td>' +
+        '<td>' + fwdBadge + errHtml + '</td>' +
+        '</tr>';
+    }).join('');
+  }
+
+  async function loadRequests() {
+    const params = new URLSearchParams();
+    const q = document.getElementById('filterQ').value.trim();
+    const method = document.getElementById('filterMethod').value;
+    const status = document.getElementById('filterStatus').value.trim();
+    const type = document.getElementById('filterType').value;
+    if (q) params.set('q', q);
+    if (method) params.set('method', method);
+    if (status) params.set('status', status);
+    if (type) params.set('type', type);
+
+    try {
+      const res = await fetch('/apm/requests?' + params.toString());
+      const data = await res.json();
+      renderRequests(data.requests || []);
+    } catch (e) {
+      // leave last-rendered table in place on a transient fetch failure
+    }
+    loadStatus();
+  }
+
+  function applyRefreshInterval() {
+    if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+    const ms = parseInt(document.getElementById('refreshInterval').value, 10);
+    if (ms > 0) refreshTimer = setInterval(loadRequests, ms);
+  }
+  document.getElementById('refreshInterval').addEventListener('change', applyRefreshInterval);
+  ['filterQ', 'filterStatus'].forEach(id =>
+    document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') loadRequests(); }));
+  ['filterMethod', 'filterType'].forEach(id =>
+    document.getElementById(id).addEventListener('change', loadRequests));
+
+  loadStatus();
+  loadRequests();
+  applyRefreshInterval();
+</script>
+</body>
+</html>

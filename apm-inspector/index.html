@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Elastic APM RUM Inspector</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #0b0f14; --panel: #131a22; --border: #253141; --text: #e6edf3;
+    --muted: #8b98a5; --accent: #4fd1c5; --amber: #e3b341; --red: #ff6b6b;
+    --mono: "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  header { padding: 16px 24px; border-bottom: 1px solid var(--border); }
+  header h1 { margin: 0 0 4px; font-size: 18px; }
+  header p { margin: 0; color: var(--muted); font-size: 13px; }
+  main { display: grid; grid-template-columns: 340px 1fr; gap: 0; min-height: calc(100vh - 70px); }
+  section.config {
+    border-right: 1px solid var(--border); padding: 20px; overflow-y: auto;
+  }
+  section.log { padding: 20px; overflow-y: auto; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 14px 0 4px; }
+  input, select {
+    width: 100%; padding: 8px 10px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 6px; color: var(--text); font-size: 13px;
+  }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  .row { display: flex; gap: 8px; }
+  .row > div { flex: 1; }
+  button {
+    cursor: pointer; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--panel); color: var(--text); padding: 8px 12px; font-size: 13px;
+  }
+  button.primary { background: var(--accent); color: #04201d; border-color: var(--accent); font-weight: 600; }
+  button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  button:hover:not(:disabled) { filter: brightness(1.1); }
+  .actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+  .status { margin-top: 16px; padding: 10px; border-radius: 6px; font-size: 12px; border: 1px solid var(--border); }
+  .status.ok { border-color: var(--accent); color: var(--accent); }
+  .status.err { border-color: var(--red); color: var(--red); }
+  .status.idle { color: var(--muted); }
+  .stats { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+  .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; min-width: 90px; }
+  .stat .n { font-size: 20px; font-weight: 700; }
+  .stat .l { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .entry {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    margin-bottom: 10px; overflow: hidden;
+  }
+  .entry summary {
+    cursor: pointer; padding: 10px 14px; display: flex; align-items: center; gap: 10px;
+    font-family: var(--mono); font-size: 12px; list-style: none;
+  }
+  .entry summary::-webkit-details-marker { display: none; }
+  .badge { border-radius: 4px; padding: 2px 6px; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+  .badge.transaction { background: #1f6feb33; color: #79c0ff; }
+  .badge.span { background: #8957e533; color: #d2a8ff; }
+  .badge.error { background: #f8514933; color: #ff7b72; }
+  .badge.metadata { background: #23863633; color: #7ee787; }
+  .badge.metricset { background: #e3b34133; color: #e3b341; }
+  .badge.other { background: #6e768133; color: var(--muted); }
+  .entry .time { color: var(--muted); }
+  .entry .grow { flex: 1; }
+  .entry .size { color: var(--muted); }
+  .entry pre {
+    margin: 0; padding: 12px 14px; background: #0d1117; font-family: var(--mono);
+    font-size: 11.5px; overflow-x: auto; border-top: 1px solid var(--border);
+    max-height: 400px; overflow-y: auto;
+  }
+  .empty { color: var(--muted); text-align: center; padding: 60px 20px; }
+  code.inline { background: var(--panel); padding: 1px 5px; border-radius: 4px; font-family: var(--mono); }
+  .hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Elastic APM RUM Inspector</h1>
+  <p>Runs the real <code class="inline">@elastic/apm-rum</code> agent in this page, intercepts every request it sends to your APM Server, and lets each one through unmodified.</p>
+</header>
+
+<main>
+  <section class="config">
+    <label>APM Server URL <span style="color:var(--red)">*</span></label>
+    <input id="serverUrl" placeholder="https://my-apm-server:8200" />
+    <div class="hint">The RUM endpoint must have CORS enabled for this page's origin (<code class="inline" id="originHint"></code>) via <code class="inline">apm-server.rum.allow_origins</code>.</div>
+
+    <div class="row">
+      <div>
+        <label>Service Name</label>
+        <input id="serviceName" value="apm-inspector-demo" />
+      </div>
+      <div>
+        <label>Service Version</label>
+        <input id="serviceVersion" value="1.0.0" />
+      </div>
+    </div>
+
+    <label>Environment</label>
+    <input id="environment" value="development" />
+
+    <label>Secret Token (optional)</label>
+    <input id="secretToken" type="password" placeholder="only if server requires it" />
+
+    <label>API Key (optional, alternative to secret token)</label>
+    <input id="apiKey" type="password" placeholder="id:apiKey base64, if used instead" />
+
+    <div class="actions">
+      <button class="primary" id="startBtn">Start agent</button>
+      <button id="stopBtn" disabled>Stop</button>
+    </div>
+    <div class="status idle" id="status">Not started.</div>
+
+    <div class="actions" style="margin-top:24px; border-top:1px solid var(--border); padding-top:16px;">
+      <button id="fireTxn" disabled>Trigger test transaction</button>
+      <button id="fireErr" disabled>Trigger test error</button>
+      <button id="flush" disabled>Force flush</button>
+      <button id="clearLog">Clear log</button>
+    </div>
+  </section>
+
+  <section class="log">
+    <div class="stats">
+      <div class="stat"><div class="n" id="cReq">0</div><div class="l">Requests</div></div>
+      <div class="stat"><div class="n" id="cTxn">0</div><div class="l">Transactions</div></div>
+      <div class="stat"><div class="n" id="cSpan">0</div><div class="l">Spans</div></div>
+      <div class="stat"><div class="n" id="cErr">0</div><div class="l">Errors</div></div>
+      <div class="stat"><div class="n" id="cBytes">0 B</div><div class="l">Total sent</div></div>
+    </div>
+    <div id="entries"><div class="empty">No traffic captured yet. Start the agent to begin.</div></div>
+  </section>
+</main>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  document.getElementById('originHint').textContent = location.origin;
+
+  let counts = { req: 0, transaction: 0, span: 0, error: 0, metricset: 0, bytes: 0 };
+  let originalFetch = window.fetch;
+  let originalXhrOpen = XMLHttpRequest.prototype.open;
+  let originalXhrSend = XMLHttpRequest.prototype.send;
+  let originalSendBeacon = navigator.sendBeacon;
+  let apmServerBase = null;
+  let agent = null;
+  let intercepting = false;
+
+  function setStatus(msg, kind) {
+    const el = $('status');
+    el.textContent = msg;
+    el.className = 'status ' + (kind || 'idle');
+  }
+
+  function fmtBytes(n) {
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / (1024 * 1024)).toFixed(2) + ' MB';
+  }
+
+  function classifyLine(obj) {
+    if (obj.metadata) return 'metadata';
+    if (obj.transaction) return 'transaction';
+    if (obj.span) return 'span';
+    if (obj.error) return 'error';
+    if (obj.metricset) return 'metricset';
+    return 'other';
+  }
+
+  function renderEntry(url, method, bodyText) {
+    const container = $('entries');
+    const empty = container.querySelector('.empty');
+    if (empty) empty.remove();
+
+    // Elastic RUM intake is newline-delimited JSON (NDJSON)
+    const lines = bodyText.split('\n').filter(Boolean);
+    const parsed = [];
+    for (const line of lines) {
+      try { parsed.push(JSON.parse(line)); } catch (e) { parsed.push({ raw: line }); }
+    }
+    const types = parsed.map(classifyLine);
+    types.forEach((t) => { if (counts[t] !== undefined) counts[t]++; });
+    counts.req++;
+    counts.bytes += bodyText.length;
+    updateStats();
+
+    const badgeSummary = types.reduce((acc, t) => {
+      acc[t] = (acc[t] || 0) + 1;
+      return acc;
+    }, {});
+
+    const details = document.createElement('details');
+    details.className = 'entry';
+    const summary = document.createElement('summary');
+    summary.innerHTML = `
+      <span class="time">${new Date().toLocaleTimeString()}</span>
+      <span>${method}</span>
+      ${Object.entries(badgeSummary).map(([t, n]) => `<span class="badge ${t}">${t} ${n > 1 ? '×' + n : ''}</span>`).join('')}
+      <span class="grow"></span>
+      <span class="size">${fmtBytes(bodyText.length)}</span>
+    `;
+    const pre = document.createElement('pre');
+    pre.textContent = parsed.map((p) => JSON.stringify(p, null, 2)).join('\n\n');
+    details.appendChild(summary);
+    details.appendChild(pre);
+    container.prepend(details);
+  }
+
+  function updateStats() {
+    $('cReq').textContent = counts.req;
+    $('cTxn').textContent = counts.transaction;
+    $('cSpan').textContent = counts.span;
+    $('cErr').textContent = counts.error;
+    $('cBytes').textContent = fmtBytes(counts.bytes);
+  }
+
+  function isApmUrl(url) {
+    if (!apmServerBase) return false;
+    try {
+      return new URL(url, location.href).href.startsWith(apmServerBase);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  async function readBody(body) {
+    if (body == null) return '';
+    if (typeof body === 'string') return body;
+    if (body instanceof Blob) return await body.text();
+    if (body instanceof ArrayBuffer) return new TextDecoder().decode(body);
+    try { return await new Response(body).text(); } catch (e) { return '[unreadable body]'; }
+  }
+
+  function installInterceptors() {
+    if (intercepting) return;
+    intercepting = true;
+
+    window.fetch = async function (input, init) {
+      const url = typeof input === 'string' ? input : input.url;
+      if (isApmUrl(url) && init && init.body) {
+        readBody(init.body).then((text) => renderEntry(url, (init.method || 'POST'), text));
+      }
+      return originalFetch.call(window, input, init);
+    };
+
+    XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+      this.__apmInspectUrl = url;
+      this.__apmInspectMethod = method;
+      return originalXhrOpen.call(this, method, url, ...rest);
+    };
+    XMLHttpRequest.prototype.send = function (body) {
+      if (isApmUrl(this.__apmInspectUrl) && body) {
+        readBody(body).then((text) => renderEntry(this.__apmInspectUrl, this.__apmInspectMethod || 'POST', text));
+      }
+      return originalXhrSend.call(this, body);
+    };
+
+    navigator.sendBeacon = function (url, data) {
+      if (isApmUrl(url) && data) {
+        readBody(data).then((text) => renderEntry(url, 'BEACON', text));
+      }
+      return originalSendBeacon.call(navigator, url, data);
+    };
+  }
+
+  function uninstallInterceptors() {
+    window.fetch = originalFetch;
+    XMLHttpRequest.prototype.open = originalXhrOpen;
+    XMLHttpRequest.prototype.send = originalXhrSend;
+    navigator.sendBeacon = originalSendBeacon;
+    intercepting = false;
+  }
+
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = src;
+      s.onload = resolve;
+      s.onerror = () => reject(new Error('Failed to load ' + src));
+      document.head.appendChild(s);
+    });
+  }
+
+  $('startBtn').addEventListener('click', async () => {
+    const serverUrl = $('serverUrl').value.trim().replace(/\/+$/, '');
+    if (!serverUrl) { setStatus('Enter an APM Server URL first.', 'err'); return; }
+
+    $('startBtn').disabled = true;
+    setStatus('Loading agent bundle…', 'idle');
+
+    try {
+      if (!window.elasticApm) {
+        await loadScript('https://unpkg.com/@elastic/apm-rum@5/dist/bundles/elastic-apm-rum.umd.min.js');
+      }
+      apmServerBase = serverUrl;
+      installInterceptors();
+
+      const config = {
+        serviceName: $('serviceName').value.trim() || 'apm-inspector-demo',
+        serverUrl: serverUrl,
+        serviceVersion: $('serviceVersion').value.trim(),
+        environment: $('environment').value.trim(),
+      };
+      if ($('secretToken').value.trim()) config.secretToken = $('secretToken').value.trim();
+      if ($('apiKey').value.trim()) config.apiKey = $('apiKey').value.trim();
+
+      agent = window.elasticApm.init(config);
+      setStatus('Agent running. Watching requests to ' + serverUrl, 'ok');
+      $('stopBtn').disabled = false;
+      $('fireTxn').disabled = false;
+      $('fireErr').disabled = false;
+      $('flush').disabled = false;
+    } catch (e) {
+      setStatus('Failed to start: ' + e.message, 'err');
+      $('startBtn').disabled = false;
+    }
+  });
+
+  $('stopBtn').addEventListener('click', () => {
+    uninstallInterceptors();
+    apmServerBase = null;
+    agent = null;
+    setStatus('Stopped. Reload the page for a clean restart before reconnecting.', 'idle');
+    $('startBtn').disabled = false;
+    $('stopBtn').disabled = true;
+    $('fireTxn').disabled = true;
+    $('fireErr').disabled = true;
+    $('flush').disabled = true;
+  });
+
+  $('fireTxn').addEventListener('click', () => {
+    if (!agent) return;
+    const txn = agent.startTransaction('inspector-test-transaction', 'test');
+    const span = agent.startSpan('inspector-test-span', 'test');
+    setTimeout(() => {
+      if (span) span.end();
+      if (txn) txn.end();
+    }, 150 + Math.random() * 300);
+  });
+
+  $('fireErr').addEventListener('click', () => {
+    if (!agent) return;
+    try {
+      throw new Error('APM inspector test error @ ' + new Date().toISOString());
+    } catch (e) {
+      agent.captureError(e);
+    }
+  });
+
+  $('flush').addEventListener('click', () => {
+    if (agent && agent.flushTransaction) agent.flushTransaction();
+  });
+
+  $('clearLog').addEventListener('click', () => {
+    counts = { req: 0, transaction: 0, span: 0, error: 0, metricset: 0, bytes: 0 };
+    updateStats();
+    $('entries').innerHTML = '<div class="empty">No traffic captured yet.</div>';
+  });
+})();
+</script>
+</body>
+</html>
