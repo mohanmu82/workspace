@@ -234,6 +234,7 @@
     if (window.StaticDatasetWidget) {
         StaticDatasetWidget.mount({
             containerId: 'dsWidget',
+            page: 'solaceListener',
             fields: [
                 { key: 'host', label: 'Host / URL', guesses: ['host', 'url'], required: true },
                 { key: 'vpn', label: 'Message VPN', guesses: ['vpn', 'messagevpn', 'msgvpn'], required: true },

@@ -727,24 +727,41 @@ public class BatchController {
 
     // -------------------------------------------------------------------------
     // -------------------------------------------------------------------------
-    // GET /batch/joindataset        — list all joindataset config names
+    // GET /batch/joindataset        — list all joindataset config names (DATADIR/joindataset/ + classpath:joindataset/)
     // GET /batch/joindataset/{name} — get a specific joindataset config
     // -------------------------------------------------------------------------
+
+    private Path joinDatasetDir() {
+        String dataDir = serverPropertiesLoader.getProperties().getOrDefault("DATADIR", ".");
+        return Path.of(dataDir).resolve("joindataset");
+    }
 
     @GetMapping("/joindataset")
     public ResponseEntity<?> listJoinDatasets() {
         List<String> names = new ArrayList<>();
+        // Scan DATADIR/joindataset/
+        Path dir = joinDatasetDir();
+        if (Files.isDirectory(dir)) {
+            try (var stream = Files.list(dir)) {
+                stream.filter(p -> p.toString().endsWith(".json"))
+                      .map(p -> p.getFileName().toString().replaceAll("\\.json$", ""))
+                      .sorted()
+                      .forEach(names::add);
+            } catch (Exception ignored) {}
+        }
+        // Also scan classpath:joindataset/ (bundled examples)
         try {
             PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
-            Resource[] resources = resolver.getResources("classpath:joindataset/*.json");
+            Resource[] resources = resolver.getResources("classpath*:joindataset/*.json");
             for (Resource r : resources) {
                 String filename = r.getFilename();
                 if (filename != null && filename.endsWith(".json")) {
-                    names.add(filename.substring(0, filename.length() - 5));
+                    String n = filename.substring(0, filename.length() - 5);
+                    if (!names.contains(n)) names.add(n);
                 }
             }
-            names.sort(String::compareTo);
         } catch (Exception ignored) {}
+        names.sort(String::compareTo);
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("data", names);
         return ResponseEntity.ok(response);
@@ -753,6 +770,15 @@ public class BatchController {
     @GetMapping("/joindataset/{name}")
     public ResponseEntity<?> getJoinDataset(@PathVariable String name) throws Exception {
         if (!name.matches("[\\w\\-]+")) return badRequest("invalid joindataset name");
+        // Try DATADIR/joindataset/ first
+        Path file = joinDatasetDir().resolve(name + ".json");
+        if (Files.exists(file)) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> content = objectMapper.readValue(file.toFile(), Map.class);
+            applyJoinDatasetDefaults(content);
+            return ResponseEntity.ok(content);
+        }
+        // Fall back to classpath:joindataset/ (bundled examples)
         String path = "joindataset/" + name + ".json";
         try (InputStream is = getClass().getClassLoader().getResourceAsStream(path)) {
             if (is == null) return badRequest("joindataset not found: " + name);

@@ -8,6 +8,7 @@
  *   <script>
  *     StaticDatasetWidget.mount({
  *       containerId: 'dsWidget',
+ *       page: 'serviceDashboard', // stable page id — scopes the saved field mapping below
  *       fields: [
  *         { key: 'url',  label: 'URL',  guesses: ['url'],  required: true },
  *         { key: 'name', label: 'Name', guesses: ['name'], required: false },
@@ -27,6 +28,12 @@
  * filter conditions (attribute/operator/value) persisted on the dataset itself via
  * POST/DELETE /staticdataset/{name}/favorites, so it is reusable on every page that
  * mounts this widget against the same dataset.
+ *
+ * The field -> attribute mapping (and any fallback values) is likewise persisted server-side,
+ * keyed by `page` + dataset name, via GET/PUT /pagepreference — so once an operator maps
+ * "url" to the "HTTPURL" column, that choice survives reloads and is shared with anyone else
+ * opening the same page, instead of relying on the best-effort guess every time. Editable
+ * directly from the Admin page. Pass no `page` to opt out and always fall back to guessing.
  */
 (function (global) {
   'use strict';
@@ -94,6 +101,11 @@
         font-size: 0.7rem; font-weight: 700; color: #888; text-transform: uppercase;
         letter-spacing: .04em; margin: 10px 0 6px; font-family: 'Segoe UI', sans-serif;
       }
+      .sdw-mapping-status {
+        font-size: 0.72rem; color: #888; font-family: 'Segoe UI', sans-serif;
+        align-self: center; margin-left: 2px;
+      }
+      .sdw-mapping-status.sdw-ok { color: #0a5c36; }
     `;
     document.head.appendChild(style);
   }
@@ -121,6 +133,7 @@
     const fields = opts.fields || [];
     const loadLabel = opts.loadLabel || 'Load';
     const showLabel = opts.showLabel || null;
+    const page = opts.page || null; // scopes the saved field mapping — omit to always guess, never persist
 
     const state = {
       datasetName: null,
@@ -137,6 +150,7 @@
           <select data-role="dataset"><option value="">-- select a dataset --</option></select>
         </div>
         <div class="sdw-mapping" style="display:flex;gap:10px;flex-wrap:wrap"></div>
+        <span class="sdw-mapping-status" data-role="mapping-status"></span>
       </div>
       <div class="sdw-section-label">Filter (all conditions must match)</div>
       <div data-role="conditions"></div>
@@ -160,13 +174,14 @@
     `;
 
     const el = {
-      dataset:    container.querySelector('[data-role="dataset"]'),
-      mapping:    container.querySelector('.sdw-mapping'),
-      conditions: container.querySelector('[data-role="conditions"]'),
-      count:      container.querySelector('[data-role="count"]'),
-      favName:    container.querySelector('[data-role="fav-name"]'),
-      favChips:   container.querySelector('[data-role="fav-chips"]'),
-      status:     container.querySelector('[data-role="status"]')
+      dataset:       container.querySelector('[data-role="dataset"]'),
+      mapping:       container.querySelector('.sdw-mapping'),
+      mappingStatus: container.querySelector('[data-role="mapping-status"]'),
+      conditions:    container.querySelector('[data-role="conditions"]'),
+      count:         container.querySelector('[data-role="count"]'),
+      favName:       container.querySelector('[data-role="fav-name"]'),
+      favChips:      container.querySelector('[data-role="fav-chips"]'),
+      status:        container.querySelector('[data-role="status"]')
     };
 
     function setStatus(msg, cls) {
@@ -179,7 +194,9 @@
       return state.attributes.find(a => guesses.includes(a.toLowerCase())) || '';
     }
 
-    function renderMapping() {
+    // preset: { mapping: {fieldKey: attrName}, fallbacks: {fieldKey: value} } from a saved
+    // page preference, or null to fall back to the best-effort attribute-name guess.
+    function renderMapping(preset) {
       el.mapping.innerHTML = fields.map(f => {
         const attrOptions = state.attributes.map(a =>
           '<option value="' + escapeHtml(a) + '">' + escapeHtml(a) + '</option>').join('');
@@ -202,9 +219,66 @@
 
       fields.forEach(f => {
         const sel = el.mapping.querySelector('[data-role="map-' + f.key + '"]');
-        const guess = guessAttribute(f);
-        if (guess) sel.value = guess;
+        const savedAttr = preset && preset.mapping ? preset.mapping[f.key] : null;
+        const value = (savedAttr && state.attributes.includes(savedAttr)) ? savedAttr : guessAttribute(f);
+        if (value) sel.value = value;
+
+        if (f.fallback) {
+          const fbSel = el.mapping.querySelector('[data-role="fallback-' + f.key + '"]');
+          const savedFallback = preset && preset.fallbacks ? preset.fallbacks[f.key] : null;
+          if (savedFallback && fbSel.querySelector('option[value="' + CSS.escape(savedFallback) + '"]')) {
+            fbSel.value = savedFallback;
+          }
+        }
       });
+
+      setMappingStatus(preset ? 'Using saved mapping.' : '', preset ? 'sdw-ok' : '');
+    }
+
+    function setMappingStatus(msg, cls) {
+      if (!el.mappingStatus) return;
+      el.mappingStatus.textContent = msg || '';
+      el.mappingStatus.className = 'sdw-mapping-status' + (cls ? ' ' + cls : '');
+    }
+
+    function readCurrentMapping() {
+      const mapping = {};
+      const fallbacks = {};
+      fields.forEach(f => {
+        const sel = el.mapping.querySelector('[data-role="map-' + f.key + '"]');
+        mapping[f.key] = sel ? sel.value : '';
+        if (f.fallback) {
+          const fbSel = el.mapping.querySelector('[data-role="fallback-' + f.key + '"]');
+          fallbacks[f.key] = fbSel ? fbSel.value : f.fallback.default;
+        }
+      });
+      return { mapping, fallbacks };
+    }
+
+    async function loadMappingPreference() {
+      if (!page || !state.datasetName) return null;
+      try {
+        const res = await fetch('/pagepreference/' + encodeURIComponent(page) + '/' + encodeURIComponent(state.datasetName));
+        if (!res.ok) return null;
+        return await res.json();
+      } catch (e) {
+        return null;
+      }
+    }
+
+    async function saveMappingPreference() {
+      if (!page || !state.datasetName) return;
+      const { mapping, fallbacks } = readCurrentMapping();
+      try {
+        const res = await fetch('/pagepreference', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ page, datasetName: state.datasetName, mapping, fallbacks })
+        });
+        setMappingStatus(res.ok ? 'Mapping saved.' : 'Failed to save mapping.', res.ok ? 'sdw-ok' : '');
+      } catch (e) {
+        setMappingStatus('Failed to save mapping: ' + e.message, '');
+      }
     }
 
     function renderConditions() {
@@ -266,7 +340,8 @@
         state.attributes = data.attributes || [];
         state.rows = data.rows || [];
         state.favorites = data.favorites || [];
-        renderMapping();
+        const preset = await loadMappingPreference();
+        renderMapping(preset);
         renderConditions();
         renderFavorites();
         setStatus(state.rows.length + ' rows available.', 'sdw-ok');
@@ -402,6 +477,8 @@
       } else if (t.matches('[data-role="cond-op"]')) {
         state.conditions[Number(t.getAttribute('data-idx'))].op = t.value;
         updateCount();
+      } else if (t.matches('.sdw-mapping select')) {
+        saveMappingPreference();
       }
     });
 

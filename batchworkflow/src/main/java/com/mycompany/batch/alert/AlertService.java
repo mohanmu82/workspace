@@ -2,12 +2,12 @@ package com.mycompany.batch.alert;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mycompany.batch.config.ServerPropertiesLoader;
 import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Service;
 
 import java.io.InputStream;
 import java.net.URI;
-import java.net.URL;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -35,11 +35,13 @@ public class AlertService {
             .build();
 
     private final ObjectMapper objectMapper;
+    private final ServerPropertiesLoader serverPropertiesLoader;
     private volatile AlertConfig config = new AlertConfig();
     private final Map<String, Long> lastAlertAt = new ConcurrentHashMap<>();
 
-    public AlertService(ObjectMapper objectMapper) {
+    public AlertService(ObjectMapper objectMapper, ServerPropertiesLoader serverPropertiesLoader) {
         this.objectMapper = objectMapper;
+        this.serverPropertiesLoader = serverPropertiesLoader;
     }
 
     @PostConstruct
@@ -146,25 +148,12 @@ public class AlertService {
     }
 
     // -------------------------------------------------------------------------
-    // Persistence — same resolve/read/write pattern as the other *Service classes in this app
+    // Persistence — ${DATADIR}/alertconfig.json, same pattern as the other *Service classes
     // -------------------------------------------------------------------------
 
     private Path resolveConfigPath() {
-        Path srcResources = Path.of("src/main/resources");
-        if (Files.isDirectory(srcResources)) {
-            return srcResources.resolve(CONFIG_RESOURCE);
-        }
-        try {
-            URL url = getClass().getClassLoader().getResource(CONFIG_RESOURCE);
-            if (url != null && "file".equals(url.getProtocol())) {
-                return Path.of(url.toURI());
-            }
-            URL rootUrl = getClass().getClassLoader().getResource("application.properties");
-            if (rootUrl != null && "file".equals(rootUrl.getProtocol())) {
-                return Path.of(rootUrl.toURI()).getParent().resolve(CONFIG_RESOURCE);
-            }
-        } catch (Exception ignored) { }
-        return srcResources.resolve(CONFIG_RESOURCE);
+        String dataDir = serverPropertiesLoader.getProperties().getOrDefault("DATADIR", ".");
+        return Path.of(dataDir).resolve(CONFIG_RESOURCE);
     }
 
     private AlertConfig readConfigFile() {

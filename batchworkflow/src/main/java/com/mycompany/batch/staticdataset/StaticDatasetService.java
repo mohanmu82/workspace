@@ -5,12 +5,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jayway.jsonpath.Configuration;
 import com.jayway.jsonpath.JsonPath;
 import com.jayway.jsonpath.Option;
+import com.mycompany.batch.config.ServerPropertiesLoader;
 import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Service;
 
 import java.io.InputStream;
 import java.net.URI;
-import java.net.URL;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -27,10 +27,8 @@ import java.util.regex.Pattern;
  * Loads, persists, and refreshes {@link StaticDatasetDef} definitions.
  *
  * <p>All definitions — including each dataset's saved {@link FilterFavorite} favorites —
- * live together as a single JSON array in {@code staticdatasets.json} on the classpath,
- * (re)loaded at startup. Edits made through the UI are written back to the same file
- * (filesystem when running unpacked, {@code src/main/resources/staticdatasets.json} as a
- * fallback otherwise — mirrors {@code JoinDatasetController}'s save pattern).
+ * live together as a single JSON array at {@code ${DATADIR}/staticdatasets.json}, (re)loaded
+ * at startup. Edits made through the UI are written back to the same file.
  *
  * <p>Row data fetched from each dataset's configured source (file or HTTP) is cached in
  * memory keyed by dataset name; consumers such as the Service Dashboard read the cached
@@ -58,12 +56,14 @@ public class StaticDatasetService {
             String error) {}
 
     private final ObjectMapper objectMapper;
+    private final ServerPropertiesLoader serverPropertiesLoader;
 
     private final Map<String, StaticDatasetDef> defs  = new ConcurrentHashMap<>();
     private final Map<String, DatasetState>     state = new ConcurrentHashMap<>();
 
-    public StaticDatasetService(ObjectMapper objectMapper) {
+    public StaticDatasetService(ObjectMapper objectMapper, ServerPropertiesLoader serverPropertiesLoader) {
         this.objectMapper = objectMapper;
+        this.serverPropertiesLoader = serverPropertiesLoader;
     }
 
     @PostConstruct
@@ -93,8 +93,8 @@ public class StaticDatasetService {
     public synchronized StaticDatasetDef save(StaticDatasetDef def) throws Exception {
         if (def.getName() == null || !def.getName().matches("[\\w\\-]+"))
             throw new IllegalArgumentException("name is required and must contain only word characters or dashes");
-        if (def.getSource() == null || (!def.getSource().equals("file") && !def.getSource().equals("http")))
-            throw new IllegalArgumentException("source must be 'file' or 'http'");
+        if (def.getSource() == null || !List.of("file", "http", "paste").contains(def.getSource()))
+            throw new IllegalArgumentException("source must be 'file', 'http' or 'paste'");
         if (def.getLocation() == null || def.getLocation().isBlank())
             throw new IllegalArgumentException("location is required");
 
@@ -135,9 +135,11 @@ public class StaticDatasetService {
         if (def == null) throw new IllegalArgumentException("Unknown static dataset: " + name);
 
         try {
-            List<Map<String, Object>> rows = "file".equals(def.getSource())
-                    ? loadFromFile(def.getLocation())
-                    : loadFromHttp(def.getLocation(), def.getArrayElement());
+            List<Map<String, Object>> rows = switch (def.getSource()) {
+                case "file"  -> loadFromFile(def.getLocation());
+                case "paste" -> loadFromPaste(def.getLocation());
+                default      -> loadFromHttp(def.getLocation(), def.getArrayElement());
+            };
 
             List<String> attributes = computeAttributes(rows);
             def.setAttributes(attributes);
@@ -164,14 +166,23 @@ public class StaticDatasetService {
     // -------------------------------------------------------------------------
 
     private List<Map<String, Object>> loadFromFile(String path) throws Exception {
-        List<String> lines = Files.readAllLines(Path.of(path));
+        return parseDelimitedLines(Files.readAllLines(Path.of(path)));
+    }
+
+    /** Rows pasted (as tab-separated text) directly from Excel; {@code raw} is stored verbatim as the dataset's location. */
+    private List<Map<String, Object>> loadFromPaste(String raw) {
+        if (raw == null || raw.isBlank()) return List.of();
+        List<String> lines = Arrays.asList(raw.replace("\r\n", "\n").replace("\r", "\n").split("\n", -1));
+        return parseDelimitedLines(lines);
+    }
+
+    /** Splits header + data lines on the first delimiter found among tab, comma, pipe (in that priority order). */
+    private List<Map<String, Object>> parseDelimitedLines(List<String> lines) {
         if (lines.isEmpty()) return List.of();
 
-        String   header      = lines.get(0);
-        String[] commaTokens = header.split(",", -1);
-        String   delimiter   = commaTokens.length > 1 ? "," : "|";
-        String[] headers     = Arrays.stream(
-                delimiter.equals(",") ? commaTokens : header.split(Pattern.quote("|"), -1))
+        String header    = lines.get(0);
+        String delimiter = header.contains("\t") ? "\t" : header.split(",", -1).length > 1 ? "," : "|";
+        String[] headers = Arrays.stream(header.split(Pattern.quote(delimiter), -1))
                 .map(String::trim).toArray(String[]::new);
         String delimPat = Pattern.quote(delimiter);
 
@@ -233,32 +244,12 @@ public class StaticDatasetService {
     // -------------------------------------------------------------------------
 
     /**
-     * Resolves the on-disk location of {@code staticdatasets.json}. Reads and writes always
-     * go through this same method so they can never diverge (e.g. reading the classpath copy
-     * under {@code target/classes} while writes silently land somewhere else).
-     *
-     * <p>Prefers the actual {@code src/main/resources} source tree when running from the
-     * project directory — this is what makes edits visible in the IDE and durable across
-     * {@code mvn clean}. Falls back to the classpath-resolved location (e.g. {@code target/classes}
-     * or an exploded jar directory) only when no source tree is present, such as a packaged
-     * deployment.
+     * Resolves the on-disk location of {@code staticdatasets.json} under {@code ${DATADIR}}.
+     * Reads and writes always go through this same method so they can never diverge.
      */
     private Path resolveConfigPath() {
-        Path srcResources = Path.of("src/main/resources");
-        if (Files.isDirectory(srcResources)) {
-            return srcResources.resolve(CONFIG_RESOURCE);
-        }
-        try {
-            URL url = getClass().getClassLoader().getResource(CONFIG_RESOURCE);
-            if (url != null && "file".equals(url.getProtocol())) {
-                return Path.of(url.toURI());
-            }
-            URL rootUrl = getClass().getClassLoader().getResource("application.properties");
-            if (rootUrl != null && "file".equals(rootUrl.getProtocol())) {
-                return Path.of(rootUrl.toURI()).getParent().resolve(CONFIG_RESOURCE);
-            }
-        } catch (Exception ignored) { }
-        return srcResources.resolve(CONFIG_RESOURCE);
+        String dataDir = serverPropertiesLoader.getProperties().getOrDefault("DATADIR", ".");
+        return Path.of(dataDir).resolve(CONFIG_RESOURCE);
     }
 
     private List<StaticDatasetDef> readConfigFile() {

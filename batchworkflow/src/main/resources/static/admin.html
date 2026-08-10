@@ -106,6 +106,28 @@
         /* Copy-on-click feedback */
         .copyable { cursor: pointer; }
         .copyable:hover { background: #e9f0ff !important; }
+
+        /* Dataset Field Mappings */
+        .mapping-block { padding: 12px 16px; border-bottom: 1px solid #f0f1f3; }
+        .mapping-block:last-child { border-bottom: none; }
+        .mapping-title {
+            font-size: 13px; font-weight: 700; color: #172b4d; margin-bottom: 8px;
+            display: flex; align-items: center; gap: 6px;
+        }
+        .mapping-title .arrow { color: #5e6c84; font-weight: 400; }
+        .mapping-title .dataset-name { color: #0052cc; }
+        .mapping-val-input {
+            width: 100%; font: inherit; font-size: 12px; font-family: Consolas, monospace;
+            padding: 4px 6px; border: 1px solid #dfe1e6; border-radius: 4px;
+        }
+        .mapping-val-input:focus { outline: none; border-color: #4c9aff; }
+        .mapping-actions { display: flex; gap: 8px; margin-top: 10px; }
+        .mapping-actions button.small { padding: 5px 12px; font-size: 12px; }
+        .mapping-actions button.danger { background: #fff; color: #de350b; border: 1px solid #de350b; }
+        .mapping-actions button.danger:hover { background: #ffebe6; }
+        .mapping-save-msg { font-size: 12px; margin-left: 4px; align-self: center; }
+        .mapping-save-msg.ok { color: #006644; }
+        .mapping-save-msg.error { color: #de350b; }
     </style>
 </head>
 <body>
@@ -146,6 +168,15 @@
         <span class="badge" id="badgeDirs">—</span>
     </div>
     <div id="dirsBody"><div class="kv-empty"><span class="spinner"></span> Loading…</div></div>
+</div>
+
+<!-- Dataset Field Mappings -->
+<div class="card" id="cardMappings">
+    <div class="card-header">
+        <h2>Dataset Field Mappings</h2>
+        <span class="badge" id="badgeMappings">—</span>
+    </div>
+    <div id="mappingsBody"><div class="kv-empty"><span class="spinner"></span> Loading…</div></div>
 </div>
 
 <script>
@@ -256,11 +287,140 @@ function renderDirs(dirs, container, badgeId) {
     });
 }
 
+function renderMappings(list) {
+    const container = document.getElementById('mappingsBody');
+    const badge = document.getElementById('badgeMappings');
+    if (!list || list.length === 0) {
+        container.innerHTML = '<div class="kv-empty">No saved field mappings yet — set one from a page\'s "Load from Static Dataset" panel, or it will fall back to guessing attribute names.</div>';
+        badge.textContent = '0';
+        return;
+    }
+    badge.textContent = list.length;
+    container.innerHTML = '';
+
+    list.forEach(pref => {
+        const block = document.createElement('div');
+        block.className = 'mapping-block';
+
+        const title = document.createElement('div');
+        title.className = 'mapping-title';
+        title.innerHTML = esc(pref.page) + '<span class="arrow">&rarr;</span><span class="dataset-name">' + esc(pref.datasetName) + '</span>';
+        block.appendChild(title);
+
+        const table = document.createElement('table');
+        table.className = 'kv-table';
+        const tbody = document.createElement('tbody');
+
+        function addRow(label, keyType, key, value) {
+            const tr = document.createElement('tr');
+            const tdKey = document.createElement('td');
+            tdKey.className = 'kv-key';
+            tdKey.textContent = key + ' (' + label + ')';
+            const tdVal = document.createElement('td');
+            tdVal.className = 'kv-val';
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'mapping-val-input';
+            input.value = value || '';
+            input.dataset.keyType = keyType;
+            input.dataset.key = key;
+            tdVal.appendChild(input);
+            tr.appendChild(tdKey);
+            tr.appendChild(tdVal);
+            tbody.appendChild(tr);
+        }
+
+        Object.keys(pref.mapping || {}).forEach(k => addRow('dataset attribute', 'mapping', k, pref.mapping[k]));
+        Object.keys(pref.fallbacks || {}).forEach(k => addRow('fallback value', 'fallbacks', k, pref.fallbacks[k]));
+
+        if (!tbody.children.length) {
+            const tr = document.createElement('tr');
+            const td = document.createElement('td');
+            td.className = 'kv-empty';
+            td.textContent = 'No fields mapped.';
+            tr.appendChild(td);
+            tbody.appendChild(tr);
+        }
+
+        table.appendChild(tbody);
+        block.appendChild(table);
+
+        const actions = document.createElement('div');
+        actions.className = 'mapping-actions';
+
+        const saveBtn = document.createElement('button');
+        saveBtn.className = 'primary small';
+        saveBtn.textContent = 'Save';
+        const msg = document.createElement('span');
+        msg.className = 'mapping-save-msg';
+
+        saveBtn.addEventListener('click', () => saveMapping(pref, table, msg));
+
+        const delBtn = document.createElement('button');
+        delBtn.className = 'secondary small danger';
+        delBtn.textContent = 'Delete';
+        delBtn.addEventListener('click', () => deleteMapping(pref.page, pref.datasetName));
+
+        actions.appendChild(saveBtn);
+        actions.appendChild(delBtn);
+        actions.appendChild(msg);
+        block.appendChild(actions);
+
+        container.appendChild(block);
+    });
+}
+
+async function saveMapping(pref, table, msg) {
+    const mapping = {};
+    const fallbacks = {};
+    table.querySelectorAll('input[data-key]').forEach(input => {
+        if (input.dataset.keyType === 'mapping') mapping[input.dataset.key] = input.value.trim();
+        else fallbacks[input.dataset.key] = input.value.trim();
+    });
+
+    msg.textContent = 'Saving…';
+    msg.className = 'mapping-save-msg';
+    try {
+        const res = await fetch('/pagepreference', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ page: pref.page, datasetName: pref.datasetName, mapping, fallbacks })
+        });
+        const data = await res.json();
+        if (!res.ok) { msg.textContent = data.error || 'Save failed.'; msg.className = 'mapping-save-msg error'; return; }
+        msg.textContent = 'Saved.';
+        msg.className = 'mapping-save-msg ok';
+    } catch (e) {
+        msg.textContent = 'Save failed: ' + e.message;
+        msg.className = 'mapping-save-msg error';
+    }
+}
+
+async function deleteMapping(page, datasetName) {
+    if (!confirm('Delete the field mapping for page "' + page + '" / dataset "' + datasetName + '"? The page will fall back to guessing attribute names.')) return;
+    try {
+        await fetch('/pagepreference/' + encodeURIComponent(page) + '/' + encodeURIComponent(datasetName), { method: 'DELETE' });
+    } catch (e) { /* ignore */ }
+    loadMappings();
+}
+
+async function loadMappings() {
+    document.getElementById('mappingsBody').innerHTML = '<div class="kv-empty"><span class="spinner"></span> Loading…</div>';
+    try {
+        const res = await fetch('/pagepreference');
+        const list = await res.json();
+        renderMappings(list);
+    } catch (e) {
+        document.getElementById('mappingsBody').innerHTML = '<div class="kv-empty">Load failed.</div>';
+    }
+}
+
 async function load() {
     setStatus('Loading…');
     document.getElementById('serverPropsBody').innerHTML = '<div class="kv-empty"><span class="spinner"></span> Loading…</div>';
     document.getElementById('dynamicBody').innerHTML     = '<div class="kv-empty"><span class="spinner"></span> Loading…</div>';
     document.getElementById('dirsBody').innerHTML        = '<div class="kv-empty"><span class="spinner"></span> Loading…</div>';
+    loadMappings();
 
     try {
         const res  = await fetch('/batch/admin');

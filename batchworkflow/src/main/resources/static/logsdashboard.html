@@ -72,19 +72,49 @@
                      border-top: 1px solid #f4f5f7; align-items: flex-start; }
         .match-row:first-child { border-top: none; }
         .match-row .ln { color: #97a0af; min-width: 50px; text-align: right; flex-shrink: 0; }
-        .match-row .lvl { flex-shrink: 0; min-width: 68px; font-weight: 700; }
+        .match-row .lvl { flex-shrink: 0; min-width: 68px; font-weight: 700; color: #172b4d; }
         .match-row .lvl.CRITICAL { color: #de350b; }
         .match-row .lvl.ERROR    { color: #ff5630; }
         .match-row .lvl.EXCEPTION{ color: #6554c0; }
+        .match-row .lvl.MATCH    { color: #0052cc; }
         .match-row .txt { white-space: pre-wrap; word-break: break-all; color: #172b4d; }
         .more-note { padding: 6px 14px; font-size: 11px; color: #5e6c84; font-style: italic; }
 
         .empty-note { padding: 30px; text-align: center; color: #5e6c84; font-size: 13px; }
+
+        .candidate-btn { padding: 5px 10px; font-size: 12px; font-weight: 500;
+                          border: 1px solid #0052cc; border-radius: 4px; cursor: pointer;
+                          background: #fff; color: #0052cc; font-family: "Cascadia Code",
+                          "Fira Code", Consolas, monospace; }
+        .candidate-btn:hover { background: #e9f0ff; }
+        .candidate-btn .conf { font-family: inherit; font-weight: 700; text-transform: uppercase;
+                                font-size: 10px; margin-right: 6px; color: #5e6c84; }
     </style>
 </head>
 <body>
 <div class="nav"><a href="/">&larr; Batch Runner</a></div>
 <h1>Logs Dashboard</h1>
+
+<div class="panel">
+    <div class="panel-title">Jolokia &mdash; Guess Log Path</div>
+    <div class="form-grid" style="grid-template-columns: 240px 1fr 150px;">
+        <div class="form-group">
+            <label>Known Targets</label>
+            <select id="jolokiaTarget" onchange="onJolokiaTargetChange()"></select>
+        </div>
+        <div class="form-group">
+            <label>Jolokia Base URL</label>
+            <input type="text" id="jolokiaUrl" placeholder="https://localhost:8091/actuator/jolokia"
+                   onkeydown="if(event.key==='Enter')guessLogPath()" />
+        </div>
+        <div class="form-group">
+            <label>&nbsp;</label>
+            <button class="secondary" id="btnGuess" onclick="guessLogPath()">Guess Log Path</button>
+        </div>
+    </div>
+    <div id="jolokiaStatusBar" class="status-bar"></div>
+    <div id="jolokiaCandidates" style="display:none;flex-wrap:wrap;gap:8px;margin-top:6px"></div>
+</div>
 
 <div class="panel">
     <div class="panel-title">Scan Logs</div>
@@ -96,6 +126,16 @@
         <div class="form-group">
             <label>Look Back (minutes)</label>
             <input type="number" id="minutesBack" value="15" min="1" max="1440" />
+        </div>
+    </div>
+    <div class="form-grid" style="grid-template-columns: 1fr 1fr;">
+        <div class="form-group">
+            <label>File Name Filter (optional)</label>
+            <input type="text" id="fileNamePattern" placeholder="*.log or *.log*" />
+        </div>
+        <div class="form-group">
+            <label>Search Criteria (regex)</label>
+            <input type="text" id="searchPattern" value="CRITICAL|ERROR|EXCEPTION" />
         </div>
     </div>
     <div class="toolbar">
@@ -116,9 +156,112 @@
 <div id="results"></div>
 
 <script>
+    // Static dataset of known Jolokia endpoints in this environment. Add more entries here as
+    // other services are wired up — nothing about this list is discovered or stored server-side.
+    const JOLOKIA_TARGETS = [
+        { name: 'batchworkflow (local)', url: 'https://localhost:8091/actuator/jolokia' },
+    ];
+
+    (function populateJolokiaTargets() {
+        const sel = document.getElementById('jolokiaTarget');
+        const customOpt = document.createElement('option');
+        customOpt.value = '';
+        customOpt.textContent = 'Custom URL…';
+        sel.appendChild(customOpt);
+        JOLOKIA_TARGETS.forEach((t, i) => {
+            const opt = document.createElement('option');
+            opt.value = String(i);
+            opt.textContent = t.name;
+            sel.appendChild(opt);
+        });
+        if (JOLOKIA_TARGETS.length) {
+            sel.value = '0';
+            document.getElementById('jolokiaUrl').value = JOLOKIA_TARGETS[0].url;
+        }
+    })();
+
+    function onJolokiaTargetChange() {
+        const idx = document.getElementById('jolokiaTarget').value;
+        if (idx === '') return;
+        document.getElementById('jolokiaUrl').value = JOLOKIA_TARGETS[parseInt(idx, 10)].url;
+    }
+
+    async function guessLogPath() {
+        const jolokiaUrl = document.getElementById('jolokiaUrl').value.trim();
+        if (!jolokiaUrl) { setJolokiaStatus('Enter a Jolokia URL', 'error'); return; }
+
+        setJolokiaStatus('Querying Jolokia…', 'warning');
+        document.getElementById('jolokiaCandidates').style.display = 'none';
+        document.getElementById('jolokiaCandidates').innerHTML = '';
+        document.getElementById('btnGuess').disabled = true;
+
+        try {
+            const res = await fetch('/logsdashboard/guess-log-path', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jolokiaUrl })
+            });
+            const body = await res.json();
+            if (!res.ok) { setJolokiaStatus('Error: ' + (body.error || res.statusText), 'error'); return; }
+            if (body.error) { setJolokiaStatus(body.error, 'error'); return; }
+
+            renderJolokiaCandidates(body.candidates || []);
+            if (!body.candidates || !body.candidates.length) {
+                setJolokiaStatus('No log path candidates found — this endpoint may not expose any file-related MBeans or system properties.', 'warning');
+            } else {
+                setJolokiaStatus('Found ' + body.candidates.length + ' candidate(s) — click one to fill the log path below.', 'ok');
+            }
+        } catch (e) {
+            setJolokiaStatus('Request failed: ' + e.message, 'error');
+        } finally {
+            document.getElementById('btnGuess').disabled = false;
+        }
+    }
+
+    function renderJolokiaCandidates(candidates) {
+        const box = document.getElementById('jolokiaCandidates');
+        box.innerHTML = '';
+        if (!candidates.length) { box.style.display = 'none'; return; }
+        box.style.display = 'flex';
+
+        candidates.forEach(c => {
+            const path = c.derivedPath || c.value;
+            const btn = document.createElement('button');
+            btn.className = 'candidate-btn';
+            btn.type = 'button';
+            btn.title = c.source === 'mbean-attribute'
+                ? ('MBean: ' + c.mbean + ' → ' + c.attribute)
+                : ('System property: ' + c.property + (c.derivedPath ? ' (base dir, "/logs" appended)' : ''));
+            btn.innerHTML = '<span class="conf">' + escHtml(c.confidence) + '</span>' + escHtml(path);
+            btn.onclick = () => {
+                document.getElementById('rootPath').value = pathToParentDir(path);
+                setJolokiaStatus('Filled log path from ' + (c.source === 'mbean-attribute' ? c.attribute : c.property) + '.', 'ok');
+            };
+            box.appendChild(btn);
+        });
+    }
+
+    /** If the candidate looks like a file (has a short extension), use its containing directory —
+     *  the scan endpoint walks a directory tree, not a single file. */
+    function pathToParentDir(p) {
+        const norm = p.replace(/\\/g, '/');
+        if (/\.[a-zA-Z0-9]{1,5}$/.test(norm) && norm.lastIndexOf('/') > 0) {
+            return p.substring(0, Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')));
+        }
+        return p;
+    }
+
+    function setJolokiaStatus(msg, type) {
+        const el = document.getElementById('jolokiaStatusBar');
+        el.textContent = msg;
+        el.className = 'status-bar ' + (type || '');
+    }
+
     async function scan() {
-        const rootPath    = document.getElementById('rootPath').value.trim();
-        const minutesBack = parseInt(document.getElementById('minutesBack').value, 10) || 15;
+        const rootPath        = document.getElementById('rootPath').value.trim();
+        const minutesBack     = parseInt(document.getElementById('minutesBack').value, 10) || 15;
+        const fileNamePattern = document.getElementById('fileNamePattern').value.trim();
+        const searchPattern   = document.getElementById('searchPattern').value.trim();
 
         if (!rootPath) {
             setStatus('Enter a top-level log path', 'error');
@@ -136,7 +279,7 @@
             const res = await fetch('/logsdashboard/scan', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ rootPath, minutesBack })
+                body: JSON.stringify({ rootPath, minutesBack, fileNamePattern, searchPattern })
             });
             const body = await res.json();
             if (!res.ok) {
@@ -201,7 +344,7 @@
             if (f.error) {
                 list.innerHTML = '<div class="more-note">' + escHtml(f.error) + '</div>';
             } else if (!f.matches.length) {
-                list.innerHTML = '<div class="more-note">No CRITICAL / ERROR / exception lines found.</div>';
+                list.innerHTML = '<div class="more-note">No matching lines found.</div>';
             } else {
                 f.matches.forEach(m => {
                     const row = document.createElement('div');
@@ -271,8 +414,10 @@
         return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     }
 
-    document.getElementById('rootPath').addEventListener('keydown', e => {
-        if (e.key === 'Enter') scan();
+    ['rootPath', 'minutesBack', 'fileNamePattern', 'searchPattern'].forEach(id => {
+        document.getElementById(id).addEventListener('keydown', e => {
+            if (e.key === 'Enter') scan();
+        });
     });
 </script>
 </body>

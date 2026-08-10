@@ -14,13 +14,15 @@ import java.util.List;
  * <p>{@code source=http} — {@code location} is a URL returning JSON; {@code arrayElement}
  * is a JSONPath (default {@code $}) selecting the array of objects, whose keys become
  * the attributes.
+ * <p>{@code source=paste} — {@code location} holds tab-separated rows pasted directly
+ * from Excel (header row first), stored and reparsed verbatim on reload.
  */
 public class StaticDatasetDef {
 
     private String       name;
-    /** {@code file} or {@code http}. */
+    /** {@code file}, {@code http} or {@code paste}. */
     private String       source;
-    /** File path (source=file) or URL (source=http). */
+    /** File path (source=file), URL (source=http), or raw pasted TSV text (source=paste). */
     private String       location;
     /** JSONPath into the HTTP response selecting the row array. Ignored for source=file. */
     private String       arrayElement;

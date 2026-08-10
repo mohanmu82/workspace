@@ -3,10 +3,12 @@ package com.mycompany.batch.apm;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 
+import java.io.ByteArrayOutputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
@@ -18,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.zip.GZIPOutputStream;
 
 /**
  * Holds the currently-registered APM server (if any) and forwards each HTTP transaction
@@ -129,11 +132,13 @@ public class ApmForwardingService {
 
         try {
             String ndjson = buildNdjson(r, txnId, traceId, method, path, statusCode, latencyMs, tsMicros);
+            byte[] gzipped = gzip(ndjson);
             HttpRequest.Builder b = HttpRequest.newBuilder()
                     .uri(URI.create(r.serverUrl() + "/intake/v2/events"))
                     .timeout(Duration.ofMillis(props.getTimeoutMs()))
                     .header("Content-Type", "application/x-ndjson")
-                    .POST(HttpRequest.BodyPublishers.ofString(ndjson));
+                    .header("Content-Encoding", "gzip")
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(gzipped));
             if (r.secretToken() != null) b.header("Authorization", "Bearer " + r.secretToken());
             else if (r.apiKey() != null) b.header("Authorization", "ApiKey " + r.apiKey());
 
@@ -226,5 +231,13 @@ public class ApmForwardingService {
 
     private String blankToNull(String s) {
         return s == null || s.isBlank() ? null : s.trim();
+    }
+
+    private byte[] gzip(String s) throws Exception {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        try (GZIPOutputStream gzos = new GZIPOutputStream(baos)) {
+            gzos.write(s.getBytes(StandardCharsets.UTF_8));
+        }
+        return baos.toByteArray();
     }
 }

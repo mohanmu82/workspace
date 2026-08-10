@@ -62,9 +62,15 @@
   .badge { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 0.7rem; font-weight: 700; white-space: nowrap; }
   .badge-file { background: #d3f3e6; color: #0a6b47; }
   .badge-http { background: #cfe2ff; color: #084298; }
+  .badge-paste { background: #fde8cf; color: #8a4b0a; }
 
   .ds-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
   .empty-msg { font-size: 0.82rem; color: #888; padding: 18px; text-align: center; }
+
+  .search-row { margin-bottom: 14px; }
+  .search-row input[type=text] { width: 100%; max-width: 360px; }
+  .search-hint { font-size: 0.72rem; color: #999; margin-top: 4px; }
+  mark { background: #fff3a3; color: inherit; border-radius: 2px; }
 
   .ds-card {
     border: 1px solid #dde1e7; border-radius: 8px; padding: 14px 16px; background: #fff;
@@ -88,12 +94,20 @@
   .ds-footer button.danger { background: #fbdcdc; color: #92251f; }
   .ds-footer button.danger:hover { background: #f6c6c6; }
 
-  .preview-table-wrap { overflow-x: auto; max-height: 260px; overflow-y: auto; border: 1px solid #eceff3; border-radius: 4px; }
-  table.preview { border-collapse: collapse; width: 100%; font-size: 0.75rem; }
-  table.preview th, table.preview td {
-    padding: 5px 8px; border-bottom: 1px solid #eceff3; text-align: left; white-space: nowrap;
+  .grid-modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 1000;
+    align-items: center; justify-content: center;
   }
-  table.preview th { background: #f8f9fb; position: sticky; top: 0; }
+  .grid-modal {
+    background: #fff; width: 92vw; height: 86vh; border-radius: 8px; display: flex;
+    flex-direction: column; overflow: hidden; box-shadow: 0 10px 40px rgba(0,0,0,.3);
+  }
+  .grid-modal-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 18px; border-bottom: 1px solid #dde1e7;
+  }
+  .grid-modal-title { font-size: 1rem; font-weight: 700; }
+  .grid-modal-body { flex: 1; overflow: hidden; padding: 14px 18px; display: flex; flex-direction: column; }
 </style>
 </head>
 <body>
@@ -116,9 +130,10 @@
       <select id="fSource" onchange="onSourceChange()">
         <option value="file">File</option>
         <option value="http">HTTP</option>
+        <option value="paste">Paste from Excel</option>
       </select>
     </div>
-    <div class="field" style="flex:2;min-width:280px">
+    <div class="field" id="fLocationField" style="flex:2;min-width:280px">
       <label id="fLocationLabel">File Path</label>
       <input type="text" id="fLocation" placeholder="C:/data/services.csv" style="width:100%">
     </div>
@@ -133,6 +148,10 @@
       <button class="secondary" onclick="cancelEdit()" id="cancelBtn" style="display:none">Cancel</button>
     </div>
   </div>
+  <div class="field" id="fPasteField" style="display:none;margin-top:10px">
+    <label>Pasted Data <span class="hint">(select cells in Excel, copy, then paste below — first row is the header)</span></label>
+    <textarea id="fPasteData" rows="8" placeholder="Paste Excel cells here (Ctrl+V)…" style="width:100%;padding:8px 10px;font-size:0.82rem;border:1px solid #ccc;border-radius:4px;font-family:Consolas,monospace;resize:vertical"></textarea>
+  </div>
   <div id="formStatusMsg" class="status-msg"></div>
 </div>
 
@@ -141,19 +160,38 @@
     <span>Datasets</span>
     <button class="secondary small" onclick="reloadAll()" id="reloadAllBtn">Reload All</button>
   </div>
+  <div class="search-row">
+    <input type="text" id="dsSearch" placeholder="Search by dataset name or attribute name (e.g. url)" oninput="renderGrid()">
+    <div class="search-hint" id="searchHint"></div>
+  </div>
   <div id="dsGrid" class="ds-grid"></div>
 </div>
 
+<div class="grid-modal-overlay" id="gridModal">
+  <div class="grid-modal" role="dialog" aria-modal="true" aria-labelledby="gridModalTitle" tabindex="-1">
+    <div class="grid-modal-head">
+      <div class="grid-modal-title" id="gridModalTitle"></div>
+      <button class="secondary small" id="gridModalCloseBtn" onclick="closeGridModal()">Close</button>
+    </div>
+    <div class="grid-modal-body" id="gridModalBody"></div>
+  </div>
+</div>
+
+<script src="excelgrid.js"></script>
 <script>
   let datasets = [];
   let editingName = null;
 
   function onSourceChange() {
-    const isHttp = document.getElementById('fSource').value === 'http';
+    const source = document.getElementById('fSource').value;
+    const isHttp = source === 'http';
+    const isPaste = source === 'paste';
     document.getElementById('fLocationLabel').textContent = isHttp ? 'HTTP URL' : 'File Path';
     document.getElementById('fLocation').placeholder = isHttp
         ? 'http://host:port/services.json' : 'C:/data/services.csv';
     document.getElementById('fArrayElementField').style.display = isHttp ? 'flex' : 'none';
+    document.getElementById('fLocationField').style.display = isPaste ? 'none' : 'flex';
+    document.getElementById('fPasteField').style.display = isPaste ? 'flex' : 'none';
   }
 
   function setFormStatus(msg, cls) {
@@ -172,6 +210,7 @@
       datasets = await res.json();
     } catch (e) {
       datasets = [];
+      setFormStatus('Failed to load datasets: ' + e.message, 'status-err');
     }
     renderGrid();
   }
@@ -179,12 +218,15 @@
   async function saveDataset() {
     const name = document.getElementById('fName').value.trim();
     const source = document.getElementById('fSource').value;
-    const location = document.getElementById('fLocation').value.trim();
+    const isPaste = source === 'paste';
+    const location = isPaste
+        ? document.getElementById('fPasteData').value.replace(/\n+$/, '')
+        : document.getElementById('fLocation').value.trim();
     const arrayElement = document.getElementById('fArrayElement').value.trim();
 
     if (!name) { setFormStatus('Dataset name is required.', 'status-err'); return; }
     if (!/^[\w-]+$/.test(name)) { setFormStatus('Name must contain only letters, digits, _ or -.', 'status-err'); return; }
-    if (!location) { setFormStatus('Location is required.', 'status-err'); return; }
+    if (!location) { setFormStatus(isPaste ? 'Paste some rows first.' : 'Location is required.', 'status-err'); return; }
 
     const payload = { name, source, location, arrayElement: arrayElement || null };
     const isEdit = editingName !== null;
@@ -214,7 +256,8 @@
     document.getElementById('fName').value = ds.name;
     document.getElementById('fName').disabled = true;
     document.getElementById('fSource').value = ds.source;
-    document.getElementById('fLocation').value = ds.location || '';
+    document.getElementById('fLocation').value = ds.source === 'paste' ? '' : (ds.location || '');
+    document.getElementById('fPasteData').value = ds.source === 'paste' ? (ds.location || '') : '';
     document.getElementById('fArrayElement').value = ds.arrayElement || '';
     document.getElementById('cancelBtn').style.display = '';
     onSourceChange();
@@ -227,9 +270,12 @@
     document.getElementById('formTitle').textContent = 'Add Dataset';
     document.getElementById('fName').value = '';
     document.getElementById('fName').disabled = false;
+    document.getElementById('fSource').value = 'file';
     document.getElementById('fLocation').value = '';
+    document.getElementById('fPasteData').value = '';
     document.getElementById('fArrayElement').value = '';
     document.getElementById('cancelBtn').style.display = 'none';
+    onSourceChange();
   }
 
   async function reloadAll() {
@@ -237,10 +283,15 @@
     btn.disabled = true;
     setFormStatus('Reloading all datasets…');
     try {
-      await Promise.all(datasets.map(d =>
+      const results = await Promise.all(datasets.map(d =>
         fetch('/staticdataset/' + encodeURIComponent(d.name) + '/reload', { method: 'POST' })
-          .catch(() => null)));
-      setFormStatus('Reloaded ' + datasets.length + ' dataset(s).', 'status-ok');
+          .then(res => res.ok).catch(() => false)));
+      const failCount = results.filter(ok => !ok).length;
+      if (failCount === 0) {
+        setFormStatus('Reloaded ' + datasets.length + ' dataset(s).', 'status-ok');
+      } else {
+        setFormStatus((datasets.length - failCount) + ' of ' + datasets.length + ' dataset(s) reloaded, ' + failCount + ' failed.', 'status-err');
+      }
     } finally {
       btn.disabled = false;
       loadList();
@@ -248,13 +299,14 @@
   }
 
   async function reloadDataset(name) {
-    setFormStatus('');
+    setFormStatus('Reloading "' + name + '"…');
     try {
       const res = await fetch('/staticdataset/' + encodeURIComponent(name) + '/reload', { method: 'POST' });
       const data = await res.json();
-      if (!res.ok) { alert('Reload failed: ' + (data.error || res.status)); return; }
+      if (!res.ok) { setFormStatus('Reload of "' + name + '" failed: ' + (data.error || res.status), 'status-err'); loadList(); return; }
+      setFormStatus('Reloaded "' + name + '".', 'status-ok');
     } catch (e) {
-      alert('Reload failed: ' + e.message);
+      setFormStatus('Reload of "' + name + '" failed: ' + e.message, 'status-err');
     }
     loadList();
   }
@@ -262,84 +314,141 @@
   async function deleteDataset(name) {
     if (!confirm('Delete static dataset "' + name + '"?')) return;
     try {
-      await fetch('/staticdataset/' + encodeURIComponent(name), { method: 'DELETE' });
-    } catch (e) { /* ignore */ }
+      const res = await fetch('/staticdataset/' + encodeURIComponent(name), { method: 'DELETE' });
+      if (!res.ok) { setFormStatus('Delete of "' + name + '" failed: ' + res.status, 'status-err'); return; }
+      setFormStatus('Deleted "' + name + '".', 'status-ok');
+    } catch (e) {
+      setFormStatus('Delete of "' + name + '" failed: ' + e.message, 'status-err');
+      return;
+    }
     if (editingName === name) cancelEdit();
     loadList();
   }
 
-  async function togglePreview(name) {
-    const wrap = document.getElementById('preview-' + cssId(name));
-    if (!wrap) return;
-    if (wrap.style.display === 'block') { wrap.style.display = 'none'; return; }
-    wrap.style.display = 'block';
-    wrap.innerHTML = '<div class="empty-msg">Loading…</div>';
+  let lastFocusedEl = null;
+
+  async function viewGrid(name) {
+    lastFocusedEl = document.activeElement;
+    document.getElementById('gridModalTitle').textContent = name;
+    document.getElementById('gridModal').style.display = 'flex';
+    document.getElementById('gridModalCloseBtn').focus();
+    const body = document.getElementById('gridModalBody');
+    body.innerHTML = '<div class="empty-msg">Loading…</div>';
     try {
       const res = await fetch('/staticdataset/' + encodeURIComponent(name) + '/data');
       const data = await res.json();
-      wrap.innerHTML = renderPreviewTable(data);
+      if (!res.ok) { body.innerHTML = '<div class="ds-error">' + escapeHtml(data.error || res.statusText) + '</div>'; return; }
+      body.innerHTML = '<div id="gridMount" style="height:100%"></div>';
+      ExcelGrid.mount({ containerId: 'gridMount', attributes: data.attributes || [], rows: data.rows || [] });
     } catch (e) {
-      wrap.innerHTML = '<div class="ds-error">Failed to load: ' + escapeHtml(e.message) + '</div>';
+      body.innerHTML = '<div class="ds-error">Failed to load: ' + escapeHtml(e.message) + '</div>';
     }
   }
 
-  function renderPreviewTable(data) {
-    const attrs = data.attributes || [];
-    const rows = (data.rows || []).slice(0, 20);
-    if (attrs.length === 0 || rows.length === 0) {
-      return '<div class="empty-msg">No rows loaded yet.</div>';
-    }
-    let html = '<div class="preview-table-wrap"><table class="preview"><thead><tr>';
-    attrs.forEach(a => html += '<th>' + escapeHtml(a) + '</th>');
-    html += '</tr></thead><tbody>';
-    rows.forEach(row => {
-      html += '<tr>';
-      attrs.forEach(a => html += '<td>' + escapeHtml(row[a] != null ? row[a] : '') + '</td>');
-      html += '</tr>';
-    });
-    html += '</tbody></table></div>';
-    if ((data.rows || []).length > 20) {
-      html += '<div class="ds-meta">Showing 20 of ' + data.rows.length + ' rows</div>';
-    }
-    return html;
+  function closeGridModal() {
+    document.getElementById('gridModal').style.display = 'none';
+    document.getElementById('gridModalBody').innerHTML = '';
+    if (lastFocusedEl) { lastFocusedEl.focus(); lastFocusedEl = null; }
   }
 
-  function cssId(name) { return name.replace(/[^\w-]/g, '_'); }
+  function trapModalFocus(e) {
+    if (e.key !== 'Tab') return;
+    const modal = document.querySelector('#gridModal .grid-modal');
+    const focusable = modal.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault(); last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault(); first.focus();
+    }
+  }
+
+  document.getElementById('dsGrid').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-action]');
+    if (!btn) return;
+    const name = btn.dataset.name;
+    switch (btn.dataset.action) {
+      case 'view': viewGrid(name); break;
+      case 'reload': reloadDataset(name); break;
+      case 'edit': editDataset(name); break;
+      case 'delete': deleteDataset(name); break;
+    }
+  });
+
+  document.getElementById('gridModal').addEventListener('click', (e) => {
+    if (e.target.id === 'gridModal') closeGridModal();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (document.getElementById('gridModal').style.display !== 'flex') return;
+    if (e.key === 'Escape') closeGridModal();
+    else trapModalFocus(e);
+  });
+
+  function highlight(text, query) {
+    const escaped = escapeHtml(text);
+    if (!query) return escaped;
+    const idx = escaped.toLowerCase().indexOf(query.toLowerCase());
+    if (idx === -1) return escaped;
+    return escaped.slice(0, idx) + '<mark>' + escaped.slice(idx, idx + query.length) + '</mark>' + escaped.slice(idx + query.length);
+  }
+
+  function matchesSearch(ds, query) {
+    if (!query) return true;
+    const q = query.toLowerCase();
+    if ((ds.name || '').toLowerCase().includes(q)) return true;
+    return (ds.attributes || []).some(a => a.toLowerCase().includes(q));
+  }
 
   function renderGrid() {
     const grid = document.getElementById('dsGrid');
+    const query = document.getElementById('dsSearch').value.trim();
+    const filtered = datasets.filter(ds => matchesSearch(ds, query));
+
+    const hint = document.getElementById('searchHint');
+    hint.textContent = query ? (filtered.length + ' of ' + datasets.length + ' dataset(s) match') : '';
+
     if (datasets.length === 0) {
       grid.innerHTML = '<div class="empty-msg">No static datasets yet — add one above.</div>';
       return;
     }
-    grid.innerHTML = datasets.map(renderCard).join('');
+    if (filtered.length === 0) {
+      grid.innerHTML = '<div class="empty-msg">No datasets match "' + escapeHtml(query) + '".</div>';
+      return;
+    }
+    grid.innerHTML = filtered.map(ds => renderCard(ds, query)).join('');
   }
 
-  function renderCard(ds) {
-    const badgeCls = ds.source === 'http' ? 'badge-http' : 'badge-file';
-    const chips = (ds.attributes || []).map(a => '<span class="chip">' + escapeHtml(a) + '</span>').join('');
+  function renderCard(ds, query) {
+    const badgeCls = ds.source === 'http' ? 'badge-http' : ds.source === 'paste' ? 'badge-paste' : 'badge-file';
+    const badgeText = ds.source === 'paste' ? 'PASTED' : ds.source.toUpperCase();
+    const chips = (ds.attributes || []).map(a =>
+      '<span class="chip">' + highlight(a, query) + '</span>').join('');
     const metaParts = [];
     if (ds.count != null) metaParts.push(ds.count + ' rows');
     if (ds.loadedTime) metaParts.push('loaded ' + ds.loadedTime);
     const errorHtml = ds.error ? '<div class="ds-error">' + escapeHtml(ds.error) + '</div>' : '';
+    const locationHtml = ds.source === 'paste'
+        ? '<div class="ds-location">pasted data (' + (ds.location ? ds.location.split('\n').length : 0) + ' line(s))</div>'
+        : '<div class="ds-location" title="' + escapeHtml(ds.location) + '">' + escapeHtml(ds.location) + '</div>';
 
     return (
       '<div class="ds-card">' +
         '<div class="ds-head">' +
-          '<div class="ds-name">' + escapeHtml(ds.name) + '</div>' +
-          '<span class="badge ' + badgeCls + '">' + ds.source.toUpperCase() + '</span>' +
+          '<div class="ds-name">' + highlight(ds.name, query) + '</div>' +
+          '<span class="badge ' + badgeCls + '">' + badgeText + '</span>' +
         '</div>' +
-        '<div class="ds-location" title="' + escapeHtml(ds.location) + '">' + escapeHtml(ds.location) + '</div>' +
+        locationHtml +
         (ds.source === 'http' && ds.arrayElement ? '<div class="ds-meta mono">arrayElement: ' + escapeHtml(ds.arrayElement) + '</div>' : '') +
         '<div class="chip-row">' + chips + '</div>' +
         '<div class="ds-meta">' + metaParts.join(' · ') + '</div>' +
         errorHtml +
-        '<div id="preview-' + cssId(ds.name) + '" style="display:none"></div>' +
         '<div class="ds-footer">' +
-          '<button class="small" onclick="togglePreview(\'' + ds.name + '\')">Preview</button>' +
-          '<button class="small" onclick="reloadDataset(\'' + ds.name + '\')">Reload</button>' +
-          '<button class="small" onclick="editDataset(\'' + ds.name + '\')">Edit</button>' +
-          '<button class="small danger" onclick="deleteDataset(\'' + ds.name + '\')">Delete</button>' +
+          '<button class="small" data-action="view" data-name="' + escapeHtml(ds.name) + '">View Grid</button>' +
+          '<button class="small" data-action="reload" data-name="' + escapeHtml(ds.name) + '">Reload</button>' +
+          '<button class="small" data-action="edit" data-name="' + escapeHtml(ds.name) + '">Edit</button>' +
+          '<button class="small danger" data-action="delete" data-name="' + escapeHtml(ds.name) + '">Delete</button>' +
         '</div>' +
       '</div>'
     );

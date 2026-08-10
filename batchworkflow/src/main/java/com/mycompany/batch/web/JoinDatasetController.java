@@ -2,6 +2,7 @@ package com.mycompany.batch.web;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mycompany.batch.cache.CacheFactory;
+import com.mycompany.batch.config.ServerPropertiesLoader;
 import com.mycompany.batch.model.RunRequest;
 import com.mycompany.batch.service.BatchService;
 import com.mycompany.batch.service.JoinDatasetCacheService;
@@ -11,7 +12,6 @@ import org.springframework.web.bind.annotation.*;
 
 
 import java.io.InputStream;
-import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
@@ -30,15 +30,17 @@ public class JoinDatasetController {
     private final JoinDatasetCacheService dsCache;
     private final ObjectMapper            objectMapper;
     private final CacheFactory            cacheFactory;
+    private final ServerPropertiesLoader  serverPropertiesLoader;
 
     public JoinDatasetController(BatchService batchService, BatchController batchController,
                                  JoinDatasetCacheService dsCache, ObjectMapper objectMapper,
-                                 CacheFactory cacheFactory) {
+                                 CacheFactory cacheFactory, ServerPropertiesLoader serverPropertiesLoader) {
         this.batchService    = batchService;
         this.batchController = batchController;
         this.dsCache         = dsCache;
         this.objectMapper    = objectMapper;
         this.cacheFactory    = cacheFactory;
+        this.serverPropertiesLoader = serverPropertiesLoader;
     }
 
     // -------------------------------------------------------------------------
@@ -476,8 +478,23 @@ public class JoinDatasetController {
                 .orElse(List.of());
     }
 
+    private Path joinDatasetDir() {
+        String dataDir = serverPropertiesLoader.getProperties().getOrDefault("DATADIR", ".");
+        return Path.of(dataDir).resolve("joindataset");
+    }
+
     @SuppressWarnings("unchecked")
     private Map<String, Object> loadConfig(String jdName) {
+        // Try DATADIR/joindataset/ first
+        Path file = joinDatasetDir().resolve(jdName + ".json");
+        if (Files.exists(file)) {
+            try {
+                return objectMapper.readValue(file.toFile(), Map.class);
+            } catch (Exception e) {
+                return null;
+            }
+        }
+        // Fall back to classpath:joindataset/ (bundled examples)
         String path = "joindataset/" + jdName + ".json";
         try (InputStream is = getClass().getClassLoader().getResourceAsStream(path)) {
             if (is == null) return null;
@@ -488,22 +505,7 @@ public class JoinDatasetController {
     }
 
     private void saveConfig(String jdName, Map<String, Object> config) throws Exception {
-        String resourcePath = "joindataset/" + jdName + ".json";
-        URL url = getClass().getClassLoader().getResource(resourcePath);
-        Path target;
-        if (url != null && "file".equals(url.getProtocol())) {
-            target = Path.of(url.toURI());
-        } else {
-            // New file – find the joindataset directory via any existing resource
-            URL dirUrl = getClass().getClassLoader().getResource("joindataset/");
-            if (dirUrl != null && "file".equals(dirUrl.getProtocol())) {
-                target = Path.of(dirUrl.toURI()).resolve(jdName + ".json");
-            } else {
-                Path fallback = Path.of("src/main/resources/joindataset");
-                Files.createDirectories(fallback);
-                target = fallback.resolve(jdName + ".json");
-            }
-        }
+        Path target = joinDatasetDir().resolve(jdName + ".json");
         Files.createDirectories(target.getParent());
         objectMapper.writerWithDefaultPrettyPrinter().writeValue(target.toFile(), config);
     }
