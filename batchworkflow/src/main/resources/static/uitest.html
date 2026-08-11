@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UI Testing Tool</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #f4f6f9;
+      color: #222;
+      padding: 28px 28px 48px;
+    }
+
+    header { margin-bottom: 24px; }
+    header h1 { font-size: 1.3rem; font-weight: 700; }
+    header p  { font-size: 0.82rem; color: #666; margin-top: 4px; }
+    .back { font-size: 0.8rem; color: #0078d4; text-decoration: none; }
+    .back:hover { text-decoration: underline; }
+
+    .card {
+      background: #fff;
+      border: 1px solid #dde1e7;
+      border-radius: 8px;
+      padding: 18px 22px;
+      margin-bottom: 18px;
+    }
+
+    .card-title {
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: #111;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .input-row {
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+      flex-wrap: wrap;
+    }
+
+    .field { display: flex; flex-direction: column; gap: 4px; }
+    .field label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+    input[type=text], input[type=number], select {
+      padding: 7px 10px;
+      font-size: 0.85rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-family: inherit;
+    }
+    input[type=text] { min-width: 220px; }
+    input[type=number] { width: 90px; }
+    input:focus, select:focus { outline: none; border-color: #0078d4; }
+
+    .checkbox-field { display: flex; align-items: center; gap: 6px; }
+    .checkbox-field label { font-size: 0.8rem; color: #444; }
+
+    button {
+      padding: 7px 18px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      background: #0078d4;
+      color: #fff;
+      white-space: nowrap;
+    }
+    button:hover:not(:disabled) { background: #005fa3; }
+    button:disabled { background: #9ec5e8; cursor: not-allowed; }
+    button.danger  { background: #c0392b; }
+    button.danger:hover { background: #a93226; }
+    button.secondary { background: #6c757d; }
+    button.secondary:hover { background: #545b62; }
+    button.small { padding: 4px 10px; font-size: 0.75rem; }
+
+    .status-msg { font-size: 0.82rem; margin-top: 8px; }
+    .status-err { color: #842029; }
+
+    .tbl-wrap { overflow-x: auto; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.81rem;
+    }
+    th {
+      background: #f0f2f5;
+      border: 1px solid #dde1e7;
+      padding: 7px 10px;
+      text-align: left;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    td {
+      border: 1px solid #dde1e7;
+      padding: 6px 8px;
+      vertical-align: middle;
+    }
+    tr:nth-child(even) td { background: #fafbfc; }
+
+    #stepsTable input[type=text] { min-width: 0; width: 100%; }
+    #stepsTable select { width: 100%; }
+    #stepsTable input[type=number] { width: 70px; }
+    .col-idx { width: 30px; text-align: center; color: #888; font-family: monospace; }
+    .col-remove { width: 36px; text-align: center; }
+    .col-shot { width: 60px; text-align: center; }
+
+    .help-text { font-size: 0.76rem; color: #888; margin-top: 10px; line-height: 1.5; }
+    code { background: #f0f2f5; padding: 1px 5px; border-radius: 3px; font-size: 0.78rem; }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 10px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .badge-pass    { background: #d1e7dd; color: #0a5c36; }
+    .badge-fail    { background: #f8d7da; color: #842029; }
+    .badge-skipped { background: #e4e8ef; color: #555; }
+
+    .summary-grid {
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+    .summary-cell {
+      background: #f8f9fb;
+      border: 1px solid #dde1e7;
+      border-radius: 6px;
+      padding: 10px 18px;
+      min-width: 130px;
+    }
+    .summary-cell .lbl { font-size: 0.72rem; font-weight: 700; color: #888; text-transform: uppercase; }
+    .summary-cell .val { font-size: 1.2rem; font-weight: 700; color: #111; margin-top: 2px; word-break: break-all; }
+
+    .step-msg { font-size: 0.78rem; color: #555; max-width: 320px; }
+    .step-msg.fail { color: #842029; }
+
+    .thumb {
+      width: 48px;
+      height: 32px;
+      object-fit: cover;
+      border: 1px solid #ccc;
+      border-radius: 3px;
+      cursor: zoom-in;
+    }
+
+    .final-shot {
+      max-width: 100%;
+      border: 1px solid #dde1e7;
+      border-radius: 6px;
+      margin-top: 10px;
+      cursor: zoom-in;
+    }
+
+    .console-box {
+      background: #1e1e1e;
+      color: #d4d4d4;
+      font-family: monospace;
+      font-size: 0.76rem;
+      border-radius: 6px;
+      padding: 10px 14px;
+      max-height: 220px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .console-box .err { color: #f48771; }
+    .console-box .warn { color: #cca700; }
+
+    .lightbox {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.8);
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      cursor: zoom-out;
+      padding: 30px;
+    }
+    .lightbox img { max-width: 100%; max-height: 100%; border-radius: 6px; }
+
+    .toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+
+<header>
+  <a class="back" href="index.html">&#8592; Home</a>
+  <h1>UI Testing Tool</h1>
+  <p>Drive a real browser with Playwright: navigate a URL, script clicks/fills/asserts, and capture screenshots.</p>
+</header>
+
+<!-- ===== Target & options ===== -->
+<div class="card">
+  <div class="card-title">Target &amp; Options</div>
+  <div class="input-row">
+    <div class="field" style="flex:1;min-width:260px">
+      <label>URL</label>
+      <input type="text" id="url" placeholder="https://example.com" value="https://example.com">
+    </div>
+    <div class="field">
+      <label>Browser</label>
+      <select id="browser">
+        <option value="chromium">Chromium</option>
+        <option value="firefox">Firefox</option>
+        <option value="webkit">WebKit</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Viewport W</label>
+      <input type="number" id="viewportWidth" value="1280" min="200" max="3840">
+    </div>
+    <div class="field">
+      <label>Viewport H</label>
+      <input type="number" id="viewportHeight" value="800" min="200" max="2160">
+    </div>
+    <div class="field">
+      <label>Timeout (ms)</label>
+      <input type="number" id="timeoutMs" value="30000" min="500" max="120000" step="500">
+    </div>
+    <div class="field">
+      <div class="checkbox-field" style="height:33px">
+        <input type="checkbox" id="headless" checked>
+        <label for="headless">Headless</label>
+      </div>
+    </div>
+    <div class="field">
+      <div class="checkbox-field" style="height:33px">
+        <input type="checkbox" id="stopOnFailure" checked>
+        <label for="stopOnFailure">Stop on first failure</label>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Steps ===== -->
+<div class="card">
+  <div class="card-title">
+    <span>Steps</span>
+    <div class="toolbar">
+      <button class="secondary small" onclick="exportScript()">Export JSON</button>
+      <button class="secondary small" onclick="document.getElementById('importFile').click()">Import JSON</button>
+      <input type="file" id="importFile" accept="application/json" class="hidden" onchange="importScript(event)">
+    </div>
+  </div>
+  <div class="tbl-wrap">
+    <table id="stepsTable">
+      <thead>
+        <tr>
+          <th class="col-idx">#</th>
+          <th style="width:170px">Action</th>
+          <th>Selector</th>
+          <th>Value</th>
+          <th style="width:90px">Key</th>
+          <th style="width:75px">Wait ms</th>
+          <th class="col-shot">Shot?</th>
+          <th class="col-remove"></th>
+        </tr>
+      </thead>
+      <tbody id="stepsBody"></tbody>
+    </table>
+  </div>
+  <div style="margin-top:12px">
+    <button class="secondary" onclick="addStep()">+ Add Step</button>
+  </div>
+  <div class="help-text">
+    Step 0 (the initial page load) always runs first automatically.
+    <code>selector</code> accepts any Playwright locator (CSS, <code>text=...</code>, <code>role=...</code>).
+    Actions needing a selector: click, dblclick, fill, type, press, check, uncheck, selectOption, hover,
+    scrollIntoView, waitForSelector, assertVisible, assertHidden, assertText, assertExactText, assertCount, screenshot (optional).
+    <code>waitForTimeout</code> uses Wait&nbsp;ms. <code>press</code> uses Key (e.g. <code>Enter</code>).
+    <code>assertText</code>/<code>assertExactText</code>/<code>assertUrl</code>/<code>assertTitle</code>/<code>assertCount</code>/<code>fill</code>/<code>type</code>/<code>selectOption</code>/<code>goto</code> use Value.
+  </div>
+</div>
+
+<div class="toolbar" style="margin-bottom:18px">
+  <button id="runBtn" onclick="runTest()">Run Test</button>
+  <span id="statusMsg" class="status-msg"></span>
+</div>
+
+<!-- ===== Results ===== -->
+<div class="card" id="resultsCard" style="display:none">
+  <div class="card-title">
+    <span>Results <span id="overallBadge"></span></span>
+  </div>
+  <div class="summary-grid" style="margin-bottom:16px">
+    <div class="summary-cell"><div class="lbl">Duration</div><div class="val" id="sumDuration">—</div></div>
+    <div class="summary-cell"><div class="lbl">Browser</div><div class="val" id="sumBrowser">—</div></div>
+    <div class="summary-cell"><div class="lbl">Final URL</div><div class="val" id="sumUrl" style="font-size:0.85rem">—</div></div>
+    <div class="summary-cell"><div class="lbl">Final Title</div><div class="val" id="sumTitle" style="font-size:0.85rem">—</div></div>
+  </div>
+
+  <div class="tbl-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th class="col-idx">#</th>
+          <th style="width:130px">Action</th>
+          <th>Selector / Value</th>
+          <th style="width:90px">Status</th>
+          <th style="width:80px">Duration</th>
+          <th>Message</th>
+          <th style="width:60px">Shot</th>
+        </tr>
+      </thead>
+      <tbody id="resultsBody"></tbody>
+    </table>
+  </div>
+
+  <div id="finalShotWrap" style="display:none;margin-top:18px">
+    <div class="card-title">Final Screenshot</div>
+    <img id="finalShot" class="final-shot" onclick="openLightbox(this.src)">
+  </div>
+
+  <div id="consoleWrap" style="display:none;margin-top:18px">
+    <div class="card-title">Console Messages</div>
+    <div class="console-box" id="consoleBox"></div>
+  </div>
+
+  <div id="errorsWrap" style="display:none;margin-top:18px">
+    <div class="card-title">Page Errors</div>
+    <div class="console-box" id="errorsBox"></div>
+  </div>
+</div>
+
+<div class="lightbox" id="lightbox" onclick="closeLightbox()">
+  <img id="lightboxImg">
+</div>
+
+<script>
+  const ACTIONS = [
+    'click', 'dblclick', 'fill', 'type', 'press', 'check', 'uncheck', 'selectOption',
+    'hover', 'scrollIntoView', 'waitForSelector', 'waitForTimeout',
+    'assertVisible', 'assertHidden', 'assertText', 'assertExactText', 'assertUrl',
+    'assertTitle', 'assertCount', 'screenshot', 'reload', 'goBack', 'goForward', 'goto'
+  ];
+
+  let steps = [
+    { action: 'waitForSelector', selector: 'body', value: '', key: '', ms: 0, screenshot: true }
+  ];
+
+  // =====================================================================
+  // Steps editor
+  // =====================================================================
+
+  function addStep() {
+    steps.push({ action: 'click', selector: '', value: '', key: '', ms: 0, screenshot: false });
+    renderSteps();
+  }
+
+  function removeStep(i) {
+    steps.splice(i, 1);
+    renderSteps();
+  }
+
+  function renderSteps() {
+    const tbody = document.getElementById('stepsBody');
+    tbody.innerHTML = '';
+    steps.forEach((s, i) => tbody.appendChild(buildStepRow(s, i)));
+  }
+
+  function buildStepRow(s, i) {
+    const tr = document.createElement('tr');
+
+    const optionsHtml = ACTIONS.map(a =>
+      `<option value="${a}"${s.action === a ? ' selected' : ''}>${a}</option>`).join('');
+
+    tr.innerHTML = `
+      <td class="col-idx">${i + 1}</td>
+      <td><select data-f="action">${optionsHtml}</select></td>
+      <td><input type="text" data-f="selector" value="${escAttr(s.selector)}" placeholder="css / text= / role="></td>
+      <td><input type="text" data-f="value" value="${escAttr(s.value)}" placeholder="value / url / expected text"></td>
+      <td><input type="text" data-f="key" value="${escAttr(s.key)}" placeholder="Enter"></td>
+      <td><input type="number" data-f="ms" value="${s.ms || 0}" min="0" step="100"></td>
+      <td class="col-shot"><input type="checkbox" data-f="screenshot" ${s.screenshot ? 'checked' : ''}></td>
+      <td class="col-remove"><button class="danger small" onclick="removeStep(${i})">&times;</button></td>`;
+
+    tr.querySelectorAll('[data-f]').forEach(el => {
+      const field = el.dataset.f;
+      const evt = el.tagName === 'SELECT' || el.type === 'checkbox' ? 'change' : 'input';
+      el.addEventListener(evt, () => {
+        steps[i][field] = el.type === 'checkbox' ? el.checked
+          : (field === 'ms' ? (parseInt(el.value, 10) || 0) : el.value);
+      });
+    });
+
+    return tr;
+  }
+
+  // =====================================================================
+  // Export / Import
+  // =====================================================================
+
+  function exportScript() {
+    const script = { config: buildConfig(false), steps };
+    const blob = new Blob([JSON.stringify(script, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'ui-test-script.json';
+    a.click();
+  }
+
+  function importScript(evt) {
+    const file = evt.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(reader.result);
+        if (parsed.config) applyConfig(parsed.config);
+        steps = Array.isArray(parsed.steps) ? parsed.steps.map(s => ({
+          action: s.action || 'click', selector: s.selector || '', value: s.value || '',
+          key: s.key || '', ms: s.ms || 0, screenshot: !!s.screenshot
+        })) : steps;
+        renderSteps();
+        setStatus('Script imported.');
+      } catch (e) {
+        setStatus('Invalid JSON file: ' + e.message, true);
+      }
+    };
+    reader.readAsText(file);
+    evt.target.value = '';
+  }
+
+  function buildConfig() {
+    return {
+      url: document.getElementById('url').value.trim(),
+      browser: document.getElementById('browser').value,
+      headless: document.getElementById('headless').checked,
+      viewportWidth: parseInt(document.getElementById('viewportWidth').value, 10) || 1280,
+      viewportHeight: parseInt(document.getElementById('viewportHeight').value, 10) || 800,
+      timeoutMs: parseInt(document.getElementById('timeoutMs').value, 10) || 30000,
+      stopOnFailure: document.getElementById('stopOnFailure').checked
+    };
+  }
+
+  function applyConfig(cfg) {
+    if (cfg.url) document.getElementById('url').value = cfg.url;
+    if (cfg.browser) document.getElementById('browser').value = cfg.browser;
+    if (cfg.headless !== undefined) document.getElementById('headless').checked = cfg.headless;
+    if (cfg.viewportWidth) document.getElementById('viewportWidth').value = cfg.viewportWidth;
+    if (cfg.viewportHeight) document.getElementById('viewportHeight').value = cfg.viewportHeight;
+    if (cfg.timeoutMs) document.getElementById('timeoutMs').value = cfg.timeoutMs;
+    if (cfg.stopOnFailure !== undefined) document.getElementById('stopOnFailure').checked = cfg.stopOnFailure;
+  }
+
+  // =====================================================================
+  // Run
+  // =====================================================================
+
+  async function runTest() {
+    const url = document.getElementById('url').value.trim();
+    if (!url) { setStatus('Enter a URL.', true); return; }
+
+    const body = Object.assign(buildConfig(), { steps });
+
+    const btn = document.getElementById('runBtn');
+    btn.disabled = true;
+    setStatus('Running…');
+    document.getElementById('resultsCard').style.display = 'none';
+
+    try {
+      const resp = await fetch('/uitest/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        setStatus(data.error || 'Request failed', true);
+      } else {
+        setStatus('');
+        renderResults(data);
+      }
+    } catch (e) {
+      setStatus('Request failed: ' + e.message, true);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // =====================================================================
+  // Results rendering
+  // =====================================================================
+
+  function renderResults(d) {
+    document.getElementById('resultsCard').style.display = '';
+    document.getElementById('overallBadge').innerHTML =
+      `<span class="badge ${d.success ? 'badge-pass' : 'badge-fail'}">${d.success ? 'PASS' : 'FAIL'}</span>`;
+    document.getElementById('sumDuration').textContent = formatDuration(d.durationMs);
+    document.getElementById('sumBrowser').textContent = d.browser;
+    document.getElementById('sumUrl').textContent = d.finalUrl || '—';
+    document.getElementById('sumTitle').textContent = d.finalTitle || '—';
+
+    const tbody = document.getElementById('resultsBody');
+    tbody.innerHTML = '';
+    (d.steps || []).forEach(s => tbody.appendChild(buildResultRow(s)));
+
+    const finalWrap = document.getElementById('finalShotWrap');
+    if (d.finalScreenshot) {
+      document.getElementById('finalShot').src = 'data:image/png;base64,' + d.finalScreenshot;
+      finalWrap.style.display = '';
+    } else {
+      finalWrap.style.display = 'none';
+    }
+
+    const consoleWrap = document.getElementById('consoleWrap');
+    if (d.consoleMessages && d.consoleMessages.length) {
+      document.getElementById('consoleBox').innerHTML = d.consoleMessages.map(m =>
+        `<div class="${m.type === 'error' ? 'err' : (m.type === 'warning' ? 'warn' : '')}">[${escHtml(m.type)}] ${escHtml(m.text)}</div>`
+      ).join('');
+      consoleWrap.style.display = '';
+    } else {
+      consoleWrap.style.display = 'none';
+    }
+
+    const errorsWrap = document.getElementById('errorsWrap');
+    if (d.pageErrors && d.pageErrors.length) {
+      document.getElementById('errorsBox').innerHTML = d.pageErrors.map(e =>
+        `<div class="err">${escHtml(e)}</div>`).join('');
+      errorsWrap.style.display = '';
+    } else {
+      errorsWrap.style.display = 'none';
+    }
+  }
+
+  function buildResultRow(s) {
+    const tr = document.createElement('tr');
+    const badgeCls = s.status === 'PASS' ? 'badge-pass' : (s.status === 'FAIL' ? 'badge-fail' : 'badge-skipped');
+    const selVal = [s.selector, s.value].filter(Boolean).map(escHtml).join(' &rarr; ') || '<span style="color:#bbb">—</span>';
+    const shotHtml = s.screenshot
+      ? `<img class="thumb" src="data:image/png;base64,${s.screenshot}" onclick="openLightbox(this.src)">`
+      : '<span style="color:#bbb">—</span>';
+
+    tr.innerHTML = `
+      <td class="col-idx">${s.index}</td>
+      <td><code>${escHtml(s.action)}</code></td>
+      <td>${selVal}</td>
+      <td><span class="badge ${badgeCls}">${s.status}</span></td>
+      <td>${s.durationMs != null ? s.durationMs + ' ms' : '—'}</td>
+      <td class="step-msg ${s.status === 'FAIL' ? 'fail' : ''}">${s.message ? escHtml(s.message) : ''}</td>
+      <td class="col-shot">${shotHtml}</td>`;
+    return tr;
+  }
+
+  // =====================================================================
+  // Lightbox
+  // =====================================================================
+
+  function openLightbox(src) {
+    document.getElementById('lightboxImg').src = src;
+    document.getElementById('lightbox').style.display = 'flex';
+  }
+  function closeLightbox() {
+    document.getElementById('lightbox').style.display = 'none';
+  }
+
+  // =====================================================================
+  // Utilities
+  // =====================================================================
+
+  function formatDuration(ms) {
+    if (ms == null) return '—';
+    if (ms < 1000) return ms + ' ms';
+    if (ms < 60000) return (ms / 1000).toFixed(1) + ' s';
+    return Math.floor(ms / 60000) + 'm ' + Math.round((ms % 60000) / 1000) + 's';
+  }
+
+  function setStatus(msg, isErr) {
+    const el = document.getElementById('statusMsg');
+    el.textContent = msg || '';
+    el.className = 'status-msg' + (isErr ? ' status-err' : '');
+  }
+
+  function escHtml(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function escAttr(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+  }
+
+  renderSteps();
+</script>
+</body>
+</html>

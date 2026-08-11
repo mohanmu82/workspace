@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Thread Dump Analyzer</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+               background: #f4f5f7; color: #172b4d; padding: 24px; }
+        .nav { margin-bottom: 18px; }
+        .nav a { font-size: 13px; color: #0052cc; text-decoration: none; }
+        .nav a:hover { text-decoration: underline; }
+        h1 { font-size: 20px; font-weight: 600; margin-bottom: 16px; }
+
+        .mono { font-family: "Cascadia Code", "Fira Code", Consolas, monospace; }
+
+        .panel { background: #fff; border: 1px solid #dfe1e6; border-radius: 6px;
+                 padding: 16px; margin-bottom: 14px; }
+        .panel-title { font-size: 12px; font-weight: 700; text-transform: uppercase;
+                       letter-spacing: .5px; margin-bottom: 12px; color: #5e6c84; }
+
+        .mode-toggle { display: flex; gap: 6px; margin-bottom: 12px; }
+        .mode-btn { padding: 6px 14px; font-size: 12px; font-weight: 600; border: 1px solid #dfe1e6;
+                    border-radius: 4px; background: #fff; color: #5e6c84; cursor: pointer; }
+        .mode-btn.active { background: #0052cc; color: #fff; border-color: #0052cc; }
+
+        .form-grid { display: grid; grid-template-columns: 1fr 150px; gap: 12px; margin-bottom: 12px; align-items: end; }
+        .form-group { display: flex; flex-direction: column; gap: 4px; }
+        .form-group label { font-size: 11px; font-weight: 600; color: #5e6c84;
+                            text-transform: uppercase; letter-spacing: .4px; }
+        .form-group input, .form-group textarea, .form-group select {
+                            padding: 7px 10px; font-size: 13px; border: 1px solid #ccc;
+                            border-radius: 4px; outline: none; font-family: inherit; }
+        .form-group textarea { font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+                            font-size: 12px; resize: vertical; }
+        .form-group input:focus, .form-group textarea:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.25); }
+
+        .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        button { padding: 7px 16px; font-size: 13px; font-weight: 500; border: none;
+                 border-radius: 4px; cursor: pointer; white-space: nowrap; }
+        button.primary   { background: #0052cc; color: #fff; }
+        button.primary:hover  { background: #0065ff; }
+        button.secondary { background: #fff; color: #0052cc; border: 1px solid #0052cc; }
+        button.secondary:hover { background: #e9f0ff; }
+        button:disabled  { opacity: .45; cursor: not-allowed; }
+
+        .status-bar { font-size: 13px; color: #5e6c84; min-height: 20px; margin-top: 10px; }
+        .status-bar.ok      { color: #006644; }
+        .status-bar.error   { color: #de350b; }
+        .status-bar.warning { color: #7a4600; }
+
+        .summary { display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 14px; }
+        .stat { background: #fff; border: 1px solid #dfe1e6; border-radius: 6px;
+                padding: 12px 18px; min-width: 130px; }
+        .stat .num { font-size: 22px; font-weight: 700; }
+        .stat .lbl { font-size: 11px; color: #5e6c84; text-transform: uppercase; letter-spacing: .4px; margin-top: 2px; }
+        .stat.bad .num  { color: #de350b; }
+        .stat.warn .num { color: #7a4600; }
+        .stat.good .num { color: #006644; }
+
+        #results { display: none; }
+
+        /* Issues */
+        .issue-row { display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px;
+                     border: 1px solid #dfe1e6; border-radius: 6px; margin-bottom: 8px; background: #fff; }
+        .issue-row .sev { flex-shrink: 0; font-size: 10px; font-weight: 700; letter-spacing: .4px;
+                           padding: 2px 8px; border-radius: 10px; color: #fff; text-transform: uppercase; }
+        .issue-row .sev.CRITICAL { background: #de350b; }
+        .issue-row .sev.ERROR    { background: #de350b; }
+        .issue-row .sev.WARNING  { background: #ffab00; color: #3b2600; }
+        .issue-row .txt { font-size: 13px; line-height: 1.5; }
+        .empty-note { padding: 20px; text-align: center; color: #5e6c84; font-size: 13px; }
+
+        /* Dump cards */
+        .dump-card { background: #fff; border: 1px solid #dfe1e6; border-radius: 6px;
+                     margin-bottom: 10px; overflow: hidden; }
+        .dump-header { display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+                       cursor: pointer; background: #fafbfc; flex-wrap: wrap; }
+        .dump-header:hover { background: #f0f2f5; }
+        .dump-header .caret { font-size: 11px; color: #5e6c84; transition: transform .15s; width: 10px; }
+        .dump-header.open .caret { transform: rotate(90deg); }
+        .dump-title { font-weight: 600; font-size: 13px; }
+        .dump-meta { font-size: 11px; color: #5e6c84; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px;
+                 font-weight: 700; color: #fff; margin-left: 4px; }
+        .badge.zero { background: #6b778c; }
+        .badge.some { background: #de350b; }
+        .badge.newt { background: #006644; }
+        .badge.endedt { background: #6b778c; }
+        .state-chip { font-size: 11px; padding: 2px 7px; border-radius: 4px; background: #f4f5f7;
+                      color: #42526e; font-family: "Cascadia Code", "Fira Code", Consolas, monospace; }
+        .state-bar { display: inline-flex; width: 120px; height: 10px; border-radius: 5px;
+                     overflow: hidden; vertical-align: middle; background: #f4f5f7; flex-shrink: 0; }
+
+        .dump-body { display: none; border-top: 1px solid #dfe1e6; padding: 14px; }
+        .dump-body.open { display: block; }
+
+        .sub-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
+                     color: #5e6c84; margin: 14px 0 8px; }
+        .sub-title:first-child { margin-top: 0; }
+
+        table.mini { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+        table.mini th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: .3px;
+                        color: #5e6c84; padding: 4px 8px; border-bottom: 1px solid #dfe1e6; }
+        table.mini td { padding: 5px 8px; border-bottom: 1px solid #f4f5f7; vertical-align: top; }
+        table.mini td.mono { font-family: "Cascadia Code", "Fira Code", Consolas, monospace; word-break: break-all; }
+        table.mini tr.concern td { background: #fff5f0; }
+        table.mini tr.thread-row:hover { background: #f4f5f7; }
+
+        .deadlock-box { border: 1px solid #de350b; border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; background: #fff5f5; }
+        .deadlock-box .dtitle { font-weight: 700; color: #de350b; font-size: 12.5px; margin-bottom: 4px; }
+        .deadlock-box .dthreads { font-family: "Cascadia Code", "Fira Code", Consolas, monospace; font-size: 12px; margin-bottom: 6px; }
+        .deadlock-box pre { font-size: 11px; background: #0d1117; color: #c9d1d9; padding: 8px 10px;
+                            border-radius: 4px; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+                            max-height: 260px; overflow-y: auto; }
+        .deadlock-box .note { font-size: 11.5px; color: #7a4600; margin-top: 6px; }
+
+        .stack-pre { font-size: 11px; background: #0d1117; color: #c9d1d9; padding: 8px 10px;
+                     border-radius: 4px; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+                     max-height: 300px; overflow-y: auto; margin: 4px 0 8px; }
+
+        .mem-row { font-family: "Cascadia Code", "Fira Code", Consolas, monospace; font-size: 12px;
+                   padding: 6px 10px; border-bottom: 1px solid #f4f5f7; }
+        .mem-row .ln { color: #97a0af; margin-right: 10px; }
+        .none-note { font-size: 12px; color: #6b778c; font-style: italic; padding: 4px 0; }
+    </style>
+</head>
+<body>
+<div class="nav"><a href="/">&larr; Batch Runner</a></div>
+<h1>Thread Dump Analyzer</h1>
+
+<div class="panel">
+    <div class="panel-title">Source</div>
+    <div class="mode-toggle">
+        <button type="button" class="mode-btn active" id="modeFileBtn" onclick="setInputMode('file')">File Path</button>
+        <button type="button" class="mode-btn" id="modePasteBtn" onclick="setInputMode('paste')">Paste Text</button>
+        <button type="button" class="mode-btn" id="modeJolokiaBtn" onclick="setInputMode('jolokia')">Jolokia URL</button>
+    </div>
+
+    <div class="form-grid" id="fileModeBox">
+        <div class="form-group">
+            <label>Stdout / Log File Path</label>
+            <input type="text" id="filePath" placeholder="/var/log/app/service.out"
+                   onkeydown="if(event.key==='Enter')analyze()" />
+        </div>
+        <div class="form-group">
+            <label>&nbsp;</label>
+            <button class="primary" id="btnAnalyzeFile" onclick="analyze()">Analyze</button>
+        </div>
+    </div>
+
+    <div class="form-grid" id="pasteModeBox" style="display:none;">
+        <div class="form-group">
+            <label>Thread Dump Text</label>
+            <textarea id="pasteText" rows="8"
+                      placeholder="Paste jstack / kill -3 / jcmd Thread.print output here… (Ctrl+Enter to analyze)"
+                      onkeydown="if(event.key==='Enter' && (event.ctrlKey || event.metaKey))analyze()"></textarea>
+        </div>
+        <div class="form-group">
+            <label>&nbsp;</label>
+            <button class="primary" id="btnAnalyzePaste" onclick="analyze()">Analyze</button>
+        </div>
+    </div>
+
+    <div id="jolokiaModeBox" style="display:none;">
+        <div class="form-grid">
+            <div class="form-group">
+                <label>Jolokia URL</label>
+                <input type="text" id="jolokiaUrl" placeholder="http://host:8778/jolokia"
+                       onkeydown="if(event.key==='Enter')analyze()" />
+            </div>
+            <div class="form-group">
+                <label>&nbsp;</label>
+                <button class="primary" id="btnAnalyzeJolokia" onclick="analyze()">Analyze</button>
+            </div>
+        </div>
+        <div class="form-grid" style="grid-template-columns: 1fr 1fr;">
+            <div class="form-group">
+                <label>Username (optional)</label>
+                <input type="text" id="jolokiaUsername" autocomplete="off" />
+            </div>
+            <div class="form-group">
+                <label>Password (optional)</label>
+                <input type="password" id="jolokiaPassword" autocomplete="off"
+                       onkeydown="if(event.key==='Enter')analyze()" />
+            </div>
+        </div>
+        <div style="font-size:12px;color:#5e6c84;margin-bottom:4px;">
+            Pulls a live snapshot via the <span class="mono">java.lang:type=Threading</span> /
+            <span class="mono">dumpAllThreads</span> MBean operation over Jolokia — no file or log access needed.
+            The server calls the Jolokia URL directly (avoids browser CORS).
+        </div>
+    </div>
+
+    <div class="toolbar">
+        <span style="font-size:12px;color:#5e6c84">
+            Locates every embedded "Full thread dump" block (jstack / kill -3 / jcmd Thread.print),
+            and checks each one for deadlocks, lock contention, thread-pool exhaustion, and memory-pressure signals.
+        </span>
+    </div>
+    <div id="statusBar" class="status-bar"></div>
+</div>
+
+<div id="results">
+    <div class="toolbar" style="justify-content:flex-end; margin-bottom:10px;">
+        <button class="secondary" onclick="exportJson()">Export JSON</button>
+    </div>
+
+    <div class="summary">
+        <div class="stat" id="statDumps"><div class="num">0</div><div class="lbl">Thread Dumps Found</div></div>
+        <div class="stat" id="statThreads"><div class="num">0</div><div class="lbl">Threads (last dump)</div></div>
+        <div class="stat" id="statDaemon"><div class="num">0</div><div class="lbl">Daemon Threads (last dump)</div></div>
+        <div class="stat" id="statDeadlocks"><div class="num">0</div><div class="lbl">Deadlocks</div></div>
+        <div class="stat" id="statMemory"><div class="num">0</div><div class="lbl">Memory Signals</div></div>
+        <div class="stat" id="statStuck"><div class="num">0</div><div class="lbl">Possibly Stuck Threads</div></div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-title">Issues</div>
+        <div id="issuesBox"></div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-title">Thread Dumps</div>
+        <div id="dumpsBox"></div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-title">Top CPU-Consuming Threads (Last Dump)</div>
+        <div id="cpuBox"></div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-title">Memory Signals</div>
+        <div id="memoryBox"></div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-title">Stuck Threads Across Dumps</div>
+        <div id="stuckBox"></div>
+    </div>
+</div>
+
+<script>
+    let inputMode = 'file';
+    let lastResult = null;
+
+    function setInputMode(mode) {
+        inputMode = mode;
+        document.getElementById('modeFileBtn').classList.toggle('active', mode === 'file');
+        document.getElementById('modePasteBtn').classList.toggle('active', mode === 'paste');
+        document.getElementById('modeJolokiaBtn').classList.toggle('active', mode === 'jolokia');
+        document.getElementById('fileModeBox').style.display = mode === 'file' ? 'grid' : 'none';
+        document.getElementById('pasteModeBox').style.display = mode === 'paste' ? 'grid' : 'none';
+        document.getElementById('jolokiaModeBox').style.display = mode === 'jolokia' ? 'block' : 'none';
+    }
+
+    async function analyze() {
+        let payload;
+        if (inputMode === 'paste') {
+            const text = document.getElementById('pasteText').value;
+            if (!text.trim()) {
+                setStatus('Pasted thread dump text is required', 'error');
+                return;
+            }
+            payload = { text };
+        } else if (inputMode === 'jolokia') {
+            const jolokiaUrl = document.getElementById('jolokiaUrl').value.trim();
+            if (!jolokiaUrl) {
+                setStatus('Jolokia URL is required', 'error');
+                return;
+            }
+            payload = { jolokiaUrl };
+            const username = document.getElementById('jolokiaUsername').value.trim();
+            const password = document.getElementById('jolokiaPassword').value;
+            if (username) payload.username = username;
+            if (password) payload.password = password;
+        } else {
+            const filePath = document.getElementById('filePath').value.trim();
+            if (!filePath) {
+                setStatus('File path is required', 'error');
+                return;
+            }
+            payload = { filePath };
+        }
+
+        const btns = [document.getElementById('btnAnalyzeFile'), document.getElementById('btnAnalyzePaste'), document.getElementById('btnAnalyzeJolokia')];
+        btns.forEach(b => b.disabled = true);
+        setStatus('Analyzing…', '');
+        document.getElementById('results').style.display = 'none';
+
+        try {
+            const res = await fetch('/threaddump/analyze', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const body = await res.json();
+            if (!res.ok) {
+                setStatus(body.error || ('HTTP ' + res.status), 'error');
+                return;
+            }
+            lastResult = body;
+            render(body);
+            const critCount = (body.issues || []).filter(i => i.severity === 'CRITICAL' || i.severity === 'ERROR').length;
+            if (critCount > 0) {
+                setStatus(body.dumpCount + ' dump(s) analyzed — ' + critCount + ' critical issue(s) found', 'error');
+            } else if ((body.issues || []).length > 0) {
+                setStatus(body.dumpCount + ' dump(s) analyzed — ' + body.issues.length + ' warning(s)', 'warning');
+            } else {
+                setStatus(body.dumpCount + ' dump(s) analyzed — no issues found', 'ok');
+            }
+        } catch (e) {
+            setStatus('Request failed: ' + e.message, 'error');
+        } finally {
+            btns.forEach(b => b.disabled = false);
+        }
+    }
+
+    function exportJson() {
+        if (!lastResult) return;
+        const blob = new Blob([JSON.stringify(lastResult, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'thread-dump-analysis.json';
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+
+    function render(data) {
+        document.getElementById('results').style.display = 'block';
+
+        const dumps = data.dumps || [];
+        const lastDump = dumps.length ? dumps[dumps.length - 1] : null;
+        const deadlockCount = dumps.reduce((n, d) => n + (d.deadlocks || []).length, 0);
+
+        setStat('statDumps', dumps.length, dumps.length > 0);
+        setStat('statThreads', lastDump ? lastDump.threadCount : 0, true);
+        setStat('statDaemon', lastDump ? (lastDump.daemonCount || 0) : 0, true);
+        setStat('statDeadlocks', deadlockCount, deadlockCount === 0, deadlockCount > 0);
+        setStat('statMemory', (data.memorySignals || []).length, (data.memorySignals || []).length === 0, (data.memorySignals || []).length > 0);
+        setStat('statStuck', (data.stuckThreads || []).length, (data.stuckThreads || []).length === 0, false, (data.stuckThreads || []).length > 0);
+
+        renderIssues(data.issues || []);
+        renderDumps(dumps);
+        renderCpu(data.topCpuThreads || []);
+        renderMemory(data.memorySignals || []);
+        renderStuck(data.stuckThreads || []);
+    }
+
+    function setStat(id, value, good, bad, warn) {
+        const el = document.getElementById(id);
+        el.querySelector('.num').textContent = value.toLocaleString();
+        el.classList.remove('good', 'bad', 'warn');
+        if (bad) el.classList.add('bad');
+        else if (warn) el.classList.add('warn');
+        else if (good) el.classList.add('good');
+    }
+
+    function renderIssues(issues) {
+        const box = document.getElementById('issuesBox');
+        box.innerHTML = '';
+        if (!issues.length) {
+            box.innerHTML = '<div class="empty-note">No issues detected.</div>';
+            return;
+        }
+        issues.forEach(i => {
+            const row = document.createElement('div');
+            row.className = 'issue-row';
+            row.innerHTML = '<span class="sev ' + esc(i.severity) + '">' + esc(i.severity) + '</span>' +
+                             '<span class="txt">' + esc(i.summary) + '</span>';
+            box.appendChild(row);
+        });
+    }
+
+    function renderDumps(dumps) {
+        const box = document.getElementById('dumpsBox');
+        box.innerHTML = '';
+        if (!dumps.length) {
+            box.innerHTML = '<div class="empty-note">No "Full thread dump" blocks found in this file.</div>';
+            return;
+        }
+        dumps.forEach(d => box.appendChild(buildDumpCard(d)));
+    }
+
+    function buildDumpCard(d) {
+        const card = document.createElement('div');
+        card.className = 'dump-card';
+
+        const deadlockCount = (d.deadlocks || []).length;
+        const header = document.createElement('div');
+        header.className = 'dump-header';
+        header.innerHTML =
+            '<span class="caret">&#9656;</span>' +
+            '<span class="dump-title">Dump #' + d.index + (d.timestamp ? ' — ' + esc(d.timestamp) : '') + '</span>' +
+            '<span class="dump-meta">' + d.threadCount.toLocaleString() + ' threads' +
+                (d.daemonCount != null ? ' (' + d.daemonCount + ' daemon)' : '') + '</span>' +
+            stateBarHtml(d.stateCounts) +
+            stateChips(d.stateCounts) +
+            '<span class="badge ' + (deadlockCount ? 'some' : 'zero') + '">' + deadlockCount + ' deadlock' + (deadlockCount === 1 ? '' : 's') + '</span>' +
+            churnBadgesHtml(d);
+
+        const body = document.createElement('div');
+        body.className = 'dump-body';
+        body.appendChild(buildDeadlocks(d.deadlocks || []));
+        body.appendChild(buildChurn(d));
+        body.appendChild(buildHotspots(d.blockingHotspots || []));
+        body.appendChild(buildPools(d.poolHotspots || []));
+        body.appendChild(buildThreadsSection(d));
+
+        header.onclick = () => {
+            header.classList.toggle('open');
+            body.classList.toggle('open');
+        };
+
+        card.appendChild(header);
+        card.appendChild(body);
+        return card;
+    }
+
+    function stateChips(stateCounts) {
+        if (!stateCounts) return '';
+        return Object.entries(stateCounts)
+            .map(([state, count]) => '<span class="state-chip">' + esc(state) + ': ' + count + '</span>')
+            .join(' ');
+    }
+
+    function stateColor(state) {
+        switch (state) {
+            case 'RUNNABLE': return '#36b37e';
+            case 'BLOCKED': return '#de350b';
+            case 'WAITING': return '#ffab00';
+            case 'TIMED_WAITING': return '#4c9aff';
+            case 'NEW': return '#6b778c';
+            case 'TERMINATED': return '#6b778c';
+            default: return '#97a0af';
+        }
+    }
+
+    function stateBarHtml(stateCounts) {
+        if (!stateCounts) return '';
+        const total = Object.values(stateCounts).reduce((a, b) => a + b, 0);
+        if (!total) return '';
+        const segs = Object.entries(stateCounts).map(([state, count]) => {
+            const pct = (count / total * 100).toFixed(2);
+            return '<span title="' + esc(state) + ': ' + count + '" style="display:inline-block;height:100%;width:' +
+                   pct + '%;background:' + stateColor(state) + ';"></span>';
+        }).join('');
+        return '<span class="state-bar">' + segs + '</span>';
+    }
+
+    function churnBadgesHtml(d) {
+        let html = '';
+        if (d.newThreadCount) html += '<span class="badge newt">+' + d.newThreadCount + ' new</span>';
+        if (d.endedThreadCount) html += '<span class="badge endedt">-' + d.endedThreadCount + ' ended</span>';
+        return html;
+    }
+
+    function buildChurn(d) {
+        const wrap = document.createElement('div');
+        if (!d.newThreadCount && !d.endedThreadCount) return wrap;
+
+        const title = document.createElement('div');
+        title.className = 'sub-title';
+        title.textContent = 'Thread Churn Since Previous Dump';
+        wrap.appendChild(title);
+
+        const row = document.createElement('div');
+        row.style.cssText = 'font-size:12.5px;line-height:1.7;';
+        if (d.newThreadCount) {
+            const shown = (d.newThreads || []).join(', ');
+            const more = d.newThreadCount > (d.newThreads || []).length ? ', …' : '';
+            row.innerHTML += '<div><span class="badge newt">+' + d.newThreadCount + ' new</span> ' +
+                              '<span class="mono">' + esc(shown) + esc(more) + '</span></div>';
+        }
+        if (d.endedThreadCount) {
+            const shown = (d.endedThreads || []).join(', ');
+            const more = d.endedThreadCount > (d.endedThreads || []).length ? ', …' : '';
+            row.innerHTML += '<div style="margin-top:4px;"><span class="badge endedt">-' + d.endedThreadCount + ' ended</span> ' +
+                              '<span class="mono">' + esc(shown) + esc(more) + '</span></div>';
+        }
+        wrap.appendChild(row);
+        return wrap;
+    }
+
+    function buildDeadlocks(deadlocks) {
+        const wrap = document.createElement('div');
+        const title = document.createElement('div');
+        title.className = 'sub-title';
+        title.textContent = 'Deadlocks';
+        wrap.appendChild(title);
+
+        if (!deadlocks.length) {
+            wrap.appendChild(noneNote('No deadlocks detected in this dump.'));
+            return wrap;
+        }
+
+        deadlocks.forEach(dl => {
+            const box = document.createElement('div');
+            box.className = 'deadlock-box';
+            const src = dl.source === 'jstack' ? 'Reported by JVM (jstack)' : 'Detected via lock-graph analysis';
+            box.innerHTML =
+                '<div class="dtitle">' + esc(src) + '</div>' +
+                '<div class="dthreads">Threads: ' + esc((dl.threads || []).join(', ')) + '</div>' +
+                (dl.detail ? '<pre>' + esc(dl.detail) + '</pre>' : '') +
+                (dl.note ? '<div class="note">' + esc(dl.note) + '</div>' : '');
+            wrap.appendChild(box);
+        });
+        return wrap;
+    }
+
+    function buildHotspots(hotspots) {
+        const wrap = document.createElement('div');
+        const title = document.createElement('div');
+        title.className = 'sub-title';
+        title.textContent = 'Lock Contention Hotspots (BLOCKED threads by stack frame)';
+        wrap.appendChild(title);
+
+        if (!hotspots.length) {
+            wrap.appendChild(noneNote('No contention hotspots (2+ threads BLOCKED at the same frame) found.'));
+            return wrap;
+        }
+
+        const table = document.createElement('table');
+        table.className = 'mini';
+        table.innerHTML = '<tr><th>Count</th><th>Frame</th><th>Sample Threads</th></tr>';
+        hotspots.forEach(h => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = '<td>' + h.count + '</td>' +
+                            '<td class="mono">' + esc(h.frame) + '</td>' +
+                            '<td class="mono">' + esc((h.sampleThreads || []).join(', ')) + '</td>';
+            table.appendChild(tr);
+        });
+        wrap.appendChild(table);
+        return wrap;
+    }
+
+    function buildPools(pools) {
+        const wrap = document.createElement('div');
+        const title = document.createElement('div');
+        title.className = 'sub-title';
+        title.textContent = 'Thread Pool Groups';
+        wrap.appendChild(title);
+
+        if (!pools.length) {
+            wrap.appendChild(noneNote('No thread-pool groups with 5+ members found.'));
+            return wrap;
+        }
+
+        const table = document.createElement('table');
+        table.className = 'mini';
+        table.innerHTML = '<tr><th>Pattern</th><th>Count</th><th>States</th><th></th></tr>';
+        pools.forEach(p => {
+            const tr = document.createElement('tr');
+            if (p.concern) tr.className = 'concern';
+            tr.innerHTML = '<td class="mono">' + esc(p.pattern) + '</td>' +
+                            '<td>' + p.count + '</td>' +
+                            '<td>' + stateChips(p.stateCounts) + '</td>' +
+                            '<td>' + (p.concern ? '<span class="badge some">exhaustion?</span>' : '') + '</td>';
+            table.appendChild(tr);
+        });
+        wrap.appendChild(table);
+        return wrap;
+    }
+
+    function buildThreadsSection(d) {
+        const wrap = document.createElement('div');
+        const threads = d.threads || [];
+
+        const title = document.createElement('div');
+        title.className = 'sub-title';
+        title.textContent = 'All Threads (' + threads.length + ')';
+        wrap.appendChild(title);
+
+        if (!threads.length) {
+            wrap.appendChild(noneNote('No individual thread records parsed for this dump.'));
+            return wrap;
+        }
+
+        const toolbarRow = document.createElement('div');
+        toolbarRow.style.cssText = 'display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;';
+
+        const searchInput = document.createElement('input');
+        searchInput.type = 'text';
+        searchInput.placeholder = 'Filter by thread name or stack frame…';
+        searchInput.style.cssText = 'flex:1;min-width:200px;padding:6px 10px;font-size:12px;border:1px solid #ccc;border-radius:4px;font-family:inherit;';
+
+        const stateSelect = document.createElement('select');
+        stateSelect.style.cssText = 'padding:6px 10px;font-size:12px;border:1px solid #ccc;border-radius:4px;';
+        const states = Array.from(new Set(threads.map(t => t.state))).sort();
+        stateSelect.innerHTML = '<option value="">All states</option>' +
+            states.map(s => '<option value="' + esc(s) + '">' + esc(s) + '</option>').join('');
+
+        toolbarRow.appendChild(searchInput);
+        toolbarRow.appendChild(stateSelect);
+        wrap.appendChild(toolbarRow);
+
+        const tableWrap = document.createElement('div');
+        tableWrap.style.cssText = 'overflow-x:auto;';
+        wrap.appendChild(tableWrap);
+
+        function renderTable() {
+            const q = searchInput.value.trim().toLowerCase();
+            const st = stateSelect.value;
+            const filtered = threads.filter(t => {
+                if (st && t.state !== st) return false;
+                if (!q) return true;
+                return (t.name || '').toLowerCase().includes(q) || (t.topFrame || '').toLowerCase().includes(q);
+            });
+
+            tableWrap.innerHTML = '';
+            if (!filtered.length) {
+                tableWrap.appendChild(noneNote('No threads match this filter.'));
+                return;
+            }
+
+            const LIMIT = 500;
+            const table = document.createElement('table');
+            table.className = 'mini';
+            table.innerHTML = '<tr><th></th><th>Name</th><th>State</th><th>Daemon</th><th>Prio</th><th>CPU (ms)</th><th>Top Frame</th></tr>';
+
+            filtered.slice(0, LIMIT).forEach(t => {
+                const tr = document.createElement('tr');
+                tr.className = 'thread-row';
+                const idAttrs = t.tid ? (esc(t.tid) + (t.nid ? (' / ' + esc(t.nid)) : '')) : '';
+                tr.innerHTML =
+                    '<td class="mono" style="width:14px;color:#97a0af;">&#9656;</td>' +
+                    '<td class="mono">' + esc(t.name) + (idAttrs ? ' <span style="color:#97a0af">(' + idAttrs + ')</span>' : '') + '</td>' +
+                    '<td>' + esc(t.state) + '</td>' +
+                    '<td>' + (t.daemon ? 'yes' : '') + '</td>' +
+                    '<td>' + (t.priority != null ? t.priority : '') + '</td>' +
+                    '<td>' + (t.cpuMs != null ? t.cpuMs.toFixed(1) : '') + '</td>' +
+                    '<td class="mono">' + esc(t.topFrame || '') + '</td>';
+
+                const stackRow = document.createElement('tr');
+                stackRow.style.display = 'none';
+                const stackTd = document.createElement('td');
+                stackTd.colSpan = 7;
+                const pre = document.createElement('pre');
+                pre.className = 'stack-pre';
+                pre.textContent = t.stack || '';
+                stackTd.appendChild(pre);
+                stackRow.appendChild(stackTd);
+
+                tr.onclick = () => {
+                    const open = stackRow.style.display !== 'none';
+                    stackRow.style.display = open ? 'none' : 'table-row';
+                    tr.firstElementChild.innerHTML = open ? '&#9656;' : '&#9662;';
+                };
+
+                table.appendChild(tr);
+                table.appendChild(stackRow);
+            });
+
+            tableWrap.appendChild(table);
+            if (filtered.length > LIMIT) {
+                tableWrap.appendChild(noneNote('Showing first ' + LIMIT + ' of ' + filtered.length + ' matching threads — refine the filter to narrow further.'));
+            }
+        }
+
+        searchInput.oninput = renderTable;
+        stateSelect.onchange = renderTable;
+        renderTable();
+
+        return wrap;
+    }
+
+    function renderCpu(topCpuThreads) {
+        const box = document.getElementById('cpuBox');
+        box.innerHTML = '';
+        if (!topCpuThreads.length) {
+            box.innerHTML = '<div class="empty-note">No cpu=…ms timings found (only present in some jcmd Thread.print outputs on newer JDKs).</div>';
+            return;
+        }
+        const table = document.createElement('table');
+        table.className = 'mini';
+        table.innerHTML = '<tr><th>Thread</th><th>State</th><th>CPU (ms)</th><th>Dump</th></tr>';
+        topCpuThreads.forEach(t => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = '<td class="mono">' + esc(t.name) + '</td>' +
+                            '<td>' + esc(t.state) + '</td>' +
+                            '<td>' + (t.cpuMs != null ? t.cpuMs.toFixed(1) : '') + '</td>' +
+                            '<td>#' + t.dumpIndex + '</td>';
+            table.appendChild(tr);
+        });
+        box.appendChild(table);
+    }
+
+    function renderMemory(signals) {
+        const box = document.getElementById('memoryBox');
+        box.innerHTML = '';
+        if (!signals.length) {
+            box.innerHTML = '<div class="empty-note">No OutOfMemoryError, GC overhead, native-thread-creation, or StackOverflowError signals found.</div>';
+            return;
+        }
+        signals.forEach(s => {
+            const row = document.createElement('div');
+            row.className = 'mem-row';
+            row.innerHTML = '<span class="ln">L' + s.lineNumber + '</span>' + esc(s.text);
+            box.appendChild(row);
+        });
+    }
+
+    function renderStuck(stuck) {
+        const box = document.getElementById('stuckBox');
+        box.innerHTML = '';
+        if (!stuck.length) {
+            box.innerHTML = '<div class="empty-note">No thread had an identical stack across every dump in this file (or only one dump was found).</div>';
+            return;
+        }
+        const table = document.createElement('table');
+        table.className = 'mini';
+        table.innerHTML = '<tr><th>Thread</th><th>State</th><th>Dumps Present</th><th>Top Frame</th></tr>';
+        stuck.forEach(s => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = '<td class="mono">' + esc(s.name) + '</td>' +
+                            '<td>' + esc(s.state) + '</td>' +
+                            '<td>' + s.dumpsPresent + '</td>' +
+                            '<td class="mono">' + esc(s.topFrame || '') + '</td>';
+            table.appendChild(tr);
+        });
+        box.appendChild(table);
+    }
+
+    function noneNote(text) {
+        const el = document.createElement('div');
+        el.className = 'none-note';
+        el.textContent = text;
+        return el;
+    }
+
+    function setStatus(msg, type) {
+        const bar = document.getElementById('statusBar');
+        bar.textContent = msg;
+        bar.className = 'status-bar' + (type ? ' ' + type : '');
+    }
+
+    function esc(s) {
+        return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+</script>
+</body>
+</html>
