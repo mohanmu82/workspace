@@ -19,10 +19,6 @@
             "username": "${SSHUSERNAME}",
             "privateKey": "${SSHPRIVATEKEYPATH}"
         }
-        ,"onError": {
-            "status": "SSHFAILURE",
-            "message": "$ssh.getErrorMessage()"
-        }
       }
   ],
   "activity": [

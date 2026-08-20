@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HTTP via Agent</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f4f5f7;
+            color: #172b4d;
+            padding: 24px;
+        }
+
+        .nav { margin-bottom: 18px; }
+        .nav a { font-size: 13px; color: #0052cc; text-decoration: none; }
+        .nav a:hover { text-decoration: underline; }
+
+        h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+        .subtitle { font-size: 13px; color: #5e6c84; margin-bottom: 16px; }
+
+        .panel {
+            background: #fff;
+            border: 1px solid #dfe1e6;
+            border-radius: 6px;
+            padding: 16px;
+            margin-bottom: 14px;
+        }
+
+        .panel-title {
+            font-size: 12px;
+            font-weight: 700;
+            color: #5e6c84;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        .form-group { display: flex; flex-direction: column; gap: 4px; }
+        .form-group.wide { grid-column: 1 / -1; }
+
+        .form-group label {
+            font-size: 11px;
+            font-weight: 600;
+            color: #5e6c84;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            padding: 7px 10px;
+            font-size: 14px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            outline: none;
+            background: #fff;
+            font-family: inherit;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            border-color: #4c9aff;
+            box-shadow: 0 0 0 2px rgba(76,154,255,0.25);
+        }
+
+        .form-group textarea {
+            resize: vertical;
+            font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+            font-size: 13px;
+        }
+
+        textarea.body-area { min-height: 140px; }
+        textarea.headers-area { min-height: 70px; }
+
+        .hint { font-size: 11px; color: #a5adba; margin-top: 2px; }
+
+        .ws-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #a5adba; margin-right: 5px; vertical-align: middle; }
+        .ws-dot.online  { background: #57d9a3; }
+        .ws-dot.offline { background: #de350b; }
+
+        .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 4px; }
+
+        button {
+            padding: 8px 16px;
+            font-size: 13px;
+            font-weight: 500;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        button.primary { background: #0052cc; color: #fff; }
+        button.primary:hover { background: #0065ff; }
+        button.primary:disabled { background: #a5adba; cursor: not-allowed; }
+
+        button.secondary { background: #fff; color: #0052cc; border: 1px solid #0052cc; }
+        button.secondary:hover { background: #e9f0ff; }
+        button.secondary:disabled { background: #fff; color: #a5adba; border-color: #a5adba; cursor: not-allowed; }
+
+        button.tool-btn { background: #f4f5f7; color: #172b4d; border: 1px solid #dfe1e6; padding: 5px 12px; font-size: 12px; }
+        button.tool-btn:hover { background: #ebecf0; }
+
+        .status-bar { font-size: 13px; color: #5e6c84; margin: 10px 0; min-height: 18px; }
+        .status-bar.error { color: #de350b; }
+        .status-bar.ok    { color: #006644; }
+
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #f0f1f3; vertical-align: top; }
+        th { color: #5e6c84; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+        .empty-row td { color: #97a0af; font-style: italic; }
+
+        .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+        .pill.get    { background: #e6fcff; color: #00728e; }
+        .pill.post   { background: #e3fcef; color: #006644; }
+        .pill.put    { background: #fff0b3; color: #7a4600; }
+        .pill.delete { background: #ffebe6; color: #bf2600; }
+        .pill.other  { background: #eae6ff; color: #403294; }
+
+        .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+        .badge.ok  { background: #e3fcef; color: #006644; }
+        .badge.err { background: #ffebe6; color: #de350b; }
+
+        .remove-btn {
+            background: none; border: none; color: #de350b; cursor: pointer;
+            font-size: 12px; padding: 2px 6px;
+        }
+        .remove-btn:hover { text-decoration: underline; }
+
+        .result-card {
+            border: 1px solid #dfe1e6;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            overflow: hidden;
+        }
+        .result-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+            user-select: none;
+            padding: 10px 14px;
+            background: #f4f5f7;
+        }
+        .result-header:hover { background: #ebecf0; }
+        .result-header .url { font-size: 13px; font-weight: 600; flex: 1; word-break: break-all; }
+        .result-header .meta { font-size: 11px; color: #5e6c84; font-weight: 400; }
+        .chevron { transition: transform 0.15s; display: inline-block; }
+        .chevron.open { transform: rotate(90deg); }
+        .result-body {
+            display: none;
+            background: #1e1e2e;
+            color: #cdd6f4;
+            font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+            font-size: 12px;
+            padding: 12px 14px;
+            max-height: 500px;
+            overflow: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .result-body.open { display: block; }
+    </style>
+</head>
+<body>
+
+<div class="nav"><a href="/">&larr; Batch Runner</a></div>
+<h1>HTTP via Agent</h1>
+<div class="subtitle">Send HTTP requests through a remote agent (or round-robin across all connected agents) via <code>POST /agents/http-batch</code>.</div>
+
+<!-- Target agent -->
+<div class="panel">
+    <div class="panel-title">
+        <span>Target Agent</span>
+        <button class="tool-btn" onclick="refreshAgents()">Refresh</button>
+    </div>
+    <div class="form-row">
+        <div class="form-group">
+            <label>Agent &nbsp;<span id="wsDot" class="ws-dot"></span></label>
+            <select id="agentSelect">
+                <option value="">Any (round-robin)</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Default Timeout (ms)</label>
+            <input id="defaultTimeoutMs" type="number" value="30000" min="500" step="500" />
+        </div>
+    </div>
+    <div id="agentStatus" class="status-bar"></div>
+</div>
+
+<!-- Request builder -->
+<div class="panel">
+    <div class="panel-title">Request</div>
+    <div class="form-row">
+        <div class="form-group">
+            <label>Method</label>
+            <select id="method">
+                <option>GET</option><option>POST</option><option>PUT</option>
+                <option>DELETE</option><option>PATCH</option><option>HEAD</option>
+            </select>
+        </div>
+        <div class="form-group" style="grid-column: span 3">
+            <label>URL</label>
+            <input id="url" type="text" placeholder="https://api.example.com/endpoint" />
+        </div>
+        <div class="form-group">
+            <label>Timeout (ms, optional)</label>
+            <input id="timeoutMs" type="number" placeholder="uses default" min="500" step="500" />
+        </div>
+    </div>
+    <div class="form-group wide" style="margin-bottom:12px">
+        <label>Headers (JSON object)</label>
+        <textarea id="headers" class="headers-area" spellcheck="false" placeholder='{"Accept": "application/json"}'></textarea>
+    </div>
+    <div class="form-group wide">
+        <label>Body</label>
+        <textarea id="body" class="body-area" spellcheck="false" placeholder='{"key": "value"}'></textarea>
+    </div>
+</div>
+
+<div class="toolbar">
+    <button class="primary" id="addBtn" onclick="addRequest()">Add to Batch</button>
+    <button class="secondary" id="sendOneBtn" onclick="sendOne()">Send Just This</button>
+</div>
+
+<!-- Queued batch -->
+<div class="panel">
+    <div class="panel-title">
+        <span>Queued Requests</span>
+        <button class="tool-btn" onclick="clearBatch()">Clear</button>
+    </div>
+    <table>
+        <thead><tr><th style="width:70px">Method</th><th>URL</th><th style="width:60px"></th></tr></thead>
+        <tbody id="batchBody"><tr class="empty-row"><td colspan="3">No requests queued</td></tr></tbody>
+    </table>
+    <div class="toolbar" style="margin-top:12px">
+        <button class="primary" id="sendBatchBtn" onclick="sendBatch()">Send Batch</button>
+    </div>
+    <div id="statusBar" class="status-bar"></div>
+</div>
+
+<!-- Results -->
+<div class="panel" id="resultsPanel" style="display:none">
+    <div class="panel-title">Results</div>
+    <div id="resultsContainer"></div>
+</div>
+
+<script>
+    let agents = [];
+    let batch = [];
+
+    // ── Agents ───────────────────────────────────────────────────────────────
+
+    async function refreshAgents() {
+        setAgentStatus('Loading agents…');
+        try {
+            const res = await fetch('/agents');
+            agents = await res.json();
+            renderAgents();
+            setAgentStatus(agents.length + ' agent(s) connected', agents.length ? 'ok' : '');
+        } catch (e) {
+            setAgentStatus('Failed to load agents: ' + e.message, 'error');
+        }
+    }
+
+    function renderAgents() {
+        const select = document.getElementById('agentSelect');
+        const previouslySelected = select.value;
+        select.innerHTML = '<option value="">Any (round-robin)</option>';
+        agents.forEach(a => {
+            const opt = document.createElement('option');
+            opt.value = a.agentId;
+            opt.textContent = a.agentId + (a.hostname && a.hostname !== a.agentId ? ' (' + a.hostname + ')' : '');
+            select.appendChild(opt);
+        });
+        if ([...select.options].some(o => o.value === previouslySelected)) select.value = previouslySelected;
+        document.getElementById('wsDot').className = 'ws-dot ' + (agents.length ? 'online' : 'offline');
+    }
+
+    function setAgentStatus(msg, type) {
+        const bar = document.getElementById('agentStatus');
+        bar.textContent = msg;
+        bar.className = 'status-bar' + (type ? ' ' + type : '');
+    }
+
+    // ── Request builder ──────────────────────────────────────────────────────
+
+    function readRequestForm() {
+        const url = document.getElementById('url').value.trim();
+        if (!url) { setStatus('URL is required.', 'error'); return null; }
+
+        const method = document.getElementById('method').value;
+
+        let headers = {};
+        const headersRaw = document.getElementById('headers').value.trim();
+        if (headersRaw) {
+            try { headers = JSON.parse(headersRaw); }
+            catch (e) { setStatus('Headers are not valid JSON: ' + e.message, 'error'); return null; }
+        }
+
+        const body = document.getElementById('body').value;
+        const timeoutRaw = document.getElementById('timeoutMs').value.trim();
+        const timeoutMs = timeoutRaw ? parseInt(timeoutRaw, 10) : undefined;
+
+        const item = { url, method, headers, body };
+        if (timeoutMs) item.timeoutMs = timeoutMs;
+        return item;
+    }
+
+    function addRequest() {
+        const item = readRequestForm();
+        if (!item) return;
+        batch.push(item);
+        renderBatch();
+        setStatus('Added to batch (' + batch.length + ' queued).', 'ok');
+    }
+
+    function clearBatch() {
+        batch = [];
+        renderBatch();
+        setStatus('Batch cleared.');
+    }
+
+    function removeFromBatch(idx) {
+        batch.splice(idx, 1);
+        renderBatch();
+    }
+
+    function renderBatch() {
+        const body = document.getElementById('batchBody');
+        body.innerHTML = '';
+        if (!batch.length) {
+            body.innerHTML = '<tr class="empty-row"><td colspan="3">No requests queued</td></tr>';
+            return;
+        }
+        batch.forEach((item, idx) => {
+            const tr = document.createElement('tr');
+            const methodClass = ['get','post','put','delete'].includes(item.method.toLowerCase()) ? item.method.toLowerCase() : 'other';
+            tr.innerHTML = `<td><span class="pill ${methodClass}">${esc(item.method)}</span></td>` +
+                            `<td>${esc(item.url)}</td>` +
+                            `<td><button class="remove-btn" onclick="removeFromBatch(${idx})">Remove</button></td>`;
+            body.appendChild(tr);
+        });
+    }
+
+    // ── Sending ──────────────────────────────────────────────────────────────
+
+    async function sendOne() {
+        const item = readRequestForm();
+        if (!item) return;
+        await runBatch([item]);
+    }
+
+    async function sendBatch() {
+        if (!batch.length) { setStatus('Queue is empty — add a request first.', 'error'); return; }
+        await runBatch(batch);
+    }
+
+    async function runBatch(requests) {
+        const agentId = document.getElementById('agentSelect').value;
+        const defaultTimeoutMs = parseInt(document.getElementById('defaultTimeoutMs').value, 10) || 30000;
+
+        const payload = { requests, defaultTimeoutMs };
+        if (agentId) payload.agentId = agentId;
+
+        setButtonsDisabled(true);
+        setStatus('Sending ' + requests.length + ' request(s)' + (agentId ? ' to ' + agentId : ' (round-robin)') + '…');
+
+        try {
+            const res = await fetch('/agents/http-batch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                setStatus('Failed: ' + (data.error || res.statusText), 'error');
+                return;
+            }
+            showResults(data);
+            setStatus('Done — ' + data.length + ' result(s).', 'ok');
+        } catch (e) {
+            setStatus('Request failed: ' + e.message, 'error');
+        } finally {
+            setButtonsDisabled(false);
+        }
+    }
+
+    function setButtonsDisabled(disabled) {
+        document.getElementById('addBtn').disabled = disabled;
+        document.getElementById('sendOneBtn').disabled = disabled;
+        document.getElementById('sendBatchBtn').disabled = disabled;
+    }
+
+    // ── Results ──────────────────────────────────────────────────────────────
+
+    function showResults(results) {
+        const panel = document.getElementById('resultsPanel');
+        const container = document.getElementById('resultsContainer');
+        container.innerHTML = '';
+        panel.style.display = results.length ? '' : 'none';
+
+        results.forEach((r, idx) => {
+            const ok = !r.error && r.statusCode != null && r.statusCode < 400;
+            const card = document.createElement('div');
+            card.className = 'result-card';
+
+            const header = document.createElement('div');
+            header.className = 'result-header';
+            header.onclick = () => toggleResult(idx);
+            header.innerHTML =
+                `<span class="chevron" id="chev${idx}">&#9658;</span>` +
+                `<span class="url">${esc(r.url || '')}</span>` +
+                `<span class="badge ${ok ? 'ok' : 'err'}">${r.error ? 'ERROR' : (r.statusCode != null ? 'HTTP ' + r.statusCode : '?')}</span>` +
+                `<span class="meta">${esc(r.agentId || '')}${r.durationMs != null ? ' · ' + r.durationMs + 'ms' : ''}</span>`;
+            card.appendChild(header);
+
+            const bodyEl = document.createElement('pre');
+            bodyEl.className = 'result-body';
+            bodyEl.id = 'body' + idx;
+            bodyEl.textContent = JSON.stringify(r, null, 2);
+            card.appendChild(bodyEl);
+
+            container.appendChild(card);
+        });
+
+        // Auto-expand if there's exactly one result
+        if (results.length === 1) toggleResult(0);
+    }
+
+    function toggleResult(idx) {
+        document.getElementById('chev' + idx).classList.toggle('open');
+        document.getElementById('body' + idx).classList.toggle('open');
+    }
+
+    function setStatus(msg, type) {
+        const bar = document.getElementById('statusBar');
+        bar.textContent = msg;
+        bar.className = 'status-bar' + (type ? ' ' + type : '');
+    }
+
+    function esc(v) {
+        return String(v === undefined || v === null ? '' : v)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    refreshAgents();
+</script>
+
+</body>
+</html>

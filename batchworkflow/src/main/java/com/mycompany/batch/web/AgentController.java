@@ -20,8 +20,9 @@ import java.util.Map;
  * REST surface for the remote agent feature:
  * GET  /agents             — agents currently connected over {@code /agent/ws}
  * POST /agents/discover    — multicast probe for agents on the LAN (connected or not)
- * POST /agents/http-batch  — fan a batch of HTTP requests out across connected agents, round-robin,
- *                             and return every result in one response (see {@link AgentHttpDispatchService})
+ * POST /agents/http-batch  — fan a batch of HTTP requests out across connected agents, round-robin
+ *                             (or all to one agent via {@code agentId}), and return every result in
+ *                             one response (see {@link AgentHttpDispatchService})
  */
 @RestController
 public class AgentController {
@@ -58,7 +59,8 @@ public class AgentController {
             return ResponseEntity.badRequest().body(Map.of("error", "requests must not be empty"));
         }
         try {
-            List<Map<String, Object>> results = httpDispatchService.dispatch(request.getRequests(), request.getDefaultTimeoutMs());
+            List<Map<String, Object>> results = httpDispatchService.dispatch(
+                    request.getRequests(), request.getDefaultTimeoutMs(), request.getAgentId());
             return ResponseEntity.ok(results);
         } catch (IllegalStateException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));

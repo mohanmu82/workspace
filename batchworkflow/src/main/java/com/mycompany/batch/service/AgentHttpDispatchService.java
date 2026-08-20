@@ -46,9 +46,18 @@ public class AgentHttpDispatchService {
 
     /** Round-robins {@code requests} across connected agents and blocks until every one has replied or timed out. */
     public List<Map<String, Object>> dispatch(List<HttpBatchRequest.Item> requests, Integer defaultTimeoutMs) {
-        List<AgentConnection> agents = registry.list().stream()
-                .filter(a -> a.getSession().isOpen())
-                .toList();
+        return dispatch(requests, defaultTimeoutMs, null);
+    }
+
+    /**
+     * Dispatches {@code requests}, blocking until every one has replied or timed out. When
+     * {@code agentId} is set, every request is sent to that specific agent instead of being
+     * round-robined across all connected agents.
+     */
+    public List<Map<String, Object>> dispatch(List<HttpBatchRequest.Item> requests, Integer defaultTimeoutMs, String agentId) {
+        List<AgentConnection> agents = agentId != null && !agentId.isBlank()
+                ? List.of(resolveTargetAgent(agentId))
+                : registry.list().stream().filter(a -> a.getSession().isOpen()).toList();
         if (agents.isEmpty()) {
             throw new IllegalStateException("No agents connected");
         }
@@ -69,6 +78,14 @@ public class AgentHttpDispatchService {
             }
         }
         return results;
+    }
+
+    private AgentConnection resolveTargetAgent(String agentId) {
+        AgentConnection agent = registry.get(agentId);
+        if (agent == null || !agent.getSession().isOpen()) {
+            throw new IllegalStateException("Agent not connected: " + agentId);
+        }
+        return agent;
     }
 
     private CompletableFuture<Map<String, Object>> dispatchOne(AgentConnection agent, HttpBatchRequest.Item spec, int fallbackTimeoutMs) {
