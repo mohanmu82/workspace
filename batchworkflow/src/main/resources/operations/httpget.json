@@ -12,7 +12,6 @@
       "http": {
         "url": "${inputHttpUrl}",
         "method": "GET",
-        "httpHeaders": "${inputHttpHeader}",
         "extract":{
               "RESPONSECODE": "$.statusCode",
               "REQUESTURL": "$.url",

@@ -41,7 +41,6 @@
       "http": {
         "url": "${inputHttpUrl}",
         "bodyTemplate": "${inputHttpBody}",
-        "httpHeaders": "${inputHttpHeader}",
         "method": "POST",
         "contentType": "application/json",
         "extract":{
