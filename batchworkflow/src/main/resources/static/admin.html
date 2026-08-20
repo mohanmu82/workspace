@@ -179,6 +179,27 @@
     <div id="mappingsBody"><div class="kv-empty"><span class="spinner"></span> Loading…</div></div>
 </div>
 
+<!-- Page Properties -->
+<div class="card" id="cardPageProps">
+    <div class="card-header">
+        <h2>Page Properties</h2>
+        <span class="badge" id="badgePageProps">—</span>
+    </div>
+    <div id="pagePropsBody"><div class="kv-empty"><span class="spinner"></span> Loading…</div></div>
+    <div class="mapping-block" style="border-top:1px solid #f0f1f3;">
+        <div class="mapping-title">Add Property</div>
+        <div class="row" style="display:flex;gap:8px;">
+            <input type="text" id="newPropPage" class="mapping-val-input" placeholder="page (e.g. websocketproxy)" style="flex:1;">
+            <input type="text" id="newPropKey" class="mapping-val-input" placeholder="key (e.g. defaultPort)" style="flex:1;">
+            <input type="text" id="newPropValue" class="mapping-val-input" placeholder="value (e.g. 13000)" style="flex:1;">
+        </div>
+        <div class="mapping-actions">
+            <button class="primary small" onclick="addPageProperty()">Add</button>
+            <span id="newPropMsg" class="mapping-save-msg"></span>
+        </div>
+    </div>
+</div>
+
 <script>
 function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
@@ -415,12 +436,149 @@ async function loadMappings() {
     }
 }
 
+function renderPageProperties(list) {
+    const container = document.getElementById('pagePropsBody');
+    const badge = document.getElementById('badgePageProps');
+    if (!list || list.length === 0) {
+        container.innerHTML = '<div class="kv-empty">No page properties set — pages fall back to their own built-in defaults.</div>';
+        badge.textContent = '0';
+        return;
+    }
+    let keyCount = 0;
+    container.innerHTML = '';
+
+    list.forEach(pp => {
+        const block = document.createElement('div');
+        block.className = 'mapping-block';
+
+        const title = document.createElement('div');
+        title.className = 'mapping-title';
+        title.textContent = pp.page;
+        block.appendChild(title);
+
+        const table = document.createElement('table');
+        table.className = 'kv-table';
+        const tbody = document.createElement('tbody');
+
+        Object.keys(pp.properties || {}).forEach(key => {
+            keyCount++;
+            const tr = document.createElement('tr');
+
+            const tdKey = document.createElement('td');
+            tdKey.className = 'kv-key';
+            tdKey.textContent = key;
+
+            const tdVal = document.createElement('td');
+            tdVal.className = 'kv-val';
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'mapping-val-input';
+            input.value = pp.properties[key] || '';
+
+            const tdActions = document.createElement('td');
+            tdActions.style.whiteSpace = 'nowrap';
+            const saveBtn = document.createElement('button');
+            saveBtn.className = 'primary small';
+            saveBtn.textContent = 'Save';
+            const msg = document.createElement('span');
+            msg.className = 'mapping-save-msg';
+            saveBtn.addEventListener('click', () => savePageProperty(pp.page, key, input.value, msg));
+            const delBtn = document.createElement('button');
+            delBtn.className = 'secondary small danger';
+            delBtn.textContent = 'Delete';
+            delBtn.style.marginLeft = '6px';
+            delBtn.addEventListener('click', () => deletePageProperty(pp.page, key));
+
+            tdVal.appendChild(input);
+            tdActions.appendChild(saveBtn);
+            tdActions.appendChild(delBtn);
+            tdActions.appendChild(msg);
+            tr.appendChild(tdKey);
+            tr.appendChild(tdVal);
+            tr.appendChild(tdActions);
+            tbody.appendChild(tr);
+        });
+
+        table.appendChild(tbody);
+        block.appendChild(table);
+        container.appendChild(block);
+    });
+
+    badge.textContent = keyCount;
+}
+
+async function savePageProperty(page, key, value, msg) {
+    msg.textContent = 'Saving…';
+    msg.className = 'mapping-save-msg';
+    try {
+        const res = await fetch('/pageproperty', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ page, key, value })
+        });
+        const data = await res.json();
+        if (!res.ok) { msg.textContent = data.error || 'Save failed.'; msg.className = 'mapping-save-msg error'; return; }
+        msg.textContent = 'Saved.';
+        msg.className = 'mapping-save-msg ok';
+    } catch (e) {
+        msg.textContent = 'Save failed: ' + e.message;
+        msg.className = 'mapping-save-msg error';
+    }
+}
+
+async function deletePageProperty(page, key) {
+    if (!confirm('Delete property "' + key + '" for page "' + page + '"? The page will fall back to its own built-in default.')) return;
+    try {
+        await fetch('/pageproperty/' + encodeURIComponent(page) + '/' + encodeURIComponent(key), { method: 'DELETE' });
+    } catch (e) { /* ignore */ }
+    loadPageProperties();
+}
+
+async function addPageProperty() {
+    const page = document.getElementById('newPropPage').value.trim();
+    const key = document.getElementById('newPropKey').value.trim();
+    const value = document.getElementById('newPropValue').value.trim();
+    const msg = document.getElementById('newPropMsg');
+    if (!page || !key) { msg.textContent = 'Page and key are required.'; msg.className = 'mapping-save-msg error'; return; }
+    msg.textContent = 'Saving…';
+    msg.className = 'mapping-save-msg';
+    try {
+        const res = await fetch('/pageproperty', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ page, key, value })
+        });
+        const data = await res.json();
+        if (!res.ok) { msg.textContent = data.error || 'Save failed.'; msg.className = 'mapping-save-msg error'; return; }
+        document.getElementById('newPropPage').value = '';
+        document.getElementById('newPropKey').value = '';
+        document.getElementById('newPropValue').value = '';
+        msg.textContent = '';
+        loadPageProperties();
+    } catch (e) {
+        msg.textContent = 'Save failed: ' + e.message;
+        msg.className = 'mapping-save-msg error';
+    }
+}
+
+async function loadPageProperties() {
+    document.getElementById('pagePropsBody').innerHTML = '<div class="kv-empty"><span class="spinner"></span> Loading…</div>';
+    try {
+        const res = await fetch('/pageproperty');
+        const list = await res.json();
+        renderPageProperties(list);
+    } catch (e) {
+        document.getElementById('pagePropsBody').innerHTML = '<div class="kv-empty">Load failed.</div>';
+    }
+}
+
 async function load() {
     setStatus('Loading…');
     document.getElementById('serverPropsBody').innerHTML = '<div class="kv-empty"><span class="spinner"></span> Loading…</div>';
     document.getElementById('dynamicBody').innerHTML     = '<div class="kv-empty"><span class="spinner"></span> Loading…</div>';
     document.getElementById('dirsBody').innerHTML        = '<div class="kv-empty"><span class="spinner"></span> Loading…</div>';
     loadMappings();
+    loadPageProperties();
 
     try {
         const res  = await fetch('/batch/admin');

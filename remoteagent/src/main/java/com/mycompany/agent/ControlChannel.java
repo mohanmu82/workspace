@@ -15,25 +15,33 @@ import java.util.concurrent.TimeUnit;
 /**
  * Dials out to the batchworkflow server's {@code /agent/ws} endpoint and stays connected,
  * reconnecting with exponential backoff on any drop. Once registered, it dispatches incoming
- * {@code exec} commands to a {@link CommandExecutor} and streams the results back.
+ * commands to either a {@link CommandExecutor} ({@code exec}) or a {@link HttpRequestExecutor}
+ * ({@code http}) and streams/returns the results back.
  *
  * <p>The agent always initiates the connection so the remote host needs no inbound firewall
- * rule — only outbound access to the server.
+ * rule — only outbound access to the server. Both command modes ride this same outbound
+ * websocket; the agent never opens a listening port of its own.
  */
 public class ControlChannel {
 
     private static final int MAX_BACKOFF_MS = 30_000;
 
-    private final URI               serverUri;
-    private final String            agentId;
-    private final String            hostname;
-    private final String            token;
-    private final ObjectMapper      objectMapper = new ObjectMapper();
-    private final CommandExecutor   executor     = new CommandExecutor();
-    private final HttpClient        httpClient   = HttpClient.newHttpClient();
+    private final URI                  serverUri;
+    private final String               agentId;
+    private final String               hostname;
+    private final String               token;
+    private final ObjectMapper         objectMapper = new ObjectMapper();
+    private final CommandExecutor      executor     = new CommandExecutor();
+    private final HttpRequestExecutor  httpExecutor = new HttpRequestExecutor();
+    private final HttpClient           httpClient   = HttpClient.newHttpClient();
 
     private volatile WebSocket webSocket;
     private volatile boolean   running = true;
+
+    /** Serializes sends on the shared websocket: java.net.http.WebSocket forbids starting a new
+     *  send before the previous one's CompletableFuture completes, and concurrent exec/http
+     *  requests each finish on their own thread and race to report their result otherwise. */
+    private final Object sendLock = new Object();
 
     public ControlChannel(String serverUrl, String agentId, String hostname, String token) {
         this.serverUri = URI.create(serverUrl);
@@ -150,6 +158,20 @@ public class ControlChannel {
                 executor.execute(command,
                         line -> sendJson(webSocket, Map.of("type", "line", "requestId", requestId, "text", line)),
                         exitCode -> sendJson(webSocket, Map.of("type", "done", "requestId", requestId, "exitCode", exitCode)));
+            } else if ("http".equals(msg.get("type"))) {
+                String requestId = String.valueOf(msg.get("requestId"));
+                HttpRequestExecutor.HttpExecRequest httpRequest = new HttpRequestExecutor.HttpExecRequest(
+                        String.valueOf(msg.get("url")),
+                        msg.get("method") != null ? String.valueOf(msg.get("method")) : "GET",
+                        toHeaderMap(msg.get("headers")),
+                        msg.get("body") != null ? String.valueOf(msg.get("body")) : "",
+                        msg.get("timeoutMs") instanceof Number n ? n.intValue() : 30_000);
+                httpExecutor.execute(httpRequest, result -> {
+                    Map<String, Object> outbound = new LinkedHashMap<>(result);
+                    outbound.put("type", "httpResult");
+                    outbound.put("requestId", requestId);
+                    sendJson(webSocket, outbound);
+                });
             } else if ("error".equals(msg.get("type"))) {
                 System.err.println("[agent] server error: " + msg.get("message"));
             }
@@ -158,11 +180,21 @@ public class ControlChannel {
         }
     }
 
+    private Map<String, String> toHeaderMap(Object raw) {
+        if (!(raw instanceof Map<?, ?> map)) return Map.of();
+        Map<String, String> headers = new LinkedHashMap<>();
+        map.forEach((k, v) -> { if (k != null && v != null) headers.put(k.toString(), v.toString()); });
+        return headers;
+    }
+
     private void sendJson(WebSocket ws, Object payload) {
         if (ws == null) return;
-        try {
-            ws.sendText(objectMapper.writeValueAsString(payload), true);
-        } catch (Exception ignored) {}
+        synchronized (sendLock) {
+            try {
+                String json = objectMapper.writeValueAsString(payload);
+                ws.sendText(json, true).get(10, TimeUnit.SECONDS);
+            } catch (Exception ignored) {}
+        }
     }
 
     private static void sleep(long ms) {

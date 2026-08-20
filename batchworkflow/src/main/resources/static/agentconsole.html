@@ -94,6 +94,32 @@
         .form-group { display: flex; flex-direction: column; gap: 4px; }
         .form-group label { font-size: 11px; font-weight: 600; color: #5e6c84;
                             text-transform: uppercase; letter-spacing: .4px; }
+
+        .mode-toggle { display: flex; gap: 6px; margin-bottom: 12px; }
+        .mode-toggle button { background: #f4f5f7; color: #172b4d; border: 1px solid #dfe1e6; padding: 6px 14px; }
+        .mode-toggle button.active { background: #0052cc; color: #fff; border-color: #0052cc; }
+
+        .url-row { display: flex; gap: 8px; margin-bottom: 10px; }
+        .url-row select { flex: 0 0 100px; }
+        .url-row input[type=text] { flex: 1; padding: 8px 10px; font-size: 13px; border: 1px solid #ccc;
+                                     border-radius: 4px; outline: none; font-family: inherit; }
+        .url-row input[type=text]:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.25); }
+
+        textarea.small-input {
+            width: 100%;
+            padding: 8px 10px;
+            font-family: "Cascadia Code", "Fira Code", Consolas, "Courier New", monospace;
+            font-size: 12px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            outline: none;
+            resize: vertical;
+            min-height: 60px;
+        }
+        textarea.small-input:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.25); }
+
+        .out-line.status-ok  { color: #3fb950; font-weight: 600; }
+        .out-line.status-err { color: #ff7b72; font-weight: 600; }
     </style>
 </head>
 <body>
@@ -125,17 +151,49 @@
 
 <div class="panel">
     <div class="panel-title">Command</div>
+    <div class="mode-toggle">
+        <button type="button" id="modeBtnCommand" class="active" onclick="setMode('command')">Command Line</button>
+        <button type="button" id="modeBtnHttp" onclick="setMode('http')">HTTP Request</button>
+    </div>
     <div class="form-row">
         <div class="form-group">
             <label>Target Agent</label>
             <select id="agentSelect" style="min-width:220px"></select>
         </div>
     </div>
-    <div style="margin-bottom:10px">
-        <textarea class="cmd-input" id="commandInput" placeholder="Enter command to execute on the selected agent…&#10;e.g.: uptime"></textarea>
+
+    <div id="modeCommand">
+        <div style="margin-bottom:10px">
+            <textarea class="cmd-input" id="commandInput" placeholder="Enter command to execute on the selected agent…&#10;e.g.: uptime"></textarea>
+        </div>
     </div>
+
+    <div id="modeHttp" style="display:none">
+        <div class="url-row">
+            <select id="httpMethod">
+                <option>GET</option><option>POST</option><option>PUT</option>
+                <option>DELETE</option><option>PATCH</option><option>HEAD</option>
+            </select>
+            <input type="text" id="httpUrl" placeholder="https://example.com/api/resource">
+        </div>
+        <div class="form-row" style="margin-bottom:6px">
+            <div class="form-group" style="flex:1">
+                <label>Headers (one per line, Key: Value)</label>
+                <textarea class="small-input" id="httpHeaders" placeholder="Content-Type: application/json"></textarea>
+            </div>
+            <div class="form-group" style="width:120px">
+                <label>Timeout (ms)</label>
+                <input type="number" id="httpTimeout" value="30000" min="1" style="height:60px">
+            </div>
+        </div>
+        <div class="form-group" style="margin-bottom:10px">
+            <label>Body</label>
+            <textarea class="small-input" id="httpBody" placeholder="Request body (ignored for GET/HEAD)"></textarea>
+        </div>
+    </div>
+
     <div class="toolbar">
-        <button class="primary"   id="btnExec" onclick="execCommand()">Execute</button>
+        <button class="primary"   id="btnExec" onclick="runCurrentMode()">Execute</button>
         <button class="secondary" onclick="clearOutput()">Clear Output</button>
         <button class="tool-btn"  onclick="copyOutput()">Copy Output</button>
     </div>
@@ -182,6 +240,9 @@
                     break;
                 case 'done':
                     appendDone(msg.exitCode);
+                    break;
+                case 'httpResult':
+                    appendHttpResult(msg);
                     break;
                 case 'error':
                     setStatus('Error: ' + msg.message, 'error');
@@ -269,12 +330,30 @@
     }
 
     // -------------------------------------------------------------------------
+    // Mode toggle (command line vs http)
+    // -------------------------------------------------------------------------
+
+    let mode = 'command';
+
+    function setMode(next) {
+        mode = next;
+        document.getElementById('modeCommand').style.display = next === 'command' ? '' : 'none';
+        document.getElementById('modeHttp').style.display    = next === 'http'    ? '' : 'none';
+        document.getElementById('modeBtnCommand').classList.toggle('active', next === 'command');
+        document.getElementById('modeBtnHttp').classList.toggle('active', next === 'http');
+    }
+
+    function runCurrentMode() {
+        if (mode === 'http') runHttpRequest(); else runExecCommand();
+    }
+
+    // -------------------------------------------------------------------------
     // Exec
     // -------------------------------------------------------------------------
 
     let currentCommand = '';
 
-    function execCommand() {
+    function runExecCommand() {
         const agentId = document.getElementById('agentSelect').value;
         const command = document.getElementById('commandInput').value.trim();
         if (!agentId) { setStatus('Select a target agent first', 'error'); return; }
@@ -284,6 +363,38 @@
         currentCommand = command;
         ws.send(JSON.stringify({ type: 'exec', agentId, command }));
         document.getElementById('commandInput').value = '';
+    }
+
+    // -------------------------------------------------------------------------
+    // HTTP request
+    // -------------------------------------------------------------------------
+
+    function runHttpRequest() {
+        const agentId  = document.getElementById('agentSelect').value;
+        const method   = document.getElementById('httpMethod').value;
+        const url      = document.getElementById('httpUrl').value.trim();
+        const body     = document.getElementById('httpBody').value;
+        const timeoutMs = parseInt(document.getElementById('httpTimeout').value, 10) || 30000;
+        const headers  = parseHeaders(document.getElementById('httpHeaders').value);
+
+        if (!agentId) { setStatus('Select a target agent first', 'error'); return; }
+        if (!url)     { setStatus('Enter a URL first', 'error'); return; }
+        if (!ws || ws.readyState !== WebSocket.OPEN) { setStatus('Console channel not connected', 'error'); return; }
+
+        currentCommand = method + ' ' + url;
+        ws.send(JSON.stringify({ type: 'http', agentId, url, method, headers, body, timeoutMs }));
+    }
+
+    function parseHeaders(text) {
+        const headers = {};
+        text.split('\n').forEach(line => {
+            const idx = line.indexOf(':');
+            if (idx <= 0) return;
+            const key = line.slice(0, idx).trim();
+            const val = line.slice(idx + 1).trim();
+            if (key) headers[key] = val;
+        });
+        return headers;
     }
 
     // -------------------------------------------------------------------------
@@ -305,6 +416,33 @@
         done.className   = exitCode === 0 ? 'out-line done-ok' : 'out-line done-err';
         done.textContent = `[exit ${exitCode}]`;
         box.appendChild(done);
+        box.scrollTop = box.scrollHeight;
+    }
+
+    function appendHttpResult(msg) {
+        const box = document.getElementById('outputBox');
+
+        if (msg.error) {
+            const err = document.createElement('span');
+            err.className   = 'out-line status-err';
+            err.textContent = `[error] ${msg.error} (${msg.durationMs != null ? msg.durationMs : '?'}ms)`;
+            box.appendChild(err);
+            box.scrollTop = box.scrollHeight;
+            return;
+        }
+
+        const status = document.createElement('span');
+        status.className   = 'out-line ' + (msg.statusCode < 400 ? 'status-ok' : 'status-err');
+        status.textContent = `HTTP ${msg.statusCode}  (${msg.durationMs}ms)`;
+        box.appendChild(status);
+
+        if (msg.headers) {
+            Object.entries(msg.headers).forEach(([k, v]) => appendLine(`${k}: ${v}`));
+        }
+        if (msg.body) {
+            appendLine('');
+            msg.body.split('\n').forEach(line => appendLine(line));
+        }
         box.scrollTop = box.scrollHeight;
     }
 
@@ -356,7 +494,7 @@
     }
 
     document.getElementById('commandInput').addEventListener('keydown', e => {
-        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); execCommand(); }
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); runCurrentMode(); }
     });
 
     connectConsole();

@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Browser Simulator</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #f4f6f9; color: #222; padding: 24px; }
+  h1 { font-size: 1.3rem; font-weight: 600; margin-bottom: 4px; }
+  .subtitle { font-size: 0.82rem; color: #666; margin-bottom: 16px; }
+
+  .card {
+    background: #fff;
+    border: 1px solid #dde1e7;
+    border-radius: 6px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+  }
+  .card h2 { font-size: 1rem; font-weight: 600; margin-bottom: 12px; }
+
+  label { display: block; font-size: 0.8rem; font-weight: 600; margin-bottom: 4px; color: #555; }
+
+  input[type=text], input[type=number] {
+    width: 100%;
+    padding: 7px 9px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    font-family: inherit;
+  }
+
+  .row { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 12px; }
+  .row > div { flex: 1 1 200px; }
+
+  button {
+    padding: 7px 18px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    background: #0078d4;
+    color: #fff;
+  }
+  button:hover { background: #005fa3; }
+  button:disabled { background: #9ec5e8; cursor: not-allowed; }
+  button.danger { background: #b02a37; }
+  button.danger:hover { background: #8b202a; }
+  button.small { padding: 4px 12px; font-size: 0.78rem; }
+  button.secondary { background: #6c757d; }
+  button.secondary:hover { background: #545b62; }
+
+  .err-msg { color: #842029; font-size: 0.8rem; margin-top: 8px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  th {
+    background: #f0f2f5;
+    border: 1px solid #dde1e7;
+    padding: 6px 10px;
+    text-align: left;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  td { border: 1px solid #dde1e7; padding: 6px 10px; vertical-align: top; word-break: break-word; }
+  tr:nth-child(even) td { background: #fafbfc; }
+  tr.active-row td { background: #eaf3fc; }
+
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; font-weight: 600; white-space: nowrap; }
+  .badge-up { background: #d1e7dd; color: #0a5c36; }
+  .badge-down { background: #f8d7da; color: #842029; }
+  .badge-pending { background: #fff3cd; color: #856404; }
+  .mono { font-family: monospace; font-size: 0.8rem; }
+  .muted { color: #888; }
+  .empty-hint { font-size: 0.82rem; color: #888; padding: 8px 0; }
+
+  .view-layout { display: flex; gap: 18px; flex-wrap: wrap; }
+  .view-shot { flex: 1 1 380px; min-width: 280px; }
+  .view-shot img {
+    width: 100%;
+    border: 1px solid #dde1e7;
+    border-radius: 4px;
+    background: repeating-conic-gradient(#f0f0f0 0% 25%, #fafafa 0% 50%) 0 0 / 16px 16px;
+  }
+  .view-metrics { flex: 2 1 480px; min-width: 300px; }
+
+  .bd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .bd-card { border: 1px solid #dde1e7; border-radius: 6px; padding: 10px 12px; background: #fafbfc; }
+  .bd-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: #888; margin-bottom: 4px; }
+  .bd-val { font-size: 1.05rem; font-weight: 700; color: #222; }
+
+  details summary { cursor: pointer; font-size: 0.82rem; font-weight: 600; color: #555; margin-bottom: 6px; }
+  .raw-table-wrap { max-height: 260px; overflow: auto; border: 1px solid #dde1e7; border-radius: 4px; margin-top: 6px; }
+  .raw-table-wrap table { border: none; }
+
+  .view-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+  .view-toolbar h2 { margin-bottom: 0; }
+  .view-toolbar label { display: flex; align-items: center; gap: 4px; font-weight: normal; margin: 0; color: #555; }
+</style>
+</head>
+<body>
+
+<h1>Browser Simulator</h1>
+<div class="subtitle">Load a URL inside a real headless Chromium/Chrome/Edge process on this server and inspect its memory footprint via the Chrome DevTools Protocol.</div>
+
+<div class="card">
+  <h2>Load a Page</h2>
+  <div class="row">
+    <div style="flex:3 1 380px;">
+      <label>URL</label>
+      <input type="text" id="urlInput" placeholder="https://example.com">
+    </div>
+    <div style="flex:0 0 160px;">
+      <label>Settle Time (ms)</label>
+      <input type="number" id="settleInput" min="0" max="15000" value="1500">
+    </div>
+    <div style="flex:0 0 auto; align-self:flex-end;">
+      <button id="startBtn" onclick="startSim()">Load</button>
+    </div>
+  </div>
+  <div class="muted" style="font-size:0.78rem;">
+    Launches a dedicated headless browser process, navigates to the URL, waits for the load event
+    plus the settle time (lets async scripts/images finish), then captures memory metrics.
+    Needs Chrome, Chromium, or Edge installed on this server (set CHROME_PATH if not auto-detected).
+    On Linux, if the browser fails to launch as root (e.g. in a container), set env var
+    CHROME_NO_SANDBOX=true — off by default since it removes a layer of isolation.
+  </div>
+  <div id="startErr" class="err-msg" style="display:none;"></div>
+</div>
+
+<div class="card">
+  <h2>Sessions</h2>
+  <div id="sessionsWrap">
+    <table>
+      <thead>
+        <tr><th>ID</th><th>URL</th><th>Status</th><th>PID</th><th>Started</th><th></th></tr>
+      </thead>
+      <tbody id="sessionsBody"></tbody>
+    </table>
+    <div class="empty-hint" id="sessionsEmptyHint">No sessions yet — load a URL above.</div>
+  </div>
+</div>
+
+<div class="card" id="viewPanel" style="display:none;">
+  <div class="view-toolbar">
+    <h2 id="viewTitle">—</h2>
+    <button class="small secondary" id="refreshBtn" onclick="refreshViewed()">Re-capture</button>
+    <label><input type="checkbox" id="viewAutoRefresh" onchange="toggleViewAutoRefresh()"> Auto re-capture (2s)</label>
+  </div>
+
+  <div class="view-layout">
+    <div class="view-shot">
+      <img id="screenshotImg" style="display:none;">
+    </div>
+    <div class="view-metrics">
+      <div class="bd-grid" id="breakdownGrid"></div>
+      <details>
+        <summary>All raw Performance.getMetrics values</summary>
+        <div class="raw-table-wrap">
+          <table>
+            <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+            <tbody id="rawMetricsBody"></tbody>
+          </table>
+        </div>
+      </details>
+    </div>
+  </div>
+</div>
+
+<script>
+  let sessions = [];
+  let viewedId = null;
+  let viewAutoRefreshTimer = null;
+
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function fmtBytes(v) {
+    if (v === null || v === undefined || isNaN(v)) return '—';
+    const units = ['B','KB','MB','GB'];
+    let n = Number(v), i = 0;
+    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+    return n.toFixed(i === 0 ? 0 : 2) + ' ' + units[i];
+  }
+
+  function fmtMs(v) {
+    if (v === null || v === undefined || isNaN(v)) return '—';
+    return Number(v).toFixed(1) + ' ms';
+  }
+
+  function fmtNum(v) {
+    return (v === null || v === undefined || isNaN(v)) ? '—' : Math.round(Number(v));
+  }
+
+  function statusBadgeClass(status) {
+    if (status === 'READY') return 'badge-up';
+    if (status === 'ERROR') return 'badge-down';
+    return 'badge-pending';
+  }
+
+  // ---------------- Start ----------------
+
+  async function startSim() {
+    const errEl = document.getElementById('startErr');
+    errEl.style.display = 'none';
+    const url = document.getElementById('urlInput').value.trim();
+    const settleMs = parseInt(document.getElementById('settleInput').value, 10) || 1500;
+    if (!url) { errEl.textContent = 'Enter a URL.'; errEl.style.display = ''; return; }
+
+    const btn = document.getElementById('startBtn');
+    btn.disabled = true;
+    try {
+      const r = await fetch('/browsersimulator/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, settleMs })
+      });
+      const d = await r.json();
+      if (!r.ok) { errEl.textContent = d.error || 'Failed to start'; errEl.style.display = ''; return; }
+      await refreshList();
+      viewSession(d.id);
+    } catch (e) {
+      errEl.textContent = e.message;
+      errEl.style.display = '';
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // ---------------- Session list ----------------
+
+  async function refreshList() {
+    try {
+      const r = await fetch('/browsersimulator/status');
+      sessions = await r.json();
+      renderSessions();
+      if (viewedId && !sessions.some(s => s.id === viewedId)) {
+        viewedId = null;
+        document.getElementById('viewPanel').style.display = 'none';
+      }
+    } catch (e) { /* transient — next poll retries */ }
+  }
+
+  function renderSessions() {
+    const body = document.getElementById('sessionsBody');
+    const hint = document.getElementById('sessionsEmptyHint');
+    body.innerHTML = '';
+    hint.style.display = sessions.length ? 'none' : '';
+    sessions.forEach(s => {
+      const badge = `<span class="badge ${statusBadgeClass(s.status)}">${escHtml(s.status)}</span>`;
+      body.insertAdjacentHTML('beforeend', `
+        <tr class="${s.id === viewedId ? 'active-row' : ''}" style="cursor:pointer;" onclick="viewSession('${s.id}')">
+          <td class="mono">${escHtml(s.id)}</td>
+          <td class="mono" style="max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escHtml(s.url)}</td>
+          <td>${badge}${s.error ? `<div class="muted" style="font-size:0.72rem; margin-top:3px;">${escHtml(s.error)}</div>` : ''}</td>
+          <td class="mono">${s.pid || ''}</td>
+          <td class="mono">${new Date(s.createdAt).toLocaleTimeString()}</td>
+          <td><button class="small danger" onclick="event.stopPropagation(); stopSession('${s.id}')">Stop</button></td>
+        </tr>`);
+    });
+  }
+
+  // ---------------- Detail view ----------------
+
+  async function viewSession(id) {
+    viewedId = id;
+    renderSessions();
+    document.getElementById('viewPanel').style.display = '';
+    await loadViewedDetail();
+  }
+
+  async function loadViewedDetail() {
+    if (!viewedId) return;
+    try {
+      const r = await fetch('/browsersimulator/status/' + viewedId);
+      if (!r.ok) return;
+      renderDetail(await r.json());
+    } catch (e) { /* transient */ }
+  }
+
+  async function refreshViewed() {
+    if (!viewedId) return;
+    const btn = document.getElementById('refreshBtn');
+    btn.disabled = true;
+    try {
+      const r = await fetch('/browsersimulator/refresh/' + viewedId, { method: 'POST' });
+      const d = await r.json();
+      if (r.ok) renderDetail(d);
+    } catch (e) { /* transient */ } finally {
+      btn.disabled = false;
+    }
+    refreshList();
+  }
+
+  function toggleViewAutoRefresh() {
+    const on = document.getElementById('viewAutoRefresh').checked;
+    if (viewAutoRefreshTimer) { clearInterval(viewAutoRefreshTimer); viewAutoRefreshTimer = null; }
+    if (on) viewAutoRefreshTimer = setInterval(refreshViewed, 2000);
+  }
+
+  async function stopSession(id) {
+    await fetch('/browsersimulator/stop/' + id, { method: 'POST' });
+    if (viewedId === id) {
+      viewedId = null;
+      document.getElementById('viewPanel').style.display = 'none';
+      if (viewAutoRefreshTimer) { clearInterval(viewAutoRefreshTimer); viewAutoRefreshTimer = null; }
+    }
+    refreshList();
+  }
+
+  function renderDetail(d) {
+    document.getElementById('viewTitle').textContent = d.url + ' — ' + d.status;
+
+    const shot = document.getElementById('screenshotImg');
+    if (d.screenshotBase64) {
+      shot.src = 'data:image/png;base64,' + d.screenshotBase64;
+      shot.style.display = '';
+    } else {
+      shot.style.display = 'none';
+    }
+
+    const m = d.metrics || {};
+    const jsHeap = m.jsHeap || {};
+    const rtHeap = m.runtimeHeap || {};
+    const dom = m.domCounters || {};
+    const timing = m.timing || {};
+
+    document.getElementById('breakdownGrid').innerHTML = `
+      <div class="bd-card"><div class="bd-label">JS Heap Used</div><div class="bd-val">${fmtBytes(jsHeap.usedBytes)}</div></div>
+      <div class="bd-card"><div class="bd-label">JS Heap Total</div><div class="bd-val">${fmtBytes(jsHeap.totalBytes)}</div></div>
+      <div class="bd-card"><div class="bd-label">Runtime Heap Used</div><div class="bd-val">${fmtBytes(rtHeap.usedBytes)}</div></div>
+      <div class="bd-card"><div class="bd-label">Runtime Heap Total</div><div class="bd-val">${fmtBytes(rtHeap.totalBytes)}</div></div>
+      <div class="bd-card"><div class="bd-label">Embedder Heap</div><div class="bd-val">${fmtBytes(rtHeap.embedderHeapUsedBytes)}</div></div>
+      <div class="bd-card"><div class="bd-label">Backing Storage</div><div class="bd-val">${fmtBytes(rtHeap.backingStorageBytes)}</div></div>
+      <div class="bd-card"><div class="bd-label">DOM Nodes</div><div class="bd-val">${fmtNum(dom.nodes)}</div></div>
+      <div class="bd-card"><div class="bd-label">Documents</div><div class="bd-val">${fmtNum(dom.documents)}</div></div>
+      <div class="bd-card"><div class="bd-label">Frames</div><div class="bd-val">${fmtNum(dom.frames)}</div></div>
+      <div class="bd-card"><div class="bd-label">JS Event Listeners</div><div class="bd-val">${fmtNum(dom.jsEventListeners)}</div></div>
+      <div class="bd-card"><div class="bd-label">Layout Count</div><div class="bd-val">${fmtNum(dom.layoutCount)}</div></div>
+      <div class="bd-card"><div class="bd-label">Recalc Style Count</div><div class="bd-val">${fmtNum(dom.recalcStyleCount)}</div></div>
+      <div class="bd-card"><div class="bd-label">Layout Duration</div><div class="bd-val">${fmtMs(timing.layoutDurationMs)}</div></div>
+      <div class="bd-card"><div class="bd-label">Recalc Style Duration</div><div class="bd-val">${fmtMs(timing.recalcStyleDurationMs)}</div></div>
+      <div class="bd-card"><div class="bd-label">Script Duration</div><div class="bd-val">${fmtMs(timing.scriptDurationMs)}</div></div>
+      <div class="bd-card"><div class="bd-label">Task Duration</div><div class="bd-val">${fmtMs(timing.taskDurationMs)}</div></div>
+    `;
+
+    const raw = m.raw || {};
+    const rawKeys = Object.keys(raw).sort();
+    document.getElementById('rawMetricsBody').innerHTML = rawKeys.map(k =>
+      `<tr><td class="mono">${escHtml(k)}</td><td class="mono">${raw[k]}</td></tr>`).join('') ||
+      '<tr><td colspan="2" class="muted">No metrics captured yet.</td></tr>';
+  }
+
+  // ---------------- Init ----------------
+
+  refreshList();
+  setInterval(refreshList, 3000);
+</script>
+</body>
+</html>

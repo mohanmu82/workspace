@@ -8,12 +8,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Tracks remote agent jars currently connected over {@code /agent/ws}, and correlates
- * in-flight exec requests (identified by a server-generated requestId) back to the browser
- * websocket session on {@code /agentconsole/ws} that issued them.
+ * in-flight exec/http requests (identified by a server-generated requestId) back either to the
+ * browser websocket session on {@code /agentconsole/ws} that issued them, or to a pending
+ * {@link CompletableFuture} for requests dispatched server-side (see {@code AgentHttpDispatchService}).
  */
 @Service
 public class AgentRegistryService {
@@ -42,8 +44,9 @@ public class AgentRegistryService {
         void touch() { lastSeen = Instant.now(); }
     }
 
-    private final Map<String, AgentConnection>  agents          = new ConcurrentHashMap<>();
-    private final Map<String, WebSocketSession> pendingRequests = new ConcurrentHashMap<>();
+    private final Map<String, AgentConnection>  agents              = new ConcurrentHashMap<>();
+    private final Map<String, WebSocketSession> pendingRequests     = new ConcurrentHashMap<>();
+    private final Map<String, CompletableFuture<Map<String, Object>>> pendingHttpRequests = new ConcurrentHashMap<>();
 
     public AgentConnection register(String agentId, String hostname, WebSocketSession session) {
         AgentConnection conn = new AgentConnection(agentId, hostname, session);
@@ -82,5 +85,20 @@ public class AgentRegistryService {
 
     public void dropRequestsFor(WebSocketSession browserSession) {
         pendingRequests.values().removeIf(s -> s == browserSession);
+    }
+
+    /** Registers a server-initiated dispatch (no browser session involved) and returns its requestId. */
+    public String trackHttpRequest(CompletableFuture<Map<String, Object>> future) {
+        String requestId = UUID.randomUUID().toString();
+        pendingHttpRequests.put(requestId, future);
+        return requestId;
+    }
+
+    /** Completes a pending server-initiated dispatch. Returns false if requestId isn't one (e.g. it belongs to a browser console session). */
+    public boolean completeHttpRequest(String requestId, Map<String, Object> result) {
+        CompletableFuture<Map<String, Object>> future = pendingHttpRequests.remove(requestId);
+        if (future == null) return false;
+        future.complete(result);
+        return true;
     }
 }

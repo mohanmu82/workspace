@@ -1,0 +1,26 @@
+[Unit]
+Description=Remote batchworkflow agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=remoteagent
+Group=remoteagent
+WorkingDirectory=/opt/remoteagent
+EnvironmentFile=/etc/remoteagent/remoteagent.env
+ExecStart=/usr/bin/java -jar /opt/remoteagent/remoteagent.jar --server=${REMOTEAGENT_SERVER} --id=${REMOTEAGENT_ID} --hostname=${REMOTEAGENT_HOSTNAME} --token=${REMOTEAGENT_TOKEN}
+
+# Restart on crash, clean exit, or OOM kill alike; small delay avoids hot-looping.
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/remoteagent
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

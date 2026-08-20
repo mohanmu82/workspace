@@ -17,15 +17,16 @@ import java.util.Map;
 
 /**
  * WebSocket endpoint at {@code /agentconsole/ws} — the browser-facing side of remote agent
- * command execution. The UI asks for the current agent list and issues {@code exec} requests
- * here; this handler looks the target agent up in {@link AgentRegistryService}, forwards the
- * command over its {@code /agent/ws} session, and the agent's streamed reply is routed straight
- * back to this session by {@link AgentWebSocketHandler}.
+ * command execution. The UI asks for the current agent list and issues {@code exec} or
+ * {@code http} requests here; this handler looks the target agent up in
+ * {@link AgentRegistryService}, forwards the request over its {@code /agent/ws} session, and the
+ * agent's reply is routed straight back to this session by {@link AgentWebSocketHandler}.
  *
  * <p>Protocol (browser → server):
  * <pre>
  * {"type":"list"}
  * {"type":"exec","agentId":"host1","command":"uptime"}
+ * {"type":"http","agentId":"host1","url":"https://...","method":"POST","headers":{...},"body":"...","timeoutMs":30000}
  * </pre>
  *
  * <p>Protocol (server → browser):
@@ -34,6 +35,7 @@ import java.util.Map;
  * {"type":"started","requestId":"...","agentId":"host1"}
  * {"type":"line","requestId":"...","text":"..."}
  * {"type":"done","requestId":"...","exitCode":0}
+ * {"type":"httpResult","requestId":"...","statusCode":200,"headers":{...},"body":"...","durationMs":42}
  * {"type":"error","message":"..."}
  * </pre>
  */
@@ -56,6 +58,7 @@ public class AgentConsoleWebSocketHandler extends TextWebSocketHandler {
             switch (str(params, "type")) {
                 case "list" -> sendAgentList(ws);
                 case "exec" -> handleExec(ws, params);
+                case "http" -> handleHttp(ws, params);
                 default     -> sendError(ws, "Unknown message type: " + str(params, "type"));
             }
         } catch (Exception e) {
@@ -103,6 +106,34 @@ public class AgentConsoleWebSocketHandler extends TextWebSocketHandler {
         String requestId = registry.trackRequest(ws);
         sendJson(ws, Map.of("type", "started", "requestId", requestId, "agentId", agentId));
         sendJson(conn.getSession(), Map.of("type", "exec", "requestId", requestId, "command", command));
+    }
+
+    private void handleHttp(WebSocketSession ws, Map<String, Object> params) {
+        String agentId = str(params, "agentId");
+        String url     = str(params, "url");
+        if (agentId.isBlank() || url.isBlank()) {
+            sendError(ws, "agentId and url are required");
+            return;
+        }
+
+        AgentConnection conn = registry.get(agentId);
+        if (conn == null || !conn.getSession().isOpen()) {
+            sendError(ws, "Agent not connected: " + agentId);
+            return;
+        }
+
+        String requestId = registry.trackRequest(ws);
+        Map<String, Object> outbound = new LinkedHashMap<>();
+        outbound.put("type", "http");
+        outbound.put("requestId", requestId);
+        outbound.put("url", url);
+        outbound.put("method", params.getOrDefault("method", "GET"));
+        outbound.put("headers", params.getOrDefault("headers", Map.of()));
+        outbound.put("body", params.getOrDefault("body", ""));
+        outbound.put("timeoutMs", params.getOrDefault("timeoutMs", 30000));
+
+        sendJson(ws, Map.of("type", "started", "requestId", requestId, "agentId", agentId));
+        sendJson(conn.getSession(), outbound);
     }
 
     // -------------------------------------------------------------------------

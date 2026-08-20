@@ -18,8 +18,11 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * WebSocket endpoint at {@code /agent/ws} — the control channel that standalone remote agent
  * jars dial into. The agent registers with an id/hostname/shared-secret token, then the server
- * forwards {@code exec} commands to it (from {@link AgentConsoleWebSocketHandler}) and relays
- * its streamed {@code line}/{@code done} responses back to whichever browser session asked.
+ * forwards {@code exec}/{@code http} requests to it — from {@link AgentConsoleWebSocketHandler}
+ * for browser-console use, or from {@code AgentHttpDispatchService} for server-side bulk
+ * fan-out — and relays the agent's responses back to whichever requester asked: a browser
+ * session for console requests, or a pending {@link com.mycompany.batch.service.AgentRegistryService}
+ * future for server-dispatched ones.
  *
  * <p>Protocol (agent → server):
  * <pre>
@@ -27,6 +30,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * {"type":"heartbeat"}
  * {"type":"line","requestId":"...","text":"..."}
  * {"type":"done","requestId":"...","exitCode":0}
+ * {"type":"httpResult","requestId":"...","statusCode":200,"headers":{...},"body":"...","durationMs":42}
  * {"type":"error","requestId":"...","message":"..."}
  * </pre>
  *
@@ -35,6 +39,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * {"type":"registered","message":"..."}
  * {"type":"error","message":"..."}
  * {"type":"exec","requestId":"...","command":"..."}
+ * {"type":"http","requestId":"...","url":"...","method":"POST","headers":{...},"body":"...","timeoutMs":30000}
  * </pre>
  */
 @Component
@@ -61,9 +66,10 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
             switch (str(params, "type")) {
                 case "register"  -> handleRegister(ws, params);
                 case "heartbeat" -> registry.touch(sessionAgentIds.get(ws.getId()));
-                case "line"      -> forwardToBrowser(params, "line");
-                case "done"      -> forwardToBrowser(params, "done");
-                case "error"     -> forwardToBrowser(params, "error");
+                case "line"       -> forwardToBrowser(params, "line");
+                case "done"       -> forwardToBrowser(params, "done");
+                case "httpResult" -> forwardToBrowser(params, "httpResult");
+                case "error"      -> forwardToBrowser(params, "error");
                 default          -> sendError(ws, "Unknown message type: " + str(params, "type"));
             }
         } catch (Exception e) {
@@ -104,12 +110,16 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
         String requestId = str(params, "requestId");
         if (requestId.isBlank()) return;
 
-        boolean terminal = type.equals("done") || type.equals("error");
-        WebSocketSession browser = registry.resolveRequest(requestId, terminal);
-        if (browser == null || !browser.isOpen()) return;
-
         Map<String, Object> outbound = new LinkedHashMap<>(params);
         outbound.put("type", type);
+
+        boolean terminal = type.equals("done") || type.equals("error") || type.equals("httpResult");
+
+        // Server-dispatched (bulk fan-out) requests are tracked by a future, not a browser session.
+        if (terminal && registry.completeHttpRequest(requestId, outbound)) return;
+
+        WebSocketSession browser = registry.resolveRequest(requestId, terminal);
+        if (browser == null || !browser.isOpen()) return;
         sendJson(browser, outbound);
     }
 

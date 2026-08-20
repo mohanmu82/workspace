@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>WebSocket Proxy</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #f4f6f9; color: #222; padding: 24px; }
+  h1 { font-size: 1.3rem; font-weight: 600; margin-bottom: 4px; }
+  .subtitle { font-size: 0.82rem; color: #666; margin-bottom: 16px; }
+
+  .card {
+    background: #fff;
+    border: 1px solid #dde1e7;
+    border-radius: 6px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+  }
+  .card h2 { font-size: 1rem; font-weight: 600; margin-bottom: 12px; }
+
+  label { display: block; font-size: 0.8rem; font-weight: 600; margin-bottom: 4px; color: #555; }
+
+  input[type=text], input[type=number], select, textarea {
+    width: 100%;
+    padding: 7px 9px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    font-family: inherit;
+  }
+  textarea { font-family: monospace; resize: vertical; }
+  input:disabled, textarea:disabled, select:disabled { background: #f0f0f0; color: #999; cursor: not-allowed; }
+
+  .row { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 12px; }
+  .row > div { flex: 1 1 200px; }
+  .row.tight { align-items: flex-end; }
+
+  button {
+    padding: 7px 18px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    background: #0078d4;
+    color: #fff;
+  }
+  button:hover { background: #005fa3; }
+  button:disabled { background: #9ec5e8; cursor: not-allowed; }
+  button.secondary { background: #6c757d; }
+  button.secondary:hover { background: #545b62; }
+  button.danger { background: #b02a37; }
+  button.danger:hover { background: #8b202a; }
+  button.small { padding: 4px 12px; font-size: 0.78rem; }
+
+  .err-msg { color: #842029; font-size: 0.8rem; margin-top: 8px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  th {
+    background: #f0f2f5;
+    border: 1px solid #dde1e7;
+    padding: 6px 10px;
+    text-align: left;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  td { border: 1px solid #dde1e7; padding: 6px 10px; vertical-align: top; word-break: break-word; }
+  tr:nth-child(even) td { background: #fafbfc; }
+  .filter-row th { padding: 4px 6px; background: #fff; }
+  .filter-row input { padding: 4px 6px; font-size: 0.78rem; }
+
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; font-weight: 600; white-space: nowrap; }
+  .badge-up { background: #d1e7dd; color: #0a5c36; }
+  .badge-down { background: #f8d7da; color: #842029; }
+  .badge-success { background: #d1e7dd; color: #0a5c36; }
+  .badge-error { background: #f8d7da; color: #842029; }
+  .mono { font-family: monospace; font-size: 0.8rem; }
+  .muted { color: #888; }
+
+  .proxy-row td { vertical-align: middle; }
+  .target-chip { display: inline-block; margin: 2px 4px 2px 0; padding: 2px 8px; border-radius: 10px; font-size: 0.72rem; }
+  .target-chip.up { background: #d1e7dd; color: #0a5c36; }
+  .target-chip.down { background: #f8d7da; color: #842029; }
+
+  pre.response-box {
+    background: #f7f8fa;
+    border: 1px solid #dde1e7;
+    border-radius: 4px;
+    padding: 10px 12px;
+    font-size: 0.8rem;
+    max-height: 320px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .presets { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+  .table-wrap { max-height: 480px; overflow: auto; border: 1px solid #dde1e7; border-radius: 4px; }
+  .table-wrap table { border: none; }
+  .table-wrap th { position: sticky; top: 0; z-index: 1; }
+  .table-wrap .filter-row th { top: 29px; }
+
+  .empty-hint { font-size: 0.82rem; color: #888; padding: 8px 0; }
+
+  .progress-track { flex: 0 0 160px; height: 6px; border-radius: 3px; background: #e1e0d9; overflow: hidden; }
+  .progress-fill { height: 100%; background: #0078d4; width: 0%; transition: width .15s ease; }
+
+  .summary-cell-inline { font-size: 0.82rem; color: #444; }
+  .summary-cell-inline b { font-weight: 700; }
+  .summary-cell-inline.success b { color: #0a5c36; }
+  .summary-cell-inline.error b { color: #842029; }
+
+  .result-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+  .result-card {
+    border: 1px solid #dde1e7; border-left: 3px solid #cfd4da; border-radius: 6px;
+    padding: 8px 10px; background: #fff; font-size: 0.78rem; cursor: pointer;
+  }
+  .result-card.success { border-left-color: #0ca30c; background: #f6fcf8; }
+  .result-card.error   { border-left-color: #d03b3b; background: #fdf5f5; }
+  .result-card .rc-head { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; margin-bottom: 4px; }
+  .result-card .rc-idx { font-weight: 700; color: #555; }
+  .result-card .rc-meta { color: #777; font-size: 0.72rem; word-break: break-all; }
+  .result-card .rc-msg { color: #555; margin-top: 3px; word-break: break-word; }
+  .result-card .rc-payload { display: none; margin-top: 6px; }
+  .result-card.expanded .rc-payload { display: block; }
+  .result-card .rc-payload pre {
+    background: #f7f8fa; border: 1px solid #eef0f4; border-radius: 4px; padding: 6px 8px;
+    font-size: 0.72rem; max-height: 200px; overflow: auto; white-space: pre-wrap; word-break: break-word; margin-top: 4px;
+  }
+  .result-card .rc-payload .rc-payload-label { font-size: 0.66rem; font-weight: 700; color: #999; text-transform: uppercase; letter-spacing: .03em; }
+
+  .group-block { margin-bottom: 14px; }
+  .group-block-header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+  .group-block-header .name { font-size: 0.82rem; font-weight: 700; color: #333; }
+  .group-block-header .count { font-size: 0.74rem; color: #999; }
+</style>
+</head>
+<body>
+
+<h1>WebSocket Proxy</h1>
+<div class="subtitle">Open a listening port on this server and proxy/reflect/broadcast traffic to one or more target WebSocket endpoints.</div>
+
+<div class="card">
+  <h2>Start a Proxy</h2>
+  <div class="row">
+    <div style="flex:0 0 140px;">
+      <label>Listen Port</label>
+      <input type="number" id="portInput" min="1" max="65535" placeholder="13000">
+    </div>
+    <div style="flex:2 1 380px;">
+      <label>Target WebSocket Address(es) — comma separated</label>
+      <input type="text" id="targetsInput" placeholder="ws://host1:8080/socket, ws://host2:8080/socket">
+    </div>
+    <div style="flex:0 0 160px;">
+      <label>Mode</label>
+      <select id="modeInput" onchange="onModeChange()">
+        <option value="PROXY" selected>PROXY</option>
+        <option value="REFLECT">REFLECT</option>
+        <option value="BROADCAST">BROADCAST</option>
+      </select>
+    </div>
+    <div style="flex:0 0 auto;">
+      <button id="startBtn" onclick="startProxy()">Start</button>
+    </div>
+  </div>
+  <div class="muted" style="font-size:0.78rem;">
+    REFLECT builds the envelope and returns it without contacting any target.
+    PROXY round-robins across whichever targets are currently connected.
+    BROADCAST sends to every configured target and returns all responses.
+  </div>
+  <div id="startErr" class="err-msg" style="display:none;"></div>
+</div>
+
+<div class="card">
+  <h2>Active Proxies</h2>
+  <div id="proxyTableWrap">
+    <table>
+      <thead>
+        <tr><th>Port</th><th>Mode</th><th>Clients</th><th>Targets</th><th></th></tr>
+      </thead>
+      <tbody id="proxyBody"></tbody>
+    </table>
+    <div class="empty-hint" id="proxyEmptyHint">No proxies running.</div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Send Test Payload</h2>
+  <div class="row">
+    <div style="flex:0 0 200px;">
+      <label>Through Proxy (port)</label>
+      <select id="sendPortSelect"></select>
+    </div>
+  </div>
+  <label>Payload (string or JSON)</label>
+  <textarea id="payloadInput" rows="6" placeholder='{"hello":"world"}'></textarea>
+  <div style="margin-top:10px;">
+    <button onclick="sendPayload()">Send</button>
+  </div>
+  <div style="margin-top:12px;">
+    <label>Response</label>
+    <pre class="response-box" id="responseBox">—</pre>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Batch Send</h2>
+  <div class="row">
+    <div style="flex:0 0 200px;">
+      <label>Through Proxy (port)</label>
+      <select id="batchPortSelect"></select>
+    </div>
+    <div style="flex:0 0 160px;">
+      <label>Payload Source</label>
+      <select id="batchSourceMode" onchange="onBatchSourceModeChange()">
+        <option value="template" selected>Template</option>
+        <option value="list">List (one per line)</option>
+      </select>
+    </div>
+    <div style="flex:0 0 110px;" id="batchCountWrap">
+      <label>Count</label>
+      <input type="number" id="batchCountInput" min="1" max="5000" value="500">
+    </div>
+    <div style="flex:0 0 120px;">
+      <label>Concurrency</label>
+      <input type="number" id="batchConcurrencyInput" min="1" max="100" value="10">
+    </div>
+    <div style="flex:0 0 auto; display:flex; gap:8px; align-items:flex-end;">
+      <button id="batchSendBtn" onclick="sendBatch()">Send Batch</button>
+      <button class="secondary" onclick="clearBatchResults()">Clear Results</button>
+    </div>
+  </div>
+  <label id="batchPayloadLabel">Payload Template — {{i}} = 0-based index, {{n}} = 1-based, {{uuid}}, {{timestamp}}</label>
+  <textarea id="batchPayloadInput" rows="5" placeholder='{"id": {{i}}, "name": "user-{{i}}"}'></textarea>
+  <div class="row tight" id="batchProgressWrap" style="display:none; margin-top:10px;">
+    <div style="flex:0 0 auto; display:flex; align-items:center; gap:8px;">
+      <div class="progress-track"><div class="progress-fill" id="batchProgressFill"></div></div>
+      <span id="batchProgressLabel" class="muted" style="font-size:0.78rem;"></span>
+    </div>
+  </div>
+  <div id="batchErr" class="err-msg" style="display:none;"></div>
+</div>
+
+<div class="card">
+  <h2>Batch Results</h2>
+  <div class="presets">
+    <span class="summary-cell-inline">Total: <b id="resTotal">0</b></span>
+    <span class="summary-cell-inline success">Success: <b id="resSuccess">0</b></span>
+    <span class="summary-cell-inline error">Error: <b id="resError">0</b></span>
+    <select id="groupBySelect" style="width:auto;" onchange="renderResults()">
+      <option value="">No grouping</option>
+    </select>
+    <select id="statusFilterSelect" style="width:auto;" onchange="renderResults()">
+      <option value="">All statuses</option>
+      <option value="success">Success only</option>
+      <option value="error">Error only</option>
+    </select>
+    <input type="text" id="resultSearchInput" placeholder="Search payload/message…" style="width:220px;" oninput="renderResults()">
+  </div>
+  <div id="resultGroups"></div>
+  <div class="empty-hint" id="resultEmptyHint">No batch sent yet.</div>
+</div>
+
+<div class="card">
+  <h2>Request Log</h2>
+  <div class="presets">
+    <button class="small secondary" onclick="loadLog({limit:10})">Last 10</button>
+    <button class="small secondary" onclick="loadLog({sinceMinutes:10})">Last 10 Minutes</button>
+    <button class="small secondary" onclick="loadLog({sinceMinutes:60})">Last 1 Hour</button>
+    <button class="small secondary" onclick="loadLog({limit:1000})">All (up to 1000)</button>
+    <button class="small secondary" onclick="loadLog(lastQuery)">Refresh</button>
+    <button class="small secondary" onclick="clearColumnFilters()">Clear Column Filters</button>
+    <select id="logPortSelect" style="width:auto;" onchange="loadLog(lastQuery)"></select>
+    <label style="display:flex; align-items:center; gap:4px; font-weight:normal; margin:0;">
+      <input type="checkbox" id="logAutoRefresh" style="width:auto;" onchange="toggleLogAutoRefresh()"> Auto-refresh
+    </label>
+    <span id="logCount" class="muted" style="font-size:0.8rem;"></span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Time</th><th>UUID</th><th>Port</th><th>Mode</th><th>Source</th><th>Target</th>
+          <th>Status</th><th>Message</th><th>Time Taken (ms)</th><th>Request Payload</th><th>Response Payload</th>
+        </tr>
+        <tr class="filter-row">
+          <th></th>
+          <th><input data-col="uuid" oninput="renderLog()"></th>
+          <th><input data-col="port" oninput="renderLog()"></th>
+          <th><input data-col="mode" oninput="renderLog()"></th>
+          <th><input data-col="source" oninput="renderLog()"></th>
+          <th><input data-col="target" oninput="renderLog()"></th>
+          <th><input data-col="status" oninput="renderLog()"></th>
+          <th><input data-col="message" oninput="renderLog()"></th>
+          <th></th>
+          <th><input data-col="requestPayload" oninput="renderLog()"></th>
+          <th><input data-col="responsePayload" oninput="renderLog()"></th>
+        </tr>
+      </thead>
+      <tbody id="logBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  let currentLog = [];
+  let lastQuery = { limit: 100 };
+  let defaultPort = 13000;
+
+  // Admin-editable override (Admin page -> Page Properties -> "websocketproxy" -> "defaultPort").
+  async function loadPageProperties() {
+    try {
+      const r = await fetch('/pageproperty/websocketproxy');
+      const props = await r.json();
+      const n = parseInt(props && props.defaultPort, 10);
+      if (!isNaN(n)) defaultPort = n;
+    } catch (e) { /* keep hardcoded default */ }
+    const portInput = document.getElementById('portInput');
+    portInput.placeholder = String(defaultPort);
+    if (!portInput.value) portInput.value = defaultPort;
+  }
+
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function fmtVal(v) {
+    if (v === null || v === undefined) return '';
+    return typeof v === 'object' ? JSON.stringify(v) : String(v);
+  }
+
+  function onModeChange() {
+    const mode = document.getElementById('modeInput').value;
+    const targetsInput = document.getElementById('targetsInput');
+    const isReflect = mode === 'REFLECT';
+    targetsInput.disabled = isReflect;
+    targetsInput.placeholder = isReflect
+      ? 'Not used in REFLECT mode'
+      : 'ws://host1:8080/socket, ws://host2:8080/socket';
+    if (isReflect) targetsInput.value = '';
+  }
+
+  // ---------------- Batch Send ----------------
+
+  let batchResults = [];       // flattened list of {index, status, target, message, timeTakenMs, uuid, requestPayload, responsePayload, port, mode}
+  let batchSending = false;
+
+  function onBatchSourceModeChange() {
+    const mode = document.getElementById('batchSourceMode').value;
+    const isList = mode === 'list';
+    document.getElementById('batchCountWrap').style.display = isList ? 'none' : '';
+    document.getElementById('batchPayloadLabel').textContent = isList
+      ? 'Payload List — one message per line'
+      : 'Payload Template — {{i}} = 0-based index, {{n}} = 1-based, {{uuid}}, {{timestamp}}';
+    document.getElementById('batchPayloadInput').placeholder = isList
+      ? '{"id": 1, "name": "user-1"}\n{"id": 2, "name": "user-2"}'
+      : '{"id": {{i}}, "name": "user-{{i}}"}';
+  }
+
+  function uuidv4() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+      const r = Math.random() * 16 | 0;
+      return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+    });
+  }
+
+  function applyTemplate(template, i) {
+    return template
+      .replace(/\{\{\s*i\s*\}\}/g, String(i))
+      .replace(/\{\{\s*n\s*\}\}/g, String(i + 1))
+      .replace(/\{\{\s*uuid\s*\}\}/g, uuidv4())
+      .replace(/\{\{\s*timestamp\s*\}\}/g, String(Date.now()));
+  }
+
+  function buildBatchPayloads() {
+    const source = document.getElementById('batchSourceMode').value;
+    const raw = document.getElementById('batchPayloadInput').value;
+    if (source === 'list') {
+      return raw.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    }
+    const count = Math.max(1, parseInt(document.getElementById('batchCountInput').value, 10) || 0);
+    const template = raw.trim() || '{"id": {{i}}}';
+    const out = [];
+    for (let i = 0; i < count; i++) out.push(applyTemplate(template, i));
+    return out;
+  }
+
+  // Simple bounded-concurrency worker pool — fires `worker` for each item, never running more
+  // than `concurrency` at once, so a 500-message batch doesn't open 500 simultaneous sockets.
+  async function runPool(items, concurrency, worker) {
+    let next = 0;
+    let active = 0;
+    return new Promise(resolve => {
+      function pump() {
+        if (next >= items.length && active === 0) { resolve(); return; }
+        while (active < concurrency && next < items.length) {
+          const idx = next++;
+          active++;
+          worker(items[idx], idx).finally(() => { active--; pump(); });
+        }
+      }
+      pump();
+    });
+  }
+
+  function tryParse(s) {
+    try { return JSON.parse(s); } catch { return s; }
+  }
+
+  async function sendBatch() {
+    if (batchSending) return;
+    const errEl = document.getElementById('batchErr');
+    errEl.style.display = 'none';
+    const port = document.getElementById('batchPortSelect').value;
+    if (!port) { errEl.textContent = 'Start a proxy first.'; errEl.style.display = ''; return; }
+    const portNum = parseInt(port, 10);
+
+    let payloads;
+    try {
+      payloads = buildBatchPayloads();
+    } catch (e) {
+      errEl.textContent = 'Failed to build payloads: ' + e.message;
+      errEl.style.display = '';
+      return;
+    }
+    if (payloads.length === 0) { errEl.textContent = 'No payloads to send.'; errEl.style.display = ''; return; }
+
+    const concurrency = Math.max(1, Math.min(100, parseInt(document.getElementById('batchConcurrencyInput').value, 10) || 10));
+
+    batchResults = [];
+    batchSending = true;
+    const btn = document.getElementById('batchSendBtn');
+    btn.disabled = true;
+    const progressWrap = document.getElementById('batchProgressWrap');
+    const progressFill = document.getElementById('batchProgressFill');
+    const progressLabel = document.getElementById('batchProgressLabel');
+    progressWrap.style.display = '';
+    progressFill.style.width = '0%';
+    progressLabel.textContent = `0 / ${payloads.length}`;
+
+    let completed = 0;
+    let lastRenderAt = 0;
+    function maybeRenderResults(force) {
+      const now = Date.now();
+      if (force || now - lastRenderAt > 250) {
+        lastRenderAt = now;
+        updateGroupBySelect();
+        renderResults();
+      }
+    }
+
+    async function sendOne(payloadStr, idx) {
+      const reqParsed = tryParse(payloadStr);
+      try {
+        const r = await fetch('/wsproxy/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ port: portNum, payload: payloadStr })
+        });
+        const d = await r.json();
+        const entries = Array.isArray(d) ? d : [d];
+        entries.forEach((e, sub) => {
+          batchResults.push({
+            index: idx,
+            sub,
+            status: (e && e.status) || (e && e.error ? 'error' : 'unknown'),
+            target: (e && e.target) || '',
+            message: (e && e.message) || (e && e.error) || '',
+            timeTakenMs: e && e.timeTakenMs,
+            uuid: e && e.uuid,
+            requestPayload: reqParsed,
+            responsePayload: e && ('payload' in e ? e.payload : e),
+            port: portNum
+          });
+        });
+      } catch (e) {
+        batchResults.push({
+          index: idx, sub: 0, status: 'error', target: '', message: e.message,
+          timeTakenMs: null, uuid: null, requestPayload: reqParsed, responsePayload: null, port: portNum
+        });
+      }
+      completed++;
+      const pct = Math.round((completed / payloads.length) * 100);
+      progressFill.style.width = pct + '%';
+      progressLabel.textContent = `${completed} / ${payloads.length}`;
+      maybeRenderResults(false);
+    }
+
+    try {
+      await runPool(payloads, concurrency, sendOne);
+    } finally {
+      batchSending = false;
+      btn.disabled = false;
+      progressWrap.style.display = 'none';
+      maybeRenderResults(true);
+      loadLog(lastQuery);
+    }
+  }
+
+  function clearBatchResults() {
+    batchResults = [];
+    updateGroupBySelect();
+    renderResults();
+  }
+
+  // ---------------- Batch Results: grouping + rendering ----------------
+
+  function fmtGroupVal(v) {
+    if (v === null || v === undefined || v === '') return '(none)';
+    return typeof v === 'object' ? JSON.stringify(v) : String(v);
+  }
+
+  function getGroupValue(item, key) {
+    if (key === '__status') return item.status || 'unknown';
+    if (key === '__target') return item.target || '(none)';
+    if (key === '__message') return item.message || '(none)';
+    if (key === '__port') return String(item.port);
+    if (key.startsWith('req:')) {
+      const k = key.slice(4);
+      const v = item.requestPayload && typeof item.requestPayload === 'object' ? item.requestPayload[k] : undefined;
+      return fmtGroupVal(v);
+    }
+    if (key.startsWith('resp:')) {
+      const k = key.slice(5);
+      const v = item.responsePayload && typeof item.responsePayload === 'object' ? item.responsePayload[k] : undefined;
+      return fmtGroupVal(v);
+    }
+    return '';
+  }
+
+  // Rebuilds the Group By dropdown options from whatever attributes are actually present across
+  // the current results (fixed ones + any top-level keys found on request/response payload
+  // objects), without clobbering the user's current selection if it's still valid.
+  function updateGroupBySelect() {
+    const sel = document.getElementById('groupBySelect');
+    const prev = sel.value;
+    const reqKeys = new Set();
+    const respKeys = new Set();
+    batchResults.forEach(item => {
+      if (item.requestPayload && typeof item.requestPayload === 'object' && !Array.isArray(item.requestPayload)) {
+        Object.keys(item.requestPayload).forEach(k => reqKeys.add(k));
+      }
+      if (item.responsePayload && typeof item.responsePayload === 'object' && !Array.isArray(item.responsePayload)) {
+        Object.keys(item.responsePayload).forEach(k => respKeys.add(k));
+      }
+    });
+
+    let html = '<option value="">No grouping</option>';
+    html += '<optgroup label="Result">';
+    html += '<option value="__status">Status</option>';
+    html += '<option value="__target">Target</option>';
+    html += '<option value="__message">Message</option>';
+    html += '<option value="__port">Port</option>';
+    html += '</optgroup>';
+    if (reqKeys.size) {
+      html += '<optgroup label="Request Payload">' +
+        Array.from(reqKeys).sort().map(k => `<option value="req:${escHtml(k)}">${escHtml(k)}</option>`).join('') +
+        '</optgroup>';
+    }
+    if (respKeys.size) {
+      html += '<optgroup label="Response Payload">' +
+        Array.from(respKeys).sort().map(k => `<option value="resp:${escHtml(k)}">${escHtml(k)}</option>`).join('') +
+        '</optgroup>';
+    }
+    sel.innerHTML = html;
+    if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+  }
+
+  function renderResultCard(item) {
+    const statusCls = item.status === 'success' ? 'success' : (item.status === 'error' ? 'error' : '');
+    const badge = `<span class="badge ${item.status === 'success' ? 'badge-success' : 'badge-error'}">${escHtml(item.status || 'unknown')}</span>`;
+    const label = item.sub > 0 ? `#${item.index}.${item.sub}` : `#${item.index}`;
+    return `
+      <div class="result-card ${statusCls}" onclick="this.classList.toggle('expanded')">
+        <div class="rc-head">
+          <span class="rc-idx">${label}</span>
+          ${badge}
+        </div>
+        <div class="rc-meta">${escHtml(item.target || '')}${item.timeTakenMs !== null && item.timeTakenMs !== undefined ? ' · ' + item.timeTakenMs + ' ms' : ''}</div>
+        ${item.message ? `<div class="rc-msg">${escHtml(item.message)}</div>` : ''}
+        <div class="rc-payload">
+          <div class="rc-payload-label">Request</div>
+          <pre>${escHtml(fmtVal(item.requestPayload))}</pre>
+          <div class="rc-payload-label">Response</div>
+          <pre>${escHtml(fmtVal(item.responsePayload))}</pre>
+        </div>
+      </div>`;
+  }
+
+  function renderResults() {
+    document.getElementById('resTotal').textContent = batchResults.length;
+    document.getElementById('resSuccess').textContent = batchResults.filter(r => r.status === 'success').length;
+    document.getElementById('resError').textContent = batchResults.filter(r => r.status === 'error').length;
+
+    const statusFilter = document.getElementById('statusFilterSelect').value;
+    const search = document.getElementById('resultSearchInput').value.trim().toLowerCase();
+    const groupKey = document.getElementById('groupBySelect').value;
+
+    const filtered = batchResults.filter(item => {
+      if (statusFilter && item.status !== statusFilter) return false;
+      if (search) {
+        const haystack = (fmtVal(item.requestPayload) + ' ' + fmtVal(item.responsePayload) + ' ' + item.message + ' ' + item.target).toLowerCase();
+        if (!haystack.includes(search)) return false;
+      }
+      return true;
+    });
+
+    const wrap = document.getElementById('resultGroups');
+    const emptyHint = document.getElementById('resultEmptyHint');
+    if (filtered.length === 0) {
+      wrap.innerHTML = '';
+      emptyHint.style.display = '';
+      emptyHint.textContent = batchResults.length === 0 ? 'No batch sent yet.' : 'No results match the current filters.';
+      return;
+    }
+    emptyHint.style.display = 'none';
+
+    if (!groupKey) {
+      wrap.innerHTML = `<div class="result-grid">${filtered.map(renderResultCard).join('')}</div>`;
+      return;
+    }
+
+    const groups = new Map();
+    filtered.forEach(item => {
+      const val = getGroupValue(item, groupKey);
+      if (!groups.has(val)) groups.set(val, []);
+      groups.get(val).push(item);
+    });
+    const sortedKeys = Array.from(groups.keys()).sort();
+    wrap.innerHTML = sortedKeys.map(k => `
+      <div class="group-block">
+        <div class="group-block-header">
+          <span class="name">${escHtml(k)}</span>
+          <span class="count">${groups.get(k).length}</span>
+        </div>
+        <div class="result-grid">${groups.get(k).map(renderResultCard).join('')}</div>
+      </div>`).join('');
+  }
+
+  // ---------------- Start / Stop ----------------
+
+  async function startProxy() {
+    const errEl = document.getElementById('startErr');
+    errEl.style.display = 'none';
+    const port = parseInt(document.getElementById('portInput').value, 10);
+    const targets = document.getElementById('targetsInput').value;
+    const mode = document.getElementById('modeInput').value;
+    if (!port) { errEl.textContent = 'Enter a listen port.'; errEl.style.display = ''; return; }
+
+    const btn = document.getElementById('startBtn');
+    btn.disabled = true;
+    try {
+      const r = await fetch('/wsproxy/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ port, targets, mode })
+      });
+      const d = await r.json();
+      if (!r.ok) { errEl.textContent = d.error || 'Failed to start proxy'; errEl.style.display = ''; return; }
+      document.getElementById('portInput').value = defaultPort;
+      document.getElementById('targetsInput').value = '';
+      await refreshStatus();
+    } catch (e) {
+      errEl.textContent = e.message;
+      errEl.style.display = '';
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function stopProxy(port, clientCount) {
+    if (clientCount > 0 && !confirm(`Port ${port} has ${clientCount} connected client(s). Stop anyway?`)) return;
+    await fetch('/wsproxy/stop', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ port })
+    });
+    await refreshStatus();
+  }
+
+  // ---------------- Status polling ----------------
+
+  async function refreshStatus() {
+    try {
+      const r = await fetch('/wsproxy/status');
+      const list = await r.json();
+      renderProxies(list);
+      populatePortSelect(document.getElementById('sendPortSelect'), list, null);
+      populatePortSelect(document.getElementById('batchPortSelect'), list, null);
+      populatePortSelect(document.getElementById('logPortSelect'), list, 'All Ports');
+    } catch (e) { /* transient — next poll will retry */ }
+  }
+
+  function renderProxies(list) {
+    const body = document.getElementById('proxyBody');
+    const hint = document.getElementById('proxyEmptyHint');
+    body.innerHTML = '';
+    hint.style.display = list.length ? 'none' : '';
+    list.forEach(p => {
+      const targetsHtml = (p.targets || []).map(t =>
+        `<span class="target-chip ${t.connected ? 'up' : 'down'}" title="${escHtml(t.lastError || '')}">${escHtml(t.url)}</span>`
+      ).join('') || '<span class="muted">—</span>';
+      body.insertAdjacentHTML('beforeend', `
+        <tr class="proxy-row">
+          <td class="mono">${p.port}</td>
+          <td>${escHtml(p.mode)}</td>
+          <td>${p.clientCount}</td>
+          <td>${targetsHtml}</td>
+          <td><button class="small danger" onclick="stopProxy(${p.port}, ${p.clientCount})">Stop</button></td>
+        </tr>`);
+    });
+  }
+
+  // Shared by the "send test payload" port select and the log port filter. `allLabel`
+  // adds a leading "any port" option (used for the log filter, omitted for send).
+  function populatePortSelect(sel, list, allLabel) {
+    const prev = sel.value;
+    sel.innerHTML = '';
+    if (allLabel) sel.insertAdjacentHTML('beforeend', `<option value="">${allLabel}</option>`);
+    if (!list.length) {
+      if (!allLabel) sel.insertAdjacentHTML('beforeend', '<option value="">— no active proxies —</option>');
+    } else {
+      list.forEach(p => {
+        sel.insertAdjacentHTML('beforeend', `<option value="${p.port}">${p.port} (${escHtml(p.mode)})</option>`);
+      });
+    }
+    if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+  }
+
+  // ---------------- Manual send ----------------
+
+  async function sendPayload() {
+    const port = document.getElementById('sendPortSelect').value;
+    const payload = document.getElementById('payloadInput').value;
+    const box = document.getElementById('responseBox');
+    if (!port) { box.textContent = 'Start a proxy first.'; return; }
+    box.textContent = 'Sending…';
+    try {
+      const r = await fetch('/wsproxy/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ port: parseInt(port, 10), payload })
+      });
+      const d = await r.json();
+      box.textContent = JSON.stringify(d, null, 2);
+    } catch (e) {
+      box.textContent = 'Error: ' + e.message;
+    }
+    loadLog(lastQuery);
+  }
+
+  // ---------------- Log query ----------------
+
+  async function loadLog(query) {
+    lastQuery = Object.assign({}, query || {});
+    const portSel = document.getElementById('logPortSelect');
+    if (portSel && portSel.value) lastQuery.port = parseInt(portSel.value, 10);
+    else delete lastQuery.port;
+
+    const params = new URLSearchParams();
+    if (lastQuery.limit) params.set('limit', lastQuery.limit);
+    if (lastQuery.sinceMinutes) params.set('sinceMinutes', lastQuery.sinceMinutes);
+    if (lastQuery.port) params.set('port', lastQuery.port);
+    const r = await fetch('/wsproxy/log?' + params.toString());
+    currentLog = await r.json();
+    renderLog();
+  }
+
+  let logAutoRefreshTimer = null;
+  function toggleLogAutoRefresh() {
+    const on = document.getElementById('logAutoRefresh').checked;
+    if (logAutoRefreshTimer) { clearInterval(logAutoRefreshTimer); logAutoRefreshTimer = null; }
+    if (on) logAutoRefreshTimer = setInterval(() => loadLog(lastQuery), 3000);
+  }
+
+  function clearColumnFilters() {
+    document.querySelectorAll('.filter-row input').forEach(i => i.value = '');
+    renderLog();
+  }
+
+  function renderLog() {
+    const filters = {};
+    document.querySelectorAll('.filter-row input').forEach(i => {
+      if (i.value.trim()) filters[i.dataset.col] = i.value.trim().toLowerCase();
+    });
+
+    const rows = currentLog.filter(e => {
+      return Object.entries(filters).every(([col, needle]) =>
+        fmtVal(e[col]).toLowerCase().includes(needle));
+    });
+
+    const body = document.getElementById('logBody');
+    body.innerHTML = '';
+    rows.forEach(e => {
+      const statusBadge = `<span class="badge ${e.status === 'success' ? 'badge-success' : 'badge-error'}">${escHtml(e.status || '')}</span>`;
+      body.insertAdjacentHTML('beforeend', `
+        <tr>
+          <td class="mono">${new Date(e.timestamp).toLocaleString()}</td>
+          <td class="mono">${escHtml(e.uuid || '')}</td>
+          <td class="mono">${e.port}</td>
+          <td>${escHtml(e.mode || '')}</td>
+          <td>${escHtml(e.source || '')}</td>
+          <td>${escHtml(e.target || '')}</td>
+          <td>${statusBadge}</td>
+          <td>${escHtml(e.message || '')}</td>
+          <td class="mono">${e.timeTakenMs !== null && e.timeTakenMs !== undefined ? e.timeTakenMs : ''}</td>
+          <td class="mono">${escHtml(fmtVal(e.requestPayload))}</td>
+          <td class="mono">${escHtml(fmtVal(e.responsePayload))}</td>
+        </tr>`);
+    });
+    document.getElementById('logCount').textContent = `${rows.length} of ${currentLog.length} loaded`;
+  }
+
+  // ---------------- Init ----------------
+
+  loadPageProperties();
+  onModeChange();
+  onBatchSourceModeChange();
+  updateGroupBySelect();
+  renderResults();
+  refreshStatus();
+  loadLog(lastQuery);
+  setInterval(refreshStatus, 3000);
+</script>
+</body>
+</html>
