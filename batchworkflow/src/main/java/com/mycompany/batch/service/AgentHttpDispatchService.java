@@ -16,6 +16,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Fans a batch of self-contained HTTP requests out across every agent currently connected on
@@ -23,6 +24,9 @@ import java.util.concurrent.TimeUnit;
  * the existing agent control-channel websocket — no new inbound listener is added on the agent
  * side, matching how {@link com.mycompany.batch.web.AgentConsoleWebSocketHandler} already talks
  * to agents for the browser console.
+ *
+ * <p>{@link #dispatchSingle} is the one-request door onto the same rotation, used by callers that
+ * arrive with a single call to place rather than a batch.
  */
 @Service
 public class AgentHttpDispatchService {
@@ -32,6 +36,14 @@ public class AgentHttpDispatchService {
 
     private final AgentRegistryService registry;
     private final ObjectMapper         objectMapper;
+
+    /**
+     * Where the next round-robin hand-out starts. Kept across calls so a caller dispatching one
+     * request at a time — the App Catalog running a single instance on an agent — still spreads its
+     * work over the fleet instead of every call landing on the first agent.
+     */
+    private final AtomicInteger roundRobin = new AtomicInteger();
+
     private final ScheduledExecutorService timeoutScheduler =
             Executors.newSingleThreadScheduledExecutor(r -> {
                 Thread t = new Thread(r, "http-dispatch-timeout");
@@ -63,9 +75,10 @@ public class AgentHttpDispatchService {
         }
 
         int fallbackTimeout = defaultTimeoutMs != null && defaultTimeoutMs > 0 ? defaultTimeoutMs : DEFAULT_TIMEOUT_MS;
+        int start = roundRobin.getAndAdd(requests.size());
         List<CompletableFuture<Map<String, Object>>> futures = new ArrayList<>(requests.size());
         for (int i = 0; i < requests.size(); i++) {
-            AgentConnection agent = agents.get(i % agents.size());
+            AgentConnection agent = agents.get(Math.floorMod(start + i, agents.size()));
             futures.add(dispatchOne(agent, requests.get(i), fallbackTimeout));
         }
 
@@ -78,6 +91,32 @@ public class AgentHttpDispatchService {
             }
         }
         return results;
+    }
+
+    /**
+     * Sends one request and blocks until the agent replies or it times out. With a blank
+     * {@code agentId} the next agent in the rotation takes it, so concurrent single dispatches
+     * still spread across the fleet.
+     *
+     * @return the agent's reply — {@code statusCode}/{@code headers}/{@code body}/{@code agentId} on
+     *         success, or a map carrying {@code error} when the call could not be completed
+     */
+    public Map<String, Object> dispatchSingle(HttpBatchRequest.Item request, Integer defaultTimeoutMs, String agentId) {
+        AgentConnection agent = agentId != null && !agentId.isBlank() ? resolveTargetAgent(agentId) : nextAgent();
+        int timeoutMs = defaultTimeoutMs != null && defaultTimeoutMs > 0 ? defaultTimeoutMs : DEFAULT_TIMEOUT_MS;
+        try {
+            return dispatchOne(agent, request, timeoutMs).get();
+        } catch (Exception e) {
+            return Map.of("agentId", agent.getAgentId(),
+                          "error", e.getMessage() != null ? e.getMessage() : "dispatch failed");
+        }
+    }
+
+    /** The next connected agent in the rotation. */
+    private AgentConnection nextAgent() {
+        List<AgentConnection> agents = registry.list().stream().filter(a -> a.getSession().isOpen()).toList();
+        if (agents.isEmpty()) throw new IllegalStateException("No agents connected");
+        return agents.get(Math.floorMod(roundRobin.getAndIncrement(), agents.size()));
     }
 
     private AgentConnection resolveTargetAgent(String agentId) {

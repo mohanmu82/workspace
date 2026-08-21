@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>App Definitions</title>
+    <link rel="stylesheet" href="appcatalog.css">
+</head>
+<body>
+
+<div class="page-nav"><a href="app.html">&larr; App Catalog</a></div>
+<h1>App Definitions</h1>
+<div class="subtitle">Register an application and the defaults every one of its use cases inherits.</div>
+
+<div class="split">
+
+    <!-- Existing apps -->
+    <div class="panel">
+        <div class="panel-title">
+            <span>Apps</span>
+            <button class="tool-btn" onclick="newApp()">+ New</button>
+        </div>
+        <div class="record-list" id="appList"></div>
+    </div>
+
+    <!-- Editor -->
+    <div class="panel">
+        <div class="panel-title"><span id="editorTitle">New App</span></div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label for="appName">App Name</label>
+                <input id="appName" type="text" placeholder="orders-api" autocomplete="off">
+                <span class="hint" id="appNameHint">Unique — everything else references it.</span>
+            </div>
+            <div class="form-group">
+                <label for="appMode">App Mode</label>
+                <select id="appMode">
+                    <option value="HTTP">HTTP</option>
+                    <option value="SOLACE">SOLACE</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="appStatus">App Status</label>
+                <select id="appStatus">
+                    <option value="ACTIVE">ACTIVE</option>
+                    <option value="INACTIVE">INACTIVE</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="authMethod">Auth Method</label>
+                <select id="authMethod" onchange="renderAuthHint()">
+                    <option value="NONE">None</option>
+                    <option value="JWT">JWT</option>
+                    <option value="KERBEROS">Kerberos</option>
+                    <option value="USERNAMEPASSWORD">UserNamePassword</option>
+                    <option value="DIGEST">Digest</option>
+                </select>
+                <span class="hint" id="authHint"></span>
+            </div>
+            <div class="form-group wide">
+                <label for="appDescription">Description</label>
+                <input id="appDescription" type="text" placeholder="What this application does">
+            </div>
+            <div class="form-group wide">
+                <label for="appVariables">App Variables (JSON)</label>
+                <textarea id="appVariables" class="tall" spellcheck="false" placeholder='{"region": "emea", "clientId": "batch-tools"}'></textarea>
+                <span class="hint">Base layer of the variable merge — a use case or an instance input of the same name wins. Reference them as <code>$region</code> or <code>${region}</code> in a URL, header or body.</span>
+            </div>
+        </div>
+
+        <div class="toolbar">
+            <button class="primary" onclick="saveApp()">Save</button>
+            <button class="secondary" onclick="newApp()">New</button>
+            <button class="tool-btn" onclick="formatVariables()">Format JSON</button>
+            <button class="danger" id="deleteBtn" onclick="deleteApp()" style="display:none">Delete</button>
+        </div>
+        <div id="statusBar" class="status-bar"></div>
+    </div>
+
+</div>
+
+<script src="appcatalog.js"></script>
+<script>
+    // Mode notes shown under the auth dropdown: which environment fields each method will
+    // actually read, so the environments page never comes as a surprise.
+    const AUTH_HINTS = {
+        NONE:             'No credentials sent.',
+        JWT:              'Environment supplies jwtUrl + username/password. Token also available as $jwtToken.',
+        KERBEROS:         'Environment supplies the principal (username) and keytab path (password).',
+        USERNAMEPASSWORD: 'Environment supplies username + password, sent as HTTP Basic.',
+        DIGEST:           'Environment supplies username, password and the token URL (jwtUrl).'
+    };
+
+    let apps = [];
+    let editingAppName = null;   // null while creating; set to the saved name while editing
+
+    async function loadApps() {
+        try {
+            apps = await AC.listApps();
+            renderAppList();
+        } catch (e) {
+            AC.setStatus('statusBar', 'Failed to load apps: ' + e.message, 'error');
+        }
+    }
+
+    function renderAppList() {
+        const list = document.getElementById('appList');
+        if (!apps.length) {
+            list.innerHTML = '<div class="empty-note">No apps yet — fill in the form and save.</div>';
+            return;
+        }
+        list.innerHTML = apps
+            .slice()
+            .sort((a, b) => a.appName.localeCompare(b.appName))
+            .map(app =>
+                '<div class="record' + (app.appName === editingAppName ? ' selected' : '') + '" ' +
+                     'onclick="editApp(\'' + AC.attr(app.appName) + '\')">' +
+                    '<div class="record-name">' + AC.esc(app.appName) + '</div>' +
+                    '<div class="record-meta">' +
+                        '<span class="badge ' + app.appMode.toLowerCase() + '">' + AC.esc(app.appMode) + '</span>' +
+                        '<span class="badge ' + app.appStatus.toLowerCase() + '">' + AC.esc(app.appStatus) + '</span>' +
+                        '<span class="badge auth">' + AC.esc(app.authMethod) + '</span>' +
+                    '</div>' +
+                    (app.appDescription ? '<div class="record-meta">' + AC.esc(app.appDescription) + '</div>' : '') +
+                '</div>'
+            ).join('');
+    }
+
+    function renderAuthHint() {
+        document.getElementById('authHint').textContent = AUTH_HINTS[document.getElementById('authMethod').value] || '';
+    }
+
+    function newApp() {
+        editingAppName = null;
+        document.getElementById('editorTitle').textContent = 'New App';
+        document.getElementById('appName').value = '';
+        document.getElementById('appName').disabled = false;
+        document.getElementById('appNameHint').textContent = 'Unique — everything else references it.';
+        document.getElementById('appDescription').value = '';
+        document.getElementById('appMode').value = 'HTTP';
+        document.getElementById('appStatus').value = 'ACTIVE';
+        document.getElementById('authMethod').value = 'NONE';
+        document.getElementById('appVariables').value = '';
+        document.getElementById('deleteBtn').style.display = 'none';
+        renderAuthHint();
+        renderAppList();
+        AC.setStatus('statusBar', '');
+    }
+
+    function editApp(appName) {
+        const app = apps.find(a => a.appName === appName);
+        if (!app) return;
+
+        editingAppName = appName;
+        document.getElementById('editorTitle').textContent = 'Edit ' + appName;
+        document.getElementById('appName').value = app.appName;
+        // The name is the catalog's key — renaming would orphan environments, use cases and
+        // instances, so it is fixed once saved.
+        document.getElementById('appName').disabled = true;
+        document.getElementById('appNameHint').textContent = 'Fixed once saved — create a new app to use a different name.';
+        document.getElementById('appDescription').value = app.appDescription || '';
+        document.getElementById('appMode').value = app.appMode || 'HTTP';
+        document.getElementById('appStatus').value = app.appStatus || 'ACTIVE';
+        document.getElementById('authMethod').value = app.authMethod || 'NONE';
+        document.getElementById('appVariables').value = AC.prettyJson(app.appVariables);
+        document.getElementById('deleteBtn').style.display = '';
+        renderAuthHint();
+        renderAppList();
+        AC.setStatus('statusBar', '');
+    }
+
+    function readForm() {
+        const appName = document.getElementById('appName').value.trim();
+        if (!appName) throw new Error('App Name is required.');
+        return {
+            appName,
+            appDescription: document.getElementById('appDescription').value.trim(),
+            appMode:        document.getElementById('appMode').value,
+            appStatus:      document.getElementById('appStatus').value,
+            authMethod:     document.getElementById('authMethod').value,
+            appVariables:   AC.parseJsonObject(document.getElementById('appVariables').value, 'App Variables')
+        };
+    }
+
+    async function saveApp() {
+        let app;
+        try {
+            app = readForm();
+        } catch (e) {
+            AC.setStatus('statusBar', e.message, 'error');
+            return;
+        }
+
+        try {
+            if (editingAppName) {
+                await AC.api('PUT', '/appcatalog/apps/' + encodeURIComponent(editingAppName), app);
+            } else {
+                await AC.api('POST', '/appcatalog/apps', app);
+            }
+            await loadApps();
+            editApp(app.appName);
+            AC.setSelectedApp(app.appName);
+            AC.setStatus('statusBar', 'Saved ' + app.appName + '.', 'ok');
+        } catch (e) {
+            AC.setStatus('statusBar', 'Save failed: ' + e.message, 'error');
+        }
+    }
+
+    async function deleteApp() {
+        if (!editingAppName) return;
+        if (!AC.confirmDelete('app', editingAppName + '" and every environment, use case and instance under it')) return;
+        try {
+            await AC.api('DELETE', '/appcatalog/apps/' + encodeURIComponent(editingAppName));
+            const deleted = editingAppName;
+            await loadApps();
+            newApp();
+            AC.setStatus('statusBar', 'Deleted ' + deleted + '.', 'ok');
+        } catch (e) {
+            AC.setStatus('statusBar', 'Delete failed: ' + e.message, 'error');
+        }
+    }
+
+    function formatVariables() {
+        const field = document.getElementById('appVariables');
+        try {
+            field.value = AC.prettyJson(AC.parseJsonObject(field.value, 'App Variables'));
+            AC.setStatus('statusBar', 'Formatted.', 'ok');
+        } catch (e) {
+            AC.setStatus('statusBar', e.message, 'error');
+        }
+    }
+
+    AC.applyEmbedding();
+    newApp();
+    loadApps().then(() => {
+        // Land on whatever app the other tabs are working with, so switching here mid-flow
+        // shows the app you were just editing rather than a blank form.
+        const selected = AC.selectedApp();
+        if (selected && apps.some(a => a.appName === selected)) editApp(selected);
+    });
+</script>
+
+</body>
+</html>

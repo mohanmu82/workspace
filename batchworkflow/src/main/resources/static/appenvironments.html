@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>App Environments</title>
+    <link rel="stylesheet" href="appcatalog.css">
+</head>
+<body>
+
+<div class="page-nav"><a href="app.html">&larr; App Catalog</a></div>
+<h1>App Environments</h1>
+<div class="subtitle">Where an app runs — the URL prefix a use case is appended to, plus the credentials that environment needs.</div>
+
+<!-- App picker -->
+<div class="panel">
+    <div class="form-row" style="margin-bottom:0">
+        <div class="form-group">
+            <label for="appSelect">App</label>
+            <select id="appSelect" onchange="onAppChange()"></select>
+        </div>
+        <div class="form-group">
+            <label>Auth Method</label>
+            <input id="appAuthMethod" type="text" disabled>
+            <span class="hint">Set on the App Definitions tab — it decides which credential fields below apply.</span>
+        </div>
+    </div>
+</div>
+
+<div class="split">
+
+    <!-- Existing environments -->
+    <div class="panel">
+        <div class="panel-title">
+            <span>Environments</span>
+            <button class="tool-btn" onclick="newEnvironment()">+ New</button>
+        </div>
+        <div class="record-list" id="envList"></div>
+    </div>
+
+    <!-- Editor -->
+    <div class="panel">
+        <div class="panel-title"><span id="editorTitle">New Environment</span></div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label for="environment">Environment</label>
+                <input id="environment" type="text" placeholder="uat-emea" autocomplete="off">
+                <span class="hint" id="environmentHint">Unique within this app.</span>
+            </div>
+            <div class="form-group">
+                <label for="envClass">Env Class</label>
+                <select id="envClass">
+                    <option value="DEV">DEV</option>
+                    <option value="UAT">UAT</option>
+                    <option value="PROD">PROD</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="envStatus">Env Status</label>
+                <select id="envStatus">
+                    <option value="ACTIVE">ACTIVE</option>
+                    <option value="INACTIVE">INACTIVE</option>
+                </select>
+            </div>
+            <div class="form-group wide">
+                <label for="urlPrefix">URL Prefix</label>
+                <input id="urlPrefix" type="text" placeholder="https://orders-uat.example.com/api">
+                <span class="hint">Each use case's URL suffix is appended to this verbatim.</span>
+            </div>
+
+            <div class="form-group wide" id="jwtUrlGroup">
+                <label for="jwtUrl" id="jwtUrlLabel">JWT URL</label>
+                <input id="jwtUrl" type="text" placeholder="https://auth-uat.example.com/token">
+                <span class="hint" id="jwtUrlHint">Posted username + password; the returned token lands in <code>$jwtToken</code> and in the Authorization header.</span>
+            </div>
+
+            <div class="form-group" id="usernameGroup">
+                <label for="username" id="usernameLabel">Username</label>
+                <input id="username" type="text" autocomplete="off">
+            </div>
+            <div class="form-group" id="passwordGroup">
+                <label for="password" id="passwordLabel">Password</label>
+                <input id="password" type="password" autocomplete="new-password">
+            </div>
+
+            <div class="form-group wide" id="authNote"></div>
+        </div>
+
+        <div class="toolbar">
+            <button class="primary" onclick="saveEnvironment()">Save</button>
+            <button class="secondary" onclick="newEnvironment()">New</button>
+            <button class="danger" id="deleteBtn" onclick="deleteEnvironment()" style="display:none">Delete</button>
+        </div>
+        <div id="statusBar" class="status-bar"></div>
+    </div>
+
+</div>
+
+<script src="appcatalog.js"></script>
+<script>
+    // Which credential fields each auth method actually reads, and what to call them. Fields the
+    // selected method ignores are hidden outright rather than left on screen to be filled in
+    // pointlessly — the auth note explains what is in play.
+    const AUTH_FIELDS = {
+        NONE:             { jwtUrl: false, credentials: false,
+                            note: 'This app sends no credentials — only the URL prefix matters here.' },
+        JWT:              { jwtUrl: true,  credentials: true, jwtUrlLabel: 'JWT URL',
+                            note: 'The JWT URL is called with the username/password below; the token is sent as a Bearer header and exposed to use cases as $jwtToken.' },
+        KERBEROS:         { jwtUrl: false, credentials: true, usernameLabel: 'Principal', passwordLabel: 'Keytab Path', passwordType: 'text',
+                            note: 'SPNEGO: the principal logs in with the keytab, and the service principal is derived from the URL prefix host.' },
+        USERNAMEPASSWORD: { jwtUrl: false, credentials: true,
+                            note: 'Sent as an HTTP Basic Authorization header on every request.' },
+        DIGEST:           { jwtUrl: true,  credentials: true, jwtUrlLabel: 'Token URL',
+                            note: 'The token URL is called with the username/password below and its response is used as the Bearer token.' }
+    };
+
+    let apps = [];
+    let environments = [];
+    let currentApp = null;             // the selected AppDefinition
+    let editingEnvironment = null;     // null while creating
+
+    async function loadApps() {
+        try {
+            apps = await AC.listApps();
+            AC.fillSelect(document.getElementById('appSelect'), apps.map(a => a.appName), apps.length ? '— select an app —' : 'No apps defined yet');
+            // Land on the app the other tabs are working with; failing that, the first app —
+            // an empty page on a first visit hides everything that is already configured.
+            const remembered = AC.selectedApp();
+            document.getElementById('appSelect').value =
+                remembered && apps.some(a => a.appName === remembered) ? remembered
+                : apps.length ? apps[0].appName : '';
+            await onAppChange();
+        } catch (e) {
+            AC.setStatus('statusBar', 'Failed to load apps: ' + e.message, 'error');
+        }
+    }
+
+    async function onAppChange() {
+        const appName = document.getElementById('appSelect').value;
+        AC.setSelectedApp(appName);
+        currentApp = apps.find(a => a.appName === appName) || null;
+        document.getElementById('appAuthMethod').value = currentApp ? currentApp.authMethod : '';
+        applyAuthFields();
+        newEnvironment();
+
+        if (!appName) {
+            environments = [];
+            renderEnvList();
+            return;
+        }
+        try {
+            environments = await AC.listEnvironments(appName);
+            renderEnvList();
+        } catch (e) {
+            AC.setStatus('statusBar', 'Failed to load environments: ' + e.message, 'error');
+        }
+    }
+
+    /** Shows/labels the credential fields that the selected app's auth method actually uses. */
+    function applyAuthFields() {
+        const config = AUTH_FIELDS[currentApp ? currentApp.authMethod : 'NONE'] || AUTH_FIELDS.NONE;
+
+        document.getElementById('jwtUrlGroup').style.display   = config.jwtUrl ? '' : 'none';
+        document.getElementById('usernameGroup').style.display = config.credentials ? '' : 'none';
+        document.getElementById('passwordGroup').style.display = config.credentials ? '' : 'none';
+
+        document.getElementById('jwtUrlLabel').textContent   = config.jwtUrlLabel || 'JWT URL';
+        document.getElementById('usernameLabel').textContent = config.usernameLabel || 'Username';
+        document.getElementById('passwordLabel').textContent = config.passwordLabel || 'Password';
+        document.getElementById('password').type             = config.passwordType || 'password';
+
+        document.getElementById('authNote').innerHTML = currentApp
+            ? '<span class="hint">' + AC.esc(config.note) + '</span>'
+            : '';
+    }
+
+    function renderEnvList() {
+        const list = document.getElementById('envList');
+        if (!currentApp) {
+            list.innerHTML = '<div class="empty-note">Select an app first.</div>';
+            return;
+        }
+        if (!environments.length) {
+            list.innerHTML = '<div class="empty-note">No environments for this app yet.</div>';
+            return;
+        }
+        list.innerHTML = environments
+            .slice()
+            .sort((a, b) => a.environment.localeCompare(b.environment))
+            .map(env =>
+                '<div class="record' + (env.environment === editingEnvironment ? ' selected' : '') + '" ' +
+                     'onclick="editEnvironment(\'' + AC.attr(env.environment) + '\')">' +
+                    '<div class="record-name">' + AC.esc(env.environment) + '</div>' +
+                    '<div class="record-meta">' +
+                        '<span class="badge ' + (env.envClass || 'dev').toLowerCase() + '">' + AC.esc(env.envClass) + '</span>' +
+                        '<span class="badge ' + (env.envStatus || 'active').toLowerCase() + '">' + AC.esc(env.envStatus) + '</span>' +
+                    '</div>' +
+                    '<div class="record-meta">' + AC.esc(env.urlPrefix || '') + '</div>' +
+                '</div>'
+            ).join('');
+    }
+
+    function newEnvironment() {
+        editingEnvironment = null;
+        document.getElementById('editorTitle').textContent = 'New Environment';
+        document.getElementById('environment').value = '';
+        document.getElementById('environment').disabled = false;
+        document.getElementById('environmentHint').textContent = 'Unique within this app.';
+        document.getElementById('envClass').value = 'DEV';
+        document.getElementById('envStatus').value = 'ACTIVE';
+        document.getElementById('urlPrefix').value = '';
+        document.getElementById('jwtUrl').value = '';
+        document.getElementById('username').value = '';
+        document.getElementById('password').value = '';
+        document.getElementById('deleteBtn').style.display = 'none';
+        renderEnvList();
+        AC.setStatus('statusBar', '');
+    }
+
+    function editEnvironment(name) {
+        const env = environments.find(e => e.environment === name);
+        if (!env) return;
+
+        editingEnvironment = name;
+        document.getElementById('editorTitle').textContent = 'Edit ' + name;
+        document.getElementById('environment').value = env.environment;
+        document.getElementById('environment').disabled = true;
+        document.getElementById('environmentHint').textContent = 'Fixed once saved — instances reference it by name.';
+        document.getElementById('envClass').value = env.envClass || 'DEV';
+        document.getElementById('envStatus').value = env.envStatus || 'ACTIVE';
+        document.getElementById('urlPrefix').value = env.urlPrefix || '';
+        document.getElementById('jwtUrl').value = env.jwtUrl || '';
+        document.getElementById('username').value = env.username || '';
+        document.getElementById('password').value = env.password || '';
+        document.getElementById('deleteBtn').style.display = '';
+        renderEnvList();
+        AC.setStatus('statusBar', '');
+    }
+
+    function readForm() {
+        if (!currentApp) throw new Error('Select an app first.');
+        const environment = document.getElementById('environment').value.trim();
+        if (!environment) throw new Error('Environment is required.');
+        const urlPrefix = document.getElementById('urlPrefix').value.trim();
+        if (!urlPrefix) throw new Error('URL Prefix is required.');
+
+        return {
+            appName:     currentApp.appName,
+            environment,
+            envClass:    document.getElementById('envClass').value,
+            envStatus:   document.getElementById('envStatus').value,
+            urlPrefix,
+            jwtUrl:      document.getElementById('jwtUrl').value.trim(),
+            username:    document.getElementById('username').value,
+            password:    document.getElementById('password').value
+        };
+    }
+
+    async function saveEnvironment() {
+        let env;
+        try {
+            env = readForm();
+        } catch (e) {
+            AC.setStatus('statusBar', e.message, 'error');
+            return;
+        }
+
+        try {
+            if (editingEnvironment) {
+                await AC.api('PUT', '/appcatalog/environments/' + encodeURIComponent(env.appName)
+                        + '/' + encodeURIComponent(editingEnvironment), env);
+            } else {
+                await AC.api('POST', '/appcatalog/environments', env);
+            }
+            environments = await AC.listEnvironments(env.appName);
+            editEnvironment(env.environment);
+            AC.setStatus('statusBar', 'Saved ' + env.environment + '.', 'ok');
+        } catch (e) {
+            AC.setStatus('statusBar', 'Save failed: ' + e.message, 'error');
+        }
+    }
+
+    async function deleteEnvironment() {
+        if (!editingEnvironment || !currentApp) return;
+        if (!AC.confirmDelete('environment', editingEnvironment + '" and every instance pinned to it')) return;
+        try {
+            await AC.api('DELETE', '/appcatalog/environments/' + encodeURIComponent(currentApp.appName)
+                    + '/' + encodeURIComponent(editingEnvironment));
+            const deleted = editingEnvironment;
+            environments = await AC.listEnvironments(currentApp.appName);
+            newEnvironment();
+            AC.setStatus('statusBar', 'Deleted ' + deleted + '.', 'ok');
+        } catch (e) {
+            AC.setStatus('statusBar', 'Delete failed: ' + e.message, 'error');
+        }
+    }
+
+    AC.applyEmbedding();
+    loadApps();
+</script>
+
+</body>
+</html>

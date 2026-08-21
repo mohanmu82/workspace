@@ -95,12 +95,38 @@
   .view-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
   .view-toolbar h2 { margin-bottom: 0; }
   .view-toolbar label { display: flex; align-items: center; gap: 4px; font-weight: normal; margin: 0; color: #555; }
+
+  .log-section { border-top: 1px solid #e6e9ee; margin-top: 18px; padding-top: 14px; }
+  .log-table-wrap { max-height: 340px; overflow: auto; border: 1px solid #dde1e7; border-radius: 4px; }
+  .log-table-wrap table { border: none; }
+  .log-table-wrap th { position: sticky; top: 0; z-index: 1; }
+  .filter-input { width: auto; flex: 1 1 200px; max-width: 320px; padding: 5px 8px; font-size: 0.8rem; }
+  select { padding: 5px 8px; font-size: 0.8rem; border: 1px solid #ccc; border-radius: 4px; font-family: inherit; }
+
+  .count-pill { display: inline-block; padding: 1px 9px; border-radius: 10px; font-size: 0.75rem; font-weight: 700;
+                background: #eef1f5; color: #555; vertical-align: middle; margin-left: 4px; }
+  .count-pill.bad { background: #f8d7da; color: #842029; }
+  .count-pill.warn { background: #fff3cd; color: #856404; }
+
+  .badge-2xx { background: #d1e7dd; color: #0a5c36; }
+  .badge-3xx { background: #e2e3e5; color: #41464b; }
+  .badge-4xx, .badge-5xx, .badge-failed { background: #f8d7da; color: #842029; }
+  .badge-error { background: #f8d7da; color: #842029; }
+  .badge-warning { background: #fff3cd; color: #856404; }
+  .badge-info { background: #cfe2ff; color: #084298; }
+  .badge-log { background: #e2e3e5; color: #41464b; }
+
+  .url-cell { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .msg-cell { max-width: 620px; white-space: pre-wrap; word-break: break-word; }
+  .stack { font-family: monospace; font-size: 0.74rem; color: #666; white-space: pre-wrap;
+           margin-top: 4px; padding-left: 8px; border-left: 2px solid #dde1e7; }
+  .num { text-align: right; white-space: nowrap; }
 </style>
 </head>
 <body>
 
 <h1>Browser Simulator</h1>
-<div class="subtitle">Load a URL inside a real headless Chromium/Chrome/Edge process on this server and inspect its memory footprint via the Chrome DevTools Protocol.</div>
+<div class="subtitle">Load a URL inside a real headless Chromium/Chrome/Edge process on this server and inspect its memory footprint, every network call it makes, and every JavaScript error it throws — via the Chrome DevTools Protocol.</div>
 
 <div class="card">
   <h2>Load a Page</h2>
@@ -132,7 +158,7 @@
   <div id="sessionsWrap">
     <table>
       <thead>
-        <tr><th>ID</th><th>URL</th><th>Status</th><th>PID</th><th>Started</th><th></th></tr>
+        <tr><th>ID</th><th>URL</th><th>Status</th><th>PID</th><th class="num">Requests</th><th class="num">Errors</th><th>Started</th><th></th></tr>
       </thead>
       <tbody id="sessionsBody"></tbody>
     </table>
@@ -164,12 +190,64 @@
       </details>
     </div>
   </div>
+
+  <div class="log-section">
+    <div class="view-toolbar">
+      <h2>Network Calls
+        <span class="count-pill" id="netCountPill">0</span>
+        <span class="count-pill bad" id="netFailedPill" style="display:none;">0 failed</span>
+        <span class="count-pill" id="netBytesPill">0 B</span>
+      </h2>
+      <label><input type="checkbox" id="netFailedOnly" onchange="renderNetwork()"> Failed / 4xx / 5xx only</label>
+      <input type="text" id="netFilter" class="filter-input" placeholder="Filter by URL, method or type…" oninput="renderNetwork()">
+      <button class="small secondary" onclick="clearLog()">Clear log</button>
+    </div>
+    <div class="log-table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th><th>Started</th><th>Method</th><th>URL</th><th>Status</th><th>Type</th>
+            <th>Initiator</th><th class="num">Size</th><th class="num">Time</th><th>Remote</th>
+          </tr>
+        </thead>
+        <tbody id="networkBody"></tbody>
+      </table>
+    </div>
+    <div class="empty-hint" id="networkEmptyHint">No network calls captured yet.</div>
+  </div>
+
+  <div class="log-section">
+    <div class="view-toolbar">
+      <h2>Console &amp; JS Errors
+        <span class="count-pill bad" id="errCountPill">0 errors</span>
+        <span class="count-pill warn" id="warnCountPill">0 warnings</span>
+      </h2>
+      <select id="consoleLevel" onchange="renderConsole()">
+        <option value="error">Errors only</option>
+        <option value="warning" selected>Errors + warnings</option>
+        <option value="all">Everything</option>
+      </select>
+      <input type="text" id="consoleFilter" class="filter-input" placeholder="Filter message or source…" oninput="renderConsole()">
+    </div>
+    <div class="log-table-wrap">
+      <table>
+        <thead>
+          <tr><th>#</th><th>Time</th><th>Level</th><th>Source</th><th>Message</th><th>Location</th></tr>
+        </thead>
+        <tbody id="consoleBody"></tbody>
+      </table>
+    </div>
+    <div class="empty-hint" id="consoleEmptyHint">Nothing logged yet.</div>
+  </div>
 </div>
 
 <script>
   let sessions = [];
   let viewedId = null;
   let viewAutoRefreshTimer = null;
+  let logPollTimer = null;
+  let currentNetwork = [];
+  let currentConsole = [];
 
   function escHtml(s) {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -237,6 +315,7 @@
       if (viewedId && !sessions.some(s => s.id === viewedId)) {
         viewedId = null;
         document.getElementById('viewPanel').style.display = 'none';
+        stopLogPolling();
       }
     } catch (e) { /* transient — next poll retries */ }
   }
@@ -254,6 +333,8 @@
           <td class="mono" style="max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escHtml(s.url)}</td>
           <td>${badge}${s.error ? `<div class="muted" style="font-size:0.72rem; margin-top:3px;">${escHtml(s.error)}</div>` : ''}</td>
           <td class="mono">${s.pid || ''}</td>
+          <td class="mono num">${s.networkCount || 0}${s.networkFailedCount ? ` <span class="muted">(${s.networkFailedCount} failed)</span>` : ''}</td>
+          <td class="mono num">${s.errorCount ? `<span class="badge badge-error">${s.errorCount}</span>` : '0'}</td>
           <td class="mono">${new Date(s.createdAt).toLocaleTimeString()}</td>
           <td><button class="small danger" onclick="event.stopPropagation(); stopSession('${s.id}')">Stop</button></td>
         </tr>`);
@@ -264,9 +345,12 @@
 
   async function viewSession(id) {
     viewedId = id;
+    currentNetwork = [];
+    currentConsole = [];
     renderSessions();
     document.getElementById('viewPanel').style.display = '';
     await loadViewedDetail();
+    startLogPolling();
   }
 
   async function loadViewedDetail() {
@@ -304,6 +388,7 @@
       viewedId = null;
       document.getElementById('viewPanel').style.display = 'none';
       if (viewAutoRefreshTimer) { clearInterval(viewAutoRefreshTimer); viewAutoRefreshTimer = null; }
+      stopLogPolling();
     }
     refreshList();
   }
@@ -349,6 +434,130 @@
     document.getElementById('rawMetricsBody').innerHTML = rawKeys.map(k =>
       `<tr><td class="mono">${escHtml(k)}</td><td class="mono">${raw[k]}</td></tr>`).join('') ||
       '<tr><td colspan="2" class="muted">No metrics captured yet.</td></tr>';
+
+    setLogs(d);
+  }
+
+  // ---------------- Network calls + console/JS errors ----------------
+
+  // The page keeps emitting requests and errors long after the metrics capture, so the log is
+  // tailed on its own interval — via /log/{id}, which omits the screenshot the detail call carries.
+  function startLogPolling() {
+    stopLogPolling();
+    logPollTimer = setInterval(pollLog, 2000);
+  }
+
+  function stopLogPolling() {
+    if (logPollTimer) { clearInterval(logPollTimer); logPollTimer = null; }
+  }
+
+  async function pollLog() {
+    if (!viewedId) return;
+    try {
+      const r = await fetch('/browsersimulator/log/' + viewedId);
+      if (!r.ok) return;
+      setLogs(await r.json());
+    } catch (e) { /* transient — next poll retries */ }
+  }
+
+  function setLogs(d) {
+    if (!d) return;
+    if (Array.isArray(d.network)) currentNetwork = d.network;
+    if (Array.isArray(d.console)) currentConsole = d.console;
+
+    const failed = d.networkFailedCount || 0;
+    document.getElementById('netCountPill').textContent = (d.networkCount || 0) + ' calls';
+    const failedPill = document.getElementById('netFailedPill');
+    failedPill.textContent = failed + ' failed';
+    failedPill.style.display = failed ? '' : 'none';
+    document.getElementById('netBytesPill').textContent = fmtBytes(d.transferredBytes || 0) + ' transferred';
+
+    const errPill = document.getElementById('errCountPill');
+    errPill.textContent = (d.errorCount || 0) + ' errors';
+    errPill.className = 'count-pill ' + (d.errorCount ? 'bad' : '');
+    const warnPill = document.getElementById('warnCountPill');
+    warnPill.textContent = (d.warningCount || 0) + ' warnings';
+    warnPill.className = 'count-pill ' + (d.warningCount ? 'warn' : '');
+
+    renderNetwork();
+    renderConsole();
+  }
+
+  async function clearLog() {
+    if (!viewedId) return;
+    const r = await fetch('/browsersimulator/clearlog/' + viewedId, { method: 'POST' });
+    if (r.ok) setLogs(await r.json());
+    refreshList();
+  }
+
+  function statusBadge(c) {
+    if (c.state === 'FAILED' || c.state === 'CANCELED') {
+      return `<span class="badge badge-failed">${escHtml(c.state === 'CANCELED' ? 'canceled' : 'failed')}</span>`;
+    }
+    if (c.status === null || c.status === undefined) {
+      return '<span class="badge badge-pending">pending</span>';
+    }
+    const cls = 'badge-' + Math.floor(c.status / 100) + 'xx';
+    const label = c.status + (c.statusText ? ' ' + c.statusText : '');
+    return `<span class="badge ${cls}">${escHtml(label)}</span>`;
+  }
+
+  function isFailedCall(c) {
+    return c.state === 'FAILED' || (typeof c.status === 'number' && c.status >= 400);
+  }
+
+  function renderNetwork() {
+    const failedOnly = document.getElementById('netFailedOnly').checked;
+    const q = document.getElementById('netFilter').value.trim().toLowerCase();
+    const rows = currentNetwork.filter(c => {
+      if (failedOnly && !isFailedCall(c)) return false;
+      if (!q) return true;
+      return [c.url, c.method, c.resourceType, c.mimeType, c.error].some(v => v && String(v).toLowerCase().includes(q));
+    });
+
+    document.getElementById('networkEmptyHint').style.display = rows.length ? 'none' : '';
+    document.getElementById('networkBody').innerHTML = rows.map(c => `
+      <tr>
+        <td class="mono">${c.seq}</td>
+        <td class="mono">${new Date(c.startedAt).toLocaleTimeString()}</td>
+        <td class="mono">${escHtml(c.method || '')}</td>
+        <td class="mono url-cell" title="${escHtml(c.url || '')}">${escHtml(c.url || '')}</td>
+        <td>${statusBadge(c)}${c.error ? `<div class="muted" style="font-size:0.72rem; margin-top:3px;">${escHtml(c.error)}</div>` : ''}</td>
+        <td>${escHtml(c.resourceType || '')}${c.fromCache ? ' <span class="muted">(cache)</span>' : ''}</td>
+        <td class="muted">${escHtml(c.initiator || '')}</td>
+        <td class="mono num">${c.sizeBytes === null || c.sizeBytes === undefined ? '—' : fmtBytes(c.sizeBytes)}</td>
+        <td class="mono num">${fmtMs(c.durationMs)}</td>
+        <td class="mono muted">${escHtml(c.remoteAddress || '')}${c.protocol ? ' ' + escHtml(c.protocol) : ''}</td>
+      </tr>`).join('');
+  }
+
+  function renderConsole() {
+    const level = document.getElementById('consoleLevel').value;
+    const q = document.getElementById('consoleFilter').value.trim().toLowerCase();
+    const allowed = level === 'error' ? ['error']
+                  : level === 'warning' ? ['error', 'warning']
+                  : null;
+    const rows = currentConsole.filter(e => {
+      if (allowed && !allowed.includes(e.level)) return false;
+      if (!q) return true;
+      return [e.text, e.source, e.url].some(v => v && String(v).toLowerCase().includes(q));
+    });
+
+    document.getElementById('consoleEmptyHint').style.display = rows.length ? 'none' : '';
+    document.getElementById('consoleEmptyHint').textContent =
+      currentConsole.length ? 'Nothing matches the current filter.' : 'Nothing logged yet.';
+    document.getElementById('consoleBody').innerHTML = rows.map(e => {
+      const loc = e.url ? `${e.url}${e.lineNumber ? ':' + e.lineNumber : ''}${e.columnNumber ? ':' + e.columnNumber : ''}` : '';
+      return `
+      <tr>
+        <td class="mono">${e.seq}</td>
+        <td class="mono">${new Date(e.timestamp).toLocaleTimeString()}</td>
+        <td><span class="badge badge-${escHtml(e.level)}">${escHtml(e.level)}</span></td>
+        <td class="muted">${escHtml(e.source || '')}</td>
+        <td class="msg-cell mono">${escHtml(e.text || '')}${e.stack ? `<div class="stack">${escHtml(e.stack)}</div>` : ''}</td>
+        <td class="mono url-cell muted" title="${escHtml(loc)}">${escHtml(loc)}</td>
+      </tr>`;
+    }).join('');
   }
 
   // ---------------- Init ----------------

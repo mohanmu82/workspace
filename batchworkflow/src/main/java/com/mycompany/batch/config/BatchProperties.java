@@ -1,5 +1,7 @@
 package com.mycompany.batch.config;
 
+import com.fasterxml.jackson.core.JsonLocation;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mycompany.batch.model.ActivityType;
 import com.mycompany.batch.model.AuthMethod;
@@ -57,7 +59,7 @@ public class BatchProperties {
         operations.clear();
         for (Resource resource : resources) {
             try (InputStream is = resource.getInputStream()) {
-                loadOne(is, resource.getFilename());
+                loadOne(is, "classpath:operations/" + resource.getFilename());
             }
         }
         // Also load from ${DATADIR}/operations/ on the filesystem (runtime-generated operations)
@@ -70,7 +72,7 @@ public class BatchProperties {
                         List<Path> files = stream.filter(p -> p.toString().endsWith(".json")).sorted().toList();
                         for (Path p : files) {
                             try (InputStream is = Files.newInputStream(p)) {
-                                loadOne(is, p.getFileName().toString());
+                                loadOne(is, p.toAbsolutePath().toString());
                             }
                         }
                     }
@@ -79,10 +81,18 @@ public class BatchProperties {
         }
     }
 
-    private void loadOne(InputStream is, String filename) throws Exception {
-        OperationProperties op = objectMapper.readValue(is, OperationProperties.class);
+    private void loadOne(InputStream is, String source) throws Exception {
+        OperationProperties op;
+        try {
+            op = objectMapper.readValue(is, OperationProperties.class);
+        } catch (JsonProcessingException e) {
+            JsonLocation loc = e.getLocation();
+            throw new IllegalStateException("Malformed operation file '" + source + "'"
+                    + (loc != null ? " at line " + loc.getLineNr() + ", column " + loc.getColumnNr() : "")
+                    + ": " + e.getOriginalMessage(), e);
+        }
         if (op.getName() == null || op.getName().isBlank())
-            throw new IllegalStateException("Operation file '" + filename + "' must have a non-blank 'name' field");
+            throw new IllegalStateException("Operation file '" + source + "' must have a non-blank 'name' field");
         operations.put(op.getName(), op);  // filesystem entries intentionally overwrite classpath duplicates
     }
 

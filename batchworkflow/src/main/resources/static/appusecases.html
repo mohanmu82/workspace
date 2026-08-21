@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>App Use Cases</title>
+    <link rel="stylesheet" href="appcatalog.css">
+    <style>
+        /* Live readout of every $variable found in the URL / headers / body, and where it
+           will be resolved from — the quickest way to catch a typo before running anything. */
+        .var-scan { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+        .var-chip {
+            font-size: 11px;
+            font-family: "Cascadia Code", Consolas, monospace;
+            padding: 2px 8px;
+            border-radius: 10px;
+            background: #f4f5f7;
+            color: #5e6c84;
+            border: 1px solid #dfe1e6;
+        }
+        .var-chip.from-input   { background: #e3fcef; color: #006644; border-color: #abf5d1; }
+        .var-chip.from-usecase { background: #deebff; color: #0747a6; border-color: #b3d4ff; }
+        .var-chip.from-app     { background: #eae6ff; color: #403294; border-color: #c0b6f2; }
+        .var-chip.unresolved   { background: #ffebe6; color: #bf2600; border-color: #ffbdad; }
+    </style>
+</head>
+<body>
+
+<div class="page-nav"><a href="app.html">&larr; App Catalog</a></div>
+<h1>App Use Cases</h1>
+<div class="subtitle">What you can call on an app — one endpoint per use case, with the variables it expects.</div>
+
+<!-- App picker -->
+<div class="panel">
+    <div class="form-row" style="margin-bottom:0">
+        <div class="form-group">
+            <label for="appSelect">App</label>
+            <select id="appSelect" onchange="onAppChange()"></select>
+        </div>
+        <div class="form-group">
+            <label>App Variables (inherited)</label>
+            <input id="appVariablesPreview" type="text" disabled>
+            <span class="hint">Available to every use case below; override any of them here.</span>
+        </div>
+    </div>
+</div>
+
+<div class="split">
+
+    <!-- Existing use cases -->
+    <div class="panel">
+        <div class="panel-title">
+            <span>Use Cases</span>
+            <button class="tool-btn" onclick="newUseCase()">+ New</button>
+        </div>
+        <div class="record-list" id="useCaseList"></div>
+    </div>
+
+    <!-- Editor -->
+    <div class="panel">
+        <div class="panel-title"><span id="editorTitle">New Use Case</span></div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label for="useCaseName">Use Case Name</label>
+                <input id="useCaseName" type="text" placeholder="get-order" autocomplete="off">
+                <span class="hint" id="useCaseNameHint">Unique within this app.</span>
+            </div>
+            <div class="form-group">
+                <label for="httpMethod">HTTP Method</label>
+                <select id="httpMethod">
+                    <option>GET</option><option>POST</option><option>PUT</option>
+                    <option>DELETE</option><option>PATCH</option><option>HEAD</option><option>OPTIONS</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="timeout">Timeout (ms)</label>
+                <input id="timeout" type="number" min="100" step="500" value="5000">
+            </div>
+            <div class="form-group">
+                <label for="outputFormat">Output Format</label>
+                <select id="outputFormat">
+                    <option value="json">json</option>
+                    <option value="xml">xml</option>
+                    <option value="text">text</option>
+                </select>
+            </div>
+
+            <div class="form-group wide">
+                <label for="urlSuffix">URL Suffix</label>
+                <input id="urlSuffix" type="text" placeholder="/orders/${orderId}" oninput="renderVariableScan()">
+                <span class="hint">Appended to the environment's URL prefix.</span>
+            </div>
+
+            <div class="form-group wide">
+                <label for="httpHeaders">HTTP Headers</label>
+                <textarea id="httpHeaders" spellcheck="false" oninput="renderVariableScan()"
+                          placeholder='{"Accept": "application/json"}&#10;— or —&#10;Accept: application/json'></textarea>
+                <span class="hint">A JSON object, or one <code>Name: value</code> per line.</span>
+            </div>
+
+            <div class="form-group wide">
+                <label for="httpBody">HTTP Body</label>
+                <textarea id="httpBody" class="tall" spellcheck="false" oninput="renderVariableScan()"
+                          placeholder='{"orderId": "$orderId"}'></textarea>
+            </div>
+
+            <div class="form-group wide">
+                <label>Referenced Variables</label>
+                <div class="var-scan" id="varScan"></div>
+            </div>
+
+            <div class="form-group wide">
+                <label for="useCaseVariables">Use Case Variables (JSON)</label>
+                <textarea id="useCaseVariables" spellcheck="false" oninput="renderVariableScan()"
+                          placeholder='{"pageSize": 50}'></textarea>
+                <span class="hint">Overrides app variables; an instance input of the same name still wins.</span>
+            </div>
+
+            <div class="form-group wide">
+                <label>Use Case Inputs</label>
+                <div id="inputRows"></div>
+                <div class="toolbar" style="margin-top:6px">
+                    <button class="tool-btn" onclick="addInputRow()">+ Add Input</button>
+                </div>
+                <span class="hint">Each instance of this use case supplies values for these. Name / type / optional default.</span>
+            </div>
+
+            <div class="form-group wide">
+                <label for="jsonataTransform">JSONata Transform (optional)</label>
+                <textarea id="jsonataTransform" spellcheck="false" placeholder='{"id": order.id, "total": order.amount}'></textarea>
+                <span class="hint">Applied to the parsed response; the result comes back as <code>transformedResponse</code>.</span>
+            </div>
+        </div>
+
+        <div class="toolbar">
+            <button class="primary" onclick="saveUseCase()">Save</button>
+            <button class="secondary" onclick="newUseCase()">New</button>
+            <button class="secondary" id="cloneBtn" onclick="cloneUseCase()" style="display:none">Clone…</button>
+            <button class="danger" id="deleteBtn" onclick="deleteUseCase()" style="display:none">Delete</button>
+        </div>
+        <div id="statusBar" class="status-bar"></div>
+    </div>
+
+</div>
+
+<script src="appcatalog.js"></script>
+<script>
+    // Same placeholder grammar the server substitutes with — ${name} or bare $name.
+    const VARIABLE_PATTERN = /\$\{([A-Za-z0-9_.\-]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g;
+
+    let apps = [];
+    let useCases = [];
+    let currentApp = null;
+    let editingUseCaseName = null;
+    let inputRows = [];     // [{ name, type, defaultValue }] — the editable input definitions
+
+    // ── App selection ────────────────────────────────────────────────────────
+
+    async function loadApps() {
+        try {
+            apps = await AC.listApps();
+            AC.fillSelect(document.getElementById('appSelect'), apps.map(a => a.appName), apps.length ? '— select an app —' : 'No apps defined yet');
+            // Land on the app the other tabs are working with; failing that, the first app —
+            // an empty page on a first visit hides everything that is already configured.
+            const remembered = AC.selectedApp();
+            document.getElementById('appSelect').value =
+                remembered && apps.some(a => a.appName === remembered) ? remembered
+                : apps.length ? apps[0].appName : '';
+            await onAppChange();
+        } catch (e) {
+            AC.setStatus('statusBar', 'Failed to load apps: ' + e.message, 'error');
+        }
+    }
+
+    async function onAppChange() {
+        const appName = document.getElementById('appSelect').value;
+        AC.setSelectedApp(appName);
+        currentApp = apps.find(a => a.appName === appName) || null;
+
+        const appVars = currentApp ? Object.keys(currentApp.appVariables || {}) : [];
+        document.getElementById('appVariablesPreview').value = appVars.length ? appVars.join(', ') : '(none)';
+
+        newUseCase();
+        if (!appName) {
+            useCases = [];
+            renderUseCaseList();
+            return;
+        }
+        try {
+            useCases = await AC.listUseCases(appName);
+            renderUseCaseList();
+        } catch (e) {
+            AC.setStatus('statusBar', 'Failed to load use cases: ' + e.message, 'error');
+        }
+    }
+
+    function renderUseCaseList() {
+        const list = document.getElementById('useCaseList');
+        if (!currentApp) {
+            list.innerHTML = '<div class="empty-note">Select an app first.</div>';
+            return;
+        }
+        if (!useCases.length) {
+            list.innerHTML = '<div class="empty-note">No use cases for this app yet.</div>';
+            return;
+        }
+        list.innerHTML = useCases
+            .slice()
+            .sort((a, b) => a.useCaseName.localeCompare(b.useCaseName))
+            .map(uc =>
+                '<div class="record' + (uc.useCaseName === editingUseCaseName ? ' selected' : '') + '" ' +
+                     'onclick="editUseCase(\'' + AC.attr(uc.useCaseName) + '\')">' +
+                    '<div class="record-name">' + AC.esc(uc.useCaseName) + '</div>' +
+                    '<div class="record-meta">' +
+                        '<span class="pill ' + AC.methodClass(uc.httpMethod) + '">' + AC.esc(uc.httpMethod) + '</span>' +
+                        '<span>' + AC.esc(uc.urlSuffix || '') + '</span>' +
+                    '</div>' +
+                '</div>'
+            ).join('');
+    }
+
+    // ── Input definition rows ────────────────────────────────────────────────
+
+    function addInputRow(input) {
+        inputRows.push(input || { name: '', type: 'string', defaultValue: '' });
+        renderInputRows();
+    }
+
+    function removeInputRow(index) {
+        inputRows.splice(index, 1);
+        renderInputRows();
+    }
+
+    function updateInputRow(index, field, value) {
+        inputRows[index][field] = value;
+        if (field === 'name') renderVariableScan();
+    }
+
+    function renderInputRows() {
+        const container = document.getElementById('inputRows');
+        if (!inputRows.length) {
+            container.innerHTML = '<div class="empty-note">No inputs — this use case runs the same way every time.</div>';
+            renderVariableScan();
+            return;
+        }
+        const types = ['string', 'number', 'boolean', 'json'];
+        container.innerHTML = inputRows.map((input, index) =>
+            '<div class="kv-row">' +
+                '<input type="text" placeholder="variable name" value="' + AC.esc(input.name) + '" ' +
+                       'oninput="updateInputRow(' + index + ', \'name\', this.value)">' +
+                '<select onchange="updateInputRow(' + index + ', \'type\', this.value)">' +
+                    types.map(t => '<option value="' + t + '"' + (input.type === t ? ' selected' : '') + '>' + t + '</option>').join('') +
+                '</select>' +
+                '<input type="text" placeholder="default (optional)" value="' + AC.esc(input.defaultValue || '') + '" ' +
+                       'oninput="updateInputRow(' + index + ', \'defaultValue\', this.value)">' +
+                '<button class="icon-btn" title="Remove" onclick="removeInputRow(' + index + ')">&times;</button>' +
+            '</div>'
+        ).join('');
+        renderVariableScan();
+    }
+
+    // ── Variable scan ────────────────────────────────────────────────────────
+
+    /**
+     * Lists every placeholder used in the URL / headers / body and colours it by the layer that
+     * will resolve it — instance input, use case variable, app variable, or nothing at all.
+     */
+    function renderVariableScan() {
+        const haystack = [
+            document.getElementById('urlSuffix').value,
+            document.getElementById('httpHeaders').value,
+            document.getElementById('httpBody').value
+        ].join('\n');
+
+        const referenced = new Set();
+        let match;
+        VARIABLE_PATTERN.lastIndex = 0;
+        while ((match = VARIABLE_PATTERN.exec(haystack)) !== null) {
+            referenced.add(match[1] || match[2]);
+        }
+
+        const scan = document.getElementById('varScan');
+        if (!referenced.size) {
+            scan.innerHTML = '<span class="empty-note">No variables referenced.</span>';
+            return;
+        }
+
+        let useCaseVars = {};
+        try { useCaseVars = AC.parseJsonObject(document.getElementById('useCaseVariables').value, 'Use Case Variables'); } catch (e) { /* mid-typing */ }
+        const appVars = (currentApp && currentApp.appVariables) || {};
+        const inputNames = inputRows.map(r => r.name).filter(Boolean);
+
+        scan.innerHTML = [...referenced].sort().map(name => {
+            let source = 'unresolved', label = 'unresolved';
+            if (inputNames.includes(name))                       { source = 'from-input';   label = 'input'; }
+            else if (Object.prototype.hasOwnProperty.call(useCaseVars, name)) { source = 'from-usecase'; label = 'use case'; }
+            else if (Object.prototype.hasOwnProperty.call(appVars, name))     { source = 'from-app';     label = 'app'; }
+            else if (name === 'jwtToken')                        { source = 'from-app';     label = 'auth'; }
+            return '<span class="var-chip ' + source + '" title="Resolved from: ' + label + '">$' + AC.esc(name) + ' · ' + label + '</span>';
+        }).join('');
+    }
+
+    // ── Editor ───────────────────────────────────────────────────────────────
+
+    function newUseCase() {
+        editingUseCaseName = null;
+        document.getElementById('editorTitle').textContent = 'New Use Case';
+        document.getElementById('useCaseName').value = '';
+        document.getElementById('useCaseName').disabled = false;
+        document.getElementById('useCaseNameHint').textContent = 'Unique within this app.';
+        document.getElementById('urlSuffix').value = '';
+        document.getElementById('httpMethod').value = 'GET';
+        document.getElementById('timeout').value = 5000;
+        document.getElementById('outputFormat').value = 'json';
+        document.getElementById('httpHeaders').value = '';
+        document.getElementById('httpBody').value = '';
+        document.getElementById('useCaseVariables').value = '';
+        document.getElementById('jsonataTransform').value = '';
+        document.getElementById('deleteBtn').style.display = 'none';
+        document.getElementById('cloneBtn').style.display = 'none';
+        inputRows = [];
+        renderInputRows();
+        renderUseCaseList();
+        AC.setStatus('statusBar', '');
+    }
+
+    function editUseCase(name) {
+        const uc = useCases.find(u => u.useCaseName === name);
+        if (!uc) return;
+
+        editingUseCaseName = name;
+        document.getElementById('editorTitle').textContent = 'Edit ' + name;
+        document.getElementById('useCaseName').value = uc.useCaseName;
+        document.getElementById('useCaseName').disabled = true;
+        document.getElementById('useCaseNameHint').textContent = 'Fixed once saved — use Clone to make a variant.';
+        document.getElementById('urlSuffix').value = uc.urlSuffix || '';
+        document.getElementById('httpMethod').value = uc.httpMethod || 'GET';
+        document.getElementById('timeout').value = uc.timeout || 5000;
+        document.getElementById('outputFormat').value = uc.outputFormat || 'json';
+        document.getElementById('httpHeaders').value = uc.httpHeaders || '';
+        document.getElementById('httpBody').value = uc.httpBody || '';
+        document.getElementById('useCaseVariables').value = AC.prettyJson(uc.appUseCaseVariables);
+        document.getElementById('jsonataTransform').value = (uc.jsonataTransform && uc.jsonataTransform.value) || '';
+        document.getElementById('deleteBtn').style.display = '';
+        document.getElementById('cloneBtn').style.display = '';
+        inputRows = (uc.appUseCaseInputs || []).map(i => ({ name: i.name, type: i.type || 'string', defaultValue: i.defaultValue || '' }));
+        renderInputRows();
+        renderUseCaseList();
+        AC.setStatus('statusBar', '');
+    }
+
+    function readForm() {
+        if (!currentApp) throw new Error('Select an app first.');
+        const useCaseName = document.getElementById('useCaseName').value.trim();
+        if (!useCaseName) throw new Error('Use Case Name is required.');
+
+        const named = inputRows.filter(r => r.name && r.name.trim());
+        const seen = new Set();
+        for (const row of named) {
+            if (seen.has(row.name.trim())) throw new Error('Duplicate input name: ' + row.name.trim());
+            seen.add(row.name.trim());
+        }
+
+        const jsonata = document.getElementById('jsonataTransform').value.trim();
+
+        return {
+            appName:     currentApp.appName,
+            useCaseName,
+            urlSuffix:   document.getElementById('urlSuffix').value.trim(),
+            httpMethod:  document.getElementById('httpMethod').value,
+            httpHeaders: document.getElementById('httpHeaders').value,
+            httpBody:    document.getElementById('httpBody').value,
+            timeout:     parseInt(document.getElementById('timeout').value, 10) || 5000,
+            outputFormat: document.getElementById('outputFormat').value,
+            appUseCaseVariables: AC.parseJsonObject(document.getElementById('useCaseVariables').value, 'Use Case Variables'),
+            appUseCaseInputs: named.map(r => ({ name: r.name.trim(), type: r.type || 'string', defaultValue: r.defaultValue || null })),
+            jsonataTransform: jsonata ? { key: null, value: jsonata, source: null } : null
+        };
+    }
+
+    async function saveUseCase() {
+        let useCase;
+        try {
+            useCase = readForm();
+        } catch (e) {
+            AC.setStatus('statusBar', e.message, 'error');
+            return;
+        }
+
+        try {
+            if (editingUseCaseName) {
+                await AC.api('PUT', '/appcatalog/usecases/' + encodeURIComponent(useCase.appName)
+                        + '/' + encodeURIComponent(editingUseCaseName), useCase);
+            } else {
+                await AC.api('POST', '/appcatalog/usecases', useCase);
+            }
+            useCases = await AC.listUseCases(useCase.appName);
+            editUseCase(useCase.useCaseName);
+            AC.setStatus('statusBar', 'Saved ' + useCase.useCaseName + '.', 'ok');
+        } catch (e) {
+            AC.setStatus('statusBar', 'Save failed: ' + e.message, 'error');
+        }
+    }
+
+    /** Copies the saved use case under a new name — the fast path for "same call, one field different". */
+    async function cloneUseCase() {
+        if (!editingUseCaseName || !currentApp) return;
+        const newName = prompt('Name for the cloned use case:', editingUseCaseName + '-copy');
+        if (!newName || !newName.trim()) return;
+
+        try {
+            await AC.api('POST', '/appcatalog/usecases/' + encodeURIComponent(currentApp.appName)
+                    + '/' + encodeURIComponent(editingUseCaseName) + '/clone', { newUseCaseName: newName.trim() });
+            useCases = await AC.listUseCases(currentApp.appName);
+            editUseCase(newName.trim());
+            AC.setStatus('statusBar', 'Cloned to ' + newName.trim() + ' — edit and save.', 'ok');
+        } catch (e) {
+            AC.setStatus('statusBar', 'Clone failed: ' + e.message, 'error');
+        }
+    }
+
+    async function deleteUseCase() {
+        if (!editingUseCaseName || !currentApp) return;
+        if (!AC.confirmDelete('use case', editingUseCaseName + '" and every instance of it')) return;
+        try {
+            await AC.api('DELETE', '/appcatalog/usecases/' + encodeURIComponent(currentApp.appName)
+                    + '/' + encodeURIComponent(editingUseCaseName));
+            const deleted = editingUseCaseName;
+            useCases = await AC.listUseCases(currentApp.appName);
+            newUseCase();
+            AC.setStatus('statusBar', 'Deleted ' + deleted + '.', 'ok');
+        } catch (e) {
+            AC.setStatus('statusBar', 'Delete failed: ' + e.message, 'error');
+        }
+    }
+
+    AC.applyEmbedding();
+    loadApps();
+</script>
+
+</body>
+</html>

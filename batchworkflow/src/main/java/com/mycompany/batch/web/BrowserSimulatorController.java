@@ -11,7 +11,8 @@ import java.util.Map;
 /**
  * REST control plane for {@link BrowserSimulatorService}. Each "session" is a dedicated headless
  * browser process this server launched — these endpoints start/stop sessions, poll their status,
- * and trigger a fresh memory-metrics capture on an already-loaded page.
+ * trigger a fresh memory-metrics capture on an already-loaded page, and tail the network calls
+ * and JavaScript errors the page has produced.
  */
 @RestController
 @RequestMapping("/browsersimulator")
@@ -59,6 +60,24 @@ public class BrowserSimulatorController {
             return error(e.getMessage());
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", String.valueOf(e.getMessage())));
+        }
+    }
+
+    @GetMapping("/log/{id}")
+    public ResponseEntity<?> log(@PathVariable String id) {
+        try {
+            return ResponseEntity.ok(service.logOf(id));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/clearlog/{id}")
+    public ResponseEntity<?> clearLog(@PathVariable String id) {
+        try {
+            return ResponseEntity.ok(service.clearLog(id));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
         }
     }
 

@@ -1,0 +1,1278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Use Case Instances</title>
+    <link rel="stylesheet" href="appcatalog.css">
+    <style>
+        /* ── Instance list / group drag-and-drop ─────────────────────────────── */
+
+        .instance-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            padding: 8px 10px;
+            border: 1px solid #dfe1e6;
+            border-radius: 4px;
+            background: #fff;
+            cursor: grab;
+        }
+        .instance-row:hover { border-color: #4c9aff; background: #f7faff; }
+        .instance-row.selected { border-color: #0052cc; background: #e9f0ff; }
+        .instance-row.dragging { opacity: 0.4; }
+        .instance-row input[type="checkbox"] { width: auto; margin-top: 3px; flex: none; }
+        .instance-row .body { flex: 1; min-width: 0; cursor: pointer; }
+        .grip { color: #b3bac5; font-size: 13px; line-height: 1.3; user-select: none; flex: none; }
+
+        /* Per-row actions: small enough that a row stays one line, always visible so a run is
+           never more than one click away however many instances are on screen. */
+        .row-actions { display: flex; gap: 4px; flex: none; }
+        .row-actions button { padding: 3px 8px; font-size: 11px; }
+        .instance-row .row-status { font-size: 10px; font-weight: 700; letter-spacing: .3px; }
+        .row-status.SUCCESS { color: #006644; }
+        .row-status.FAILED, .row-status.ERROR { color: #bf2600; }
+        .row-status.RUNNING { color: #5e6c84; }
+
+        /* With the editor collapsed the list owns the full width, so it flows into as many
+           columns as fit — the point of collapsing it is to see a lot of instances at once. */
+        .split.editor-collapsed { grid-template-columns: 1fr; }
+        .split.editor-collapsed #editorPanel { display: none; }
+        .record-list.wide {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 6px;
+            max-height: none;
+        }
+
+        .chip-dropzone {
+            border: 2px dashed #dfe1e6;
+            border-radius: 6px;
+            padding: 10px;
+            min-height: 62px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            align-items: flex-start;
+            align-content: flex-start;
+        }
+        .chip-dropzone.drag-over { border-color: #0052cc; background: #e9f0ff; }
+        .dropzone-empty { font-size: 12px; color: #97a0af; font-style: italic; }
+
+        .group-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: #deebff;
+            border: 1px solid #b3d4ff;
+            color: #0747a6;
+            border-radius: 12px;
+            padding: 3px 6px 3px 10px;
+            font-size: 12px;
+            cursor: grab;
+            max-width: 100%;
+        }
+        .group-chip .idx {
+            background: #0052cc; color: #fff; border-radius: 8px;
+            font-size: 10px; font-weight: 700; padding: 0 5px;
+        }
+        .group-chip .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+        .group-chip button { background: none; border: none; color: #0747a6; cursor: pointer; font-size: 14px; padding: 0 3px; }
+        .group-chip button:hover { color: #de350b; }
+
+        .dim-chip {
+            display: inline-flex; align-items: center; gap: 5px;
+            background: #f4f5f7; border: 1px solid #dfe1e6; color: #5e6c84;
+            border-radius: 12px; padding: 3px 10px; font-size: 12px; cursor: pointer;
+        }
+        .dim-chip:hover { border-color: #4c9aff; color: #172b4d; }
+        .chevron { color: #b3bac5; font-size: 14px; align-self: center; }
+
+        /* ── Results ─────────────────────────────────────────────────────────── */
+
+        .summary-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+        .summary-cell {
+            border: 1px solid #dfe1e6; border-radius: 6px; padding: 8px 14px;
+            background: #fff; min-width: 92px;
+        }
+        .summary-cell .val { font-size: 20px; font-weight: 700; }
+        .summary-cell .lbl { font-size: 11px; color: #5e6c84; text-transform: uppercase; letter-spacing: .4px; }
+        .summary-cell.ok  { border-color: #abf5d1; background: #f2fef8; }
+        .summary-cell.ok  .val { color: #006644; }
+        .summary-cell.bad { border-color: #ffbdad; background: #fff8f6; }
+        .summary-cell.bad .val { color: #bf2600; }
+
+        .group-section { border: 1px solid #dfe1e6; border-radius: 6px; margin-bottom: 10px; overflow: hidden; }
+        .group-header {
+            display: flex; align-items: center; gap: 10px;
+            padding: 8px 12px; background: #f4f5f7; cursor: pointer; user-select: none;
+        }
+        .group-header:hover { background: #ebecf0; }
+        .group-header .name { font-size: 13px; font-weight: 600; flex: 1; }
+        .group-header .counts { font-size: 11px; color: #5e6c84; }
+        .group-body { padding: 0 12px 6px; }
+        .group-body.collapsed { display: none; }
+        .caret { display: inline-block; transition: transform .15s; font-size: 11px; color: #5e6c84; }
+        .caret.open { transform: rotate(90deg); }
+
+        .detail-cell { background: #fafbfc; }
+        .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 10px; padding: 8px 2px; }
+        .detail-block { min-width: 0; }
+        .detail-block h4 {
+            font-size: 11px; font-weight: 700; color: #5e6c84;
+            text-transform: uppercase; letter-spacing: .4px; margin-bottom: 4px;
+        }
+        .detail-block pre {
+            background: #1e1e2e; color: #cdd6f4;
+            font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+            font-size: 12px; padding: 8px 10px; border-radius: 4px;
+            max-height: 280px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+        }
+        .status-cell.SUCCESS { color: #006644; font-weight: 700; }
+        .status-cell.FAILED  { color: #bf2600; font-weight: 700; }
+        .status-cell.ERROR   { color: #bf2600; font-weight: 700; }
+        .running-note { font-size: 13px; color: #5e6c84; }
+
+        /* Payloads are fetched per row, so the detail area starts as an offer rather than content. */
+        .payload-prompt {
+            display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+            padding: 8px 2px; font-size: 12px; color: #5e6c84;
+        }
+        .payload-prompt .sizes { color: #97a0af; }
+        .truncation-note { font-size: 11px; color: #7a4600; background: #fff0b3; padding: 3px 8px; border-radius: 3px; margin-bottom: 4px; }
+        .detail-block .block-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+        .detail-block .block-head h4 { margin-bottom: 0; }
+        .detail-block .block-head a { font-size: 11px; color: #0052cc; }
+    </style>
+</head>
+<body>
+
+<div class="page-nav"><a href="app.html">&larr; App Catalog</a></div>
+<h1>Use Case Instances</h1>
+<div class="subtitle">Pin a use case to an environment with real inputs, then run one instance — or a whole group of them — and inspect every touch point.</div>
+
+<!-- App picker + where runs are made from -->
+<div class="panel">
+    <div class="form-row" style="margin-bottom:0">
+        <div class="form-group">
+            <label for="appSelect">App</label>
+            <select id="appSelect" onchange="onAppChange()"></select>
+        </div>
+        <div class="form-group">
+            <label for="targetSelect">Run From</label>
+            <select id="targetSelect" onchange="onTargetChange()">
+                <option value="LOCAL">This server (local)</option>
+                <option value="AGENT">Remote agent</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="agentSelect">Agent</label>
+            <div style="display:flex; gap:6px">
+                <select id="agentSelect" onchange="saveRunTarget()"></select>
+                <button class="tool-btn" onclick="loadAgents(true)" title="Refresh connected agents">&#8635;</button>
+            </div>
+            <span class="hint" id="agentHint"></span>
+        </div>
+    </div>
+</div>
+
+<div class="split" id="workArea">
+
+    <!-- Instances -->
+    <div class="panel">
+        <div class="panel-title">
+            <span>Instances</span>
+            <span class="toolbar">
+                <button class="tool-btn" id="editorToggleBtn" onclick="toggleEditor()"></button>
+                <button class="tool-btn" onclick="newInstance()">+ New</button>
+            </span>
+        </div>
+        <div class="toolbar" style="margin-bottom:8px">
+            <button class="tool-btn" onclick="toggleSelectAll()">Select All / None</button>
+            <button class="primary" onclick="runSelected()">Run Selected</button>
+        </div>
+        <div class="record-list" id="instanceList"></div>
+        <div class="hint" style="margin-top:8px">Drag an instance into a group below to add it.</div>
+    </div>
+
+    <!-- Instance editor -->
+    <div class="panel" id="editorPanel">
+        <div class="panel-title">
+            <span id="editorTitle">New Instance</span>
+            <span class="toolbar">
+                <span id="instanceIdBadge" class="badge auth" style="display:none"></span>
+                <button class="tool-btn" onclick="setEditorOpen(false)" title="Collapse the editor">&times; Collapse</button>
+            </span>
+        </div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label for="useCaseSelect">Use Case</label>
+                <select id="useCaseSelect" onchange="onUseCaseChange()"></select>
+            </div>
+            <div class="form-group">
+                <label for="envSelect">Environment</label>
+                <select id="envSelect"></select>
+            </div>
+            <div class="form-group wide">
+                <label for="instanceLabel">Label (optional)</label>
+                <input id="instanceLabel" type="text" placeholder="Defaults to 'use case @ environment'">
+            </div>
+            <div class="form-group wide">
+                <label>Instance Inputs</label>
+                <div id="instanceInputs"></div>
+            </div>
+        </div>
+
+        <div class="toolbar">
+            <button class="primary" onclick="saveInstance()">Save</button>
+            <button class="secondary" onclick="newInstance()">New</button>
+            <button class="secondary" id="executeBtn" onclick="runCurrent()" style="display:none">Execute</button>
+            <button class="secondary" id="cloneBtn" onclick="cloneInstance()" style="display:none">Clone</button>
+            <button class="danger" id="deleteBtn" onclick="deleteInstance()" style="display:none">Delete</button>
+        </div>
+        <div id="statusBar" class="status-bar"></div>
+    </div>
+
+</div>
+
+<!-- Instance groups -->
+<div class="panel">
+    <div class="panel-title">
+        <span>Instance Groups</span>
+        <button class="tool-btn" onclick="newGroup()">+ New Group</button>
+    </div>
+    <div class="form-row">
+        <div class="form-group">
+            <label for="groupSelect">Saved Groups</label>
+            <select id="groupSelect" onchange="onGroupChange()"></select>
+        </div>
+        <div class="form-group">
+            <label for="groupName">Group Name</label>
+            <input id="groupName" type="text" placeholder="orders-smoke">
+        </div>
+        <div class="form-group">
+            <label for="groupDescription">Description</label>
+            <input id="groupDescription" type="text" placeholder="Every touch point for the orders app">
+        </div>
+    </div>
+    <div class="form-group wide" style="margin-bottom:12px">
+        <label>Members &mdash; drag instances here, drag chips to reorder</label>
+        <div id="groupZone" class="chip-dropzone"
+             ondragover="onZoneDragOver(event)" ondragleave="onZoneDragLeave(event)" ondrop="onZoneDrop(event)"></div>
+    </div>
+    <div class="toolbar">
+        <button class="primary" onclick="saveGroup()">Save Group</button>
+        <button class="secondary" onclick="runGroup()">Run Group</button>
+        <button class="danger" id="deleteGroupBtn" onclick="deleteGroup()" style="display:none">Delete Group</button>
+    </div>
+    <div id="groupStatusBar" class="status-bar"></div>
+</div>
+
+<!-- Results -->
+<div class="panel" id="resultsPanel" style="display:none">
+    <div class="panel-title">
+        <span>Results</span>
+        <button class="tool-btn" onclick="clearResults()">Clear</button>
+    </div>
+
+    <div class="summary-row" id="summaryRow"></div>
+
+    <div class="form-row">
+        <div class="form-group wide">
+            <label>Group By / Drill Down &mdash; click or drag a dimension; order sets the depth</label>
+            <div class="chip-dropzone" id="dimPalette" style="border-style:solid; background:#fafbfc"></div>
+        </div>
+        <div class="form-group wide">
+            <label>Active Drill Down</label>
+            <div id="groupByZone" class="chip-dropzone"
+                 ondragover="onDimZoneDragOver(event)" ondragleave="onDimZoneDragLeave(event)" ondrop="onDimZoneDrop(event)"></div>
+        </div>
+    </div>
+
+    <div id="resultsContainer"></div>
+</div>
+
+<script src="appcatalog.js"></script>
+<script>
+    // Every field of an execution output that makes sense as a drill-down level. Order here is
+    // just the palette order; the user's chosen order in the dropzone is what forms the lanes.
+    const DIMENSIONS = [
+        { key: 'status',      label: 'Status' },
+        { key: 'appName',     label: 'App' },
+        { key: 'environment', label: 'Environment' },
+        { key: 'envClass',    label: 'Env Class' },
+        { key: 'useCase',     label: 'Use Case' },
+        { key: 'httpMethod',  label: 'Method' },
+        { key: 'statusCode',  label: 'HTTP Status' },
+        { key: 'executedVia', label: 'Ran On' }
+    ];
+
+    const GROUPBY_KEY   = 'appCatalog.instanceGroupByKeys';
+    const EDITOR_KEY    = 'appCatalog.instanceEditorOpen';
+    const RUNTARGET_KEY = 'appCatalog.instanceRunTarget';
+
+    /** Above this many characters a payload block renders truncated — a browser stalls long before. */
+    const RENDER_LIMIT = 100000;
+
+    let apps = [], useCases = [], environments = [], instances = [], groups = [], agents = [];
+    let currentApp = null;
+    let editingInstanceId = null;
+    let currentUseCase = null;         // the use case backing the input fields on screen
+    let extraInputNames = [];          // inputs an instance carries that its use case no longer declares
+
+    let editingGroupName = null;
+    let groupMemberIds = [];
+
+    let results = [];
+    let groupByKeys = loadGroupByKeys();
+    let expandedDetails = new Set();
+    let collapsedLanes = new Set();
+
+    // Payloads are left on the server by a run and pulled back one row at a time; this holds the
+    // ones already fetched, keyed by executionId, so collapsing and re-expanding is free.
+    let payloads = new Map();
+
+    // Last run per instance, so a row can carry the outcome of the run its own button started.
+    let lastRunByInstance = new Map();
+
+    function loadGroupByKeys() {
+        try {
+            const saved = JSON.parse(localStorage.getItem(GROUPBY_KEY) || '[]');
+            return Array.isArray(saved) ? saved.filter(k => DIMENSIONS.some(d => d.key === k)) : [];
+        } catch (e) { return []; }
+    }
+    function saveGroupByKeys() { localStorage.setItem(GROUPBY_KEY, JSON.stringify(groupByKeys)); }
+
+    // ── Editor collapse ──────────────────────────────────────────────────────
+
+    // Collapsed by default: the list is what you come to this page for, and the editor is only
+    // needed once you have picked a row to change.
+    function editorOpen() { return localStorage.getItem(EDITOR_KEY) === 'true'; }
+
+    function setEditorOpen(open) {
+        localStorage.setItem(EDITOR_KEY, open ? 'true' : 'false');
+        applyEditorState();
+    }
+
+    function toggleEditor() { setEditorOpen(!editorOpen()); }
+
+    function applyEditorState() {
+        const open = editorOpen();
+        document.getElementById('workArea').classList.toggle('editor-collapsed', !open);
+        document.getElementById('instanceList').classList.toggle('wide', !open);
+        document.getElementById('editorToggleBtn').innerHTML = open ? '&laquo; Hide Editor' : 'Show Editor &raquo;';
+    }
+
+    // ── Run target ───────────────────────────────────────────────────────────
+
+    function saveRunTarget() {
+        const select = document.getElementById('agentSelect');
+        localStorage.setItem(RUNTARGET_KEY, JSON.stringify({
+            target:  document.getElementById('targetSelect').value,
+            // dataset.preferred holds a pinned agent that is not connected right now — keep
+            // remembering it rather than silently falling back to round-robin.
+            agentId: select.value || select.dataset.preferred || ''
+        }));
+    }
+
+    function restoreRunTarget() {
+        let saved = {};
+        try { saved = JSON.parse(localStorage.getItem(RUNTARGET_KEY) || '{}') || {}; } catch (e) { saved = {}; }
+        document.getElementById('targetSelect').value = saved.target === 'AGENT' ? 'AGENT' : 'LOCAL';
+
+        const select = document.getElementById('agentSelect');
+        if (saved.agentId) {
+            if ([...select.options].some(o => o.value === saved.agentId)) select.value = saved.agentId;
+            else select.dataset.preferred = saved.agentId;
+        }
+        onTargetChange();
+    }
+
+    function onTargetChange() {
+        const remote = document.getElementById('targetSelect').value === 'AGENT';
+        document.getElementById('agentSelect').disabled = !remote;
+        saveRunTarget();
+        renderAgentHint();
+        if (remote) loadAgents(false);
+    }
+
+    /** Refreshes the connected-agent list. Silent on failure unless the user asked for it. */
+    async function loadAgents(announce) {
+        const select = document.getElementById('agentSelect');
+        try {
+            agents = await AC.api('GET', '/agents');
+        } catch (e) {
+            agents = [];
+            if (announce) AC.setStatus('statusBar', 'Could not list agents: ' + e.message, 'error');
+        }
+        const preferred = select.dataset.preferred || select.value;
+        AC.fillSelect(select, agents.map(a => ({
+            value: a.agentId,
+            label: a.agentId + (a.hostname && a.hostname !== a.agentId ? ' (' + a.hostname + ')' : '')
+        })), '— any agent (round-robin) —');
+        if (preferred && agents.some(a => a.agentId === preferred)) {
+            select.value = preferred;
+            delete select.dataset.preferred;
+        }
+        renderAgentHint();
+        if (announce) AC.setStatus('statusBar', agents.length + ' agent(s) connected.', agents.length ? 'ok' : 'error');
+    }
+
+    function renderAgentHint() {
+        const remote = document.getElementById('targetSelect').value === 'AGENT';
+        document.getElementById('agentHint').textContent =
+            !remote ? 'Runs leave from this server.'
+            : !agents.length ? 'No agents connected — remote runs will fail.'
+            : document.getElementById('agentSelect').value ? 'Every run is pinned to this agent.'
+            : agents.length + ' connected — runs are spread round-robin.';
+    }
+
+    /** The target every run on this page uses, as query parameters. */
+    function runTarget() {
+        const target = document.getElementById('targetSelect').value === 'AGENT' ? 'AGENT' : 'LOCAL';
+        return { target, agentId: target === 'AGENT' ? document.getElementById('agentSelect').value : '' };
+    }
+
+    function targetQuery() {
+        const t = runTarget();
+        return '?target=' + encodeURIComponent(t.target) + (t.agentId ? '&agentId=' + encodeURIComponent(t.agentId) : '');
+    }
+
+    function targetPhrase() {
+        const t = runTarget();
+        if (t.target !== 'AGENT') return 'locally';
+        return t.agentId ? 'on agent ' + t.agentId : 'on any available agent';
+    }
+
+    // ── App / reference data ─────────────────────────────────────────────────
+
+    async function loadApps() {
+        try {
+            apps = await AC.listApps();
+            AC.fillSelect(document.getElementById('appSelect'), apps.map(a => a.appName), apps.length ? '— select an app —' : 'No apps defined yet');
+            // Land on the app the other tabs are working with; failing that, the first app —
+            // an empty page on a first visit hides everything that is already configured.
+            const remembered = AC.selectedApp();
+            document.getElementById('appSelect').value =
+                remembered && apps.some(a => a.appName === remembered) ? remembered
+                : apps.length ? apps[0].appName : '';
+            await onAppChange();
+            await loadGroups();
+        } catch (e) {
+            AC.setStatus('statusBar', 'Failed to load apps: ' + e.message, 'error');
+        }
+    }
+
+    async function onAppChange() {
+        const appName = document.getElementById('appSelect').value;
+        AC.setSelectedApp(appName);
+        currentApp = apps.find(a => a.appName === appName) || null;
+
+        if (!appName) {
+            useCases = []; environments = []; instances = [];
+            refreshSelectors();
+            renderInstanceList();
+            resetEditor();
+            return;
+        }
+        try {
+            [useCases, environments, instances] = await Promise.all([
+                AC.listUseCases(appName),
+                AC.listEnvironments(appName),
+                AC.listInstances(appName)
+            ]);
+            await refreshInstanceLookup();
+            refreshSelectors();
+            renderInstanceList();
+            resetEditor();
+        } catch (e) {
+            AC.setStatus('statusBar', 'Failed to load app data: ' + e.message, 'error');
+        }
+    }
+
+    function refreshSelectors() {
+        AC.fillSelect(document.getElementById('useCaseSelect'), useCases.map(u => u.useCaseName), '— select a use case —');
+        AC.fillSelect(document.getElementById('envSelect'),
+            environments.map(e => ({ value: e.environment, label: e.environment + ' (' + e.envClass + ')' })), '— select an environment —');
+    }
+
+    // ── Instance list ────────────────────────────────────────────────────────
+
+    function instanceLabel(instance) {
+        return instance.instanceLabel && instance.instanceLabel.trim()
+            ? instance.instanceLabel
+            : instance.appUseCaseName + ' @ ' + instance.appEnvironment;
+    }
+
+    function renderInstanceList() {
+        const list = document.getElementById('instanceList');
+        if (!currentApp) {
+            list.innerHTML = '<div class="empty-note">Select an app first.</div>';
+            return;
+        }
+        if (!instances.length) {
+            list.innerHTML = '<div class="empty-note">No instances yet — pick a use case and environment, then save.</div>';
+            return;
+        }
+        // Checked state lives in the DOM, so preserve it across a re-render.
+        const checked = new Set(selectedInstanceIds());
+
+        list.innerHTML = instances.map(instance => {
+            const id = instance.appUseCaseInstanceId;
+            const quoted = '\'' + AC.attr(id) + '\'';
+            return '<div class="instance-row' + (id === editingInstanceId ? ' selected' : '') + '" draggable="true" ' +
+                        'data-instance-id="' + AC.esc(id) + '" ' +
+                        'ondragstart="onInstanceDragStart(event, ' + quoted + ')" ' +
+                        'ondragend="onInstanceDragEnd(event)">' +
+                    '<input type="checkbox" class="pick" value="' + AC.esc(id) + '"' + (checked.has(id) ? ' checked' : '') + '>' +
+                    '<span class="grip" title="Drag into a group">&#8942;&#8942;</span>' +
+                    '<div class="body" onclick="editInstance(' + quoted + ')">' +
+                        '<div class="record-name">' + AC.esc(instanceLabel(instance)) + '</div>' +
+                        '<div class="record-meta">' +
+                            '<span>' + AC.esc(instance.appUseCaseName) + '</span>' +
+                            '<span class="badge auth">' + AC.esc(instance.appEnvironment) + '</span>' +
+                            rowStatusHtml(id) +
+                        '</div>' +
+                    '</div>' +
+                    '<span class="row-actions">' +
+                        '<button class="primary" title="Run this instance ' + AC.esc(targetPhrase()) + '" ' +
+                                'onclick="event.stopPropagation(); runInstance(' + quoted + ')">&#9654; Run</button>' +
+                        '<button class="secondary" title="Open in the editor" ' +
+                                'onclick="event.stopPropagation(); editInstance(' + quoted + ')">&#9998; Edit</button>' +
+                    '</span>' +
+                '</div>';
+        }).join('');
+    }
+
+    /** The outcome of the last run of this instance, shown inline so a row run needs no scrolling. */
+    function rowStatusHtml(instanceId) {
+        const last = lastRunByInstance.get(instanceId);
+        if (!last) return '';
+        if (last.status === 'RUNNING') return '<span class="row-status RUNNING">running…</span>';
+        return '<span class="row-status ' + AC.esc(last.status) + '">' + AC.esc(last.status) +
+               (last.statusCode !== null && last.statusCode !== undefined ? ' ' + last.statusCode : '') +
+               (last.timeTaken !== undefined ? ' · ' + last.timeTaken + ' ms' : '') + '</span>';
+    }
+
+    function selectedInstanceIds() {
+        return [...document.querySelectorAll('#instanceList .pick:checked')].map(cb => cb.value);
+    }
+
+    function toggleSelectAll() {
+        const boxes = [...document.querySelectorAll('#instanceList .pick')];
+        const turnOn = boxes.some(cb => !cb.checked);
+        boxes.forEach(cb => { cb.checked = turnOn; });
+    }
+
+    // ── Instance editor ──────────────────────────────────────────────────────
+
+    function onUseCaseChange() {
+        const name = document.getElementById('useCaseSelect').value;
+        currentUseCase = useCases.find(u => u.useCaseName === name) || null;
+        extraInputNames = [];
+        renderInstanceInputs({});
+    }
+
+    /**
+     * One field per input the use case declares, pre-filled from the instance (when editing) or
+     * the declared default. Values an instance carries for inputs the use case has since dropped
+     * are still rendered — flagged as no longer declared — so editing an instance never silently
+     * discards data.
+     */
+    function renderInstanceInputs(values) {
+        const container = document.getElementById('instanceInputs');
+        if (!currentUseCase) {
+            container.innerHTML = '<div class="empty-note">Select a use case to see its inputs.</div>';
+            return;
+        }
+
+        const declared = currentUseCase.appUseCaseInputs || [];
+        const declaredNames = declared.map(i => i.name);
+        extraInputNames = Object.keys(values || {}).filter(k => !declaredNames.includes(k));
+
+        if (!declared.length && !extraInputNames.length) {
+            container.innerHTML = '<div class="empty-note">This use case declares no inputs — it runs on app and use case variables alone.</div>';
+            return;
+        }
+
+        const rows = declared.map(input => {
+            const value = values && values[input.name] !== undefined
+                ? values[input.name]
+                : (input.defaultValue !== null && input.defaultValue !== undefined ? input.defaultValue : '');
+            return inputFieldHtml(input.name, input.type || 'string', value, false);
+        });
+
+        rows.push(...extraInputNames.map(name => inputFieldHtml(name, 'string', values[name], true)));
+
+        container.innerHTML = '<div class="form-row" style="margin-bottom:0">' + rows.join('') + '</div>';
+    }
+
+    function inputFieldHtml(name, type, value, undeclared) {
+        const rendered = typeof value === 'object' && value !== null ? JSON.stringify(value) : (value === undefined || value === null ? '' : value);
+        return '<div class="form-group">' +
+                    '<label>' + AC.esc(name) + ' <span class="hint">' + AC.esc(type) + (undeclared ? ' · no longer declared' : '') + '</span></label>' +
+                    '<input type="text" class="instance-input" data-name="' + AC.esc(name) + '" data-type="' + AC.esc(type) + '" ' +
+                           'value="' + AC.esc(rendered) + '">' +
+                '</div>';
+    }
+
+    /** Coerces each entered value to the type its use case input declares. */
+    function readInstanceInputs() {
+        const out = {};
+        document.querySelectorAll('#instanceInputs .instance-input').forEach(field => {
+            const name = field.dataset.name;
+            const raw = field.value;
+            if (raw === '') return;
+            switch (field.dataset.type) {
+                case 'number':
+                    { const n = Number(raw); out[name] = Number.isNaN(n) ? raw : n; break; }
+                case 'boolean':
+                    out[name] = raw.trim().toLowerCase() === 'true'; break;
+                case 'json':
+                    try { out[name] = JSON.parse(raw); }
+                    catch (e) { throw new Error('Input "' + name + '" is not valid JSON: ' + e.message); }
+                    break;
+                default:
+                    out[name] = raw;
+            }
+        });
+        return out;
+    }
+
+    /** The "+ New" / "New" buttons: a blank form, and the editor open to show it. */
+    function newInstance() {
+        resetEditor();
+        setEditorOpen(true);
+    }
+
+    /** Clears the form without touching whether the editor is on screen. */
+    function resetEditor() {
+        editingInstanceId = null;
+        currentUseCase = null;
+        document.getElementById('editorTitle').textContent = 'New Instance';
+        document.getElementById('instanceIdBadge').style.display = 'none';
+        document.getElementById('useCaseSelect').value = '';
+        document.getElementById('envSelect').value = '';
+        document.getElementById('instanceLabel').value = '';
+        ['executeBtn', 'cloneBtn', 'deleteBtn'].forEach(id => { document.getElementById(id).style.display = 'none'; });
+        renderInstanceInputs({});
+        renderInstanceList();
+        AC.setStatus('statusBar', '');
+    }
+
+    function editInstance(instanceId) {
+        const instance = instances.find(i => i.appUseCaseInstanceId === instanceId);
+        if (!instance) return;
+
+        setEditorOpen(true);
+        editingInstanceId = instanceId;
+        document.getElementById('editorTitle').textContent = 'Edit Instance';
+        const badge = document.getElementById('instanceIdBadge');
+        badge.style.display = '';
+        badge.textContent = instanceId;
+        document.getElementById('useCaseSelect').value = instance.appUseCaseName;
+        document.getElementById('envSelect').value = instance.appEnvironment;
+        document.getElementById('instanceLabel').value = instance.instanceLabel || '';
+        ['executeBtn', 'cloneBtn', 'deleteBtn'].forEach(id => { document.getElementById(id).style.display = ''; });
+
+        currentUseCase = useCases.find(u => u.useCaseName === instance.appUseCaseName) || null;
+        renderInstanceInputs(instance.appUseCaseInstanceInputs || {});
+        renderInstanceList();
+        AC.setStatus('statusBar', '');
+    }
+
+    function readInstanceForm() {
+        if (!currentApp) throw new Error('Select an app first.');
+        const useCaseName = document.getElementById('useCaseSelect').value;
+        if (!useCaseName) throw new Error('Use Case is required.');
+        const environment = document.getElementById('envSelect').value;
+        if (!environment) throw new Error('Environment is required.');
+
+        return {
+            appUseCaseInstanceId: editingInstanceId,
+            instanceLabel:  document.getElementById('instanceLabel').value.trim(),
+            appName:        currentApp.appName,
+            appUseCaseName: useCaseName,
+            appEnvironment: environment,
+            appUseCaseInstanceInputs: readInstanceInputs()
+        };
+    }
+
+    async function saveInstance() {
+        let instance;
+        try {
+            instance = readInstanceForm();
+        } catch (e) {
+            AC.setStatus('statusBar', e.message, 'error');
+            return;
+        }
+
+        try {
+            const saved = editingInstanceId
+                ? await AC.api('PUT', '/appcatalog/instances/' + encodeURIComponent(editingInstanceId), instance)
+                : await AC.api('POST', '/appcatalog/instances', instance);
+            instances = await AC.listInstances(currentApp.appName);
+            await refreshInstanceLookup();
+            editInstance(saved.appUseCaseInstanceId);
+            AC.setStatus('statusBar', 'Saved instance ' + saved.appUseCaseInstanceId + '.', 'ok');
+        } catch (e) {
+            AC.setStatus('statusBar', 'Save failed: ' + e.message, 'error');
+        }
+    }
+
+    async function cloneInstance() {
+        if (!editingInstanceId) return;
+        const label = prompt('Label for the cloned instance (blank for the default):', document.getElementById('instanceLabel').value || '');
+        if (label === null) return;
+
+        try {
+            const saved = await AC.api('POST', '/appcatalog/instances/' + encodeURIComponent(editingInstanceId) + '/clone',
+                    { instanceLabel: label.trim() });
+            instances = await AC.listInstances(currentApp.appName);
+            await refreshInstanceLookup();
+            editInstance(saved.appUseCaseInstanceId);
+            AC.setStatus('statusBar', 'Cloned to ' + saved.appUseCaseInstanceId + ' — adjust its inputs and save.', 'ok');
+        } catch (e) {
+            AC.setStatus('statusBar', 'Clone failed: ' + e.message, 'error');
+        }
+    }
+
+    async function deleteInstance() {
+        if (!editingInstanceId) return;
+        if (!AC.confirmDelete('instance', editingInstanceId)) return;
+        try {
+            await AC.api('DELETE', '/appcatalog/instances/' + encodeURIComponent(editingInstanceId));
+            const deleted = editingInstanceId;
+            instances = await AC.listInstances(currentApp.appName);
+            await refreshInstanceLookup();
+            await loadGroups();
+            resetEditor();
+            AC.setStatus('statusBar', 'Deleted ' + deleted + '.', 'ok');
+        } catch (e) {
+            AC.setStatus('statusBar', 'Delete failed: ' + e.message, 'error');
+        }
+    }
+
+    // ── Groups ───────────────────────────────────────────────────────────────
+
+    async function loadGroups() {
+        try {
+            groups = await AC.listGroups();
+            AC.fillSelect(document.getElementById('groupSelect'), groups.map(g => g.groupName), '— new group —');
+            if (editingGroupName && groups.some(g => g.groupName === editingGroupName)) {
+                document.getElementById('groupSelect').value = editingGroupName;
+            }
+            renderGroupZone();
+        } catch (e) {
+            AC.setStatus('groupStatusBar', 'Failed to load groups: ' + e.message, 'error');
+        }
+    }
+
+    function onGroupChange() {
+        const name = document.getElementById('groupSelect').value;
+        if (!name) { newGroup(); return; }
+
+        const group = groups.find(g => g.groupName === name);
+        if (!group) return;
+        editingGroupName = name;
+        document.getElementById('groupName').value = group.groupName;
+        document.getElementById('groupDescription').value = group.description || '';
+        document.getElementById('deleteGroupBtn').style.display = '';
+        groupMemberIds = (group.appUseCaseInstanceIds || []).slice();
+        renderGroupZone();
+        AC.setStatus('groupStatusBar', '');
+    }
+
+    function newGroup() {
+        editingGroupName = null;
+        document.getElementById('groupSelect').value = '';
+        document.getElementById('groupName').value = '';
+        document.getElementById('groupDescription').value = '';
+        document.getElementById('deleteGroupBtn').style.display = 'none';
+        groupMemberIds = [];
+        renderGroupZone();
+        AC.setStatus('groupStatusBar', '');
+    }
+
+    /** Groups can span apps, so member labels are resolved from a catalog-wide lookup. */
+    let allInstancesById = new Map();
+
+    async function refreshInstanceLookup() {
+        try {
+            const all = await AC.listInstances('');
+            allInstancesById = new Map(all.map(i => [i.appUseCaseInstanceId, i]));
+        } catch (e) { /* labels fall back to raw ids */ }
+    }
+
+    function labelForId(id) {
+        const instance = allInstancesById.get(id) || instances.find(i => i.appUseCaseInstanceId === id);
+        return instance ? instanceLabel(instance) : id;
+    }
+
+    function renderGroupZone() {
+        const zone = document.getElementById('groupZone');
+        if (!groupMemberIds.length) {
+            zone.innerHTML = '<div class="dropzone-empty">Empty — drag instances here to build a run group.</div>';
+            return;
+        }
+        zone.innerHTML = groupMemberIds.map((id, index) =>
+            '<span class="group-chip" draggable="true" data-idx="' + index + '" ' +
+                  'ondragstart="onChipDragStart(event, ' + index + ')" ' +
+                  'ondragover="onChipDragOver(event)" ' +
+                  'ondrop="onChipDrop(event, ' + index + ')" title="' + AC.esc(id) + '">' +
+                '<span class="idx">' + (index + 1) + '</span>' +
+                '<span class="label">' + AC.esc(labelForId(id)) + '</span>' +
+                '<button type="button" title="Remove" onclick="removeGroupMember(' + index + ')">&times;</button>' +
+            '</span>'
+        ).join('');
+    }
+
+    function addGroupMember(instanceId) {
+        if (groupMemberIds.includes(instanceId)) return;
+        groupMemberIds.push(instanceId);
+        renderGroupZone();
+    }
+
+    function removeGroupMember(index) {
+        groupMemberIds.splice(index, 1);
+        renderGroupZone();
+    }
+
+    function moveGroupMember(fromIndex, toIndex) {
+        if (fromIndex === toIndex || fromIndex < 0 || fromIndex >= groupMemberIds.length) return;
+        const [moved] = groupMemberIds.splice(fromIndex, 1);
+        groupMemberIds.splice(toIndex, 0, moved);
+        renderGroupZone();
+    }
+
+    async function saveGroup() {
+        const groupName = document.getElementById('groupName').value.trim();
+        if (!groupName) { AC.setStatus('groupStatusBar', 'Group Name is required.', 'error'); return; }
+        if (!groupMemberIds.length) { AC.setStatus('groupStatusBar', 'Add at least one instance to the group.', 'error'); return; }
+
+        try {
+            await AC.api('POST', '/appcatalog/groups', {
+                groupName,
+                description: document.getElementById('groupDescription').value.trim(),
+                appUseCaseInstanceIds: groupMemberIds
+            });
+            editingGroupName = groupName;
+            await loadGroups();
+            document.getElementById('groupSelect').value = groupName;
+            document.getElementById('deleteGroupBtn').style.display = '';
+            AC.setStatus('groupStatusBar', 'Saved group ' + groupName + '.', 'ok');
+        } catch (e) {
+            AC.setStatus('groupStatusBar', 'Save failed: ' + e.message, 'error');
+        }
+    }
+
+    async function deleteGroup() {
+        if (!editingGroupName) return;
+        if (!AC.confirmDelete('group', editingGroupName)) return;
+        try {
+            await AC.api('DELETE', '/appcatalog/groups/' + encodeURIComponent(editingGroupName));
+            const deleted = editingGroupName;
+            newGroup();
+            await loadGroups();
+            AC.setStatus('groupStatusBar', 'Deleted ' + deleted + '.', 'ok');
+        } catch (e) {
+            AC.setStatus('groupStatusBar', 'Delete failed: ' + e.message, 'error');
+        }
+    }
+
+    // ── Drag and drop ────────────────────────────────────────────────────────
+
+    function onInstanceDragStart(event, instanceId) {
+        event.dataTransfer.setData('text/x-instance-id', instanceId);
+        event.dataTransfer.effectAllowed = 'copy';
+        event.currentTarget.classList.add('dragging');
+    }
+    function onInstanceDragEnd(event) { event.currentTarget.classList.remove('dragging'); }
+
+    function onZoneDragOver(event) {
+        if (![...event.dataTransfer.types].includes('text/x-instance-id')) return;
+        event.preventDefault();
+        document.getElementById('groupZone').classList.add('drag-over');
+    }
+    function onZoneDragLeave() { document.getElementById('groupZone').classList.remove('drag-over'); }
+
+    function onZoneDrop(event) {
+        event.preventDefault();
+        document.getElementById('groupZone').classList.remove('drag-over');
+        const instanceId = event.dataTransfer.getData('text/x-instance-id');
+        if (instanceId) addGroupMember(instanceId);
+    }
+
+    function onChipDragStart(event, index) {
+        event.dataTransfer.setData('text/x-member-index', String(index));
+        event.dataTransfer.effectAllowed = 'move';
+        event.stopPropagation();
+    }
+    function onChipDragOver(event) {
+        if ([...event.dataTransfer.types].includes('text/x-member-index')) event.preventDefault();
+    }
+    function onChipDrop(event, index) {
+        const from = event.dataTransfer.getData('text/x-member-index');
+        if (from === '') return;
+        event.preventDefault();
+        event.stopPropagation();
+        moveGroupMember(parseInt(from, 10), index);
+    }
+
+    // ── Execution ────────────────────────────────────────────────────────────
+
+    async function runCurrent() {
+        if (!editingInstanceId) return;
+        await runInstance(editingInstanceId);
+    }
+
+    /** The Run button on a list row — one instance, straight into the results panel. */
+    async function runInstance(instanceId) {
+        lastRunByInstance.set(instanceId, { status: 'RUNNING' });
+        renderInstanceList();
+        await run(() => AC.api('POST', '/appcatalog/execute/' + encodeURIComponent(instanceId) + targetQuery()).then(r => [r]),
+                  '1 instance ' + targetPhrase(), 'statusBar');
+    }
+
+    async function runSelected() {
+        const ids = selectedInstanceIds();
+        if (!ids.length) { AC.setStatus('statusBar', 'Tick at least one instance first.', 'error'); return; }
+        const target = runTarget();
+        await run(() => AC.api('POST', '/appcatalog/execute',
+                        { appUseCaseInstanceIds: ids, target: target.target, agentId: target.agentId }),
+                  ids.length + ' instance(s) ' + targetPhrase(), 'statusBar');
+    }
+
+    async function runGroup() {
+        const name = document.getElementById('groupSelect').value;
+        if (!name) { AC.setStatus('groupStatusBar', 'Select a saved group to run — or save this one first.', 'error'); return; }
+        await run(() => AC.api('POST', '/appcatalog/execute/group/' + encodeURIComponent(name) + targetQuery()),
+                  'group ' + name + ' ' + targetPhrase(), 'groupStatusBar');
+    }
+
+    async function run(executor, what, statusBarId) {
+        AC.setStatus(statusBarId, 'Running ' + what + '…');
+        document.getElementById('resultsPanel').style.display = '';
+        document.getElementById('resultsContainer').innerHTML = '<div class="running-note">Running ' + AC.esc(what) + '…</div>';
+        try {
+            // Results arrive without their bodies; each row fetches its own payload on demand.
+            results = await executor();
+            payloads.clear();
+            expandedDetails.clear();
+            collapsedLanes.clear();
+            results.forEach(r => lastRunByInstance.set(r.appUseCaseInstanceId, r));
+            renderInstanceList();
+            renderResults();
+            const failed = results.filter(r => r.status !== 'SUCCESS').length;
+            AC.setStatus(statusBarId,
+                'Ran ' + results.length + ' — ' + (results.length - failed) + ' succeeded, ' + failed + ' did not.',
+                failed ? 'error' : 'ok');
+        } catch (e) {
+            document.getElementById('resultsContainer').innerHTML = '';
+            lastRunByInstance.forEach((v, k) => { if (v.status === 'RUNNING') lastRunByInstance.delete(k); });
+            renderInstanceList();
+            AC.setStatus(statusBarId, 'Run failed: ' + e.message, 'error');
+        }
+    }
+
+    function clearResults() {
+        results = [];
+        payloads.clear();
+        document.getElementById('resultsPanel').style.display = 'none';
+        document.getElementById('resultsContainer').innerHTML = '';
+    }
+
+    // ── Group By / drill down ────────────────────────────────────────────────
+
+    function dimensionLabel(key) {
+        const dimension = DIMENSIONS.find(d => d.key === key);
+        return dimension ? dimension.label : key;
+    }
+
+    function renderDimPalette() {
+        const palette = document.getElementById('dimPalette');
+        const available = DIMENSIONS.filter(d => !groupByKeys.includes(d.key));
+        palette.innerHTML = available.length
+            ? available.map(d =>
+                '<span class="dim-chip" draggable="true" ' +
+                      'ondragstart="onDimDragStart(event, \'' + d.key + '\')" ' +
+                      'onclick="addGroupByKey(\'' + d.key + '\')" ' +
+                      'title="Drag onto the drill down, or click to add">' + d.label + ' <b>+</b></span>'
+              ).join('')
+            : '<div class="dropzone-empty">Every dimension is already in use.</div>';
+    }
+
+    function renderGroupByZone() {
+        const zone = document.getElementById('groupByZone');
+        zone.innerHTML = groupByKeys.length
+            ? groupByKeys.map((key, index) =>
+                (index > 0 ? '<span class="chevron">&rsaquo;</span>' : '') +
+                '<span class="group-chip" draggable="true" ' +
+                      'ondragstart="onDimReorderStart(event, ' + index + ')" ' +
+                      'ondragover="onDimChipDragOver(event)" ' +
+                      'ondrop="onDimChipDrop(event, ' + index + ')" title="Drag to reorder">' +
+                    '<span class="idx">' + (index + 1) + '</span>' +
+                    '<span class="label">' + AC.esc(dimensionLabel(key)) + '</span>' +
+                    '<button type="button" title="Remove" onclick="removeGroupByKey(\'' + key + '\')">&times;</button>' +
+                '</span>'
+              ).join('')
+            : '<div class="dropzone-empty">No drill down — results show as one flat grid.</div>';
+    }
+
+    function addGroupByKey(key) {
+        if (groupByKeys.includes(key)) return;
+        groupByKeys.push(key);
+        saveGroupByKeys();
+        collapsedLanes.clear();
+        renderResults();
+    }
+
+    function removeGroupByKey(key) {
+        groupByKeys = groupByKeys.filter(k => k !== key);
+        saveGroupByKeys();
+        collapsedLanes.clear();
+        renderResults();
+    }
+
+    function moveGroupByKey(fromIndex, toIndex) {
+        if (fromIndex === toIndex || fromIndex < 0 || fromIndex >= groupByKeys.length) return;
+        const [moved] = groupByKeys.splice(fromIndex, 1);
+        groupByKeys.splice(toIndex, 0, moved);
+        saveGroupByKeys();
+        collapsedLanes.clear();
+        renderResults();
+    }
+
+    function onDimDragStart(event, key) {
+        event.dataTransfer.setData('text/x-dimension', key);
+        event.dataTransfer.effectAllowed = 'copy';
+    }
+    function onDimZoneDragOver(event) {
+        if (![...event.dataTransfer.types].includes('text/x-dimension')) return;
+        event.preventDefault();
+        document.getElementById('groupByZone').classList.add('drag-over');
+    }
+    function onDimZoneDragLeave() { document.getElementById('groupByZone').classList.remove('drag-over'); }
+    function onDimZoneDrop(event) {
+        event.preventDefault();
+        document.getElementById('groupByZone').classList.remove('drag-over');
+        const key = event.dataTransfer.getData('text/x-dimension');
+        if (key) addGroupByKey(key);
+    }
+    function onDimReorderStart(event, index) {
+        event.dataTransfer.setData('text/x-dimension-index', String(index));
+        event.dataTransfer.effectAllowed = 'move';
+        event.stopPropagation();
+    }
+    function onDimChipDragOver(event) {
+        if ([...event.dataTransfer.types].includes('text/x-dimension-index')) event.preventDefault();
+    }
+    function onDimChipDrop(event, index) {
+        const from = event.dataTransfer.getData('text/x-dimension-index');
+        if (from === '') return;
+        event.preventDefault();
+        event.stopPropagation();
+        moveGroupByKey(parseInt(from, 10), index);
+    }
+
+    // ── Results rendering ────────────────────────────────────────────────────
+
+    function renderResults() {
+        renderDimPalette();
+        renderGroupByZone();
+        renderSummary();
+
+        const container = document.getElementById('resultsContainer');
+        if (!results.length) {
+            container.innerHTML = '<div class="empty-note">No results yet.</div>';
+            return;
+        }
+
+        if (!groupByKeys.length) {
+            container.innerHTML = resultsTable(results);
+            return;
+        }
+
+        // One lane per distinct combination of the chosen dimensions, e.g. "FAILED › uat-emea".
+        const lanes = new Map();
+        results.forEach(result => {
+            const key = groupByKeys.map(k => dimensionValue(result, k)).join(' › ');
+            if (!lanes.has(key)) lanes.set(key, []);
+            lanes.get(key).push(result);
+        });
+
+        container.innerHTML = [...lanes.keys()].sort().map(key => {
+            const lane = lanes.get(key);
+            const failed = lane.filter(r => r.status !== 'SUCCESS').length;
+            const collapsed = collapsedLanes.has(key);
+            return '<div class="group-section">' +
+                        '<div class="group-header" onclick="toggleLane(\'' + AC.attr(encodeURIComponent(key)) + '\')">' +
+                            '<span class="caret' + (collapsed ? '' : ' open') + '">&#9654;</span>' +
+                            '<span class="name">' + AC.esc(key) + '</span>' +
+                            '<span class="counts">' + lane.length + ' result' + (lane.length !== 1 ? 's' : '') +
+                                (failed ? ' · ' + failed + ' not OK' : '') + '</span>' +
+                        '</div>' +
+                        '<div class="group-body' + (collapsed ? ' collapsed' : '') + '">' + resultsTable(lane) + '</div>' +
+                    '</div>';
+        }).join('');
+    }
+
+    function dimensionValue(result, key) {
+        const value = result[key];
+        return value === undefined || value === null || value === '' ? '(none)' : String(value);
+    }
+
+    function toggleLane(encodedKey) {
+        const key = decodeURIComponent(encodedKey);
+        collapsedLanes.has(key) ? collapsedLanes.delete(key) : collapsedLanes.add(key);
+        renderResults();
+    }
+
+    function renderSummary() {
+        const total = results.length;
+        const ok = results.filter(r => r.status === 'SUCCESS').length;
+        const slowest = results.reduce((max, r) => Math.max(max, r.timeTaken || 0), 0);
+        document.getElementById('summaryRow').innerHTML =
+            cell(total, 'Executed', '') +
+            cell(ok, 'Succeeded', 'ok') +
+            cell(total - ok, 'Failed', total - ok ? 'bad' : '') +
+            cell(slowest + ' ms', 'Slowest', '');
+    }
+
+    function cell(value, label, cls) {
+        return '<div class="summary-cell ' + cls + '"><div class="val">' + AC.esc(value) + '</div>' +
+               '<div class="lbl">' + AC.esc(label) + '</div></div>';
+    }
+
+    const RESULT_COLUMNS = 10;
+
+    function resultsTable(rows) {
+        return '<div class="table-wrap"><table>' +
+            '<thead><tr>' +
+                '<th style="width:18px"></th><th>Instance</th><th>App</th><th>Environment</th><th>Use Case</th>' +
+                '<th>Status</th><th>HTTP</th><th>Time</th><th>Ran On</th><th>URL</th>' +
+            '</tr></thead><tbody>' +
+            rows.map(result => {
+                const index = results.indexOf(result);
+                const open = expandedDetails.has(index);
+                return '<tr class="clickable" onclick="toggleDetail(' + index + ')">' +
+                            '<td><span class="caret' + (open ? ' open' : '') + '">&#9654;</span></td>' +
+                            '<td>' + AC.esc(result.instanceLabel || result.appUseCaseInstanceId) + '</td>' +
+                            '<td>' + AC.esc(result.appName) + '</td>' +
+                            '<td>' + AC.esc(result.environment) +
+                                (result.envClass ? ' <span class="badge ' + String(result.envClass).toLowerCase() + '">' + AC.esc(result.envClass) + '</span>' : '') + '</td>' +
+                            '<td>' + AC.esc(result.useCase) + '</td>' +
+                            '<td class="status-cell ' + AC.esc(result.status) + '">' + AC.esc(result.status) + '</td>' +
+                            '<td>' + (result.statusCode !== null && result.statusCode !== undefined ? result.statusCode : '—') + '</td>' +
+                            '<td>' + (result.timeTaken || 0) + ' ms</td>' +
+                            '<td>' + AC.esc(result.executedVia || 'LOCAL') + '</td>' +
+                            '<td style="max-width:320px; word-break:break-all">' + AC.esc(result.url || '') + '</td>' +
+                        '</tr>' +
+                        (open ? detailRow(result, index) : '');
+            }).join('') +
+            '</tbody></table></div>';
+    }
+
+    /**
+     * The expanded row. Only what came back with the grid is shown up front — the inputs and any
+     * error. Bodies and headers stayed on the server, so they appear as an offer with their sizes
+     * and are fetched by {@link loadPayload} on click; a multi-megabyte response never reaches the
+     * DOM unless somebody asks for it.
+     */
+    function detailRow(result, index) {
+        const payload = payloads.get(result.executionId);
+        const blocks = [
+            jsonBlock('Instance Inputs', result.appUseCaseInstanceInputs),
+            result.error ? block('Error', result.error) : ''
+        ];
+
+        if (payload) {
+            blocks.push(
+                jsonBlock('Request Headers', payload.requestHeaders),
+                block('Request Body', payload.requestBody),
+                jsonBlock('Response Headers', payload.responseHeaders),
+                block('Response Body', payload.responseBody,
+                      '/appcatalog/executions/' + encodeURIComponent(result.executionId) + '/responsebody'),
+                jsonBlock('Transformed Response', payload.transformedResponse));
+        }
+
+        const prompt = payload ? '' : payloadPrompt(result, index);
+        return '<tr class="detail-cell"><td colspan="' + RESULT_COLUMNS + '">' + prompt +
+                    '<div class="detail-grid">' + blocks.filter(Boolean).join('') + '</div>' +
+               '</td></tr>';
+    }
+
+    function payloadPrompt(result, index) {
+        const total = (result.requestBodySize || 0) + (result.responseBodySize || 0);
+        return '<div class="payload-prompt" id="payloadPrompt' + index + '">' +
+                    '<button class="secondary" onclick="event.stopPropagation(); loadPayload(\'' +
+                        AC.attr(result.executionId) + '\')">Load request &amp; response</button>' +
+                    '<span class="sizes">Response body ' + AC.esc(formatSize(result.responseBodySize)) +
+                        (result.requestBodySize ? ' · request body ' + AC.esc(formatSize(result.requestBodySize)) : '') +
+                        ' · not loaded yet</span>' +
+               '</div>';
+    }
+
+    /** Pulls one execution's full record back from the server and re-renders that row. */
+    async function loadPayload(executionId) {
+        try {
+            AC.setStatus('statusBar', 'Loading payload…');
+            const full = await AC.api('GET', '/appcatalog/executions/' + encodeURIComponent(executionId));
+            payloads.set(executionId, full);
+            renderResults();
+            AC.setStatus('statusBar', '');
+        } catch (e) {
+            AC.setStatus('statusBar', 'Could not load payload: ' + e.message, 'error');
+        }
+    }
+
+    /**
+     * A payload block. Very long content is cut down before it reaches the DOM — pasting megabytes
+     * into a <pre> is exactly what froze the page before — with a link to the raw text for the rest.
+     */
+    /** A JSON block, skipped entirely when there is nothing in it — an empty {} is pure noise. */
+    function jsonBlock(title, value) {
+        if (value === null || value === undefined) return '';
+        if (typeof value === 'object' && !Object.keys(value).length) return '';
+        return block(title, AC.prettyJson(value));
+    }
+
+    function block(title, content, rawUrl) {
+        if (content === null || content === undefined || content === '') return '';
+        const text = String(content);
+        const truncated = text.length > RENDER_LIMIT;
+        const note = truncated
+            ? '<div class="truncation-note">Showing the first ' + RENDER_LIMIT.toLocaleString() +
+              ' of ' + text.length.toLocaleString() + ' characters.</div>'
+            : '';
+        const link = rawUrl
+            ? '<a href="' + AC.esc(rawUrl) + '" target="_blank" rel="noopener">open raw &#8599;</a>' : '';
+        return '<div class="detail-block">' +
+                    '<div class="block-head"><h4>' + AC.esc(title) + '</h4><span class="hint">' +
+                        AC.esc(formatSize(text.length)) + '</span>' + link + '</div>' +
+                    note +
+                    '<pre>' + AC.esc(truncated ? text.slice(0, RENDER_LIMIT) : text) + '</pre>' +
+               '</div>';
+    }
+
+    function formatSize(chars) {
+        const n = chars || 0;
+        if (n < 1024) return n + ' chars';
+        if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+        return (n / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    function toggleDetail(index) {
+        expandedDetails.has(index) ? expandedDetails.delete(index) : expandedDetails.add(index);
+        renderResults();
+    }
+
+    AC.applyEmbedding();
+    applyEditorState();
+    loadAgents(false).then(restoreRunTarget);
+    refreshInstanceLookup().then(loadApps);
+</script>
+
+</body>
+</html>
