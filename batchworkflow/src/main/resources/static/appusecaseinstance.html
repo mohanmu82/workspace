@@ -79,6 +79,8 @@
         .group-chip .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
         .group-chip button { background: none; border: none; color: #0747a6; cursor: pointer; font-size: 14px; padding: 0 3px; }
         .group-chip button:hover { color: #de350b; }
+        .group-chip button:disabled { color: #b3bac5; cursor: not-allowed; }
+        .group-chip button:disabled:hover { color: #b3bac5; }
 
         .dim-chip {
             display: inline-flex; align-items: center; gap: 5px;
@@ -143,6 +145,45 @@
         .detail-block .block-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
         .detail-block .block-head h4 { margin-bottom: 0; }
         .detail-block .block-head a { font-size: 11px; color: #0052cc; }
+
+        /* ── Headers ─────────────────────────────────────────────────────────── */
+
+        /* Headers ride along with the grid, so they render as a real name/value table rather than
+           a JSON blob — this is the first thing anyone reads when a call comes back wrong. */
+        .header-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .header-table td {
+            border-bottom: 1px solid #ebecf0; padding: 3px 6px; vertical-align: top;
+            font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+            word-break: break-word;
+        }
+        .header-table td.name { color: #5e6c84; white-space: nowrap; width: 1%; font-weight: 600; }
+        /* Credentials render masked wherever they appear — a header row, a JWT block, a grid cell. */
+        .reveal {
+            background: none; border: none; padding: 0; margin-left: 6px;
+            color: #0052cc; font-size: 11px; cursor: pointer; font-family: inherit;
+        }
+        .reveal:hover { text-decoration: underline; }
+        .secret-line {
+            font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+            font-size: 12px; word-break: break-all;
+        }
+        td .secret-line, table td > span[data-value] { word-break: break-all; }
+
+        /* ── Unresolved placeholders ─────────────────────────────────────────── */
+
+        /* A ${name} that survived substitution was sent to the endpoint verbatim. It reads as an
+           ordinary part of the URL otherwise, which is exactly how it goes unnoticed. */
+        .unresolved {
+            background: #ffebe6; color: #bf2600; border-radius: 3px;
+            padding: 0 2px; font-weight: 600; cursor: help;
+        }
+        .unresolved-flag {
+            display: inline-block; font-size: 10px; font-weight: 700; color: #bf2600;
+            background: #ffebe6; border: 1px solid #ffbdad; border-radius: 3px;
+            padding: 0 5px; margin-right: 6px; cursor: help; white-space: nowrap;
+        }
+        .url-preview { font-family: "Cascadia Code", "Fira Code", Consolas, monospace; word-break: break-all; }
+        .input-flag { color: #bf2600; }
     </style>
 </head>
 <body>
@@ -212,7 +253,7 @@
             </div>
             <div class="form-group">
                 <label for="envSelect">Environment</label>
-                <select id="envSelect"></select>
+                <select id="envSelect" onchange="renderUrlPreview()"></select>
             </div>
             <div class="form-group wide">
                 <label for="instanceLabel">Label (optional)</label>
@@ -221,6 +262,10 @@
             <div class="form-group wide">
                 <label>Instance Inputs</label>
                 <div id="instanceInputs"></div>
+            </div>
+            <div class="form-group wide">
+                <label>Resolved URL</label>
+                <div class="hint url-preview" id="urlPreview"></div>
             </div>
         </div>
 
@@ -290,6 +335,21 @@
         </div>
     </div>
 
+    <div class="form-row">
+        <div class="form-group wide">
+            <label>
+                Available Columns &mdash; click or drag one to show it
+                <button class="tool-btn" style="margin-left:8px" onclick="resetColumns()">Reset to default</button>
+            </label>
+            <div class="chip-dropzone" id="columnPalette" style="border-style:solid; background:#fafbfc"></div>
+        </div>
+        <div class="form-group wide">
+            <label>Shown Columns &mdash; drag chips to reorder</label>
+            <div id="columnZone" class="chip-dropzone"
+                 ondragover="onColZoneDragOver(event)" ondragleave="onColZoneDragLeave(event)" ondrop="onColZoneDrop(event)"></div>
+        </div>
+    </div>
+
     <div id="resultsContainer"></div>
 </div>
 
@@ -308,7 +368,58 @@
         { key: 'executedVia', label: 'Ran On' }
     ];
 
+    // Same placeholder grammar the server substitutes with — ${name} or bare $name. Anything
+    // still matching it after a run reached the endpoint verbatim, which is what this page flags.
+    const VARIABLE_PATTERN = /\$\{([A-Za-z0-9_.\-]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g;
+
+    /** Header names whose value is a credential — shown masked until someone asks to see it. */
+    const SECRET_HEADERS = ['authorization', 'proxy-authorization', 'cookie', 'set-cookie', 'x-api-key'];
+
+    /**
+     * Every column the results grid can show, in palette order. A column owns its own rendering,
+     * so adding one is a single entry here rather than an edit in three places — and the user's
+     * chosen subset and order is what the grid actually draws.
+     *
+     * <p>{@code render} returns already-escaped cell HTML; {@code cls} and {@code style} decorate
+     * the {@code <td>} itself. {@code fixed} marks the columns shown until someone says otherwise.
+     */
+    const COLUMNS = [
+        { key: 'instance', label: 'Instance', fixed: true,
+          render: r => AC.esc(r.instanceLabel || r.appUseCaseInstanceId) },
+        { key: 'appName', label: 'App', fixed: true, render: r => AC.esc(r.appName) },
+        { key: 'environment', label: 'Environment', fixed: true,
+          render: r => AC.esc(r.environment) + (r.envClass
+              ? ' <span class="badge ' + AC.esc(String(r.envClass).toLowerCase()) + '">' + AC.esc(r.envClass) + '</span>' : '') },
+        { key: 'envClass', label: 'Env Class', render: r => AC.esc(r.envClass) },
+        { key: 'useCase', label: 'Use Case', fixed: true, render: r => AC.esc(r.useCase) },
+        { key: 'httpMethod', label: 'Method',
+          render: r => '<span class="pill ' + AC.esc(AC.methodClass(r.httpMethod)) + '">' + AC.esc(r.httpMethod || 'GET') + '</span>' },
+        { key: 'status', label: 'Status', fixed: true,
+          cls: r => 'status-cell ' + String(r.status || ''), render: r => AC.esc(r.status) },
+        { key: 'statusCode', label: 'HTTP', fixed: true,
+          render: r => r.statusCode !== null && r.statusCode !== undefined ? String(r.statusCode) : '—' },
+        { key: 'timeTaken', label: 'Time', fixed: true, render: r => (r.timeTaken || 0) + ' ms' },
+        { key: 'executedVia', label: 'Ran On', fixed: true, render: r => AC.esc(r.executedVia || 'LOCAL') },
+        { key: 'url', label: 'URL', fixed: true, style: 'max-width:320px; word-break:break-all',
+          render: r => urlCell(r) },
+        { key: 'inputs', label: 'Inputs', style: 'max-width:260px; word-break:break-word',
+          render: r => AC.esc(summariseInputs(r.appUseCaseInstanceInputs)) },
+        // The live bearer token this run authenticated with — masked until asked for, since a
+        // results grid is usually the thing on the shared screen.
+        { key: 'jwtToken', label: 'JWT Token',
+          render: (r, i) => r.jwtToken ? maskedValueHtml(r.jwtToken, 'jwtcell' + i) : '—' },
+        { key: 'error', label: 'Error', style: 'max-width:320px; word-break:break-word',
+          render: r => AC.esc(r.error || '') },
+        { key: 'requestBodySize', label: 'Req Size', render: r => AC.esc(formatSize(r.requestBodySize)) },
+        { key: 'responseBodySize', label: 'Resp Size', render: r => AC.esc(formatSize(r.responseBodySize)) },
+        { key: 'appUseCaseInstanceId', label: 'Instance Id', render: r => AC.esc(r.appUseCaseInstanceId) },
+        { key: 'executionId', label: 'Execution Id', render: r => AC.esc(r.executionId) }
+    ];
+
+    const DEFAULT_COLUMN_KEYS = COLUMNS.filter(c => c.fixed).map(c => c.key);
+
     const GROUPBY_KEY   = 'appCatalog.instanceGroupByKeys';
+    const COLUMNS_KEY   = 'appCatalog.instanceColumns';
     const EDITOR_KEY    = 'appCatalog.instanceEditorOpen';
     const RUNTARGET_KEY = 'appCatalog.instanceRunTarget';
 
@@ -326,6 +437,7 @@
 
     let results = [];
     let groupByKeys = loadGroupByKeys();
+    let columnKeys = loadColumnKeys();
     let expandedDetails = new Set();
     let collapsedLanes = new Set();
 
@@ -343,6 +455,105 @@
         } catch (e) { return []; }
     }
     function saveGroupByKeys() { localStorage.setItem(GROUPBY_KEY, JSON.stringify(groupByKeys)); }
+
+    /**
+     * The saved column choice, filtered against what this build actually offers — a key that has
+     * since been renamed away drops out rather than rendering a dead column. An empty or unreadable
+     * setting falls back to the default set, never to a grid with nothing in it.
+     */
+    function loadColumnKeys() {
+        try {
+            const saved = JSON.parse(localStorage.getItem(COLUMNS_KEY) || 'null');
+            if (!Array.isArray(saved)) return DEFAULT_COLUMN_KEYS.slice();
+            const known = saved.filter(k => COLUMNS.some(c => c.key === k));
+            return known.length ? known : DEFAULT_COLUMN_KEYS.slice();
+        } catch (e) { return DEFAULT_COLUMN_KEYS.slice(); }
+    }
+
+    function saveColumnKeys() { localStorage.setItem(COLUMNS_KEY, JSON.stringify(columnKeys)); }
+
+    /** The chosen columns, in the chosen order. */
+    function visibleColumns() {
+        return columnKeys.map(k => COLUMNS.find(c => c.key === k)).filter(Boolean);
+    }
+
+    // ── Placeholders ─────────────────────────────────────────────────────────
+
+    /** Every distinct variable name referenced by a template. */
+    function referencedVariables(text) {
+        const names = [];
+        if (!text) return names;
+        VARIABLE_PATTERN.lastIndex = 0;
+        let match;
+        while ((match = VARIABLE_PATTERN.exec(text)) !== null) {
+            const name = match[1] || match[2];
+            if (!names.includes(name)) names.push(name);
+        }
+        return names;
+    }
+
+    /** The names a use case's URL, headers and body between them ask for. */
+    function useCaseReferences(useCase) {
+        if (!useCase) return [];
+        return referencedVariables([useCase.urlSuffix, useCase.httpHeaders, useCase.httpBody]
+            .filter(Boolean).join('\n'));
+    }
+
+    /**
+     * Variables the request references that nothing else supplies — not a declared input, not a use
+     * case or app variable, not the token auth injects. These are exactly the placeholders that come
+     * back unsubstituted, so the editor offers a field for each rather than leaving them unfillable.
+     */
+    function undeclaredReferences(useCase) {
+        if (!useCase) return [];
+        const declared    = (useCase.appUseCaseInputs || []).map(i => i.name);
+        const useCaseVars = useCase.appUseCaseVariables || {};
+        const appVars     = (currentApp && currentApp.appVariables) || {};
+        return useCaseReferences(useCase).filter(name =>
+            name !== 'jwtToken' &&
+            !declared.includes(name) &&
+            !Object.prototype.hasOwnProperty.call(useCaseVars, name) &&
+            !Object.prototype.hasOwnProperty.call(appVars, name));
+    }
+
+    /** The same three-layer merge the server does: app, then use case, then this instance's inputs. */
+    function mergedVariables(useCase, inputs) {
+        const merged = Object.assign({}, (currentApp && currentApp.appVariables) || {},
+                                         (useCase && useCase.appUseCaseVariables) || {});
+        (useCase ? useCase.appUseCaseInputs || [] : []).forEach(input => {
+            if (input.name && input.defaultValue !== null && input.defaultValue !== undefined && String(input.defaultValue).trim() !== '') {
+                merged[input.name] = input.defaultValue;
+            }
+        });
+        Object.keys(inputs || {}).forEach(k => { merged[k] = inputs[k]; });
+        return merged;
+    }
+
+    /** Mirrors the server: an unknown placeholder is left in place rather than blanked out. */
+    function substitute(template, variables) {
+        if (!template) return template || '';
+        return String(template).replace(VARIABLE_PATTERN, (whole, braced, bare) => {
+            const value = variables[braced || bare];
+            if (value === undefined || value === null) return whole;
+            return typeof value === 'object' ? JSON.stringify(value) : String(value);
+        });
+    }
+
+    /** Escaped HTML with any surviving placeholder called out — it went on the wire as written. */
+    function markUnresolved(text) {
+        const s = text === null || text === undefined ? '' : String(text);
+        let out = '', last = 0, match;
+        VARIABLE_PATTERN.lastIndex = 0;
+        while ((match = VARIABLE_PATTERN.exec(s)) !== null) {
+            const name = match[1] || match[2];
+            out += AC.esc(s.slice(last, match.index)) +
+                   '<span class="unresolved" title="No value for &quot;' + AC.esc(name) +
+                       '&quot; — add it as an instance input, or as a use case / app variable.">' +
+                   AC.esc(match[0]) + '</span>';
+            last = match.index + match[0].length;
+        }
+        return out + AC.esc(s.slice(last));
+    }
 
     // ── Editor collapse ──────────────────────────────────────────────────────
 
@@ -576,23 +787,32 @@
 
     /**
      * One field per input the use case declares, pre-filled from the instance (when editing) or
-     * the declared default. Values an instance carries for inputs the use case has since dropped
-     * are still rendered — flagged as no longer declared — so editing an instance never silently
-     * discards data.
+     * the declared default. Two other kinds of field join them:
+     *
+     * <ul>
+     *   <li>variables the URL, headers or body reference that nothing supplies — without a field
+     *       there is no way to fill them in, and they reach the endpoint as literal ${name};</li>
+     *   <li>values an instance carries for inputs the use case has since dropped, so editing an
+     *       instance never silently discards data.</li>
+     * </ul>
      */
     function renderInstanceInputs(values) {
         const container = document.getElementById('instanceInputs');
         if (!currentUseCase) {
             container.innerHTML = '<div class="empty-note">Select a use case to see its inputs.</div>';
+            renderUrlPreview();
             return;
         }
 
         const declared = currentUseCase.appUseCaseInputs || [];
         const declaredNames = declared.map(i => i.name);
-        extraInputNames = Object.keys(values || {}).filter(k => !declaredNames.includes(k));
+        const undeclared = undeclaredReferences(currentUseCase);
+        extraInputNames = Object.keys(values || {})
+            .filter(k => !declaredNames.includes(k) && !undeclared.includes(k));
 
-        if (!declared.length && !extraInputNames.length) {
+        if (!declared.length && !undeclared.length && !extraInputNames.length) {
             container.innerHTML = '<div class="empty-note">This use case declares no inputs — it runs on app and use case variables alone.</div>';
+            renderUrlPreview();
             return;
         }
 
@@ -600,21 +820,52 @@
             const value = values && values[input.name] !== undefined
                 ? values[input.name]
                 : (input.defaultValue !== null && input.defaultValue !== undefined ? input.defaultValue : '');
-            return inputFieldHtml(input.name, input.type || 'string', value, false);
+            return inputFieldHtml(input.name, input.type || 'string', value, '');
         });
 
-        rows.push(...extraInputNames.map(name => inputFieldHtml(name, 'string', values[name], true)));
+        rows.push(...undeclared.map(name =>
+            inputFieldHtml(name, 'string', values ? values[name] : '', 'referenced by the request · not declared')));
+        rows.push(...extraInputNames.map(name =>
+            inputFieldHtml(name, 'string', values[name], 'no longer declared')));
 
         container.innerHTML = '<div class="form-row" style="margin-bottom:0">' + rows.join('') + '</div>';
+        renderUrlPreview();
     }
 
-    function inputFieldHtml(name, type, value, undeclared) {
+    function inputFieldHtml(name, type, value, flag) {
         const rendered = typeof value === 'object' && value !== null ? JSON.stringify(value) : (value === undefined || value === null ? '' : value);
         return '<div class="form-group">' +
-                    '<label>' + AC.esc(name) + ' <span class="hint">' + AC.esc(type) + (undeclared ? ' · no longer declared' : '') + '</span></label>' +
+                    '<label>' + AC.esc(name) + ' <span class="hint">' + AC.esc(type) +
+                        (flag ? ' <span class="input-flag">· ' + AC.esc(flag) + '</span>' : '') + '</span></label>' +
                     '<input type="text" class="instance-input" data-name="' + AC.esc(name) + '" data-type="' + AC.esc(type) + '" ' +
-                           'value="' + AC.esc(rendered) + '">' +
+                           'oninput="renderUrlPreview()" value="' + AC.esc(rendered) + '">' +
                 '</div>';
+    }
+
+    /**
+     * The URL this instance would actually call, resolved as you type. Placeholders with nothing
+     * behind them stay visible and flagged here rather than turning up in a result row after a run.
+     */
+    function renderUrlPreview() {
+        const preview = document.getElementById('urlPreview');
+        if (!currentUseCase) {
+            preview.innerHTML = '<span class="empty-note">Select a use case to see the URL it resolves to.</span>';
+            return;
+        }
+
+        const env = environments.find(e => e.environment === document.getElementById('envSelect').value);
+        let entered = {};
+        try { entered = readInstanceInputs(); } catch (e) { /* mid-typing JSON — preview what parses */ }
+
+        const template = (env && env.urlPrefix ? env.urlPrefix : '') + (currentUseCase.urlSuffix || '');
+        const resolved = substitute(template, mergedVariables(currentUseCase, entered));
+        const missing = referencedVariables(resolved);
+
+        preview.innerHTML = (env ? '' : '<span class="empty-note">No environment picked — URL prefix missing. </span>') +
+            markUnresolved(resolved) +
+            (missing.length ? '<div class="input-flag" style="margin-top:4px">' + missing.length +
+                ' placeholder' + (missing.length !== 1 ? 's' : '') + ' with no value — the call goes out with ' +
+                AC.esc(missing.map(n => '${' + n + '}').join(', ')) + ' as written.</div>' : '');
     }
 
     /** Coerces each entered value to the type its use case input declares. */
@@ -1076,11 +1327,111 @@
         moveGroupByKey(parseInt(from, 10), index);
     }
 
+    // ── Column selector ──────────────────────────────────────────────────────
+
+    // Same palette-and-dropzone idiom as the drill down: what is not on screen sits on the left,
+    // what is sits on the right in the order the grid draws it.
+
+    function renderColumnPalette() {
+        const palette = document.getElementById('columnPalette');
+        const available = COLUMNS.filter(c => !columnKeys.includes(c.key));
+        palette.innerHTML = available.length
+            ? available.map(c =>
+                '<span class="dim-chip" draggable="true" ' +
+                      'ondragstart="onColDragStart(event, \'' + AC.attr(c.key) + '\')" ' +
+                      'onclick="addColumn(\'' + AC.attr(c.key) + '\')" ' +
+                      'title="Drag onto the shown columns, or click to add">' + AC.esc(c.label) + ' <b>+</b></span>'
+              ).join('')
+            : '<div class="dropzone-empty">Every column is already shown.</div>';
+    }
+
+    function renderColumnZone() {
+        const zone = document.getElementById('columnZone');
+        // The last column's × is disabled rather than silently refusing — a grid of nothing but
+        // expander carets is not a state worth reaching, and saying so beats a dead click.
+        const last = columnKeys.length <= 1;
+        zone.innerHTML = columnKeys.length
+            ? visibleColumns().map((column, index) =>
+                '<span class="group-chip" draggable="true" ' +
+                      'ondragstart="onColReorderStart(event, ' + index + ')" ' +
+                      'ondragover="onColChipDragOver(event)" ' +
+                      'ondrop="onColChipDrop(event, ' + index + ')" title="Drag to reorder">' +
+                    '<span class="idx">' + (index + 1) + '</span>' +
+                    '<span class="label">' + AC.esc(column.label) + '</span>' +
+                    '<button type="button"' + (last ? ' disabled title="At least one column has to stay"' : ' title="Hide this column"') +
+                        ' onclick="removeColumn(\'' + AC.attr(column.key) + '\')">&times;</button>' +
+                '</span>'
+              ).join('')
+            : '<div class="dropzone-empty">No columns — add at least one.</div>';
+    }
+
+    function addColumn(key) {
+        if (columnKeys.includes(key) || !COLUMNS.some(c => c.key === key)) return;
+        columnKeys.push(key);
+        saveColumnKeys();
+        renderResults();
+    }
+
+    function removeColumn(key) {
+        if (columnKeys.length <= 1) return;
+        columnKeys = columnKeys.filter(k => k !== key);
+        saveColumnKeys();
+        renderResults();
+    }
+
+    function moveColumn(fromIndex, toIndex) {
+        if (fromIndex === toIndex || fromIndex < 0 || fromIndex >= columnKeys.length) return;
+        const [moved] = columnKeys.splice(fromIndex, 1);
+        columnKeys.splice(toIndex, 0, moved);
+        saveColumnKeys();
+        renderResults();
+    }
+
+    function resetColumns() {
+        columnKeys = DEFAULT_COLUMN_KEYS.slice();
+        saveColumnKeys();
+        renderResults();
+    }
+
+    function onColDragStart(event, key) {
+        event.dataTransfer.setData('text/x-column', key);
+        event.dataTransfer.effectAllowed = 'copy';
+    }
+    function onColZoneDragOver(event) {
+        if (![...event.dataTransfer.types].includes('text/x-column')) return;
+        event.preventDefault();
+        document.getElementById('columnZone').classList.add('drag-over');
+    }
+    function onColZoneDragLeave() { document.getElementById('columnZone').classList.remove('drag-over'); }
+    function onColZoneDrop(event) {
+        event.preventDefault();
+        document.getElementById('columnZone').classList.remove('drag-over');
+        const key = event.dataTransfer.getData('text/x-column');
+        if (key) addColumn(key);
+    }
+    function onColReorderStart(event, index) {
+        event.dataTransfer.setData('text/x-column-index', String(index));
+        event.dataTransfer.effectAllowed = 'move';
+        event.stopPropagation();
+    }
+    function onColChipDragOver(event) {
+        if ([...event.dataTransfer.types].includes('text/x-column-index')) event.preventDefault();
+    }
+    function onColChipDrop(event, index) {
+        const from = event.dataTransfer.getData('text/x-column-index');
+        if (from === '') return;
+        event.preventDefault();
+        event.stopPropagation();
+        moveColumn(parseInt(from, 10), index);
+    }
+
     // ── Results rendering ────────────────────────────────────────────────────
 
     function renderResults() {
         renderDimPalette();
         renderGroupByZone();
+        renderColumnPalette();
+        renderColumnZone();
         renderSummary();
 
         const container = document.getElementById('resultsContainer');
@@ -1133,11 +1484,15 @@
         const total = results.length;
         const ok = results.filter(r => r.status === 'SUCCESS').length;
         const slowest = results.reduce((max, r) => Math.max(max, r.timeTaken || 0), 0);
+        // A run whose URLs still carry placeholders usually looks like a plain 404; counting them
+        // here is what turns "the endpoint is broken" into "the variable was never supplied".
+        const unresolved = results.filter(r => referencedVariables(r.url).length).length;
         document.getElementById('summaryRow').innerHTML =
             cell(total, 'Executed', '') +
             cell(ok, 'Succeeded', 'ok') +
             cell(total - ok, 'Failed', total - ok ? 'bad' : '') +
-            cell(slowest + ' ms', 'Slowest', '');
+            cell(slowest + ' ms', 'Slowest', '') +
+            (unresolved ? cell(unresolved, 'Unresolved URL', 'bad') : '');
     }
 
     function cell(value, label, cls) {
@@ -1145,69 +1500,156 @@
                '<div class="lbl">' + AC.esc(label) + '</div></div>';
     }
 
-    const RESULT_COLUMNS = 10;
-
     function resultsTable(rows) {
+        const columns = visibleColumns();
         return '<div class="table-wrap"><table>' +
             '<thead><tr>' +
-                '<th style="width:18px"></th><th>Instance</th><th>App</th><th>Environment</th><th>Use Case</th>' +
-                '<th>Status</th><th>HTTP</th><th>Time</th><th>Ran On</th><th>URL</th>' +
+                '<th style="width:18px"></th>' +
+                columns.map(c => '<th>' + AC.esc(c.label) + '</th>').join('') +
             '</tr></thead><tbody>' +
             rows.map(result => {
                 const index = results.indexOf(result);
                 const open = expandedDetails.has(index);
                 return '<tr class="clickable" onclick="toggleDetail(' + index + ')">' +
                             '<td><span class="caret' + (open ? ' open' : '') + '">&#9654;</span></td>' +
-                            '<td>' + AC.esc(result.instanceLabel || result.appUseCaseInstanceId) + '</td>' +
-                            '<td>' + AC.esc(result.appName) + '</td>' +
-                            '<td>' + AC.esc(result.environment) +
-                                (result.envClass ? ' <span class="badge ' + String(result.envClass).toLowerCase() + '">' + AC.esc(result.envClass) + '</span>' : '') + '</td>' +
-                            '<td>' + AC.esc(result.useCase) + '</td>' +
-                            '<td class="status-cell ' + AC.esc(result.status) + '">' + AC.esc(result.status) + '</td>' +
-                            '<td>' + (result.statusCode !== null && result.statusCode !== undefined ? result.statusCode : '—') + '</td>' +
-                            '<td>' + (result.timeTaken || 0) + ' ms</td>' +
-                            '<td>' + AC.esc(result.executedVia || 'LOCAL') + '</td>' +
-                            '<td style="max-width:320px; word-break:break-all">' + AC.esc(result.url || '') + '</td>' +
+                            columns.map(c => cellHtml(c, result, index)).join('') +
                         '</tr>' +
                         (open ? detailRow(result, index) : '');
             }).join('') +
             '</tbody></table></div>';
     }
 
+    function cellHtml(column, result, index) {
+        const cls   = column.cls ? ' class="' + AC.esc(column.cls(result)) + '"' : '';
+        const style = column.style ? ' style="' + column.style + '"' : '';
+        return '<td' + cls + style + '>' + column.render(result, index) + '</td>';
+    }
+
     /**
-     * The expanded row. Only what came back with the grid is shown up front — the inputs and any
-     * error. Bodies and headers stayed on the server, so they appear as an offer with their sizes
-     * and are fetched by {@link loadPayload} on click; a multi-megabyte response never reaches the
-     * DOM unless somebody asks for it.
+     * The URL as it went out. A placeholder still in it means no variable answered to that name, so
+     * it was sent literally — the row says so instead of leaving it to be read as part of the path.
+     */
+    function urlCell(result) {
+        const missing = referencedVariables(result.url);
+        const flag = missing.length
+            ? '<span class="unresolved-flag" title="No value supplied for: ' + AC.esc(missing.join(', ')) +
+                  '. Add them as instance inputs, or as use case / app variables.">&#9888; ' +
+                  missing.length + ' unresolved</span>'
+            : '';
+        return flag + markUnresolved(result.url || '');
+    }
+
+    /**
+     * The expanded row. The request line, both header sets, the inputs and any error come with the
+     * grid and render straight away — headers are small and are what an operator reads first. Only
+     * the bodies stayed on the server: they appear as an offer with their sizes and are fetched by
+     * {@link loadPayload} on click, so a multi-megabyte response never reaches the DOM unless
+     * somebody asks for it.
      */
     function detailRow(result, index) {
         const payload = payloads.get(result.executionId);
         const blocks = [
+            requestLineBlock(result),
+            headerBlock('Request Headers', result.requestHeaders, index, 'req'),
+            headerBlock('Response Headers', result.responseHeaders, index, 'res'),
+            jwtBlock(result, index),
             jsonBlock('Instance Inputs', result.appUseCaseInstanceInputs),
             result.error ? block('Error', result.error) : ''
         ];
 
         if (payload) {
             blocks.push(
-                jsonBlock('Request Headers', payload.requestHeaders),
                 block('Request Body', payload.requestBody),
-                jsonBlock('Response Headers', payload.responseHeaders),
                 block('Response Body', payload.responseBody,
                       '/appcatalog/executions/' + encodeURIComponent(result.executionId) + '/responsebody'),
                 jsonBlock('Transformed Response', payload.transformedResponse));
         }
 
         const prompt = payload ? '' : payloadPrompt(result, index);
-        return '<tr class="detail-cell"><td colspan="' + RESULT_COLUMNS + '">' + prompt +
+        return '<tr class="detail-cell"><td colspan="' + (visibleColumns().length + 1) + '">' + prompt +
                     '<div class="detail-grid">' + blocks.filter(Boolean).join('') + '</div>' +
                '</td></tr>';
     }
 
+    /** Method and full URL together, so the expanded row states exactly what was sent where. */
+    function requestLineBlock(result) {
+        return '<div class="detail-block">' +
+                    '<div class="block-head"><h4>Request</h4></div>' +
+                    '<pre>' + AC.esc(result.httpMethod || 'GET') + ' ' + markUnresolved(result.url || '') + '</pre>' +
+               '</div>';
+    }
+
+    /**
+     * One header set as a name/value table. Values arrive either as a plain string (request) or as
+     * a list (response, where a name may repeat); both render the same way. Credentials are masked
+     * until asked for — an expanded row is often on a shared screen.
+     */
+    function headerBlock(title, headers, index, kind) {
+        const names = headers ? Object.keys(headers) : [];
+        if (!names.length) return '';
+
+        const rows = names.sort((a, b) => a.localeCompare(b)).map((name, position) => {
+            const raw = headers[name];
+            const value = Array.isArray(raw) ? raw.join(', ') : String(raw === null || raw === undefined ? '' : raw);
+            const secret = SECRET_HEADERS.includes(name.toLowerCase()) && value !== '';
+            const shown = secret ? maskedValueHtml(value, 'hdr' + index + kind + position) : AC.esc(value);
+            return '<tr><td class="name">' + AC.esc(name) + '</td><td>' + shown + '</td></tr>';
+        }).join('');
+
+        return '<div class="detail-block">' +
+                    '<div class="block-head"><h4>' + AC.esc(title) + '</h4>' +
+                        '<span class="hint">' + names.length + '</span></div>' +
+                    '<table class="header-table"><tbody>' + rows + '</tbody></table>' +
+               '</div>';
+    }
+
+    /**
+     * The token JWT auth fetched for this run — the same value the templates saw as $jwtToken.
+     * Absent for every other auth method, so the block simply does not appear.
+     */
+    function jwtBlock(result, index) {
+        if (!result.jwtToken) return '';
+        return '<div class="detail-block">' +
+                    '<div class="block-head"><h4>JWT Token</h4>' +
+                        '<span class="hint">' + AC.esc(formatSize(result.jwtToken.length)) + '</span></div>' +
+                    '<div class="secret-line">' + maskedValueHtml(result.jwtToken, 'jwtdetail' + index) + '</div>' +
+               '</div>';
+    }
+
+    /** A credential rendered masked, with a show/hide next to it. The full value never leaves the DOM. */
+    function maskedValueHtml(value, id) {
+        return '<span id="' + id + '" data-value="' + AC.esc(value) + '">' + AC.esc(mask(value)) + '</span>' +
+               '<button class="reveal" onclick="event.stopPropagation(); revealSecret(\'' + AC.attr(id) + '\', this)">show</button>';
+    }
+
+    /** Keeps the scheme ("Bearer", "Basic") — that alone answers most auth questions. */
+    function mask(value) {
+        const space = value.indexOf(' ');
+        const scheme = space > 0 && space < 12 ? value.slice(0, space + 1) : '';
+        return scheme + '••••••••';
+    }
+
+    function revealSecret(id, button) {
+        const span = document.getElementById(id);
+        if (!span) return;
+        const hidden = button.textContent === 'show';
+        span.textContent = hidden ? span.dataset.value : mask(span.dataset.value);
+        button.textContent = hidden ? 'hide' : 'show';
+    }
+
+    /** A one-line "name=value, name=value" digest of an instance's inputs, for the Inputs column. */
+    function summariseInputs(inputs) {
+        if (!inputs) return '';
+        return Object.keys(inputs).map(name => {
+            const value = inputs[name];
+            return name + '=' + (typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value));
+        }).join(', ');
+    }
+
     function payloadPrompt(result, index) {
-        const total = (result.requestBodySize || 0) + (result.responseBodySize || 0);
         return '<div class="payload-prompt" id="payloadPrompt' + index + '">' +
                     '<button class="secondary" onclick="event.stopPropagation(); loadPayload(\'' +
-                        AC.attr(result.executionId) + '\')">Load request &amp; response</button>' +
+                        AC.attr(result.executionId) + '\')">Load request &amp; response bodies</button>' +
                     '<span class="sizes">Response body ' + AC.esc(formatSize(result.responseBodySize)) +
                         (result.requestBodySize ? ' · request body ' + AC.esc(formatSize(result.requestBodySize)) : '') +
                         ' · not loaded yet</span>' +

@@ -165,6 +165,7 @@ public class AppExecutionService {
         long started = System.currentTimeMillis();
         String url = null;
         String requestBody = null;
+        String jwtToken = null;
         Map<String, String> requestHeaders = new LinkedHashMap<>();
 
         try {
@@ -172,6 +173,8 @@ public class AppExecutionService {
 
             // Auth runs before substitution so a JWT token is available to the request as $jwtToken.
             String authorization = applyAuth(app, env, variables);
+            // The same token the templates saw, reported on the output so it can be replayed by hand.
+            jwtToken = variables.get("jwtToken") instanceof String token ? token : null;
 
             url = substitute(nullToEmpty(env.getUrlPrefix()) + nullToEmpty(useCase.getUrlSuffix()), variables);
             requestBody = useCase.getHttpBody() != null ? substitute(useCase.getHttpBody(), variables) : null;
@@ -209,6 +212,7 @@ public class AppExecutionService {
                     url,
                     method,
                     outcome.executedVia(),
+                    jwtToken,
                     requestBody,
                     outcome.body(),
                     requestHeaders,
@@ -233,6 +237,7 @@ public class AppExecutionService {
                     url != null ? url : rawUrl(env, useCase),
                     useCase.getHttpMethod(),
                     describeTarget(target, agentId),
+                    jwtToken,
                     requestBody,
                     null,
                     requestHeaders,
@@ -575,6 +580,7 @@ public class AppExecutionService {
                 "ERROR", null, 0L,
                 rawUrl(env, useCase),
                 useCase != null ? useCase.getHttpMethod() : null,
+                null,
                 null,
                 null, null, Map.of(), Map.of(), null, message,
                 null, null));
