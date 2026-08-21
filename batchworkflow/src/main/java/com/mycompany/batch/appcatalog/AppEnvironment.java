@@ -18,6 +18,11 @@ public class AppEnvironment {
     private String urlPrefix;
     /** JWT auth only — the endpoint returning JSON containing the token; the token lands in $jwtToken. */
     private String jwtUrl;
+    /**
+     * How {@link #jwtUrl} is called — GET or POST. POST sends the credentials as a JSON body and is
+     * the default, since that is what every environment configured before this field existed did.
+     */
+    private String jwtMethod = "POST";
     /** Used by JWT, USERNAMEPASSWORD and DIGEST auth. */
     private String username;
     private String password;
@@ -38,6 +43,9 @@ public class AppEnvironment {
 
     public String getJwtUrl()                 { return jwtUrl; }
     public void   setJwtUrl(String jwtUrl)    { this.jwtUrl = jwtUrl; }
+
+    public String getJwtMethod()                     { return jwtMethod; }
+    public void   setJwtMethod(String jwtMethod)     { this.jwtMethod = jwtMethod != null && !jwtMethod.isBlank() ? jwtMethod.trim().toUpperCase() : "POST"; }
 
     public String getUsername()                   { return username; }
     public void   setUsername(String username)    { this.username = username; }

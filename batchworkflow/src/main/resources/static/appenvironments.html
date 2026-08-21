@@ -5,6 +5,34 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>App Environments</title>
     <link rel="stylesheet" href="appcatalog.css">
+    <style>
+        /* The Test Token result. Deliberately loud about which way it went — the whole reason the
+           button exists is that a broken token setup otherwise only shows up as a failed run. */
+        .jwt-result {
+            margin-top: 8px; padding: 8px 10px; border-radius: 4px;
+            border: 1px solid #dfe1e6; background: #fafbfc; font-size: 12px;
+        }
+        .jwt-result.ok  { border-color: #abf5d1; background: #f2fef8; }
+        .jwt-result.bad { border-color: #ffbdad; background: #fff8f6; }
+        .jwt-result .head { font-weight: 700; margin-bottom: 6px; }
+        .jwt-result.ok  .head { color: #006644; }
+        .jwt-result.bad .head { color: #bf2600; }
+        .jwt-result .meta { color: #5e6c84; font-weight: 400; }
+        .jwt-result .token {
+            font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+            word-break: break-all; display: block; margin-top: 2px;
+        }
+        .jwt-result .actions { margin-top: 6px; display: flex; gap: 10px; }
+        .jwt-result .actions button {
+            background: none; border: none; padding: 0;
+            color: #0052cc; font-size: 11px; cursor: pointer; font-family: inherit;
+        }
+        .jwt-result .actions button:hover { text-decoration: underline; }
+        .jwt-result pre {
+            margin-top: 4px; white-space: pre-wrap; word-break: break-word;
+            font-family: "Cascadia Code", "Fira Code", Consolas, monospace; font-size: 12px;
+        }
+    </style>
 </head>
 <body>
 
@@ -71,8 +99,17 @@
 
             <div class="form-group wide" id="jwtUrlGroup">
                 <label for="jwtUrl" id="jwtUrlLabel">JWT URL</label>
-                <input id="jwtUrl" type="text" placeholder="https://auth-uat.example.com/token">
-                <span class="hint" id="jwtUrlHint">Posted username + password; the returned token lands in <code>$jwtToken</code> and in the Authorization header.</span>
+                <div style="display:flex; gap:6px">
+                    <select id="jwtMethod" onchange="applyJwtMethodHint()" style="flex:none; width:auto">
+                        <option value="POST">POST</option>
+                        <option value="GET">GET</option>
+                    </select>
+                    <input id="jwtUrl" type="text" placeholder="https://auth-uat.example.com/token">
+                    <button class="secondary" id="testJwtBtn" onclick="testJwt()"
+                            style="flex:none; white-space:nowrap">Test Token</button>
+                </div>
+                <span class="hint" id="jwtUrlHint"></span>
+                <div id="jwtResult" class="jwt-result" style="display:none"></div>
             </div>
 
             <div class="form-group" id="usernameGroup">
@@ -170,6 +207,14 @@
         document.getElementById('passwordLabel').textContent = config.passwordLabel || 'Password';
         document.getElementById('password').type             = config.passwordType || 'password';
 
+        // Only JWT is testable here: DIGEST reuses this field under a different name but a
+        // different provider, so offering the button there would test the wrong thing.
+        const testable = !!currentApp && currentApp.authMethod === 'JWT';
+        document.getElementById('testJwtBtn').style.display = testable ? '' : 'none';
+        document.getElementById('jwtMethod').style.display  = testable ? '' : 'none';
+        if (!testable) hideJwtResult();
+        applyJwtMethodHint();
+
         document.getElementById('authNote').innerHTML = currentApp
             ? '<span class="hint">' + AC.esc(config.note) + '</span>'
             : '';
@@ -211,8 +256,11 @@
         document.getElementById('envStatus').value = 'ACTIVE';
         document.getElementById('urlPrefix').value = '';
         document.getElementById('jwtUrl').value = '';
+        document.getElementById('jwtMethod').value = 'POST';
+        applyJwtMethodHint();
         document.getElementById('username').value = '';
         document.getElementById('password').value = '';
+        hideJwtResult();
         document.getElementById('deleteBtn').style.display = 'none';
         renderEnvList();
         AC.setStatus('statusBar', '');
@@ -231,8 +279,12 @@
         document.getElementById('envStatus').value = env.envStatus || 'ACTIVE';
         document.getElementById('urlPrefix').value = env.urlPrefix || '';
         document.getElementById('jwtUrl').value = env.jwtUrl || '';
+        // Environments saved before this field existed have no method — they were all POST.
+        document.getElementById('jwtMethod').value = env.jwtMethod || 'POST';
+        applyJwtMethodHint();
         document.getElementById('username').value = env.username || '';
         document.getElementById('password').value = env.password || '';
+        hideJwtResult();
         document.getElementById('deleteBtn').style.display = '';
         renderEnvList();
         AC.setStatus('statusBar', '');
@@ -252,6 +304,7 @@
             envStatus:   document.getElementById('envStatus').value,
             urlPrefix,
             jwtUrl:      document.getElementById('jwtUrl').value.trim(),
+            jwtMethod:   document.getElementById('jwtMethod').value,
             username:    document.getElementById('username').value,
             password:    document.getElementById('password').value
         };
@@ -279,6 +332,126 @@
         } catch (e) {
             AC.setStatus('statusBar', 'Save failed: ' + e.message, 'error');
         }
+    }
+
+    /**
+     * The two verbs carry the credentials differently, and getting that wrong is exactly what makes
+     * a token endpoint answer with a login page, so the hint says which shape is going out.
+     */
+    function applyJwtMethodHint() {
+        const hint = document.getElementById('jwtUrlHint');
+
+        // DIGEST borrows this field under its own name and its own provider, which the method
+        // selector does not reach — so it gets its own line rather than a JWT one that would lie.
+        if (!currentApp || currentApp.authMethod !== 'JWT') {
+            hint.innerHTML = 'Called with the username/password below; its response is used as the Bearer token.';
+            return;
+        }
+
+        hint.innerHTML = document.getElementById('jwtMethod').value === 'GET'
+            ? 'Called with a plain GET and no body. Any username below is sent as HTTP Basic. ' +
+              'The returned token lands in <code>$jwtToken</code> and in the Authorization header.'
+            : 'Posted a JSON body with whichever of application name / username / password are set. ' +
+              'The returned token lands in <code>$jwtToken</code> and in the Authorization header.';
+    }
+
+    // ── Test Token ───────────────────────────────────────────────────────────
+
+    /**
+     * Calls the token endpoint with exactly what is on screen — no save required, so credentials
+     * can be tried before they are committed. A broken JWT setup otherwise only surfaces as an
+     * ERROR row on a use case run, where the URL shows as an unsubstituted template and the real
+     * cause is buried in the error message.
+     */
+    async function testJwt() {
+        const jwtUrl = document.getElementById('jwtUrl').value.trim();
+        const panel = document.getElementById('jwtResult');
+        panel.style.display = '';
+
+        if (!jwtUrl) {
+            renderJwtResult({ ok: false, error: 'Fill in the JWT URL first.' });
+            return;
+        }
+
+        const button = document.getElementById('testJwtBtn');
+        button.disabled = true;
+        panel.className = 'jwt-result';
+        panel.innerHTML = '<div class="head">Fetching a token…</div>';
+
+        try {
+            const result = await AC.api('POST', '/appcatalog/environments/test-jwt', {
+                appName:     currentApp ? currentApp.appName : '',
+                environment: document.getElementById('environment').value.trim(),
+                urlPrefix:   document.getElementById('urlPrefix').value.trim(),
+                jwtUrl,
+                jwtMethod:   document.getElementById('jwtMethod').value,
+                username:    document.getElementById('username').value,
+                password:    document.getElementById('password').value
+            });
+            renderJwtResult(result);
+        } catch (e) {
+            renderJwtResult({ ok: false, error: e.message });
+        } finally {
+            button.disabled = false;
+        }
+    }
+
+    function renderJwtResult(result) {
+        const panel = document.getElementById('jwtResult');
+        const took = result.timeTaken !== undefined ? ' <span class="meta">· ' + result.timeTaken + ' ms</span>' : '';
+
+        if (!result.ok) {
+            // The message carries the status, content type and start of the body, so a token URL
+            // that quietly answers with a login page is readable here rather than as a parse error.
+            panel.className = 'jwt-result bad';
+            panel.innerHTML = '<div class="head">No token' + took + '</div>' +
+                              (result.jwtUrl ? '<div class="meta">' + AC.esc(result.jwtMethod || 'POST') + ' ' +
+                                               AC.esc(result.jwtUrl) + '</div>' : '') +
+                              '<pre>' + AC.esc(result.error || 'Unknown failure.') + '</pre>';
+            return;
+        }
+
+        // Masked by default: this is a live credential and the tab is often on a shared screen.
+        panel.className = 'jwt-result ok';
+        panel.innerHTML =
+            '<div class="head">Token received' + took +
+                '<span class="meta"> · ' + AC.esc(result.jwtMethod || 'POST') + ' ' + AC.esc(result.jwtUrl || '') +
+                    ' · ' + (result.sentCredentials ? 'sent a username' : 'no credentials sent') + '</span>' +
+            '</div>' +
+            '<span class="token" id="jwtTokenValue" data-value="' + AC.esc(result.token) + '">' +
+                AC.esc(maskToken(result.token)) + '</span>' +
+            '<div class="actions">' +
+                '<button type="button" id="jwtRevealBtn" onclick="toggleJwtToken()">show</button>' +
+                '<button type="button" onclick="copyJwtToken()">copy</button>' +
+            '</div>';
+    }
+
+    function maskToken(token) {
+        return '•'.repeat(Math.min(40, Math.max(8, String(token || '').length)));
+    }
+
+    function toggleJwtToken() {
+        const span = document.getElementById('jwtTokenValue');
+        const button = document.getElementById('jwtRevealBtn');
+        const hidden = button.textContent === 'show';
+        span.textContent = hidden ? span.dataset.value : maskToken(span.dataset.value);
+        button.textContent = hidden ? 'hide' : 'show';
+    }
+
+    async function copyJwtToken() {
+        const span = document.getElementById('jwtTokenValue');
+        try {
+            await navigator.clipboard.writeText(span.dataset.value);
+            AC.setStatus('statusBar', 'Token copied to the clipboard.', 'ok');
+        } catch (e) {
+            AC.setStatus('statusBar', 'Could not copy — reveal the token and copy it by hand.', 'error');
+        }
+    }
+
+    function hideJwtResult() {
+        const panel = document.getElementById('jwtResult');
+        panel.style.display = 'none';
+        panel.innerHTML = '';
     }
 
     async function deleteEnvironment() {

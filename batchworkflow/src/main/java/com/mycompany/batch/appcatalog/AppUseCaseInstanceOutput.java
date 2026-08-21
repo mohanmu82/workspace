@@ -19,6 +19,13 @@ import java.util.Map;
  *                    templates see as {@code $jwtToken}. Null for every other auth method. Reported
  *                    so a token can be lifted straight out of a run and replayed by hand; it is a
  *                    live credential, so the page shows it masked until asked.
+ * @param unresolvedVariables
+ *                    the placeholders substitution left in {@link #url} because no variable
+ *                    answered to their name — every one of them went on the wire verbatim. Empty
+ *                    when the URL resolved cleanly, and <em>null</em> when substitution never ran
+ *                    at all, in which case {@link #url} is the configured template rather than a
+ *                    real endpoint. The distinction matters: a template full of placeholders after
+ *                    an auth failure says nothing about whether the inputs were supplied.
  */
 public record AppUseCaseInstanceOutput(
         String executionId,
@@ -33,6 +40,7 @@ public record AppUseCaseInstanceOutput(
         Integer statusCode,
         long timeTaken,
         String url,
+        List<String> unresolvedVariables,
         String httpMethod,
         String executedVia,
         String jwtToken,
@@ -57,7 +65,8 @@ public record AppUseCaseInstanceOutput(
     public AppUseCaseInstanceOutput withoutPayload() {
         return new AppUseCaseInstanceOutput(
                 executionId, appUseCaseInstanceId, instanceLabel, appName, environment, envClass, useCase,
-                appUseCaseInstanceInputs, status, statusCode, timeTaken, url, httpMethod, executedVia, jwtToken,
+                appUseCaseInstanceInputs, status, statusCode, timeTaken, url, unresolvedVariables,
+                httpMethod, executedVia, jwtToken,
                 null, null, requestHeaders, responseHeaders, null, error,
                 requestBody == null ? 0 : requestBody.length(),
                 responseBody == null ? 0 : responseBody.length());

@@ -182,6 +182,12 @@
             background: #ffebe6; border: 1px solid #ffbdad; border-radius: 3px;
             padding: 0 5px; margin-right: 6px; cursor: help; white-space: nowrap;
         }
+        /* Not a failure — just a URL that never got as far as being substituted. */
+        .template-flag {
+            display: inline-block; font-size: 10px; font-weight: 700; color: #5e6c84;
+            background: #f4f5f7; border: 1px solid #dfe1e6; border-radius: 3px;
+            padding: 0 5px; margin-right: 6px; cursor: help; white-space: nowrap;
+        }
         .url-preview { font-family: "Cascadia Code", "Fira Code", Consolas, monospace; word-break: break-all; }
         .input-flag { color: #bf2600; }
     </style>
@@ -539,13 +545,18 @@
         });
     }
 
-    /** Escaped HTML with any surviving placeholder called out — it went on the wire as written. */
-    function markUnresolved(text) {
+    /**
+     * Escaped HTML with any surviving placeholder called out — it went on the wire as written.
+     * Pass {@code only} to highlight just those names, so a grid row marks exactly what the server
+     * reported rather than whatever this regex happens to match.
+     */
+    function markUnresolved(text, only) {
         const s = text === null || text === undefined ? '' : String(text);
         let out = '', last = 0, match;
         VARIABLE_PATTERN.lastIndex = 0;
         while ((match = VARIABLE_PATTERN.exec(s)) !== null) {
             const name = match[1] || match[2];
+            if (only && !only.includes(name)) continue;
             out += AC.esc(s.slice(last, match.index)) +
                    '<span class="unresolved" title="No value for &quot;' + AC.esc(name) +
                        '&quot; — add it as an instance input, or as a use case / app variable.">' +
@@ -1486,7 +1497,8 @@
         const slowest = results.reduce((max, r) => Math.max(max, r.timeTaken || 0), 0);
         // A run whose URLs still carry placeholders usually looks like a plain 404; counting them
         // here is what turns "the endpoint is broken" into "the variable was never supplied".
-        const unresolved = results.filter(r => referencedVariables(r.url).length).length;
+        // Rows whose request was never built are not counted — their URL is a template, not a miss.
+        const unresolved = results.filter(r => r.unresolvedVariables && r.unresolvedVariables.length).length;
         document.getElementById('summaryRow').innerHTML =
             cell(total, 'Executed', '') +
             cell(ok, 'Succeeded', 'ok') +
@@ -1526,17 +1538,30 @@
     }
 
     /**
-     * The URL as it went out. A placeholder still in it means no variable answered to that name, so
-     * it was sent literally — the row says so instead of leaving it to be read as part of the path.
+     * The URL as it went out, in one of three states the server distinguishes for us:
+     *
+     * <ul>
+     *   <li>{@code unresolvedVariables} empty — it resolved cleanly, shown plain;</li>
+     *   <li>non-empty — those names had no value and were sent literally, so they are flagged;</li>
+     *   <li>null — substitution never ran (the run failed before the request was built), so this is
+     *       the configured template. Flagging its placeholders would blame the inputs for something
+     *       that has nothing to do with them; the Error column is where the answer is.</li>
+     * </ul>
      */
     function urlCell(result) {
-        const missing = referencedVariables(result.url);
-        const flag = missing.length
-            ? '<span class="unresolved-flag" title="No value supplied for: ' + AC.esc(missing.join(', ')) +
-                  '. Add them as instance inputs, or as use case / app variables.">&#9888; ' +
-                  missing.length + ' unresolved</span>'
-            : '';
-        return flag + markUnresolved(result.url || '');
+        const url = result.url || '';
+        const missing = result.unresolvedVariables;
+
+        if (missing === null || missing === undefined) {
+            return '<span class="template-flag" title="The run failed before the request was built, so this is the URL as configured — its placeholders were never substituted. See the Error column.">template</span>' +
+                   AC.esc(url);
+        }
+        if (!missing.length) return AC.esc(url);
+
+        return '<span class="unresolved-flag" title="No value supplied for: ' + AC.esc(missing.join(', ')) +
+                   '. Add them as instance inputs, or as use case / app variables.">&#9888; ' +
+                   missing.length + ' unresolved</span>' +
+               markUnresolved(url, missing);
     }
 
     /**

@@ -210,6 +210,7 @@ public class AppExecutionService {
                     outcome.statusCode(),
                     elapsed,
                     url,
+                    unresolvedVariables(url),
                     method,
                     outcome.executedVia(),
                     jwtToken,
@@ -222,6 +223,9 @@ public class AppExecutionService {
                     null, null));
 
         } catch (Exception e) {
+            // Substitution may not have run at all — an auth failure happens before the URL is
+            // built. Then the URL reported is the configured template, and saying which of its
+            // placeholders are "unresolved" would be a lie: nothing was ever resolved.
             return retain(new AppUseCaseInstanceOutput(
                     newExecutionId(),
                     instanceId,
@@ -235,6 +239,7 @@ public class AppExecutionService {
                     null,
                     System.currentTimeMillis() - started,
                     url != null ? url : rawUrl(env, useCase),
+                    url != null ? unresolvedVariables(url) : null,
                     useCase.getHttpMethod(),
                     describeTarget(target, agentId),
                     jwtToken,
@@ -386,6 +391,23 @@ public class AppExecutionService {
         return out.toString();
     }
 
+    /**
+     * The placeholders {@link #substitute} left behind, in the order they appear. Every one of them
+     * went to the endpoint verbatim, because no variable answered to that name — which is a very
+     * different thing from a URL that was never substituted in the first place.
+     */
+    private static List<String> unresolvedVariables(String resolved) {
+        if (resolved == null || resolved.isEmpty()) return List.of();
+
+        List<String> names = new ArrayList<>();
+        Matcher matcher = VARIABLE.matcher(resolved);
+        while (matcher.find()) {
+            String name = matcher.group(1) != null ? matcher.group(1) : matcher.group(2);
+            if (!names.contains(name)) names.add(name);
+        }
+        return names;
+    }
+
     private String stringify(Object value) {
         if (value instanceof String s) return s;
         try {
@@ -450,7 +472,8 @@ public class AppExecutionService {
                 if (env.getJwtUrl() == null || env.getJwtUrl().isBlank())
                     throw new IllegalArgumentException("JWT auth requires a jwtUrl on environment " + env.getEnvironment());
                 HttpAuthProvider provider = new JwtAuthProvider(
-                        app.getAppName(), env.getUsername(), env.getPassword(), env.getJwtUrl(), objectMapper);
+                        app.getAppName(), env.getUsername(), env.getPassword(),
+                        env.getJwtUrl(), env.getJwtMethod(), objectMapper);
                 String header = provider.getAuthorizationHeader();
                 variables.put("jwtToken", header.startsWith("Bearer ") ? header.substring(7) : header);
                 return header;
@@ -475,6 +498,42 @@ public class AppExecutionService {
                 return null;
             }
         }
+    }
+
+    /**
+     * Calls an environment's token endpoint on its own and hands the result back, so the
+     * Environments tab can prove the JWT setup works before any use case depends on it. Takes the
+     * environment as posted rather than as stored, so credentials can be tried before they are
+     * saved.
+     *
+     * <p>Never throws: a failure is the answer the caller is looking for, so it comes back as
+     * {@code ok:false} with the message rather than as an HTTP error the page has to unwrap.
+     */
+    public Map<String, Object> testJwt(AppEnvironment env) {
+        long started = System.currentTimeMillis();
+        Map<String, Object> result = new LinkedHashMap<>();
+
+        try {
+            if (env == null || env.getJwtUrl() == null || env.getJwtUrl().isBlank())
+                throw new IllegalArgumentException("A JWT URL is required to fetch a token.");
+
+            String header = new JwtAuthProvider(env.getAppName(), env.getUsername(), env.getPassword(),
+                    env.getJwtUrl(), env.getJwtMethod(), objectMapper).getAuthorizationHeader();
+
+            result.put("ok", true);
+            result.put("token", header.startsWith("Bearer ") ? header.substring(7) : header);
+            result.put("authorizationHeader", header);
+            result.put("jwtUrl", env.getJwtUrl());
+            result.put("jwtMethod", env.getJwtMethod());
+            result.put("sentCredentials", env.getUsername() != null && !env.getUsername().isBlank());
+        } catch (Exception e) {
+            result.put("ok", false);
+            result.put("error", rootMessage(e));
+            result.put("jwtUrl", env == null ? null : env.getJwtUrl());
+            result.put("jwtMethod", env == null ? null : env.getJwtMethod());
+        }
+        result.put("timeTaken", System.currentTimeMillis() - started);
+        return result;
     }
 
     // -------------------------------------------------------------------------
@@ -579,6 +638,7 @@ public class AppExecutionService {
                 instance != null ? instance.getAppUseCaseInstanceInputs() : Map.of(),
                 "ERROR", null, 0L,
                 rawUrl(env, useCase),
+                null,   // the request was never built, so nothing was resolved or left unresolved
                 useCase != null ? useCase.getHttpMethod() : null,
                 null,
                 null,
@@ -617,7 +677,19 @@ public class AppExecutionService {
 
         String message = t.getMessage() != null ? t.getMessage()
                 : root.getMessage() != null ? root.getMessage()
-                : root.getClass().getSimpleName();
+                : originHint(root);
         return t.getClass().getSimpleName() + ": " + message;
+    }
+
+    /**
+     * Where a message-less exception came from. Repeating the class name ("NullPointerException:
+     * NullPointerException") tells an operator nothing; the throw site at least says where to look.
+     */
+    private static String originHint(Throwable root) {
+        StackTraceElement[] frames = root.getStackTrace();
+        return frames.length == 0
+                ? "no message"
+                : "no message — thrown at " + frames[0].getClassName().substring(frames[0].getClassName().lastIndexOf('.') + 1)
+                  + "." + frames[0].getMethodName() + ":" + frames[0].getLineNumber();
     }
 }

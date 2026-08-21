@@ -108,6 +108,19 @@ public class AppCatalogController {
         });
     }
 
+    /**
+     * Fetches a token from the posted environment's JWT URL and hands it straight back, so the
+     * Environments tab can verify the setup on its own instead of inferring it from a failed run.
+     * The environment comes in the body rather than by name so unsaved edits can be tried.
+     *
+     * <p>Always 200 — a failed token fetch is reported as {@code ok:false} with the reason, which
+     * is the whole point of the button.
+     */
+    @PostMapping(value = "/environments/test-jwt", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<?> testJwt(@RequestBody AppEnvironment environment) {
+        return ResponseEntity.ok(execution.testJwt(environment));
+    }
+
     // -------------------------------------------------------------------------
     // Use cases
     // -------------------------------------------------------------------------
