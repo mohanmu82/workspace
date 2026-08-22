@@ -4,7 +4,7 @@
   <groupId>com.mycompany</groupId>
   <artifactId>remoteagent</artifactId>
   <name>remoteagent</name>
-  <version>1.0.2</version>
+  <version>1.0.3</version>
   <description>Standalone agent jar: connects to batchworkflow's /agent/ws control channel,
         executes commands sent from the Agent Console UI, and answers multicast discovery pings.</description>
   <build>
