@@ -1,0 +1,1212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Global Runs</title>
+    <link rel="stylesheet" href="appcatalog.css">
+    <style>
+        /* ── Filters ─────────────────────────────────────────────────────────── */
+
+        /* A tickable list per dimension. Filtering here is nearly always "these two apps, not the
+           other nine", which a multi-select drop-down makes needlessly fiddly. */
+        .filter-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+            gap: 10px;
+        }
+        .filter-box {
+            border: 1px solid #dfe1e6; border-radius: 4px; background: #fff;
+            max-height: 132px; overflow-y: auto; padding: 4px;
+        }
+        .filter-box label {
+            display: flex; align-items: center; gap: 7px;
+            padding: 2px 6px; border-radius: 3px; cursor: pointer;
+            font-size: 12px; font-weight: 400; color: #172b4d; text-transform: none; letter-spacing: 0;
+        }
+        .filter-box label:hover { background: #f4f5f7; }
+        .filter-box input[type="checkbox"] { width: auto; margin: 0; flex: none; }
+        .filter-box .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .filter-box .count { color: #97a0af; font-size: 11px; }
+        .filter-box .empty-note { padding: 4px 6px; }
+        .filter-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+        .filter-head button { padding: 0; background: none; border: none; color: #0052cc; font-size: 11px; cursor: pointer; font-family: inherit; }
+        .filter-head button:hover { text-decoration: underline; }
+
+        /* ── Summary ─────────────────────────────────────────────────────────── */
+
+        .summary-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+        .summary-cell {
+            border: 1px solid #dfe1e6; border-radius: 6px; padding: 8px 14px;
+            background: #fff; min-width: 92px;
+        }
+        .summary-cell .val { font-size: 20px; font-weight: 700; }
+        .summary-cell .lbl { font-size: 11px; color: #5e6c84; text-transform: uppercase; letter-spacing: .4px; }
+        .summary-cell.ok  { border-color: #abf5d1; background: #f2fef8; }
+        .summary-cell.ok  .val { color: #006644; }
+        .summary-cell.bad { border-color: #ffbdad; background: #fff8f6; }
+        .summary-cell.bad .val { color: #bf2600; }
+
+        /* ── Group By / drill down ───────────────────────────────────────────── */
+
+        .chip-dropzone {
+            border: 2px dashed #dfe1e6;
+            border-radius: 6px;
+            padding: 10px;
+            min-height: 56px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            align-items: flex-start;
+            align-content: flex-start;
+        }
+        .chip-dropzone.drag-over { border-color: #0052cc; background: #e9f0ff; }
+        .dropzone-empty { font-size: 12px; color: #97a0af; font-style: italic; }
+
+        .group-chip {
+            display: inline-flex; align-items: center; gap: 6px;
+            background: #deebff; border: 1px solid #b3d4ff; color: #0747a6;
+            border-radius: 12px; padding: 3px 6px 3px 10px; font-size: 12px; cursor: grab; max-width: 100%;
+        }
+        .group-chip .idx { background: #0052cc; color: #fff; border-radius: 8px; font-size: 10px; font-weight: 700; padding: 0 5px; }
+        .group-chip .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+        .group-chip button { background: none; border: none; color: #0747a6; cursor: pointer; font-size: 14px; padding: 0 3px; }
+        .group-chip button:hover { color: #de350b; }
+
+        .dim-chip {
+            display: inline-flex; align-items: center; gap: 5px;
+            background: #f4f5f7; border: 1px solid #dfe1e6; color: #5e6c84;
+            border-radius: 12px; padding: 3px 10px; font-size: 12px; cursor: pointer;
+        }
+        .dim-chip:hover { border-color: #4c9aff; color: #172b4d; }
+        .chevron { color: #b3bac5; font-size: 14px; align-self: center; }
+
+        /* ── Results ─────────────────────────────────────────────────────────── */
+
+        .group-section { border: 1px solid #dfe1e6; border-radius: 6px; margin-bottom: 10px; overflow: hidden; }
+        .group-header {
+            display: flex; align-items: center; gap: 10px;
+            padding: 8px 12px; background: #f4f5f7; cursor: pointer; user-select: none;
+        }
+        .group-header:hover { background: #ebecf0; }
+        .group-header .name { font-size: 13px; font-weight: 600; flex: 1; }
+        .group-header .counts { font-size: 11px; color: #5e6c84; }
+        .group-header .lane-btn { padding: 2px 8px; font-size: 11px; }
+        .group-body { padding: 0 12px 6px; }
+        .group-body.collapsed { display: none; }
+        .caret { display: inline-block; transition: transform .15s; font-size: 11px; color: #5e6c84; }
+        .caret.open { transform: rotate(90deg); }
+
+        .status-cell.SUCCESS { color: #006644; font-weight: 700; }
+        .status-cell.FAILED  { color: #bf2600; font-weight: 700; }
+        .status-cell.ERROR   { color: #bf2600; font-weight: 700; }
+        .running-note { font-size: 13px; color: #5e6c84; }
+
+        table th.pick-col, table td.pick-col { width: 18px; }
+        table td input[type="checkbox"] { width: auto; margin: 0; }
+
+        .detail-cell { background: #fafbfc; }
+        .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 10px; padding: 8px 2px; }
+        .detail-block { min-width: 0; }
+        .detail-block h4 {
+            font-size: 11px; font-weight: 700; color: #5e6c84;
+            text-transform: uppercase; letter-spacing: .4px; margin-bottom: 4px;
+        }
+        .detail-block pre {
+            background: #1e1e2e; color: #cdd6f4;
+            font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+            font-size: 12px; padding: 8px 10px; border-radius: 4px;
+            max-height: 280px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+        }
+        .detail-block .block-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+        .detail-block .block-head h4 { margin-bottom: 0; }
+        .detail-block .block-head a { font-size: 11px; color: #0052cc; }
+        .payload-prompt {
+            display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+            padding: 8px 2px; font-size: 12px; color: #5e6c84;
+        }
+        .payload-prompt .sizes { color: #97a0af; }
+        .truncation-note { font-size: 11px; color: #7a4600; background: #fff0b3; padding: 3px 8px; border-radius: 3px; margin-bottom: 4px; }
+
+        .header-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .header-table td {
+            border-bottom: 1px solid #ebecf0; padding: 3px 6px; vertical-align: top;
+            font-family: "Cascadia Code", "Fira Code", Consolas, monospace; word-break: break-word;
+        }
+        .header-table td.name { color: #5e6c84; white-space: nowrap; width: 1%; font-weight: 600; }
+        .reveal {
+            background: none; border: none; padding: 0; margin-left: 6px;
+            color: #0052cc; font-size: 11px; cursor: pointer; font-family: inherit;
+        }
+        .reveal:hover { text-decoration: underline; }
+        .secret-line { font-family: "Cascadia Code", "Fira Code", Consolas, monospace; font-size: 12px; word-break: break-all; }
+
+        .unresolved {
+            background: #ffebe6; color: #bf2600; border-radius: 3px;
+            padding: 0 2px; font-weight: 600; cursor: help;
+        }
+        .unresolved-flag {
+            display: inline-block; font-size: 10px; font-weight: 700; color: #bf2600;
+            background: #ffebe6; border: 1px solid #ffbdad; border-radius: 3px;
+            padding: 0 5px; margin-right: 6px; cursor: help; white-space: nowrap;
+        }
+        .template-flag {
+            display: inline-block; font-size: 10px; font-weight: 700; color: #5e6c84;
+            background: #f4f5f7; border: 1px solid #dfe1e6; border-radius: 3px;
+            padding: 0 5px; margin-right: 6px; cursor: help; white-space: nowrap;
+        }
+    </style>
+</head>
+<body>
+
+<div class="page-nav"><a href="app.html">&larr; App Catalog</a></div>
+<h1>Global Runs</h1>
+<div class="subtitle">Every use case instance execution this server has made, across every app — filter it, drill into it, and run any of it again.</div>
+
+<!-- Where re-runs are made from, and how the feed is kept current -->
+<div class="panel">
+    <div class="form-row" style="margin-bottom:0">
+        <div class="form-group">
+            <label for="targetSelect">Re-run From</label>
+            <select id="targetSelect" onchange="onTargetChange()">
+                <option value="LOCAL">This server (local)</option>
+                <option value="AGENT">Remote agent</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="agentSelect">Agent</label>
+            <div style="display:flex; gap:6px">
+                <select id="agentSelect" onchange="saveRunTarget()"></select>
+                <button class="tool-btn" onclick="loadAgents(true)" title="Refresh connected agents">&#8635;</button>
+            </div>
+            <span class="hint" id="agentHint"></span>
+        </div>
+        <div class="form-group">
+            <label for="autoRefresh">Auto Refresh</label>
+            <select id="autoRefresh" onchange="onAutoRefreshChange()">
+                <option value="0">Off</option>
+                <option value="5">Every 5s</option>
+                <option value="15">Every 15s</option>
+                <option value="60">Every minute</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>&nbsp;</label>
+            <div class="toolbar">
+                <button class="tool-btn" onclick="loadExecutions(true)">&#8635; Refresh</button>
+                <button class="danger" onclick="clearHistory()">Clear History</button>
+            </div>
+        </div>
+    </div>
+    <div id="statusBar" class="status-bar">Loading run history…</div>
+</div>
+
+<!-- Filters -->
+<div class="panel">
+    <div class="panel-title">
+        <span class="collapse-toggle" onclick="toggleFilters()" style="display:flex; align-items:center; gap:8px; cursor:pointer">
+            <span class="caret open" id="filtersCaret">&#9654;</span>
+            <span>Filters</span>
+            <span class="hint" id="filterSummary"></span>
+        </span>
+        <button class="tool-btn" onclick="clearFilters()">Clear All</button>
+    </div>
+    <div id="filtersBody">
+        <div class="form-row">
+            <div class="form-group wide">
+                <label for="searchBox">Search &mdash; instance, URL or error text</label>
+                <input id="searchBox" type="text" placeholder="orders, 503, timed out…" oninput="onSearchInput()">
+            </div>
+        </div>
+        <div class="filter-grid" id="filterGrid"></div>
+    </div>
+</div>
+
+<!-- Grouping and columns -->
+<div class="panel">
+    <div class="form-row">
+        <div class="form-group wide">
+            <label>Group By / Drill Down &mdash; click or drag a dimension; order sets the depth</label>
+            <div class="chip-dropzone" id="dimPalette" style="border-style:solid; background:#fafbfc"></div>
+        </div>
+        <div class="form-group wide">
+            <label>Active Drill Down</label>
+            <div id="groupByZone" class="chip-dropzone"
+                 ondragover="onDimZoneDragOver(event)" ondragleave="onDimZoneDragLeave(event)" ondrop="onDimZoneDrop(event)"></div>
+        </div>
+    </div>
+    <div class="form-row">
+        <div class="form-group wide">
+            <label>
+                Available Columns &mdash; click or drag one to show it
+                <button class="tool-btn" style="margin-left:8px" onclick="resetColumns()">Reset to default</button>
+            </label>
+            <div class="chip-dropzone" id="columnPalette" style="border-style:solid; background:#fafbfc"></div>
+        </div>
+        <div class="form-group wide">
+            <label>Shown Columns &mdash; drag chips to reorder</label>
+            <div id="columnZone" class="chip-dropzone"
+                 ondragover="onColZoneDragOver(event)" ondragleave="onColZoneDragLeave(event)" ondrop="onColZoneDrop(event)"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Results -->
+<div class="panel">
+    <div class="panel-title">
+        <span>Executions</span>
+        <span class="toolbar">
+            <button class="tool-btn" onclick="toggleSelectAll()">Select All / None</button>
+            <button class="primary" onclick="rerunSelected()">&#9654; Re-run Selected</button>
+            <button class="secondary" onclick="rerunFiltered()">&#9654; Re-run All Filtered</button>
+            <button class="secondary" onclick="saveSelectionAsGroup()" title="Bundle the instances behind the selected rows into a group — it may span apps">+ Group from Selection</button>
+        </span>
+    </div>
+
+    <div class="summary-row" id="summaryRow"></div>
+    <div id="resultsContainer"></div>
+    <div id="runStatusBar" class="status-bar"></div>
+</div>
+
+<script src="appcatalog.js"></script>
+<script>
+    /**
+     * Global Runs — the same grid the Instances tab shows after a run, except its feed is the
+     * server's whole execution history rather than the batch this page just started, and it is not
+     * scoped to one app. Everything here is client-side filtering over that one feed: the server
+     * hands over the payload-free records and this page decides what to show and what to repeat.
+     */
+
+    // Every field of an execution that makes sense as a drill-down level or a filter.
+    const DIMENSIONS = [
+        { key: 'appName',     label: 'App' },
+        { key: 'status',      label: 'Status' },
+        { key: 'environment', label: 'Environment' },
+        { key: 'envClass',    label: 'Env Class' },
+        { key: 'useCase',     label: 'Use Case' },
+        { key: 'instanceLabel', label: 'Instance' },
+        { key: 'httpMethod',  label: 'Method' },
+        { key: 'statusCode',  label: 'HTTP Status' },
+        { key: 'executedVia', label: 'Ran On' }
+    ];
+
+    /** The dimensions offered as tick-list filters, in the order the boxes are laid out. */
+    const FILTERS = ['appName', 'environment', 'envClass', 'useCase', 'status', 'statusCode', 'executedVia'];
+
+    const VARIABLE_PATTERN = /\$\{([A-Za-z0-9_.\-]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g;
+    const SECRET_HEADERS = ['authorization', 'proxy-authorization', 'cookie', 'set-cookie', 'x-api-key'];
+
+    const COLUMNS = [
+        { key: 'startedAt', label: 'Time', fixed: true, render: r => AC.esc(formatTime(r.startedAt)) },
+        { key: 'appName', label: 'App', fixed: true, render: r => AC.esc(r.appName) },
+        { key: 'instance', label: 'Instance', fixed: true,
+          render: r => AC.esc(r.instanceLabel || r.appUseCaseInstanceId) },
+        { key: 'environment', label: 'Environment', fixed: true,
+          render: r => AC.esc(r.environment) + (r.envClass
+              ? ' <span class="badge ' + AC.esc(String(r.envClass).toLowerCase()) + '">' + AC.esc(r.envClass) + '</span>' : '') },
+        { key: 'envClass', label: 'Env Class', render: r => AC.esc(r.envClass) },
+        { key: 'useCase', label: 'Use Case', fixed: true, render: r => AC.esc(r.useCase) },
+        { key: 'httpMethod', label: 'Method',
+          render: r => '<span class="pill ' + AC.esc(AC.methodClass(r.httpMethod)) + '">' + AC.esc(r.httpMethod || 'GET') + '</span>' },
+        { key: 'status', label: 'Status', fixed: true,
+          cls: r => 'status-cell ' + String(r.status || ''), render: r => AC.esc(r.status) },
+        { key: 'statusCode', label: 'HTTP', fixed: true,
+          render: r => r.statusCode !== null && r.statusCode !== undefined ? String(r.statusCode) : '—' },
+        { key: 'runIndex', label: 'Run #',
+          render: r => r.runCount > 1 ? AC.esc(r.runIndex + ' / ' + r.runCount) : '—' },
+        { key: 'timeTaken', label: 'Time Taken', fixed: true, render: r => (r.timeTaken || 0) + ' ms' },
+        { key: 'executedVia', label: 'Ran On', fixed: true, render: r => AC.esc(r.executedVia || 'LOCAL') },
+        { key: 'url', label: 'URL', fixed: true, style: 'max-width:320px; word-break:break-all',
+          render: r => urlCell(r) },
+        { key: 'inputs', label: 'Inputs', style: 'max-width:260px; word-break:break-word',
+          render: r => AC.esc(summariseInputs(r.appUseCaseInstanceInputs)) },
+        { key: 'jwtToken', label: 'JWT Token',
+          render: (r, i) => r.jwtToken ? maskedValueHtml(r.jwtToken, 'jwtcell' + i) : '—' },
+        { key: 'error', label: 'Error', fixed: true, style: 'max-width:320px; word-break:break-word',
+          render: r => AC.esc(r.error || '') },
+        { key: 'requestBodySize', label: 'Req Size', render: r => AC.esc(formatSize(r.requestBodySize)) },
+        { key: 'responseBodySize', label: 'Resp Size', render: r => AC.esc(formatSize(r.responseBodySize)) },
+        { key: 'appUseCaseInstanceId', label: 'Instance Id', render: r => AC.esc(r.appUseCaseInstanceId) },
+        { key: 'executionId', label: 'Execution Id', render: r => AC.esc(r.executionId) },
+        { key: 'rerun', label: '', fixed: true,
+          render: (r, i) => '<button class="primary" style="padding:3px 8px; font-size:11px" ' +
+              'title="Run this instance again against ' + AC.esc(r.environment || 'its environment') + '" ' +
+              'onclick="event.stopPropagation(); rerun([\'' + AC.attr(r.executionId) + '\'])">&#9654; Re-run</button>' }
+    ];
+
+    const DEFAULT_COLUMN_KEYS = COLUMNS.filter(c => c.fixed).map(c => c.key);
+
+    const GROUPBY_KEY   = 'appCatalog.globalGroupByKeys';
+    const COLUMNS_KEY   = 'appCatalog.globalColumns';
+    const RUNTARGET_KEY = 'appCatalog.globalRunTarget';
+    const REFRESH_KEY   = 'appCatalog.globalAutoRefresh';
+    const FILTERS_OPEN_KEY = 'appCatalog.globalFiltersOpen';
+
+    const RENDER_LIMIT = 100000;
+    /** How many executions to pull. Beyond this the grid is the bottleneck, not the server. */
+    const FETCH_LIMIT = 1000;
+
+    let executions = [];        // everything fetched, newest first
+    let visible = [];           // what survives the filters — the list every row index refers to
+    let agents = [];
+
+    /** dimension key → Set of values kept. An absent or empty set means "no filter on this". */
+    let activeFilters = new Map();
+    let searchText = '';
+
+    let groupByKeys = loadGroupByKeys();
+    let columnKeys = loadColumnKeys();
+    let selectedIds = new Set();
+    let expandedDetails = new Set();
+    let collapsedLanes = new Set();
+    let payloads = new Map();
+    let refreshTimer = null;
+
+    // ── Saved state ──────────────────────────────────────────────────────────
+
+    function loadGroupByKeys() {
+        try {
+            const saved = JSON.parse(localStorage.getItem(GROUPBY_KEY) || '[]');
+            return Array.isArray(saved) ? saved.filter(k => DIMENSIONS.some(d => d.key === k)) : [];
+        } catch (e) { return []; }
+    }
+    function saveGroupByKeys() { localStorage.setItem(GROUPBY_KEY, JSON.stringify(groupByKeys)); }
+
+    function loadColumnKeys() {
+        try {
+            const saved = JSON.parse(localStorage.getItem(COLUMNS_KEY) || 'null');
+            if (!Array.isArray(saved)) return DEFAULT_COLUMN_KEYS.slice();
+            const known = saved.filter(k => COLUMNS.some(c => c.key === k));
+            return known.length ? known : DEFAULT_COLUMN_KEYS.slice();
+        } catch (e) { return DEFAULT_COLUMN_KEYS.slice(); }
+    }
+    function saveColumnKeys() { localStorage.setItem(COLUMNS_KEY, JSON.stringify(columnKeys)); }
+
+    function visibleColumns() {
+        return columnKeys.map(k => COLUMNS.find(c => c.key === k)).filter(Boolean);
+    }
+
+    // ── Run target ───────────────────────────────────────────────────────────
+
+    function saveRunTarget() {
+        const select = document.getElementById('agentSelect');
+        localStorage.setItem(RUNTARGET_KEY, JSON.stringify({
+            target:  document.getElementById('targetSelect').value,
+            agentId: select.value || select.dataset.preferred || ''
+        }));
+    }
+
+    function restoreRunTarget() {
+        let saved = {};
+        try { saved = JSON.parse(localStorage.getItem(RUNTARGET_KEY) || '{}') || {}; } catch (e) { saved = {}; }
+        document.getElementById('targetSelect').value = saved.target === 'AGENT' ? 'AGENT' : 'LOCAL';
+
+        const select = document.getElementById('agentSelect');
+        if (saved.agentId) {
+            if ([...select.options].some(o => o.value === saved.agentId)) select.value = saved.agentId;
+            else select.dataset.preferred = saved.agentId;
+        }
+        onTargetChange();
+    }
+
+    function onTargetChange() {
+        const remote = document.getElementById('targetSelect').value === 'AGENT';
+        document.getElementById('agentSelect').disabled = !remote;
+        saveRunTarget();
+        renderAgentHint();
+        if (remote) loadAgents(false);
+    }
+
+    async function loadAgents(announce) {
+        const select = document.getElementById('agentSelect');
+        try {
+            agents = await AC.api('GET', '/agents');
+        } catch (e) {
+            agents = [];
+            if (announce) AC.setStatus('statusBar', 'Could not list agents: ' + e.message, 'error');
+        }
+        const preferred = select.dataset.preferred || select.value;
+        AC.fillSelect(select, agents.map(a => ({
+            value: a.agentId,
+            label: a.agentId + (a.hostname && a.hostname !== a.agentId ? ' (' + a.hostname + ')' : '')
+        })), '— any agent (round-robin) —');
+        if (preferred && agents.some(a => a.agentId === preferred)) {
+            select.value = preferred;
+            delete select.dataset.preferred;
+        }
+        renderAgentHint();
+        if (announce) AC.setStatus('statusBar', agents.length + ' agent(s) connected.', agents.length ? 'ok' : 'error');
+    }
+
+    function renderAgentHint() {
+        const remote = document.getElementById('targetSelect').value === 'AGENT';
+        document.getElementById('agentHint').textContent =
+            !remote ? 'Re-runs leave from this server.'
+            : !agents.length ? 'No agents connected — remote re-runs will fail.'
+            : document.getElementById('agentSelect').value ? 'Every re-run is pinned to this agent.'
+            : agents.length + ' connected — re-runs are spread round-robin.';
+    }
+
+    function runTarget() {
+        const target = document.getElementById('targetSelect').value === 'AGENT' ? 'AGENT' : 'LOCAL';
+        return { target, agentId: target === 'AGENT' ? document.getElementById('agentSelect').value : '' };
+    }
+
+    function targetPhrase() {
+        const t = runTarget();
+        if (t.target !== 'AGENT') return 'locally';
+        return t.agentId ? 'on agent ' + t.agentId : 'on any available agent';
+    }
+
+    // ── Feed ─────────────────────────────────────────────────────────────────
+
+    async function loadExecutions(announce) {
+        try {
+            executions = await AC.api('GET', '/appcatalog/executions?limit=' + FETCH_LIMIT);
+            // A row that has aged out of the server's window can no longer be expanded or re-run,
+            // so drop it from the selection rather than leaving a tick nothing answers to.
+            const known = new Set(executions.map(e => e.executionId));
+            selectedIds.forEach(id => { if (!known.has(id)) selectedIds.delete(id); });
+            applyFilters();
+            AC.setStatus('statusBar', executions.length
+                ? executions.length + ' execution(s) in history — newest ' + formatTime(executions[0].startedAt) + '.'
+                : 'No executions yet — run something from the Instances tab.', announce ? 'ok' : '');
+        } catch (e) {
+            AC.setStatus('statusBar', 'Failed to load run history: ' + e.message, 'error');
+        }
+    }
+
+    async function clearHistory() {
+        if (!confirm('Clear the whole run history? Past results and their payloads are dropped; nothing configured is touched.')) return;
+        try {
+            await AC.api('DELETE', '/appcatalog/executions');
+            selectedIds.clear();
+            expandedDetails.clear();
+            payloads.clear();
+            await loadExecutions(true);
+        } catch (e) {
+            AC.setStatus('statusBar', 'Clear failed: ' + e.message, 'error');
+        }
+    }
+
+    function onAutoRefreshChange() {
+        const seconds = parseInt(document.getElementById('autoRefresh').value, 10) || 0;
+        localStorage.setItem(REFRESH_KEY, String(seconds));
+        if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+        if (seconds > 0) refreshTimer = setInterval(() => loadExecutions(false), seconds * 1000);
+    }
+
+    function restoreAutoRefresh() {
+        const saved = localStorage.getItem(REFRESH_KEY);
+        const select = document.getElementById('autoRefresh');
+        if (saved && [...select.options].some(o => o.value === saved)) select.value = saved;
+        onAutoRefreshChange();
+    }
+
+    // ── Filters ──────────────────────────────────────────────────────────────
+
+    function toggleFilters() {
+        const open = localStorage.getItem(FILTERS_OPEN_KEY) !== 'false';
+        localStorage.setItem(FILTERS_OPEN_KEY, open ? 'false' : 'true');
+        applyFiltersPanelState();
+    }
+
+    function applyFiltersPanelState() {
+        const open = localStorage.getItem(FILTERS_OPEN_KEY) !== 'false';
+        document.getElementById('filtersBody').style.display = open ? '' : 'none';
+        document.getElementById('filtersCaret').classList.toggle('open', open);
+    }
+
+    function onSearchInput() {
+        searchText = document.getElementById('searchBox').value.trim().toLowerCase();
+        applyFilters();
+    }
+
+    function clearFilters() {
+        activeFilters.clear();
+        searchText = '';
+        document.getElementById('searchBox').value = '';
+        applyFilters();
+    }
+
+    function toggleFilterValue(key, value) {
+        const chosen = activeFilters.get(key) || new Set();
+        chosen.has(value) ? chosen.delete(value) : chosen.add(value);
+        chosen.size ? activeFilters.set(key, chosen) : activeFilters.delete(key);
+        applyFilters();
+    }
+
+    /** The "only" link on a filter box: keep this one value and drop the rest of that dimension. */
+    function onlyFilterValue(key, value) {
+        activeFilters.set(key, new Set([value]));
+        applyFilters();
+    }
+
+    function clearFilter(key) {
+        activeFilters.delete(key);
+        applyFilters();
+    }
+
+    function dimensionValue(execution, key) {
+        const value = execution[key];
+        return value === undefined || value === null || value === '' ? '(none)' : String(value);
+    }
+
+    function dimensionLabel(key) {
+        const dimension = DIMENSIONS.find(d => d.key === key);
+        return dimension ? dimension.label : key;
+    }
+
+    function matchesFilters(execution) {
+        for (const [key, chosen] of activeFilters) {
+            if (chosen.size && !chosen.has(dimensionValue(execution, key))) return false;
+        }
+        if (!searchText) return true;
+        const haystack = [execution.instanceLabel, execution.appUseCaseInstanceId, execution.url,
+                          execution.error, execution.useCase, execution.appName, execution.environment,
+                          execution.statusCode].join(' ').toLowerCase();
+        return haystack.includes(searchText);
+    }
+
+    function applyFilters() {
+        visible = executions.filter(matchesFilters);
+        renderFilters();
+        renderSummary();
+        renderDimPalette();
+        renderGroupByZone();
+        renderColumnPalette();
+        renderColumnZone();
+        renderResults();
+    }
+
+    /**
+     * One tick box per value a dimension actually takes in the feed, with its count. Counts are of
+     * the <em>other</em> filters applied but not this one, which is what makes ticking a second
+     * value in the same box read as "or" rather than showing zeroes everywhere.
+     */
+    function renderFilters() {
+        document.getElementById('filterGrid').innerHTML = FILTERS.map(key => {
+            const others = executions.filter(e => {
+                for (const [k, chosen] of activeFilters) {
+                    if (k === key) continue;
+                    if (chosen.size && !chosen.has(dimensionValue(e, k))) return false;
+                }
+                return true;
+            });
+
+            const counts = new Map();
+            others.forEach(e => {
+                const value = dimensionValue(e, key);
+                counts.set(value, (counts.get(value) || 0) + 1);
+            });
+
+            const chosen = activeFilters.get(key) || new Set();
+            const rows = [...counts.entries()].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])));
+
+            return '<div class="form-group">' +
+                        '<div class="filter-head">' +
+                            '<label style="margin:0">' + AC.esc(dimensionLabel(key)) + '</label>' +
+                            (chosen.size ? '<button onclick="clearFilter(\'' + key + '\')">clear</button>' : '') +
+                        '</div>' +
+                        '<div class="filter-box">' +
+                            (rows.length ? rows.map(([value, count]) =>
+                                '<label>' +
+                                    '<input type="checkbox"' + (chosen.has(value) ? ' checked' : '') +
+                                           ' onchange="toggleFilterValue(\'' + key + '\', \'' + AC.attr(value) + '\')">' +
+                                    '<span class="name" title="' + AC.esc(value) + '">' + AC.esc(value) + '</span>' +
+                                    '<span class="count">' + count + '</span>' +
+                                '</label>').join('')
+                            : '<div class="empty-note">nothing yet</div>') +
+                        '</div>' +
+                   '</div>';
+        }).join('');
+
+        const active = [...activeFilters.entries()].filter(([, s]) => s.size);
+        document.getElementById('filterSummary').textContent =
+            !active.length && !searchText ? 'showing everything'
+            : visible.length + ' of ' + executions.length + ' shown';
+    }
+
+    // ── Summary ──────────────────────────────────────────────────────────────
+
+    function renderSummary() {
+        const total = visible.length;
+        const ok = visible.filter(r => r.status === 'SUCCESS').length;
+        const slowest = visible.reduce((max, r) => Math.max(max, r.timeTaken || 0), 0);
+        const apps = new Set(visible.map(r => r.appName)).size;
+
+        document.getElementById('summaryRow').innerHTML =
+            cell(total, 'Shown', '') +
+            cell(ok, 'Succeeded', 'ok') +
+            cell(total - ok, 'Failed', total - ok ? 'bad' : '') +
+            cell(apps, 'Apps', '') +
+            cell(slowest + ' ms', 'Slowest', '') +
+            httpCodeCells();
+    }
+
+    /** One cell per distinct HTTP code in view, most frequent first — the headline of a sweep. */
+    function httpCodeCells() {
+        const counts = new Map();
+        visible.forEach(r => {
+            const code = r.statusCode === null || r.statusCode === undefined ? 'no response' : String(r.statusCode);
+            counts.set(code, (counts.get(code) || 0) + 1);
+        });
+        return [...counts.entries()]
+            .sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))
+            .map(([code, count]) => cell(count, 'HTTP ' + code,
+                    code === 'no response' || Number(code) >= 400 ? 'bad' : 'ok'))
+            .join('');
+    }
+
+    function cell(value, label, cls) {
+        return '<div class="summary-cell ' + cls + '"><div class="val">' + AC.esc(value) + '</div>' +
+               '<div class="lbl">' + AC.esc(label) + '</div></div>';
+    }
+
+    // ── Group By / drill down ────────────────────────────────────────────────
+
+    function renderDimPalette() {
+        const palette = document.getElementById('dimPalette');
+        const available = DIMENSIONS.filter(d => !groupByKeys.includes(d.key));
+        palette.innerHTML = available.length
+            ? available.map(d =>
+                '<span class="dim-chip" draggable="true" ' +
+                      'ondragstart="onDimDragStart(event, \'' + d.key + '\')" ' +
+                      'onclick="addGroupByKey(\'' + d.key + '\')" ' +
+                      'title="Drag onto the drill down, or click to add">' + d.label + ' <b>+</b></span>'
+              ).join('')
+            : '<div class="dropzone-empty">Every dimension is already in use.</div>';
+    }
+
+    function renderGroupByZone() {
+        const zone = document.getElementById('groupByZone');
+        zone.innerHTML = groupByKeys.length
+            ? groupByKeys.map((key, index) =>
+                (index > 0 ? '<span class="chevron">&rsaquo;</span>' : '') +
+                '<span class="group-chip" draggable="true" ' +
+                      'ondragstart="onDimReorderStart(event, ' + index + ')" ' +
+                      'ondragover="onDimChipDragOver(event)" ' +
+                      'ondrop="onDimChipDrop(event, ' + index + ')" title="Drag to reorder">' +
+                    '<span class="idx">' + (index + 1) + '</span>' +
+                    '<span class="label">' + AC.esc(dimensionLabel(key)) + '</span>' +
+                    '<button type="button" title="Remove" onclick="removeGroupByKey(\'' + key + '\')">&times;</button>' +
+                '</span>'
+              ).join('')
+            : '<div class="dropzone-empty">No drill down — executions show as one flat grid, newest first.</div>';
+    }
+
+    function addGroupByKey(key) {
+        if (groupByKeys.includes(key)) return;
+        groupByKeys.push(key);
+        saveGroupByKeys();
+        collapsedLanes.clear();
+        applyFilters();
+    }
+
+    function removeGroupByKey(key) {
+        groupByKeys = groupByKeys.filter(k => k !== key);
+        saveGroupByKeys();
+        collapsedLanes.clear();
+        applyFilters();
+    }
+
+    function moveGroupByKey(fromIndex, toIndex) {
+        const [moved] = groupByKeys.splice(fromIndex, 1);
+        groupByKeys.splice(toIndex, 0, moved);
+        saveGroupByKeys();
+        collapsedLanes.clear();
+        applyFilters();
+    }
+
+    function onDimDragStart(event, key) {
+        event.dataTransfer.setData('text/dimension', key);
+        event.dataTransfer.effectAllowed = 'copy';
+    }
+    function onDimZoneDragOver(event) {
+        if (!event.dataTransfer.types.includes('text/dimension') && !event.dataTransfer.types.includes('text/dimindex')) return;
+        event.preventDefault();
+        document.getElementById('groupByZone').classList.add('drag-over');
+    }
+    function onDimZoneDragLeave() { document.getElementById('groupByZone').classList.remove('drag-over'); }
+    function onDimZoneDrop(event) {
+        event.preventDefault();
+        document.getElementById('groupByZone').classList.remove('drag-over');
+        const key = event.dataTransfer.getData('text/dimension');
+        if (key) addGroupByKey(key);
+    }
+    function onDimReorderStart(event, index) {
+        event.dataTransfer.setData('text/dimindex', String(index));
+        event.dataTransfer.effectAllowed = 'move';
+    }
+    function onDimChipDragOver(event) {
+        if (event.dataTransfer.types.includes('text/dimindex')) event.preventDefault();
+    }
+    function onDimChipDrop(event, index) {
+        const from = event.dataTransfer.getData('text/dimindex');
+        if (from === '') return;
+        event.preventDefault();
+        event.stopPropagation();
+        moveGroupByKey(parseInt(from, 10), index);
+    }
+
+    // ── Columns ──────────────────────────────────────────────────────────────
+
+    function renderColumnPalette() {
+        const palette = document.getElementById('columnPalette');
+        const available = COLUMNS.filter(c => !columnKeys.includes(c.key));
+        palette.innerHTML = available.length
+            ? available.map(c =>
+                '<span class="dim-chip" draggable="true" ' +
+                      'ondragstart="onColDragStart(event, \'' + c.key + '\')" ' +
+                      'onclick="addColumn(\'' + c.key + '\')" ' +
+                      'title="Drag onto the shown columns, or click to add">' +
+                    AC.esc(c.label || c.key) + ' <b>+</b></span>'
+              ).join('')
+            : '<div class="dropzone-empty">Every column is already shown.</div>';
+    }
+
+    function renderColumnZone() {
+        const zone = document.getElementById('columnZone');
+        zone.innerHTML = columnKeys.length
+            ? columnKeys.map((key, index) => {
+                const column = COLUMNS.find(c => c.key === key);
+                return '<span class="group-chip" draggable="true" ' +
+                            'ondragstart="onColReorderStart(event, ' + index + ')" ' +
+                            'ondragover="onColChipDragOver(event)" ' +
+                            'ondrop="onColChipDrop(event, ' + index + ')" title="Drag to reorder">' +
+                            '<span class="idx">' + (index + 1) + '</span>' +
+                            '<span class="label">' + AC.esc(column ? (column.label || column.key) : key) + '</span>' +
+                            '<button type="button" title="Hide" onclick="removeColumn(\'' + key + '\')">&times;</button>' +
+                        '</span>';
+              }).join('')
+            : '<div class="dropzone-empty">No columns shown — add at least one.</div>';
+    }
+
+    function addColumn(key) {
+        if (columnKeys.includes(key)) return;
+        columnKeys.push(key);
+        saveColumnKeys();
+        applyFilters();
+    }
+
+    function removeColumn(key) {
+        columnKeys = columnKeys.filter(k => k !== key);
+        saveColumnKeys();
+        applyFilters();
+    }
+
+    function moveColumn(fromIndex, toIndex) {
+        const [moved] = columnKeys.splice(fromIndex, 1);
+        columnKeys.splice(toIndex, 0, moved);
+        saveColumnKeys();
+        applyFilters();
+    }
+
+    function resetColumns() {
+        columnKeys = DEFAULT_COLUMN_KEYS.slice();
+        saveColumnKeys();
+        applyFilters();
+    }
+
+    function onColDragStart(event, key) {
+        event.dataTransfer.setData('text/column', key);
+        event.dataTransfer.effectAllowed = 'copy';
+    }
+    function onColZoneDragOver(event) {
+        if (!event.dataTransfer.types.includes('text/column') && !event.dataTransfer.types.includes('text/colindex')) return;
+        event.preventDefault();
+        document.getElementById('columnZone').classList.add('drag-over');
+    }
+    function onColZoneDragLeave() { document.getElementById('columnZone').classList.remove('drag-over'); }
+    function onColZoneDrop(event) {
+        event.preventDefault();
+        document.getElementById('columnZone').classList.remove('drag-over');
+        const key = event.dataTransfer.getData('text/column');
+        if (key) addColumn(key);
+    }
+    function onColReorderStart(event, index) {
+        event.dataTransfer.setData('text/colindex', String(index));
+        event.dataTransfer.effectAllowed = 'move';
+    }
+    function onColChipDragOver(event) {
+        if (event.dataTransfer.types.includes('text/colindex')) event.preventDefault();
+    }
+    function onColChipDrop(event, index) {
+        const from = event.dataTransfer.getData('text/colindex');
+        if (from === '') return;
+        event.preventDefault();
+        event.stopPropagation();
+        moveColumn(parseInt(from, 10), index);
+    }
+
+    // ── Results grid ─────────────────────────────────────────────────────────
+
+    function renderResults() {
+        const container = document.getElementById('resultsContainer');
+        if (!executions.length) {
+            container.innerHTML = '<div class="empty-note">No executions in history yet.</div>';
+            return;
+        }
+        if (!visible.length) {
+            container.innerHTML = '<div class="empty-note">Nothing matches the current filters.</div>';
+            return;
+        }
+
+        if (!groupByKeys.length) {
+            container.innerHTML = resultsTable(visible);
+            return;
+        }
+
+        const lanes = new Map();
+        visible.forEach(execution => {
+            const key = groupByKeys.map(k => dimensionValue(execution, k)).join(' › ');
+            if (!lanes.has(key)) lanes.set(key, []);
+            lanes.get(key).push(execution);
+        });
+
+        container.innerHTML = [...lanes.keys()].sort().map(key => {
+            const lane = lanes.get(key);
+            const failed = lane.filter(r => r.status !== 'SUCCESS').length;
+            const collapsed = collapsedLanes.has(key);
+            const encoded = AC.attr(encodeURIComponent(key));
+            return '<div class="group-section">' +
+                        '<div class="group-header" onclick="toggleLane(\'' + encoded + '\')">' +
+                            '<span class="caret' + (collapsed ? '' : ' open') + '">&#9654;</span>' +
+                            '<span class="name">' + AC.esc(key) + '</span>' +
+                            '<span class="counts">' + lane.length + ' result' + (lane.length !== 1 ? 's' : '') +
+                                (failed ? ' · ' + failed + ' not OK' : '') + '</span>' +
+                            '<button class="tool-btn lane-btn" onclick="event.stopPropagation(); selectLane(\'' + encoded + '\')">Select</button>' +
+                            '<button class="primary lane-btn" onclick="event.stopPropagation(); rerunLane(\'' + encoded + '\')">&#9654; Re-run</button>' +
+                        '</div>' +
+                        '<div class="group-body' + (collapsed ? ' collapsed' : '') + '">' + resultsTable(lane) + '</div>' +
+                    '</div>';
+        }).join('');
+    }
+
+    function toggleLane(encodedKey) {
+        const key = decodeURIComponent(encodedKey);
+        collapsedLanes.has(key) ? collapsedLanes.delete(key) : collapsedLanes.add(key);
+        renderResults();
+    }
+
+    /** The executions in one drill-down lane — the unit both lane buttons act on. */
+    function laneRows(encodedKey) {
+        const key = decodeURIComponent(encodedKey);
+        return visible.filter(e => groupByKeys.map(k => dimensionValue(e, k)).join(' › ') === key);
+    }
+
+    function selectLane(encodedKey) {
+        laneRows(encodedKey).forEach(e => selectedIds.add(e.executionId));
+        renderResults();
+    }
+
+    function rerunLane(encodedKey) {
+        rerun(laneRows(encodedKey).map(e => e.executionId));
+    }
+
+    function resultsTable(rows) {
+        const columns = visibleColumns();
+        return '<div class="table-wrap"><table>' +
+            '<thead><tr>' +
+                '<th class="pick-col"></th>' +
+                '<th style="width:18px"></th>' +
+                columns.map(c => '<th>' + AC.esc(c.label) + '</th>').join('') +
+            '</tr></thead><tbody>' +
+            rows.map(execution => {
+                const index = visible.indexOf(execution);
+                const open = expandedDetails.has(execution.executionId);
+                return '<tr class="clickable" onclick="toggleDetail(\'' + AC.attr(execution.executionId) + '\')">' +
+                            '<td class="pick-col" onclick="event.stopPropagation()">' +
+                                '<input type="checkbox" value="' + AC.esc(execution.executionId) + '"' +
+                                    (selectedIds.has(execution.executionId) ? ' checked' : '') +
+                                    ' onchange="togglePick(\'' + AC.attr(execution.executionId) + '\', this.checked)">' +
+                            '</td>' +
+                            '<td><span class="caret' + (open ? ' open' : '') + '">&#9654;</span></td>' +
+                            columns.map(c => cellHtml(c, execution, index)).join('') +
+                        '</tr>' +
+                        (open ? detailRow(execution, index) : '');
+            }).join('') +
+            '</tbody></table></div>';
+    }
+
+    function cellHtml(column, execution, index) {
+        const cls   = column.cls ? ' class="' + AC.esc(column.cls(execution)) + '"' : '';
+        const style = column.style ? ' style="' + column.style + '"' : '';
+        return '<td' + cls + style + '>' + column.render(execution, index) + '</td>';
+    }
+
+    function togglePick(executionId, checked) {
+        checked ? selectedIds.add(executionId) : selectedIds.delete(executionId);
+        renderRunStatus();
+    }
+
+    function toggleSelectAll() {
+        const allPicked = visible.length && visible.every(e => selectedIds.has(e.executionId));
+        visible.forEach(e => allPicked ? selectedIds.delete(e.executionId) : selectedIds.add(e.executionId));
+        renderResults();
+        renderRunStatus();
+    }
+
+    function renderRunStatus() {
+        if (!selectedIds.size) { AC.setStatus('runStatusBar', ''); return; }
+        AC.setStatus('runStatusBar', selectedIds.size + ' row(s) selected.');
+    }
+
+    // ── Detail row ───────────────────────────────────────────────────────────
+
+    function toggleDetail(executionId) {
+        expandedDetails.has(executionId) ? expandedDetails.delete(executionId) : expandedDetails.add(executionId);
+        renderResults();
+    }
+
+    function detailRow(execution, index) {
+        const payload = payloads.get(execution.executionId);
+        const blocks = [
+            requestLineBlock(execution),
+            headerBlock('Request Headers', execution.requestHeaders, index, 'req'),
+            headerBlock('Response Headers', execution.responseHeaders, index, 'res'),
+            jwtBlock(execution, index),
+            jsonBlock('Instance Inputs', execution.appUseCaseInstanceInputs),
+            execution.error ? block('Error', execution.error) : ''
+        ];
+
+        if (payload) {
+            blocks.push(
+                block('Request Body', payload.requestBody),
+                block('Response Body', payload.responseBody,
+                      '/appcatalog/executions/' + encodeURIComponent(execution.executionId) + '/responsebody'),
+                jsonBlock('Transformed Response', payload.transformedResponse));
+        }
+
+        const prompt = payload ? '' : payloadPrompt(execution);
+        return '<tr class="detail-cell"><td colspan="' + (visibleColumns().length + 2) + '">' + prompt +
+                    '<div class="detail-grid">' + blocks.filter(Boolean).join('') + '</div>' +
+               '</td></tr>';
+    }
+
+    function requestLineBlock(execution) {
+        return '<div class="detail-block">' +
+                    '<div class="block-head"><h4>Request</h4></div>' +
+                    '<pre>' + AC.esc(execution.httpMethod || 'GET') + ' ' + markUnresolved(execution.url || '') + '</pre>' +
+               '</div>';
+    }
+
+    function headerBlock(title, headers, index, kind) {
+        const names = headers ? Object.keys(headers) : [];
+        if (!names.length) return '';
+        const rows = names.map((name, position) => {
+            const raw = headers[name];
+            const value = Array.isArray(raw) ? raw.join(', ') : String(raw === null || raw === undefined ? '' : raw);
+            const secret = SECRET_HEADERS.includes(String(name).toLowerCase());
+            return '<tr><td class="name">' + AC.esc(name) + '</td><td>' +
+                   (secret ? maskedValueHtml(value, kind + index + '-' + position) : AC.esc(value)) +
+                   '</td></tr>';
+        }).join('');
+        return '<div class="detail-block"><h4>' + AC.esc(title) + '</h4>' +
+               '<table class="header-table"><tbody>' + rows + '</tbody></table></div>';
+    }
+
+    function jwtBlock(execution, index) {
+        if (!execution.jwtToken) return '';
+        return '<div class="detail-block"><h4>JWT Token</h4>' +
+               '<div class="secret-line">' + maskedValueHtml(execution.jwtToken, 'jwt' + index) + '</div></div>';
+    }
+
+    /** Credentials render masked wherever they appear — a grid is usually the thing on a shared screen. */
+    function maskedValueHtml(value, id) {
+        return '<span id="' + AC.esc(id) + '" data-value="' + AC.esc(value) + '">' + AC.esc(mask(value)) + '</span>' +
+               '<button class="reveal" onclick="event.stopPropagation(); revealSecret(\'' + AC.attr(id) + '\', this)">show</button>';
+    }
+
+    function mask(value) {
+        const text = String(value === null || value === undefined ? '' : value);
+        if (text.length <= 12) return '••••••';
+        return text.slice(0, 6) + '••••••' + text.slice(-4);
+    }
+
+    function revealSecret(id, button) {
+        const span = document.getElementById(id);
+        if (!span) return;
+        const shown = button.textContent === 'hide';
+        span.textContent = shown ? mask(span.dataset.value) : span.dataset.value;
+        button.textContent = shown ? 'show' : 'hide';
+    }
+
+    function payloadPrompt(execution) {
+        const sizes = 'request ' + formatSize(execution.requestBodySize) + ' · response ' + formatSize(execution.responseBodySize);
+        return '<div class="payload-prompt">' +
+                    '<button class="tool-btn" onclick="event.stopPropagation(); loadPayload(\'' + AC.attr(execution.executionId) + '\')">Load bodies</button>' +
+                    '<span class="sizes">' + AC.esc(sizes) + '</span>' +
+               '</div>';
+    }
+
+    async function loadPayload(executionId) {
+        try {
+            const full = await AC.api('GET', '/appcatalog/executions/' + encodeURIComponent(executionId));
+            payloads.set(executionId, full);
+            renderResults();
+        } catch (e) {
+            AC.setStatus('runStatusBar', 'Could not load bodies: ' + e.message, 'error');
+        }
+    }
+
+    function jsonBlock(title, value) {
+        if (value === undefined || value === null) return '';
+        if (typeof value === 'object' && !Object.keys(value).length) return '';
+        return block(title, AC.prettyJson(value));
+    }
+
+    function block(title, content, rawUrl) {
+        if (content === undefined || content === null || content === '') return '';
+        const text = String(content);
+        const truncated = text.length > RENDER_LIMIT;
+        return '<div class="detail-block">' +
+                    '<div class="block-head"><h4>' + AC.esc(title) + '</h4>' +
+                        (rawUrl ? '<a href="' + AC.esc(rawUrl) + '" target="_blank" rel="noopener">open raw</a>' : '') +
+                    '</div>' +
+                    (truncated ? '<div class="truncation-note">Showing the first ' + formatSize(RENDER_LIMIT) +
+                                 ' of ' + formatSize(text.length) + ' — open the raw view for all of it.</div>' : '') +
+                    '<pre>' + AC.esc(truncated ? text.slice(0, RENDER_LIMIT) : text) + '</pre>' +
+               '</div>';
+    }
+
+    // ── URL rendering ────────────────────────────────────────────────────────
+
+    function urlCell(execution) {
+        const url = execution.url || '';
+        const missing = execution.unresolvedVariables;
+
+        if (missing === null || missing === undefined) {
+            return '<span class="template-flag" title="The run failed before the request was built, so this is the URL as configured — its placeholders were never substituted. See the Error column.">template</span>' +
+                   AC.esc(url);
+        }
+        if (!missing.length) return AC.esc(url);
+
+        return '<span class="unresolved-flag" title="No value supplied for: ' + AC.esc(missing.join(', ')) +
+                   '. Add them as instance inputs, or as use case / app variables.">&#9888; ' +
+                   missing.length + ' unresolved</span>' +
+               markUnresolved(url, missing);
+    }
+
+    /** Highlights every ${name} still in the text, so a placeholder that went out verbatim is visible. */
+    function markUnresolved(text, only) {
+        const s = String(text === undefined || text === null ? '' : text);
+        let out = '';
+        let last = 0;
+        VARIABLE_PATTERN.lastIndex = 0;
+        let match;
+        while ((match = VARIABLE_PATTERN.exec(s)) !== null) {
+            const name = match[1] || match[2];
+            if (only && !only.includes(name)) continue;
+            out += AC.esc(s.slice(last, match.index)) +
+                   '<span class="unresolved" title="No value for &quot;' + AC.esc(name) + '&quot; — sent as written">' +
+                   AC.esc(match[0]) + '</span>';
+            last = match.index + match[0].length;
+        }
+        return out + AC.esc(s.slice(last));
+    }
+
+    // ── Re-running ───────────────────────────────────────────────────────────
+
+    async function rerunSelected() {
+        if (!selectedIds.size) { AC.setStatus('runStatusBar', 'Tick at least one row first.', 'error'); return; }
+        // Request order follows the grid, not the order rows happened to be ticked in.
+        await rerun(visible.filter(e => selectedIds.has(e.executionId)).map(e => e.executionId));
+    }
+
+    async function rerunFiltered() {
+        if (!visible.length) { AC.setStatus('runStatusBar', 'Nothing to re-run — no rows match.', 'error'); return; }
+        if (visible.length > 50 && !confirm('Re-run all ' + visible.length + ' filtered executions ' + targetPhrase() + '?')) return;
+        await rerun(visible.map(e => e.executionId));
+    }
+
+    /**
+     * Repeats past executions. Each goes back to the environment it originally ran against, so a
+     * re-run of a filtered "prod failures" view stays in prod rather than following whatever
+     * environments its instances name today.
+     */
+    async function rerun(executionIds) {
+        if (!executionIds.length) return;
+        const target = runTarget();
+        AC.setStatus('runStatusBar', 'Re-running ' + executionIds.length + ' execution(s) ' + targetPhrase() + '…');
+        try {
+            const results = await AC.api('POST', '/appcatalog/executions/rerun',
+                    { executionIds, target: target.target, agentId: target.agentId });
+            const failed = results.filter(r => r.status !== 'SUCCESS').length;
+            // The repeats are executions in their own right, so they arrive at the head of the feed.
+            await loadExecutions(false);
+            AC.setStatus('runStatusBar',
+                'Re-ran ' + results.length + ' — ' + (results.length - failed) + ' succeeded, ' + failed + ' did not.',
+                failed ? 'error' : 'ok');
+        } catch (e) {
+            AC.setStatus('runStatusBar', 'Re-run failed: ' + e.message, 'error');
+        }
+    }
+
+    // ── Groups from a selection ──────────────────────────────────────────────
+
+    /**
+     * Bundles the instances behind the selected rows into an instance group. Groups are not scoped
+     * to an app, so a selection spanning three apps makes a genuinely cross-app suite — which is
+     * the thing this page can build that the per-app Instances tab cannot.
+     */
+    async function saveSelectionAsGroup() {
+        const rows = visible.filter(e => selectedIds.has(e.executionId));
+        if (!rows.length) { AC.setStatus('runStatusBar', 'Tick the rows to bundle first.', 'error'); return; }
+
+        // Several rows usually come from one instance — a run count, or the same instance across
+        // environments. A group holds instances, so the duplicates collapse.
+        const instanceIds = [];
+        rows.forEach(r => { if (r.appUseCaseInstanceId && !instanceIds.includes(r.appUseCaseInstanceId)) instanceIds.push(r.appUseCaseInstanceId); });
+        const apps = new Set(rows.map(r => r.appName));
+
+        const name = prompt('Name for the new group (' + instanceIds.length + ' instance(s) across ' +
+                            apps.size + ' app(s)):', '');
+        if (name === null || !name.trim()) return;
+
+        try {
+            await AC.api('POST', '/appcatalog/groups', {
+                groupName: name.trim(),
+                description: 'Built from ' + rows.length + ' execution(s) on the Global Runs page',
+                appUseCaseInstanceIds: instanceIds
+            });
+            AC.setStatus('runStatusBar', 'Saved group "' + name.trim() + '" with ' + instanceIds.length +
+                         ' instance(s) across ' + apps.size + ' app(s).', 'ok');
+        } catch (e) {
+            AC.setStatus('runStatusBar', 'Could not save group: ' + e.message, 'error');
+        }
+    }
+
+    // ── Formatting ───────────────────────────────────────────────────────────
+
+    function formatTime(epochMillis) {
+        if (!epochMillis) return '';
+        const when = new Date(epochMillis);
+        const today = new Date();
+        const sameDay = when.toDateString() === today.toDateString();
+        // The history spans days; a bare clock time on a two-day-old row reads as "just now".
+        return sameDay ? when.toLocaleTimeString() : when.toLocaleString();
+    }
+
+    function formatSize(chars) {
+        if (chars === undefined || chars === null) return '—';
+        if (chars < 1024) return chars + ' B';
+        if (chars < 1024 * 1024) return (chars / 1024).toFixed(1) + ' KB';
+        return (chars / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    function summariseInputs(inputs) {
+        if (!inputs) return '';
+        const names = Object.keys(inputs);
+        if (!names.length) return '';
+        return names.map(n => n + '=' + (typeof inputs[n] === 'object' ? JSON.stringify(inputs[n]) : inputs[n])).join(', ');
+    }
+
+    AC.applyEmbedding();
+    applyFiltersPanelState();
+    loadAgents(false).then(restoreRunTarget);
+    loadExecutions(false).then(restoreAutoRefresh);
+</script>
+
+</body>
+</html>

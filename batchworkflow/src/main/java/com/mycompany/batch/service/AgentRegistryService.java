@@ -26,20 +26,32 @@ public class AgentRegistryService {
         private final WebSocketSession session;
         private final Instant connectedAt;
         private volatile Instant lastSeen;
+        /**
+         * What the agent said it trusts for outbound TLS when it registered — source, certificate
+         * count, when it was loaded. Empty for an agent built before it reported this. Not refreshed
+         * afterwards: a trust store pushed later answers with its own status.
+         */
+        private volatile Map<String, Object> trustStore;
 
-        AgentConnection(String agentId, String hostname, WebSocketSession session) {
+        AgentConnection(String agentId, String hostname, WebSocketSession session, Map<String, Object> trustStore) {
             this.agentId     = agentId;
             this.hostname    = hostname;
             this.session     = session;
+            this.trustStore  = trustStore != null ? trustStore : Map.of();
             this.connectedAt = Instant.now();
             this.lastSeen    = this.connectedAt;
         }
 
-        public String           getAgentId()     { return agentId; }
-        public String           getHostname()    { return hostname; }
-        public WebSocketSession getSession()     { return session; }
-        public Instant          getConnectedAt() { return connectedAt; }
-        public Instant          getLastSeen()    { return lastSeen; }
+        public String              getAgentId()     { return agentId; }
+        public String              getHostname()    { return hostname; }
+        public WebSocketSession    getSession()     { return session; }
+        public Instant             getConnectedAt() { return connectedAt; }
+        public Instant             getLastSeen()    { return lastSeen; }
+        public Map<String, Object> getTrustStore()  { return trustStore; }
+
+        public void setTrustStore(Map<String, Object> trustStore) {
+            this.trustStore = trustStore != null ? trustStore : Map.of();
+        }
 
         void touch() { lastSeen = Instant.now(); }
     }
@@ -48,8 +60,9 @@ public class AgentRegistryService {
     private final Map<String, WebSocketSession> pendingRequests     = new ConcurrentHashMap<>();
     private final Map<String, CompletableFuture<Map<String, Object>>> pendingHttpRequests = new ConcurrentHashMap<>();
 
-    public AgentConnection register(String agentId, String hostname, WebSocketSession session) {
-        AgentConnection conn = new AgentConnection(agentId, hostname, session);
+    public AgentConnection register(String agentId, String hostname, WebSocketSession session,
+                                    Map<String, Object> trustStore) {
+        AgentConnection conn = new AgentConnection(agentId, hostname, session, trustStore);
         agents.put(agentId, conn);
         return conn;
     }

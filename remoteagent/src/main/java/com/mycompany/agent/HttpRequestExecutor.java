@@ -1,7 +1,6 @@
 package com.mycompany.agent;
 
 import java.net.URI;
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
@@ -12,16 +11,22 @@ import java.util.function.Consumer;
 /**
  * Runs a single self-contained HTTP request (method, url, headers, body, timeout) per call and
  * reports the status code, response headers and body back via {@code onDone} in one shot.
- * Unlike {@link CommandExecutor} there's no line-by-line streaming — the whole response is only
+ * Unlike {@link CommandExecutor} there is no line-by-line streaming — the whole response is only
  * meaningful once the call completes.
+ *
+ * <p>The client comes from the {@link TrustStoreManager} on every call rather than being held here,
+ * so a trust store pushed down the control channel takes effect on the next request without a
+ * restart — which is the whole point of being able to push one.
  */
 public class HttpRequestExecutor {
 
     private static final int DEFAULT_TIMEOUT_MS = 30_000;
 
-    private final HttpClient httpClient = HttpClient.newBuilder()
-            .followRedirects(HttpClient.Redirect.NORMAL)
-            .build();
+    private final TrustStoreManager trustStore;
+
+    public HttpRequestExecutor(TrustStoreManager trustStore) {
+        this.trustStore = trustStore;
+    }
 
     public void execute(HttpExecRequest request, Consumer<Map<String, Object>> onDone) {
         // Virtual threads so one agent can hold many concurrent in-flight HTTP calls (this is
@@ -50,7 +55,7 @@ public class HttpRequestExecutor {
                     ? "GET" : request.method().toUpperCase();
             builder.method(method, publisher);
 
-            HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = trustStore.httpClient().send(builder.build(), HttpResponse.BodyHandlers.ofString());
 
             Map<String, String> responseHeaders = new LinkedHashMap<>();
             response.headers().map().forEach((k, v) -> responseHeaders.put(k, String.join(", ", v)));

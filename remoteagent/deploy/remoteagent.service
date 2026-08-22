@@ -9,7 +9,9 @@ User=remoteagent
 Group=remoteagent
 WorkingDirectory=/opt/remoteagent
 EnvironmentFile=/etc/remoteagent/remoteagent.env
-ExecStart=/usr/bin/java -jar /opt/remoteagent/remoteagent.jar --server=${REMOTEAGENT_SERVER} --id=${REMOTEAGENT_ID} --hostname=${REMOTEAGENT_HOSTNAME} --token=${REMOTEAGENT_TOKEN}
+# REMOTEAGENT_OPTS is unbraced on purpose: systemd word-splits $VAR but not ${VAR}, and it is
+# how extra options such as --truststore=... reach the agent.
+ExecStart=/usr/bin/java -jar /opt/remoteagent/remoteagent.jar --server=${REMOTEAGENT_SERVER} --id=${REMOTEAGENT_ID} --hostname=${REMOTEAGENT_HOSTNAME} --token=${REMOTEAGENT_TOKEN} $REMOTEAGENT_OPTS
 
 # Restart on crash, clean exit, or OOM kill alike; small delay avoids hot-looping.
 Restart=always

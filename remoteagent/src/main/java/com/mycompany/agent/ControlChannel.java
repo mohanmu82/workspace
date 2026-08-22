@@ -4,7 +4,6 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.net.URI;
-import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -30,10 +29,10 @@ public class ControlChannel {
     private final String               agentId;
     private final String               hostname;
     private final String               token;
+    private final TrustStoreManager    trustStore;
     private final ObjectMapper         objectMapper = new ObjectMapper();
     private final CommandExecutor      executor     = new CommandExecutor();
-    private final HttpRequestExecutor  httpExecutor = new HttpRequestExecutor();
-    private final HttpClient           httpClient   = HttpClient.newHttpClient();
+    private final HttpRequestExecutor  httpExecutor;
 
     private volatile WebSocket webSocket;
     private volatile boolean   running = true;
@@ -43,11 +42,14 @@ public class ControlChannel {
      *  requests each finish on their own thread and race to report their result otherwise. */
     private final Object sendLock = new Object();
 
-    public ControlChannel(String serverUrl, String agentId, String hostname, String token) {
-        this.serverUri = URI.create(serverUrl);
-        this.agentId   = agentId;
-        this.hostname  = hostname;
-        this.token     = token;
+    public ControlChannel(String serverUrl, String agentId, String hostname, String token,
+                          TrustStoreManager trustStore) {
+        this.serverUri    = URI.create(serverUrl);
+        this.agentId      = agentId;
+        this.hostname     = hostname;
+        this.token        = token;
+        this.trustStore   = trustStore;
+        this.httpExecutor = new HttpRequestExecutor(trustStore);
     }
 
     public void start() {
@@ -120,7 +122,10 @@ public class ControlChannel {
             }
         };
 
-        webSocket = httpClient.newWebSocketBuilder()
+        // The trust store's client, so a wss:// server presenting an internal certificate is
+        // reachable at all. A runtime reload only reaches this on the next reconnect — the handshake
+        // is long over by then — which is why the startup option exists alongside the pushed one.
+        webSocket = trustStore.httpClient().newWebSocketBuilder()
                 .connectTimeout(java.time.Duration.ofSeconds(10))
                 .buildAsync(serverUri, listener)
                 .get(15, TimeUnit.SECONDS);
@@ -136,6 +141,8 @@ public class ControlChannel {
         register.put("token", token);
         register.put("pid", ProcessHandle.current().pid());
         register.put("os", System.getProperty("os.name"));
+        // So the console can say what this agent trusts without having to ask it.
+        register.put("trustStore", trustStore.status());
         sendJson(ws, register);
     }
 
@@ -172,12 +179,52 @@ public class ControlChannel {
                     outbound.put("requestId", requestId);
                     sendJson(webSocket, outbound);
                 });
+            } else if ("truststore".equals(msg.get("type"))) {
+                handleTrustStore(msg);
             } else if ("error".equals(msg.get("type"))) {
                 System.err.println("[agent] server error: " + msg.get("message"));
             }
         } catch (Exception e) {
             System.err.println("[agent] failed to parse server message: " + e.getMessage());
         }
+    }
+
+    /**
+     * Reloads TLS trust on the running agent and answers with what it now trusts. The reload is
+     * done inline on the control-channel thread — it is a few milliseconds of keystore parsing, and
+     * doing it here means the reply cannot overtake the change it is reporting.
+     *
+     * <p>The store itself arrives either as base64 bytes ({@code INLINE}) or as a path this host can
+     * read ({@code FILE}); an agent on a locked-down host usually has no way to get a file there, so
+     * pushing the bytes is the mode that actually works in the case this exists for.
+     */
+    private void handleTrustStore(Map<String, Object> msg) {
+        String requestId = String.valueOf(msg.get("requestId"));
+        byte[] data = null;
+        Map<String, Object> result;
+        try {
+            if (msg.get("data") != null) {
+                data = java.util.Base64.getDecoder().decode(String.valueOf(msg.get("data")));
+            }
+            result = trustStore.apply(
+                    msg.get("mode") != null ? String.valueOf(msg.get("mode")) : "FILE",
+                    msg.get("path") != null ? String.valueOf(msg.get("path")) : null,
+                    msg.get("password") != null ? String.valueOf(msg.get("password")) : null,
+                    msg.get("storeType") != null ? String.valueOf(msg.get("storeType")) : null,
+                    data,
+                    !Boolean.FALSE.equals(msg.get("includeDefaults")));
+        } catch (Exception e) {
+            result = new LinkedHashMap<>();
+            result.put("ok", false);
+            result.put("message", "Trust store message rejected: "
+                    + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()));
+        }
+
+        Map<String, Object> outbound = new LinkedHashMap<>(result);
+        outbound.put("type", "truststoreResult");
+        outbound.put("requestId", requestId);
+        outbound.put("agentId", agentId);
+        sendJson(webSocket, outbound);
     }
 
     private Map<String, String> toHeaderMap(Object raw) {

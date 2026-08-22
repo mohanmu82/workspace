@@ -73,15 +73,18 @@
 </div>
 
 <script>
-    // The four sub-pages, in the order you would normally set them up: an app, then where it
-    // lives, then what you can call on it, then the concrete runs. Each is also a standalone
-    // page — the shell just frames it and keeps the current tab in the URL hash so a tab is
-    // linkable and survives a refresh.
+    // The sub-pages, in the order you would normally set them up: an app, then where it lives,
+    // then what you can call on it, then the concrete runs. Global Runs sits after them without a
+    // step number — it is not a setup step but the read-across of everything the others produced,
+    // spanning every app rather than the one currently selected. Each is also a standalone page —
+    // the shell just frames it and keeps the current tab in the URL hash so a tab is linkable and
+    // survives a refresh.
     const TABS = [
         { id: 'definition',  step: 1, label: 'App Definitions',   file: 'appdefinition.html' },
         { id: 'environments',step: 2, label: 'Environments',      file: 'appenvironments.html' },
         { id: 'usecases',    step: 3, label: 'Use Cases',         file: 'appusecases.html' },
-        { id: 'instances',   step: 4, label: 'Instances & Runs',  file: 'appusecaseinstance.html' }
+        { id: 'instances',   step: 4, label: 'Instances & Runs',  file: 'appusecaseinstance.html' },
+        { id: 'global',               label: 'Global Runs',       file: 'appglobal.html' }
     ];
 
     function currentTabId() {
@@ -93,7 +96,7 @@
         const active = currentTabId();
         document.getElementById('tabs').innerHTML = TABS.map(t =>
             '<button class="tab' + (t.id === active ? ' active' : '') + '" onclick="selectTab(\'' + t.id + '\')">' +
-                '<span class="step">' + t.step + '</span>' + t.label +
+                (t.step ? '<span class="step">' + t.step + '</span>' : '') + t.label +
             '</button>'
         ).join('');
     }

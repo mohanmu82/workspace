@@ -135,10 +135,76 @@
         </div>
     </div>
     <table>
-        <thead><tr><th>Agent ID</th><th>Hostname</th><th>Connected Since</th><th>Last Seen</th></tr></thead>
-        <tbody id="agentsBody"><tr class="empty-row"><td colspan="4">No agents connected</td></tr></tbody>
+        <thead><tr><th>Agent ID</th><th>Hostname</th><th>Connected Since</th><th>Last Seen</th><th>TLS Trust</th></tr></thead>
+        <tbody id="agentsBody"><tr class="empty-row"><td colspan="5">No agents connected</td></tr></tbody>
     </table>
     <div id="statusBar" class="status-bar">Connecting to console channel…</div>
+</div>
+
+<!-- TLS trust store: the fix for "works from the server, fails through the agent" on https -->
+<div class="panel">
+    <div class="panel-title">
+        <span>TLS Trust Store</span>
+        <span style="font-weight:400; text-transform:none; letter-spacing:0; color:#5e6c84; font-size:12px">
+            Reloads an agent's outbound trust without restarting it — https endpoints signed by an internal CA
+        </span>
+    </div>
+    <div class="form-row">
+        <div class="form-group">
+            <label>Apply To</label>
+            <select id="tsAgent" style="min-width:220px"></select>
+        </div>
+        <div class="form-group">
+            <label>Source</label>
+            <select id="tsMode" onchange="onTrustModeChange()">
+                <option value="CERT">Add a certificate (.cer / .crt / .pem)</option>
+                <option value="INLINE">Upload a trust store file (.jks / .p12)</option>
+                <option value="FILE">Path on the agent's own host</option>
+                <option value="DEFAULT">Back to the JVM default</option>
+                <option value="INSECURE">Trust any certificate (diagnostics)</option>
+            </select>
+        </div>
+        <div class="form-group" id="tsFileGroup">
+            <label id="tsFileLabel">Certificate File</label>
+            <input type="file" id="tsFile" accept=".cer,.crt,.pem,.der,.jks,.p12,.pfx,.keystore,.truststore">
+        </div>
+        <div class="form-group wide" id="tsPemGroup">
+            <label for="tsPem">…or paste the certificate (PEM)</label>
+            <textarea class="small-input" id="tsPem"
+                      placeholder="-----BEGIN CERTIFICATE-----&#10;MIID…&#10;-----END CERTIFICATE-----"></textarea>
+            <span class="hint" style="font-size:11px; color:#5e6c84">
+                A chain in one paste is fine — every certificate in it is trusted. Added alongside the JVM's
+                own roots, in memory; the JDK cacerts file is never modified.
+            </span>
+        </div>
+        <div class="form-group" id="tsPathGroup" style="display:none">
+            <label>Path on Agent Host</label>
+            <input type="text" id="tsPath" placeholder="/opt/certs/corporate-ca.jks">
+        </div>
+        <div class="form-group" id="tsPasswordGroup">
+            <label>Password (blank if none)</label>
+            <input type="password" id="tsPassword" placeholder="changeit">
+        </div>
+        <div class="form-group" id="tsTypeGroup">
+            <label>Type</label>
+            <select id="tsType">
+                <option value="">Guess from the file name</option>
+                <option value="JKS">JKS</option>
+                <option value="PKCS12">PKCS12</option>
+            </select>
+        </div>
+        <div class="form-group" id="tsDefaultsGroup">
+            <label>JVM Defaults</label>
+            <label style="font-weight:400; text-transform:none; letter-spacing:0; font-size:12px; display:flex; gap:6px; align-items:center">
+                <input type="checkbox" id="tsIncludeDefaults" checked style="width:auto">
+                Keep the public roots as well
+            </label>
+        </div>
+    </div>
+    <div class="toolbar">
+        <button class="primary" onclick="pushTrustStore()">Apply Trust Store</button>
+    </div>
+    <div id="trustStatusBar" class="status-bar"></div>
 </div>
 
 <div class="panel" id="discoveryPanel" style="display:none">
@@ -273,29 +339,162 @@
     function renderAgents() {
         const body = document.getElementById('agentsBody');
         const select = document.getElementById('agentSelect');
+        const trustSelect = document.getElementById('tsAgent');
         const previouslySelected = select.value;
+        const previousTrustTarget = trustSelect.value;
         body.innerHTML = '';
         select.innerHTML = '';
+        trustSelect.innerHTML = '';
 
         if (!agents.length) {
-            body.innerHTML = '<tr class="empty-row"><td colspan="4">No agents connected</td></tr>';
+            body.innerHTML = '<tr class="empty-row"><td colspan="5">No agents connected</td></tr>';
             select.innerHTML = '<option value="">— none connected —</option>';
+            trustSelect.innerHTML = '<option value="">— none connected —</option>';
             return;
         }
+
+        // A trust problem belongs to the endpoint rather than to one host, so "every agent" is the
+        // first option and the usual answer.
+        trustSelect.innerHTML = '<option value="">Every connected agent (' + agents.length + ')</option>';
 
         agents.forEach(a => {
             const tr = document.createElement('tr');
             tr.innerHTML = `<td>${esc(a.agentId)}</td><td>${esc(a.hostname)}</td>` +
-                            `<td>${esc(a.connectedAt)}</td><td>${esc(a.lastSeen)}</td>`;
+                            `<td>${esc(a.connectedAt)}</td><td>${esc(a.lastSeen)}</td>` +
+                            `<td>${esc(describeTrust(a.trustStore))}</td>`;
             body.appendChild(tr);
+
+            const label = a.agentId + (a.hostname && a.hostname !== a.agentId ? ' (' + a.hostname + ')' : '');
 
             const opt = document.createElement('option');
             opt.value = a.agentId;
-            opt.textContent = a.agentId + (a.hostname && a.hostname !== a.agentId ? ' (' + a.hostname + ')' : '');
+            opt.textContent = label;
             select.appendChild(opt);
+
+            const trustOpt = document.createElement('option');
+            trustOpt.value = a.agentId;
+            trustOpt.textContent = label;
+            trustSelect.appendChild(trustOpt);
         });
 
         if (agents.some(a => a.agentId === previouslySelected)) select.value = previouslySelected;
+        if (previousTrustTarget === '' || agents.some(a => a.agentId === previousTrustTarget)) {
+            trustSelect.value = previousTrustTarget;
+        }
+    }
+
+    /** One-line summary of what an agent trusts, as it last reported. */
+    function describeTrust(trustStore) {
+        if (!trustStore || !trustStore.source) return 'not reported';
+        const certs = trustStore.certificates;
+        return trustStore.source + (certs !== undefined && certs !== null && certs >= 0 ? ' · ' + certs + ' certs' : '');
+    }
+
+    // -------------------------------------------------------------------------
+    // TLS trust store
+    // -------------------------------------------------------------------------
+
+    /** Only the fields the chosen source actually uses stay on screen. */
+    function onTrustModeChange() {
+        const mode = document.getElementById('tsMode').value;
+        const supplied = mode === 'CERT' || mode === 'INLINE' || mode === 'FILE';
+        // A bare certificate has no password and no store type — asking for either invites the
+        // wrong answer, so those only appear for a real keystore.
+        const keystore = mode === 'INLINE' || mode === 'FILE';
+        document.getElementById('tsFileGroup').style.display     = mode === 'CERT' || mode === 'INLINE' ? '' : 'none';
+        document.getElementById('tsPemGroup').style.display      = mode === 'CERT' ? '' : 'none';
+        document.getElementById('tsPathGroup').style.display     = mode === 'FILE' ? '' : 'none';
+        document.getElementById('tsPasswordGroup').style.display = keystore ? '' : 'none';
+        document.getElementById('tsTypeGroup').style.display     = keystore ? '' : 'none';
+        document.getElementById('tsDefaultsGroup').style.display = supplied ? '' : 'none';
+        document.getElementById('tsFileLabel').textContent =
+            mode === 'CERT' ? 'Certificate File' : 'Trust Store File (.jks / .p12)';
+    }
+
+    /**
+     * Sends the trust store down the control channel. An uploaded file is read here and travels as
+     * base64 in the message: an agent on a locked-down host usually has no way to receive a file by
+     * any other route, which is the case this exists for.
+     */
+    async function pushTrustStore() {
+        const mode = document.getElementById('tsMode').value;
+        const body = {
+            agentId: document.getElementById('tsAgent').value,
+            mode,
+            path: document.getElementById('tsPath').value.trim(),
+            password: document.getElementById('tsPassword').value,
+            storeType: document.getElementById('tsType').value,
+            includeDefaults: document.getElementById('tsIncludeDefaults').checked
+        };
+
+        if (mode === 'INLINE') {
+            const file = document.getElementById('tsFile').files[0];
+            if (!file) { setTrustStatus('Choose a trust store file first.', 'error'); return; }
+            try {
+                body.data = await readAsBase64(file);
+                if (!body.storeType) body.storeType = /\.(p12|pfx)$/i.test(file.name) ? 'PKCS12' : 'JKS';
+            } catch (e) {
+                setTrustStatus('Could not read the file: ' + e.message, 'error');
+                return;
+            }
+        }
+        if (mode === 'CERT') {
+            // Pasted PEM wins when both are given: it is the more deliberate of the two, and a file
+            // left selected from a previous push should not quietly override what was just typed.
+            const pasted = document.getElementById('tsPem').value.trim();
+            const file = document.getElementById('tsFile').files[0];
+            if (pasted) {
+                body.data = btoa(pasted);
+            } else if (file) {
+                try {
+                    body.data = await readAsBase64(file);
+                } catch (e) {
+                    setTrustStatus('Could not read the file: ' + e.message, 'error');
+                    return;
+                }
+            } else {
+                setTrustStatus('Choose a certificate file, or paste one as PEM.', 'error');
+                return;
+            }
+        }
+        if (mode === 'FILE' && !body.path) { setTrustStatus('Enter the path on the agent host.', 'error'); return; }
+        if (mode === 'INSECURE' && !confirm('Turn off certificate verification on the selected agent(s)? Use this to confirm a failure is a trust problem, then load a real trust store.')) return;
+
+        setTrustStatus('Applying…');
+        try {
+            const res = await fetch('/agents/truststore', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            const results = await res.json();
+            if (!res.ok) { setTrustStatus(results.error || res.statusText, 'error'); return; }
+
+            results.forEach(r => appendLine('[' + (r.agentId || 'agent') + '] ' +
+                    (r.ok ? '' : 'FAILED: ') + (r.message || r.error || 'no reply')));
+            const failed = results.filter(r => !r.ok).length;
+            setTrustStatus('Applied to ' + (results.length - failed) + ' of ' + results.length + ' agent(s).',
+                    failed ? 'error' : 'ok');
+            refreshAgents();
+        } catch (e) {
+            setTrustStatus('Failed: ' + e.message, 'error');
+        }
+    }
+
+    function readAsBase64(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            // readAsDataURL gives "data:...;base64,XXXX" — the payload is everything after the comma.
+            reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+            reader.onerror = () => reject(new Error('read failed'));
+            reader.readAsDataURL(file);
+        });
+    }
+
+    function setTrustStatus(message, type) {
+        const bar = document.getElementById('trustStatusBar');
+        bar.textContent = message || '';
+        bar.className = 'status-bar' + (type ? ' ' + type : '');
     }
 
     // -------------------------------------------------------------------------
@@ -497,6 +696,7 @@
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); runCurrentMode(); }
     });
 
+    onTrustModeChange();
     connectConsole();
 </script>
 </body>

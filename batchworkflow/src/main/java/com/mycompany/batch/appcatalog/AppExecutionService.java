@@ -27,7 +27,9 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.ArrayDeque;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,9 +48,11 @@ import java.util.regex.Pattern;
  * override both. The merged map is then substituted into the URL, headers and body, so the same
  * use case definition can be pointed at different data purely by changing an instance.
  *
- * <p>A group run executes its instances in parallel and returns one
- * {@link AppUseCaseInstanceOutput} per instance in the group's declared order — never throwing for
- * a failed call, since a failure is itself a result worth showing in the grid.
+ * <p>Each instance first expands into the cartesian product of the environments it names and its
+ * run count, so one instance can be a hundred calls against each of three environments. A run
+ * executes that expansion in parallel and returns one {@link AppUseCaseInstanceOutput} per call, in
+ * the expansion's own order — never throwing for a failed call, since a failure is itself a result
+ * worth showing in the grid.
  *
  * <p>The call itself goes out either from this server ({@link ExecutionTarget#LOCAL}) or from a
  * connected remote agent ({@link ExecutionTarget#AGENT}) — everything around it, from the variable
@@ -75,6 +79,20 @@ public class AppExecutionService {
      */
     private static final int RETAINED_EXECUTIONS = 200;
 
+    /**
+     * How many executions the Global Runs page can look back over. These are payload-free — a few
+     * hundred bytes each — so the window can be far longer than the one that keeps bodies, which is
+     * what makes "every run across every app" a useful view rather than a glimpse of the last batch.
+     */
+    private static final int RETAINED_HISTORY = 5000;
+
+    /**
+     * How many calls a single run makes at once. A run-count of a hundred against three environments
+     * is three hundred calls, and firing all of them together would be a load test of the endpoint
+     * rather than a regression pass over it.
+     */
+    private static final int MAX_PARALLEL_RUNS = 10;
+
     private final AppCatalogService catalog;
     private final ObjectMapper objectMapper;
     private final AgentHttpDispatchService agentDispatch;
@@ -88,6 +106,13 @@ public class AppExecutionService {
                 }
             });
 
+    /**
+     * Newest first, payload-free, capped at {@link #RETAINED_HISTORY}. Deliberately separate from
+     * {@link #recentExecutions}: that map is keyed for one-row payload lookups and evicts on access
+     * order, neither of which gives a stable "what has run lately, in order" list.
+     */
+    private final Deque<AppUseCaseInstanceOutput> history = new ArrayDeque<>();
+
     public AppExecutionService(AppCatalogService catalog, ObjectMapper objectMapper,
                                AgentHttpDispatchService agentDispatch) {
         this.catalog = catalog;
@@ -98,6 +123,25 @@ public class AppExecutionService {
     /** The full result of a past execution, bodies and all, or null once it has aged out. */
     public AppUseCaseInstanceOutput getExecution(String executionId) {
         return recentExecutions.get(executionId);
+    }
+
+    /**
+     * Every execution this server has made recently, newest first and payload-free — what the
+     * Global Runs page lists. It spans every app, so it is the one view where a run made from the
+     * Orders instances page and one made from Payments sit side by side.
+     */
+    public List<AppUseCaseInstanceOutput> history() {
+        synchronized (history) {
+            return new ArrayList<>(history);
+        }
+    }
+
+    /** Empties the global run history. The retained payloads go with it — they are its detail rows. */
+    public void clearHistory() {
+        synchronized (history) {
+            history.clear();
+        }
+        recentExecutions.clear();
     }
 
     // -------------------------------------------------------------------------
@@ -111,56 +155,136 @@ public class AppExecutionService {
 
     /**
      * Runs several instances concurrently, preserving the caller's ordering in the result list.
-     * On {@link ExecutionTarget#AGENT} with no {@code agentId} the calls go out round-robin, so a
+     * Each instance expands first — one call per environment it names, repeated as many times as
+     * its run count asks — so a group of three instances can very well come back as three hundred
+     * results, ordered instance by instance, then environment, then repeat.
+     *
+     * <p>On {@link ExecutionTarget#AGENT} with no {@code agentId} the calls go out round-robin, so a
      * group run spreads itself across every connected agent.
      */
     public List<AppUseCaseInstanceOutput> executeAll(List<String> instanceIds, ExecutionTarget target, String agentId) {
         if (instanceIds == null || instanceIds.isEmpty()) return List.of();
 
-        try (ExecutorService pool = Executors.newFixedThreadPool(Math.min(instanceIds.size(), 10))) {
-            List<Future<AppUseCaseInstanceOutput>> futures = new ArrayList<>();
-            for (String id : instanceIds) {
-                futures.add(pool.submit(() -> execute(id, target, agentId)));
+        List<RunPlan> plans = new ArrayList<>();
+        for (String id : instanceIds) plans.addAll(plan(id));
+        return executePlans(plans, target, agentId);
+    }
+
+    /**
+     * Runs one instance, expanded over its environments and run count — so this returns a list even
+     * for a single instance, and a hundred rows when that instance asks for a hundred repeats.
+     */
+    public List<AppUseCaseInstanceOutput> executeInstance(String instanceId, ExecutionTarget target, String agentId) {
+        return executePlans(plan(instanceId), target, agentId);
+    }
+
+    /** Runs one instance on this server, expanded the same way. */
+    public List<AppUseCaseInstanceOutput> executeInstance(String instanceId) {
+        return executeInstance(instanceId, ExecutionTarget.LOCAL, null);
+    }
+
+    /**
+     * Runs one instance exactly once against one named environment, ignoring its run count. This is
+     * the re-run door: a row on the Global Runs page repeats the environment it originally hit
+     * rather than fanning back out over every environment the instance now names.
+     */
+    public AppUseCaseInstanceOutput executeOnce(String instanceId, String environment,
+                                                ExecutionTarget target, String agentId) {
+        AppUseCaseInstance instance = catalog.getInstance(instanceId);
+        String chosen = environment != null && !environment.isBlank() ? environment
+                : instance != null ? firstEnvironment(instance) : null;
+        return execute(new RunPlan(instanceId, chosen, 1, 1), target, agentId);
+    }
+
+    // -------------------------------------------------------------------------
+    // Expansion — one instance becomes environments x run count calls
+    // -------------------------------------------------------------------------
+
+    /**
+     * One unit of work: an instance pinned to a single environment and a single repeat. The whole
+     * cartesian product is built up front so the pool sees a flat list and the result ordering is
+     * decided in one place rather than emerging from the order the futures happened to finish in.
+     *
+     * @param environment the environment to call, or null when the instance names none at all —
+     *                    that plan exists only to carry the failure into the grid
+     */
+    private record RunPlan(String instanceId, String environment, int runIndex, int runCount) {}
+
+    /** The full expansion of one instance: every environment it names, each repeated run-count times. */
+    private List<RunPlan> plan(String instanceId) {
+        AppUseCaseInstance instance = catalog.getInstance(instanceId);
+        if (instance == null) return List.of(new RunPlan(instanceId, null, 1, 1));
+
+        List<String> environments = instance.getEffectiveEnvironments();
+        // No environment at all is still one plan — execute() turns it into a named failure rather
+        // than silently dropping an instance the caller asked to run.
+        if (environments.isEmpty()) environments = Collections.singletonList(null);
+
+        int runCount = Math.max(1, instance.getRunCount());
+        List<RunPlan> plans = new ArrayList<>(environments.size() * runCount);
+        for (String environment : environments) {
+            for (int run = 1; run <= runCount; run++) {
+                plans.add(new RunPlan(instanceId, environment, run, runCount));
             }
-            List<AppUseCaseInstanceOutput> out = new ArrayList<>();
+        }
+        return plans;
+    }
+
+    private static String firstEnvironment(AppUseCaseInstance instance) {
+        List<String> environments = instance.getEffectiveEnvironments();
+        return environments.isEmpty() ? null : environments.get(0);
+    }
+
+    /**
+     * Runs a flat list of plans concurrently and returns the results in the plans' own order — a
+     * regression sweep finishes out of order by nature, and a grid that reshuffles itself from one
+     * run to the next cannot be compared with the previous one.
+     */
+    private List<AppUseCaseInstanceOutput> executePlans(List<RunPlan> plans, ExecutionTarget target, String agentId) {
+        if (plans.isEmpty()) return List.of();
+
+        try (ExecutorService pool = Executors.newFixedThreadPool(Math.min(plans.size(), MAX_PARALLEL_RUNS))) {
+            List<Future<AppUseCaseInstanceOutput>> futures = new ArrayList<>(plans.size());
+            for (RunPlan runPlan : plans) {
+                futures.add(pool.submit(() -> execute(runPlan, target, agentId)));
+            }
+            List<AppUseCaseInstanceOutput> out = new ArrayList<>(futures.size());
             for (int i = 0; i < futures.size(); i++) {
                 try {
                     out.add(futures.get(i).get());
                 } catch (Exception e) {
-                    out.add(errorOutput(instanceIds.get(i), null, rootMessage(e)));
+                    out.add(errorOutput(plans.get(i), null, rootMessage(e)));
                 }
             }
             return out;
         }
     }
 
-    /** Runs one instance on this server. Never throws — a failure comes back as an ERROR-status output. */
-    public AppUseCaseInstanceOutput execute(String instanceId) {
-        return execute(instanceId, ExecutionTarget.LOCAL, null);
-    }
-
     /**
-     * Runs one instance from {@code target}. Never throws — a failure comes back as an ERROR-status
+     * Runs one plan from {@code target}. Never throws — a failure comes back as an ERROR-status
      * output, including "no agents connected" and anything the agent itself reports.
      */
-    public AppUseCaseInstanceOutput execute(String instanceId, ExecutionTarget target, String agentId) {
+    private AppUseCaseInstanceOutput execute(RunPlan runPlan, ExecutionTarget target, String agentId) {
+        String instanceId = runPlan.instanceId();
         AppUseCaseInstance instance = catalog.getInstance(instanceId);
-        if (instance == null) return errorOutput(instanceId, null, "Unknown instance id: " + instanceId);
+        if (instance == null) return errorOutput(runPlan, null, "Unknown instance id: " + instanceId);
+        if (runPlan.environment() == null)
+            return errorOutput(runPlan, instance, "Instance names no environment to run against");
 
         AppDefinition  app     = catalog.getApp(instance.getAppName());
         AppUseCase     useCase = catalog.getUseCase(instance.getAppName(), instance.getAppUseCaseName());
-        AppEnvironment env     = catalog.getEnvironment(instance.getAppName(), instance.getAppEnvironment());
+        AppEnvironment env     = catalog.getEnvironment(instance.getAppName(), runPlan.environment());
 
-        if (app == null)     return errorOutput(instanceId, instance, "Unknown app: " + instance.getAppName(), env, useCase);
-        if (useCase == null) return errorOutput(instanceId, instance, "Unknown use case: " + instance.getAppUseCaseName(), env, useCase);
-        if (env == null)     return errorOutput(instanceId, instance, "Unknown environment: " + instance.getAppEnvironment(), env, useCase);
+        if (app == null)     return errorOutput(runPlan, instance, "Unknown app: " + instance.getAppName(), env, useCase);
+        if (useCase == null) return errorOutput(runPlan, instance, "Unknown use case: " + instance.getAppUseCaseName(), env, useCase);
+        if (env == null)     return errorOutput(runPlan, instance, "Unknown environment: " + runPlan.environment(), null, useCase);
 
         if (!"ACTIVE".equalsIgnoreCase(app.getAppStatus()))
-            return errorOutput(instanceId, instance, "App '" + app.getAppName() + "' is " + app.getAppStatus(), env, useCase);
+            return errorOutput(runPlan, instance, "App '" + app.getAppName() + "' is " + app.getAppStatus(), env, useCase);
         if (!"ACTIVE".equalsIgnoreCase(env.getEnvStatus()))
-            return errorOutput(instanceId, instance, "Environment '" + env.getEnvironment() + "' is " + env.getEnvStatus(), env, useCase);
+            return errorOutput(runPlan, instance, "Environment '" + env.getEnvironment() + "' is " + env.getEnvStatus(), env, useCase);
         if (!"HTTP".equalsIgnoreCase(app.getAppMode()))
-            return errorOutput(instanceId, instance, "App mode '" + app.getAppMode() + "' cannot be executed — only HTTP is supported", env, useCase);
+            return errorOutput(runPlan, instance, "App mode '" + app.getAppMode() + "' cannot be executed — only HTTP is supported", env, useCase);
 
         long started = System.currentTimeMillis();
         String url = null;
@@ -199,15 +323,18 @@ public class AppExecutionService {
 
             return retain(new AppUseCaseInstanceOutput(
                     newExecutionId(),
+                    started,
                     instanceId,
-                    labelFor(instance),
+                    labelFor(instance, env.getEnvironment()),
                     instance.getAppName(),
-                    instance.getAppEnvironment(),
+                    env.getEnvironment(),
                     env.getEnvClass(),
                     instance.getAppUseCaseName(),
                     instance.getAppUseCaseInstanceInputs(),
                     outcome.statusCode() < 400 ? "SUCCESS" : "FAILED",
                     outcome.statusCode(),
+                    runPlan.runIndex(),
+                    runPlan.runCount(),
                     elapsed,
                     url,
                     unresolvedVariables(url),
@@ -228,15 +355,18 @@ public class AppExecutionService {
             // placeholders are "unresolved" would be a lie: nothing was ever resolved.
             return retain(new AppUseCaseInstanceOutput(
                     newExecutionId(),
+                    started,
                     instanceId,
-                    labelFor(instance),
+                    labelFor(instance, env.getEnvironment()),
                     instance.getAppName(),
-                    instance.getAppEnvironment(),
+                    env.getEnvironment(),
                     env.getEnvClass(),
                     instance.getAppUseCaseName(),
                     instance.getAppUseCaseInstanceInputs(),
                     "ERROR",
                     null,
+                    runPlan.runIndex(),
+                    runPlan.runCount(),
                     System.currentTimeMillis() - started,
                     url != null ? url : rawUrl(env, useCase),
                     url != null ? unresolvedVariables(url) : null,
@@ -322,9 +452,16 @@ public class AppExecutionService {
         return UUID.randomUUID().toString();
     }
 
-    /** Keeps the full result addressable so the browser can pull its bodies back on demand. */
+    /**
+     * Keeps the full result addressable so the browser can pull its bodies back on demand, and adds
+     * a payload-free copy to the head of the global history the Global Runs page reads.
+     */
     private AppUseCaseInstanceOutput retain(AppUseCaseInstanceOutput output) {
         recentExecutions.put(output.executionId(), output);
+        synchronized (history) {
+            history.addFirst(output.withoutPayload());
+            while (history.size() > RETAINED_HISTORY) history.removeLast();
+        }
         return output;
     }
 
@@ -616,27 +753,34 @@ public class AppExecutionService {
     // Helpers
     // -------------------------------------------------------------------------
 
-    private AppUseCaseInstanceOutput errorOutput(String instanceId, AppUseCaseInstance instance, String message) {
-        return errorOutput(instanceId, instance, message, null, null);
+    private AppUseCaseInstanceOutput errorOutput(RunPlan runPlan, AppUseCaseInstance instance, String message) {
+        return errorOutput(runPlan, instance, message, null, null);
     }
 
     /**
      * A failure that happened before the request could be built. The environment and use case are
      * passed in whenever the catalog lookup had already resolved them, so the result still names the
      * endpoint the run was aimed at: a blank URL tells an operator nothing about what went wrong.
+     *
+     * <p>The environment reported is the one the <em>plan</em> aimed at rather than the instance's
+     * primary one — on a multi-environment instance those differ, and naming the wrong environment
+     * on a failure row sends the reader to the wrong host.
      */
-    private AppUseCaseInstanceOutput errorOutput(String instanceId, AppUseCaseInstance instance, String message,
+    private AppUseCaseInstanceOutput errorOutput(RunPlan runPlan, AppUseCaseInstance instance, String message,
                                                  AppEnvironment env, AppUseCase useCase) {
+        String instanceId = runPlan.instanceId();
         return retain(new AppUseCaseInstanceOutput(
                 newExecutionId(),
+                System.currentTimeMillis(),
                 instanceId,
-                instance != null ? labelFor(instance) : instanceId,
+                instance != null ? labelFor(instance, runPlan.environment()) : instanceId,
                 instance != null ? instance.getAppName() : null,
-                instance != null ? instance.getAppEnvironment() : null,
+                runPlan.environment(),
                 env != null ? env.getEnvClass() : null,
                 instance != null ? instance.getAppUseCaseName() : null,
                 instance != null ? instance.getAppUseCaseInstanceInputs() : Map.of(),
-                "ERROR", null, 0L,
+                "ERROR", null,
+                runPlan.runIndex(), runPlan.runCount(), 0L,
                 rawUrl(env, useCase),
                 null,   // the request was never built, so nothing was resolved or left unresolved
                 useCase != null ? useCase.getHttpMethod() : null,
@@ -658,10 +802,16 @@ public class AppExecutionService {
         return raw.isBlank() ? null : raw;
     }
 
-    private String labelFor(AppUseCaseInstance instance) {
+    /**
+     * The name this run shows under. The fallback names the environment the run actually went to
+     * rather than the instance's primary one: on a multi-environment instance every row would
+     * otherwise claim to be the first environment.
+     */
+    private String labelFor(AppUseCaseInstance instance, String environment) {
         if (instance.getInstanceLabel() != null && !instance.getInstanceLabel().isBlank())
             return instance.getInstanceLabel();
-        return instance.getAppUseCaseName() + " @ " + instance.getAppEnvironment();
+        return instance.getAppUseCaseName() + " @ "
+                + (environment != null && !environment.isBlank() ? environment : instance.getAppEnvironment());
     }
 
     private static String nullToEmpty(String s) { return s == null ? "" : s; }

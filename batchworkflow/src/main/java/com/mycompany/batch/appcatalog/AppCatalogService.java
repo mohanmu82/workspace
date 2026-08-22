@@ -123,13 +123,28 @@ public class AppCatalogService {
         return env;
     }
 
-    /** Removes the environment and any instance pinned to it. */
+    /**
+     * Removes the environment, drops it from every instance that named it, and deletes only those
+     * instances left with no environment at all. An instance running against three environments
+     * survives losing one of them — deleting it outright would take the other two with it.
+     */
     public synchronized void deleteEnvironment(String appName, String environment) throws Exception {
         environments.removeIf(e -> appName.equals(e.getAppName()) && environment.equals(e.getEnvironment()));
-        List<String> orphaned = instances.stream()
-                .filter(i -> appName.equals(i.getAppName()) && environment.equals(i.getAppEnvironment()))
-                .map(AppUseCaseInstance::getAppUseCaseInstanceId)
-                .collect(Collectors.toList());
+
+        List<String> orphaned = new ArrayList<>();
+        for (AppUseCaseInstance instance : instances) {
+            if (!appName.equals(instance.getAppName())) continue;
+
+            List<String> remaining = instance.getEffectiveEnvironments();
+            if (!remaining.remove(environment)) continue;
+
+            if (remaining.isEmpty()) {
+                orphaned.add(instance.getAppUseCaseInstanceId());
+            } else {
+                instance.setAppEnvironments(remaining);
+                instance.setAppEnvironment(remaining.get(0));
+            }
+        }
         instances.removeIf(i -> orphaned.contains(i.getAppUseCaseInstanceId()));
         groups.forEach(g -> g.getAppUseCaseInstanceIds().removeAll(orphaned));
 
@@ -198,17 +213,29 @@ public class AppCatalogService {
                 .findFirst().orElse(null);
     }
 
-    /** Saves an instance, generating the id when the caller did not supply one (i.e. on create). */
+    /**
+     * Saves an instance, generating the id when the caller did not supply one (i.e. on create).
+     *
+     * <p>An instance may name several environments. They are all validated, and the first becomes
+     * {@code appEnvironment} — the single-environment field every older reader still uses, and the
+     * one the generated id is built from.
+     */
     public synchronized AppUseCaseInstance saveInstance(AppUseCaseInstance instance) throws Exception {
         requireName(instance.getAppName(), "appName");
         requireName(instance.getAppUseCaseName(), "appUseCaseName");
-        requireName(instance.getAppEnvironment(), "appEnvironment");
         if (getUseCase(instance.getAppName(), instance.getAppUseCaseName()) == null)
             throw new IllegalArgumentException("Unknown use case: "
                     + instance.getAppName() + "/" + instance.getAppUseCaseName());
-        if (getEnvironment(instance.getAppName(), instance.getAppEnvironment()) == null)
-            throw new IllegalArgumentException("Unknown environment: "
-                    + instance.getAppName() + "/" + instance.getAppEnvironment());
+
+        List<String> environments = instance.getEffectiveEnvironments();
+        if (environments.isEmpty()) throw new IllegalArgumentException("appEnvironment is required");
+        for (String environment : environments) {
+            if (getEnvironment(instance.getAppName(), environment) == null)
+                throw new IllegalArgumentException("Unknown environment: "
+                        + instance.getAppName() + "/" + environment);
+        }
+        instance.setAppEnvironments(environments);
+        instance.setAppEnvironment(environments.get(0));
 
         if (instance.getAppUseCaseInstanceId() == null || instance.getAppUseCaseInstanceId().isBlank()) {
             instance.setAppUseCaseInstanceId(newInstanceId(instance));

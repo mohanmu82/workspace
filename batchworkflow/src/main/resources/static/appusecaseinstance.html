@@ -82,6 +82,28 @@
         .group-chip button:disabled { color: #b3bac5; cursor: not-allowed; }
         .group-chip button:disabled:hover { color: #b3bac5; }
 
+        /* ── Environment multi-select ────────────────────────────────────────── */
+
+        /* A checkbox per environment rather than a <select multiple>: ticking three environments
+           should not depend on knowing to hold ctrl, and each row has room for its env class. */
+        .env-picker {
+            border: 1px solid #dfe1e6; border-radius: 4px; background: #fff;
+            max-height: 132px; overflow-y: auto; padding: 4px;
+        }
+        .env-picker label {
+            display: flex; align-items: center; gap: 7px;
+            padding: 3px 6px; border-radius: 3px; cursor: pointer;
+            font-size: 13px; font-weight: 400; color: #172b4d; text-transform: none; letter-spacing: 0;
+        }
+        .env-picker label:hover { background: #f4f5f7; }
+        .env-picker input[type="checkbox"] { width: auto; margin: 0; flex: none; }
+        .env-picker .env-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .env-picker .empty-note { padding: 4px 6px; }
+
+        /* A panel title that folds its own body away. */
+        .collapse-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+        .collapse-toggle:hover { color: #0052cc; }
+
         .dim-chip {
             display: inline-flex; align-items: center; gap: 5px;
             background: #f4f5f7; border: 1px solid #dfe1e6; color: #5e6c84;
@@ -258,8 +280,17 @@
                 <select id="useCaseSelect" onchange="onUseCaseChange()"></select>
             </div>
             <div class="form-group">
-                <label for="envSelect">Environment</label>
-                <select id="envSelect" onchange="renderUrlPreview()"></select>
+                <label>
+                    Environments
+                    <button type="button" class="tool-btn" style="margin-left:8px" onclick="toggleAllEnvironments()">All / None</button>
+                </label>
+                <div class="env-picker" id="envPicker"></div>
+                <span class="hint">Tick more than one and the instance runs against each of them.</span>
+            </div>
+            <div class="form-group">
+                <label for="runCount">Run Count</label>
+                <input id="runCount" type="number" min="1" max="10000" value="1" oninput="renderRunPlanHint()">
+                <span class="hint" id="runPlanHint"></span>
             </div>
             <div class="form-group wide">
                 <label for="instanceLabel">Label (optional)</label>
@@ -287,12 +318,17 @@
 
 </div>
 
-<!-- Instance groups -->
+<!-- Instance groups — collapsed by default; most visits here are about instances, not suites -->
 <div class="panel">
     <div class="panel-title">
-        <span>Instance Groups</span>
+        <span class="collapse-toggle" onclick="toggleGroupsPanel()">
+            <span class="caret" id="groupsCaret">&#9654;</span>
+            <span>Instance Groups</span>
+            <span class="hint" id="groupsSummary"></span>
+        </span>
         <button class="tool-btn" onclick="newGroup()">+ New Group</button>
     </div>
+    <div id="groupsBody" style="display:none">
     <div class="form-row">
         <div class="form-group">
             <label for="groupSelect">Saved Groups</label>
@@ -318,6 +354,7 @@
         <button class="danger" id="deleteGroupBtn" onclick="deleteGroup()" style="display:none">Delete Group</button>
     </div>
     <div id="groupStatusBar" class="status-bar"></div>
+    </div>
 </div>
 
 <!-- Results -->
@@ -404,7 +441,12 @@
           cls: r => 'status-cell ' + String(r.status || ''), render: r => AC.esc(r.status) },
         { key: 'statusCode', label: 'HTTP', fixed: true,
           render: r => r.statusCode !== null && r.statusCode !== undefined ? String(r.statusCode) : '—' },
+        // Which repeat of a run count this row was. Off by default — it says nothing on an
+        // ordinary single run — but it is the only way to tell the rows of a sweep apart.
+        { key: 'runIndex', label: 'Run #',
+          render: r => r.runCount > 1 ? AC.esc(r.runIndex + ' / ' + r.runCount) : '—' },
         { key: 'timeTaken', label: 'Time', fixed: true, render: r => (r.timeTaken || 0) + ' ms' },
+        { key: 'startedAt', label: 'Started', render: r => AC.esc(formatTime(r.startedAt)) },
         { key: 'executedVia', label: 'Ran On', fixed: true, render: r => AC.esc(r.executedVia || 'LOCAL') },
         { key: 'url', label: 'URL', fixed: true, style: 'max-width:320px; word-break:break-all',
           render: r => urlCell(r) },
@@ -428,6 +470,7 @@
     const COLUMNS_KEY   = 'appCatalog.instanceColumns';
     const EDITOR_KEY    = 'appCatalog.instanceEditorOpen';
     const RUNTARGET_KEY = 'appCatalog.instanceRunTarget';
+    const GROUPS_OPEN_KEY = 'appCatalog.instanceGroupsOpen';
 
     /** Above this many characters a payload block renders truncated — a browser stalls long before. */
     const RENDER_LIMIT = 100000;
@@ -715,16 +758,84 @@
 
     function refreshSelectors() {
         AC.fillSelect(document.getElementById('useCaseSelect'), useCases.map(u => u.useCaseName), '— select a use case —');
-        AC.fillSelect(document.getElementById('envSelect'),
-            environments.map(e => ({ value: e.environment, label: e.environment + ' (' + e.envClass + ')' })), '— select an environment —');
+        renderEnvPicker([]);
+    }
+
+    // ── Environments (multi-select) ──────────────────────────────────────────
+
+    /** One tickable row per environment of the current app, with the given ones pre-ticked. */
+    function renderEnvPicker(selected) {
+        const picker = document.getElementById('envPicker');
+        const ticked = new Set(selected || []);
+        picker.innerHTML = environments.length
+            ? environments.map(e =>
+                '<label><input type="checkbox" class="env-pick" value="' + AC.esc(e.environment) + '"' +
+                        (ticked.has(e.environment) ? ' checked' : '') + ' onchange="onEnvironmentsChange()">' +
+                    '<span class="env-name">' + AC.esc(e.environment) + '</span>' +
+                    '<span class="badge ' + AC.esc(String(e.envClass || '').toLowerCase()) + '">' + AC.esc(e.envClass) + '</span>' +
+                '</label>'
+              ).join('')
+            : '<div class="empty-note">No environments defined for this app yet.</div>';
+        renderRunPlanHint();
+    }
+
+    /** The ticked environments, in the order they are listed for the app. */
+    function selectedEnvironments() {
+        return [...document.querySelectorAll('#envPicker .env-pick:checked')].map(cb => cb.value);
+    }
+
+    function toggleAllEnvironments() {
+        const boxes = [...document.querySelectorAll('#envPicker .env-pick')];
+        const turnOn = boxes.some(cb => !cb.checked);
+        boxes.forEach(cb => { cb.checked = turnOn; });
+        onEnvironmentsChange();
+    }
+
+    function onEnvironmentsChange() {
+        renderRunPlanHint();
+        renderUrlPreview();
+    }
+
+    function currentRunCount() {
+        const entered = parseInt(document.getElementById('runCount').value, 10);
+        return Number.isFinite(entered) && entered > 0 ? entered : 1;
+    }
+
+    /**
+     * What one click of Run will actually do. Environments times run count is easy to set and easy
+     * to misjudge — three environments at a hundred repeats is three hundred calls, and the number
+     * is worth seeing before the button is pressed rather than after.
+     */
+    function renderRunPlanHint() {
+        const envCount = selectedEnvironments().length;
+        const runs = currentRunCount();
+        const total = envCount * runs;
+        const hint = document.getElementById('runPlanHint');
+        if (!envCount) { hint.textContent = 'Tick at least one environment.'; return; }
+        hint.textContent = total === 1
+            ? '1 call per run.'
+            : total + ' calls per run — ' + envCount + ' environment' + (envCount !== 1 ? 's' : '') +
+              ' × ' + runs + ' repeat' + (runs !== 1 ? 's' : '') + '.';
     }
 
     // ── Instance list ────────────────────────────────────────────────────────
 
+    /** Every environment an instance runs against; older instances carry only the single field. */
+    function instanceEnvironments(instance) {
+        const many = instance.appEnvironments;
+        if (Array.isArray(many) && many.length) return many;
+        return instance.appEnvironment ? [instance.appEnvironment] : [];
+    }
+
     function instanceLabel(instance) {
-        return instance.instanceLabel && instance.instanceLabel.trim()
-            ? instance.instanceLabel
-            : instance.appUseCaseName + ' @ ' + instance.appEnvironment;
+        if (instance.instanceLabel && instance.instanceLabel.trim()) return instance.instanceLabel;
+        const envs = instanceEnvironments(instance);
+        return instance.appUseCaseName + ' @ ' + (envs.length > 1 ? envs.length + ' environments' : envs[0] || '—');
+    }
+
+    /** How many calls running this instance makes: one per environment, times its run count. */
+    function instanceRunSize(instance) {
+        return Math.max(1, instanceEnvironments(instance).length) * Math.max(1, instance.runCount || 1);
     }
 
     function renderInstanceList() {
@@ -753,7 +864,11 @@
                         '<div class="record-name">' + AC.esc(instanceLabel(instance)) + '</div>' +
                         '<div class="record-meta">' +
                             '<span>' + AC.esc(instance.appUseCaseName) + '</span>' +
-                            '<span class="badge auth">' + AC.esc(instance.appEnvironment) + '</span>' +
+                            instanceEnvironments(instance).map(e =>
+                                '<span class="badge auth">' + AC.esc(e) + '</span>').join('') +
+                            (instance.runCount > 1
+                                ? '<span class="badge warn" title="Runs ' + instance.runCount +
+                                  ' times against each environment">&times;' + instance.runCount + '</span>' : '') +
                             rowStatusHtml(id) +
                         '</div>' +
                     '</div>' +
@@ -767,14 +882,54 @@
         }).join('');
     }
 
-    /** The outcome of the last run of this instance, shown inline so a row run needs no scrolling. */
+    /**
+     * The outcome of the last run of this instance, shown inline so a row run needs no scrolling.
+     * One instance can produce many results now — every environment, every repeat — so this reads
+     * as a tally, and lists the distinct HTTP codes it came back with rather than just the last one:
+     * "97/100 ok · 200/503" is the sentence a regression run is trying to say.
+     */
     function rowStatusHtml(instanceId) {
         const last = lastRunByInstance.get(instanceId);
         if (!last) return '';
-        if (last.status === 'RUNNING') return '<span class="row-status RUNNING">running…</span>';
-        return '<span class="row-status ' + AC.esc(last.status) + '">' + AC.esc(last.status) +
-               (last.statusCode !== null && last.statusCode !== undefined ? ' ' + last.statusCode : '') +
-               (last.timeTaken !== undefined ? ' · ' + last.timeTaken + ' ms' : '') + '</span>';
+        if (last.running) return '<span class="row-status RUNNING">running…</span>';
+
+        const cls   = last.failed ? 'FAILED' : 'SUCCESS';
+        const codes = last.codes.length ? ' ' + last.codes.join('/') : '';
+        const tally = last.total > 1
+            ? (last.total - last.failed) + '/' + last.total + ' ok'
+            : (last.failed ? 'FAILED' : 'SUCCESS');
+        return '<span class="row-status ' + cls + '">' + AC.esc(tally) + AC.esc(codes) +
+               ' · ' + last.slowest + ' ms</span>';
+    }
+
+    /**
+     * Folds one instance's results into the single line its list row shows. HTTP codes are kept
+     * distinct and in the order first seen — a hundred 200s and one 503 is one code too many to
+     * hide behind a status word.
+     */
+    function summariseRun(rows) {
+        const codes = [];
+        rows.forEach(r => {
+            const code = r.statusCode === null || r.statusCode === undefined ? null : String(r.statusCode);
+            if (code !== null && !codes.includes(code)) codes.push(code);
+        });
+        return {
+            running: false,
+            total:   rows.length,
+            failed:  rows.filter(r => r.status !== 'SUCCESS').length,
+            codes:   codes,
+            slowest: rows.reduce((max, r) => Math.max(max, r.timeTaken || 0), 0)
+        };
+    }
+
+    /** Replaces each instance's row summary with the results of the run that just finished. */
+    function recordRunOutcome(rows) {
+        const byInstance = new Map();
+        rows.forEach(r => {
+            if (!byInstance.has(r.appUseCaseInstanceId)) byInstance.set(r.appUseCaseInstanceId, []);
+            byInstance.get(r.appUseCaseInstanceId).push(r);
+        });
+        byInstance.forEach((rowsForInstance, id) => lastRunByInstance.set(id, summariseRun(rowsForInstance)));
     }
 
     function selectedInstanceIds() {
@@ -854,8 +1009,10 @@
     }
 
     /**
-     * The URL this instance would actually call, resolved as you type. Placeholders with nothing
-     * behind them stay visible and flagged here rather than turning up in a result row after a run.
+     * The URLs this instance would actually call, resolved as you type — one line per ticked
+     * environment, since each has its own prefix and they are exactly what a multi-environment
+     * instance is easy to get wrong about. Placeholders with nothing behind them stay visible and
+     * flagged here rather than turning up in a result row after a run.
      */
     function renderUrlPreview() {
         const preview = document.getElementById('urlPreview');
@@ -864,19 +1021,32 @@
             return;
         }
 
-        const env = environments.find(e => e.environment === document.getElementById('envSelect').value);
+        const picked = selectedEnvironments();
         let entered = {};
         try { entered = readInstanceInputs(); } catch (e) { /* mid-typing JSON — preview what parses */ }
+        const variables = mergedVariables(currentUseCase, entered);
 
-        const template = (env && env.urlPrefix ? env.urlPrefix : '') + (currentUseCase.urlSuffix || '');
-        const resolved = substitute(template, mergedVariables(currentUseCase, entered));
-        const missing = referencedVariables(resolved);
+        if (!picked.length) {
+            const resolved = substitute(currentUseCase.urlSuffix || '', variables);
+            preview.innerHTML = '<span class="empty-note">No environment ticked — URL prefix missing. </span>' +
+                markUnresolved(resolved);
+            return;
+        }
 
-        preview.innerHTML = (env ? '' : '<span class="empty-note">No environment picked — URL prefix missing. </span>') +
-            markUnresolved(resolved) +
-            (missing.length ? '<div class="input-flag" style="margin-top:4px">' + missing.length +
-                ' placeholder' + (missing.length !== 1 ? 's' : '') + ' with no value — the call goes out with ' +
-                AC.esc(missing.map(n => '${' + n + '}').join(', ')) + ' as written.</div>' : '');
+        const missing = new Set();
+        const lines = picked.map(name => {
+            const env = environments.find(e => e.environment === name);
+            const resolved = substitute((env && env.urlPrefix ? env.urlPrefix : '') + (currentUseCase.urlSuffix || ''), variables);
+            referencedVariables(resolved).forEach(n => missing.add(n));
+            return (picked.length > 1 ? '<span class="badge auth">' + AC.esc(name) + '</span> ' : '') +
+                   markUnresolved(resolved);
+        });
+
+        const names = [...missing];
+        preview.innerHTML = lines.map(l => '<div>' + l + '</div>').join('') +
+            (names.length ? '<div class="input-flag" style="margin-top:4px">' + names.length +
+                ' placeholder' + (names.length !== 1 ? 's' : '') + ' with no value — the call goes out with ' +
+                AC.esc(names.map(n => '${' + n + '}').join(', ')) + ' as written.</div>' : '');
     }
 
     /** Coerces each entered value to the type its use case input declares. */
@@ -915,7 +1085,8 @@
         document.getElementById('editorTitle').textContent = 'New Instance';
         document.getElementById('instanceIdBadge').style.display = 'none';
         document.getElementById('useCaseSelect').value = '';
-        document.getElementById('envSelect').value = '';
+        document.getElementById('runCount').value = 1;
+        renderEnvPicker([]);
         document.getElementById('instanceLabel').value = '';
         ['executeBtn', 'cloneBtn', 'deleteBtn'].forEach(id => { document.getElementById(id).style.display = 'none'; });
         renderInstanceInputs({});
@@ -934,7 +1105,10 @@
         badge.style.display = '';
         badge.textContent = instanceId;
         document.getElementById('useCaseSelect').value = instance.appUseCaseName;
-        document.getElementById('envSelect').value = instance.appEnvironment;
+        // Run count before the picker: rendering the picker recomputes the "n calls per run" hint,
+        // which would otherwise be worked out from the previous instance's count.
+        document.getElementById('runCount').value = instance.runCount || 1;
+        renderEnvPicker(instanceEnvironments(instance));
         document.getElementById('instanceLabel').value = instance.instanceLabel || '';
         ['executeBtn', 'cloneBtn', 'deleteBtn'].forEach(id => { document.getElementById(id).style.display = ''; });
 
@@ -948,15 +1122,19 @@
         if (!currentApp) throw new Error('Select an app first.');
         const useCaseName = document.getElementById('useCaseSelect').value;
         if (!useCaseName) throw new Error('Use Case is required.');
-        const environment = document.getElementById('envSelect').value;
-        if (!environment) throw new Error('Environment is required.');
+        const picked = selectedEnvironments();
+        if (!picked.length) throw new Error('Tick at least one environment.');
 
         return {
             appUseCaseInstanceId: editingInstanceId,
             instanceLabel:  document.getElementById('instanceLabel').value.trim(),
             appName:        currentApp.appName,
             appUseCaseName: useCaseName,
-            appEnvironment: environment,
+            // The first ticked environment doubles as the single-environment field the server keeps
+            // for anything reading one environment off an instance.
+            appEnvironment:  picked[0],
+            appEnvironments: picked,
+            runCount:        currentRunCount(),
             appUseCaseInstanceInputs: readInstanceInputs()
         };
     }
@@ -1018,6 +1196,34 @@
 
     // ── Groups ───────────────────────────────────────────────────────────────
 
+    /**
+     * Groups start folded away. Instances are what this page is for; a suite is set up once and
+     * then run, so its drag-and-drop editor spent most of its time pushing the results grid down
+     * the page. The choice is remembered, so anyone actually building suites opens it once.
+     */
+    function groupsPanelOpen() { return localStorage.getItem(GROUPS_OPEN_KEY) === 'true'; }
+
+    function toggleGroupsPanel() {
+        localStorage.setItem(GROUPS_OPEN_KEY, groupsPanelOpen() ? 'false' : 'true');
+        applyGroupsPanelState();
+    }
+
+    function applyGroupsPanelState() {
+        const open = groupsPanelOpen();
+        document.getElementById('groupsBody').style.display = open ? '' : 'none';
+        document.getElementById('groupsCaret').classList.toggle('open', open);
+        renderGroupsSummary();
+    }
+
+    /** With the panel folded, the header is the only place a saved group is visible at all. */
+    function renderGroupsSummary() {
+        const summary = document.getElementById('groupsSummary');
+        if (groupsPanelOpen()) { summary.textContent = ''; return; }
+        summary.textContent = groups.length
+            ? groups.length + ' saved — click to open'
+            : 'none saved — click to create one';
+    }
+
     async function loadGroups() {
         try {
             groups = await AC.listGroups();
@@ -1026,6 +1232,7 @@
                 document.getElementById('groupSelect').value = editingGroupName;
             }
             renderGroupZone();
+            renderGroupsSummary();
         } catch (e) {
             AC.setStatus('groupStatusBar', 'Failed to load groups: ' + e.message, 'error');
         }
@@ -1047,6 +1254,8 @@
     }
 
     function newGroup() {
+        // Reachable from the collapsed header, where a blank form nobody can see is no use.
+        if (!groupsPanelOpen()) toggleGroupsPanel();
         editingGroupName = null;
         document.getElementById('groupSelect').value = '';
         document.getElementById('groupName').value = '';
@@ -1189,21 +1398,33 @@
         await runInstance(editingInstanceId);
     }
 
-    /** The Run button on a list row — one instance, straight into the results panel. */
+    /**
+     * The Run button on a list row — one instance, straight into the results panel. It comes back
+     * as a list: an instance spanning three environments at ten repeats is thirty results.
+     */
     async function runInstance(instanceId) {
-        lastRunByInstance.set(instanceId, { status: 'RUNNING' });
+        const instance = instances.find(i => i.appUseCaseInstanceId === instanceId);
+        const calls = instance ? instanceRunSize(instance) : 1;
+        lastRunByInstance.set(instanceId, { running: true });
         renderInstanceList();
-        await run(() => AC.api('POST', '/appcatalog/execute/' + encodeURIComponent(instanceId) + targetQuery()).then(r => [r]),
-                  '1 instance ' + targetPhrase(), 'statusBar');
+        await run(() => AC.api('POST', '/appcatalog/execute/' + encodeURIComponent(instanceId) + targetQuery()),
+                  '1 instance (' + calls + ' call' + (calls !== 1 ? 's' : '') + ') ' + targetPhrase(), 'statusBar');
     }
 
     async function runSelected() {
         const ids = selectedInstanceIds();
         if (!ids.length) { AC.setStatus('statusBar', 'Tick at least one instance first.', 'error'); return; }
         const target = runTarget();
+        const calls = ids.reduce((sum, id) => {
+            const instance = instances.find(i => i.appUseCaseInstanceId === id);
+            return sum + (instance ? instanceRunSize(instance) : 1);
+        }, 0);
+        ids.forEach(id => lastRunByInstance.set(id, { running: true }));
+        renderInstanceList();
         await run(() => AC.api('POST', '/appcatalog/execute',
                         { appUseCaseInstanceIds: ids, target: target.target, agentId: target.agentId }),
-                  ids.length + ' instance(s) ' + targetPhrase(), 'statusBar');
+                  ids.length + ' instance(s), ' + calls + ' call' + (calls !== 1 ? 's' : '') + ', ' + targetPhrase(),
+                  'statusBar');
     }
 
     async function runGroup() {
@@ -1223,7 +1444,7 @@
             payloads.clear();
             expandedDetails.clear();
             collapsedLanes.clear();
-            results.forEach(r => lastRunByInstance.set(r.appUseCaseInstanceId, r));
+            recordRunOutcome(results);
             renderInstanceList();
             renderResults();
             const failed = results.filter(r => r.status !== 'SUCCESS').length;
@@ -1232,7 +1453,7 @@
                 failed ? 'error' : 'ok');
         } catch (e) {
             document.getElementById('resultsContainer').innerHTML = '';
-            lastRunByInstance.forEach((v, k) => { if (v.status === 'RUNNING') lastRunByInstance.delete(k); });
+            lastRunByInstance.forEach((v, k) => { if (v.running) lastRunByInstance.delete(k); });
             renderInstanceList();
             AC.setStatus(statusBarId, 'Run failed: ' + e.message, 'error');
         }
@@ -1504,7 +1725,26 @@
             cell(ok, 'Succeeded', 'ok') +
             cell(total - ok, 'Failed', total - ok ? 'bad' : '') +
             cell(slowest + ' ms', 'Slowest', '') +
-            (unresolved ? cell(unresolved, 'Unresolved URL', 'bad') : '');
+            (unresolved ? cell(unresolved, 'Unresolved URL', 'bad') : '') +
+            httpCodeCells();
+    }
+
+    /**
+     * One cell per distinct HTTP status code the run came back with, most frequent first. On a
+     * regression sweep this is the headline: "200 x 97, 503 x 3" says in one line what scrolling a
+     * hundred rows would take to find. Codes 400 and above are called out as bad.
+     */
+    function httpCodeCells() {
+        const counts = new Map();
+        results.forEach(r => {
+            const code = r.statusCode === null || r.statusCode === undefined ? 'no response' : String(r.statusCode);
+            counts.set(code, (counts.get(code) || 0) + 1);
+        });
+        return [...counts.entries()]
+            .sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))
+            .map(([code, count]) => cell(count, 'HTTP ' + code,
+                    code === 'no response' || Number(code) >= 400 ? 'bad' : 'ok'))
+            .join('');
     }
 
     function cell(value, label, cls) {
@@ -1723,6 +1963,12 @@
                '</div>';
     }
 
+    /** Local wall-clock time of a run, to the second — the grid never spans more than a few minutes. */
+    function formatTime(epochMillis) {
+        if (!epochMillis) return '';
+        return new Date(epochMillis).toLocaleTimeString();
+    }
+
     function formatSize(chars) {
         const n = chars || 0;
         if (n < 1024) return n + ' chars';
@@ -1737,6 +1983,7 @@
 
     AC.applyEmbedding();
     applyEditorState();
+    applyGroupsPanelState();
     loadAgents(false).then(restoreRunTarget);
     refreshInstanceLookup().then(loadApps);
 </script>

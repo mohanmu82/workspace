@@ -40,7 +40,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * {"type":"error","message":"..."}
  * {"type":"exec","requestId":"...","command":"..."}
  * {"type":"http","requestId":"...","url":"...","method":"POST","headers":{...},"body":"...","timeoutMs":30000}
+ * {"type":"truststore","requestId":"...","mode":"INLINE|FILE|DEFAULT|INSECURE","data":"base64","password":"...","storeType":"JKS","includeDefaults":true}
  * </pre>
+ *
+ * <p>{@code truststore} reloads the agent's outbound TLS trust in place, which is what makes an
+ * https endpoint signed by an internal CA reachable from an agent whose host JVM has never been
+ * told about that CA — without redeploying or restarting the agent.
  */
 @Component
 public class AgentWebSocketHandler extends TextWebSocketHandler {
@@ -69,6 +74,7 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
                 case "line"       -> forwardToBrowser(params, "line");
                 case "done"       -> forwardToBrowser(params, "done");
                 case "httpResult" -> forwardToBrowser(params, "httpResult");
+                case "truststoreResult" -> forwardToBrowser(params, "truststoreResult");
                 case "error"      -> forwardToBrowser(params, "error");
                 default          -> sendError(ws, "Unknown message type: " + str(params, "type"));
             }
@@ -101,7 +107,13 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
             return;
         }
 
-        registry.register(agentId, hostname.isBlank() ? agentId : hostname, ws);
+        // What the agent trusts for outbound TLS, as it reported at registration. Older agent jars
+        // do not send this at all, which reads as an empty map rather than as a missing field.
+        Map<String, Object> trustStore = new LinkedHashMap<>();
+        if (params.get("trustStore") instanceof Map<?, ?> reported) {
+            reported.forEach((key, value) -> trustStore.put(String.valueOf(key), value));
+        }
+        registry.register(agentId, hostname.isBlank() ? agentId : hostname, ws, trustStore);
         sessionAgentIds.put(ws.getId(), agentId);
         send(ws, "registered", "Registered as " + agentId);
     }
@@ -113,7 +125,10 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
         Map<String, Object> outbound = new LinkedHashMap<>(params);
         outbound.put("type", type);
 
-        boolean terminal = type.equals("done") || type.equals("error") || type.equals("httpResult");
+        // A terminal message ends the request: the reply slot is released and, for a server-side
+        // dispatch, the waiting future is completed with it.
+        boolean terminal = type.equals("done") || type.equals("error")
+                || type.equals("httpResult") || type.equals("truststoreResult");
 
         // Server-dispatched (bulk fan-out) requests are tracked by a future, not a browser session.
         if (terminal && registry.completeHttpRequest(requestId, outbound)) return;

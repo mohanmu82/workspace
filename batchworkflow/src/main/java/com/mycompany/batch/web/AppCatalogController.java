@@ -15,6 +15,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -282,11 +283,14 @@ public class AppCatalogController {
      * @param agentId with {@code AGENT}, pins the call to one agent; blank round-robins
      */
     @PostMapping("/execute/{instanceId}")
-    public ResponseEntity<AppUseCaseInstanceOutput> executeInstance(
+    public ResponseEntity<List<AppUseCaseInstanceOutput>> executeInstance(
             @PathVariable String instanceId,
             @RequestParam(required = false) String target,
             @RequestParam(required = false) String agentId) {
-        return ResponseEntity.ok(execution.execute(instanceId, ExecutionTarget.from(target), agentId).withoutPayload());
+        // A list even for one instance: it expands over every environment it names and repeats
+        // itself run-count times, so "run this instance" is a batch as soon as either is set.
+        return ResponseEntity.ok(withoutPayloads(
+                execution.executeInstance(instanceId, ExecutionTarget.from(target), agentId)));
     }
 
     /** Runs an ad-hoc selection of instances — the multi-select path on the instances page. */
@@ -307,6 +311,65 @@ public class AppCatalogController {
         return ResponseEntity.ok(withoutPayloads(
                 execution.executeAll(group.getAppUseCaseInstanceIds(), ExecutionTarget.from(target), agentId)));
     }
+
+    /**
+     * Every execution this server has made recently, newest first and payload-free — the feed
+     * behind {@code app.html#global}. Not scoped to an app: that is the whole point of the page,
+     * which puts a run of the Orders catalogue next to one of Payments.
+     *
+     * @param limit  how many of the most recent to return; the rest of the window stays on the
+     *               server rather than being shipped to a grid nobody scrolls that far down
+     */
+    @GetMapping("/executions")
+    public ResponseEntity<List<AppUseCaseInstanceOutput>> listExecutions(
+            @RequestParam(required = false, defaultValue = "1000") int limit) {
+        List<AppUseCaseInstanceOutput> all = execution.history();
+        return ResponseEntity.ok(limit > 0 && all.size() > limit ? all.subList(0, limit) : all);
+    }
+
+    /** Drops the whole run history, payloads included. */
+    @DeleteMapping("/executions")
+    public ResponseEntity<?> clearExecutions() {
+        execution.clearHistory();
+        return ResponseEntity.ok(Map.of("status", "cleared"));
+    }
+
+    /**
+     * Repeats past executions, each against the environment it originally ran on rather than
+     * whatever its instance names today — a re-run that quietly moved to a different environment
+     * would not be a re-run. Ordering follows the request.
+     *
+     * <p>An execution whose instance has since been deleted comes back as an ERROR row saying so,
+     * because dropping it silently would make a re-run of ten rows return nine with no explanation.
+     */
+    @PostMapping(value = "/executions/rerun", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<?> rerunExecutions(@RequestBody RerunRequest request) {
+        List<String> ids = request.executionIds();
+        if (ids == null || ids.isEmpty()) return badRequest("executionIds is required");
+
+        ExecutionTarget target = ExecutionTarget.from(request.target());
+        List<AppUseCaseInstanceOutput> results = new ArrayList<>(ids.size());
+        for (String executionId : ids) {
+            AppUseCaseInstanceOutput past = execution.getExecution(executionId);
+            if (past == null) {
+                past = execution.history().stream()
+                        .filter(o -> o.executionId().equals(executionId))
+                        .findFirst().orElse(null);
+            }
+            if (past == null) return notFound("Execution", executionId);
+            results.add(execution.executeOnce(past.appUseCaseInstanceId(), past.environment(),
+                    target, request.agentId()).withoutPayload());
+        }
+        return ResponseEntity.ok(results);
+    }
+
+    /**
+     * Body for {@code POST /appcatalog/executions/rerun}.
+     *
+     * @param target  {@code LOCAL} (default) or {@code AGENT} — where the repeat runs from, which
+     *                need not be where the original ran
+     */
+    public record RerunRequest(List<String> executionIds, String target, String agentId) {}
 
     /**
      * The full result of one execution — request/response bodies, headers and the transformed

@@ -32,6 +32,11 @@ REMOTEAGENT_SERVER=ws://batchhost:8090/agent/ws
 REMOTEAGENT_ID=changeme
 REMOTEAGENT_HOSTNAME=changeme
 REMOTEAGENT_TOKEN=changeme
+
+# Extra options, whitespace-separated. Set a trust store here when the endpoints this agent
+# calls (or the server itself, over wss://) use certificates the host JVM does not trust:
+#   REMOTEAGENT_OPTS=--truststore=/etc/remoteagent/corporate-ca.jks --truststore-password=secret
+REMOTEAGENT_OPTS=
 EOF
   chmod 600 "$ENV_FILE"
   chown remoteagent:remoteagent "$ENV_FILE"

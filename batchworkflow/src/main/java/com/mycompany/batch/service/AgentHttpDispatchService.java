@@ -127,36 +127,77 @@ public class AgentHttpDispatchService {
         return agent;
     }
 
+    /**
+     * Sends one non-HTTP control message to a named agent and blocks for its reply — used for the
+     * out-of-band things the console asks an agent to do to itself, such as reloading its TLS trust
+     * store. Rides the same request-id correlation and timeout guard as a dispatched HTTP call,
+     * because from the server's side it is the same shape of conversation.
+     *
+     * @param message the message body; {@code type} and {@code requestId} are filled in here
+     * @return the agent's reply, or a map carrying {@code error} when it never came
+     */
+    public Map<String, Object> sendControl(String agentId, String type, Map<String, Object> message, int timeoutMs) {
+        AgentConnection agent = resolveTargetAgent(agentId);
+        Map<String, Object> outbound = new LinkedHashMap<>(message);
+        outbound.put("type", type);
+
+        int wait = timeoutMs > 0 ? timeoutMs : DEFAULT_TIMEOUT_MS;
+        try {
+            Map<String, Object> reply = send(agent, outbound, wait).get();
+            Map<String, Object> withMeta = new LinkedHashMap<>(reply);
+            withMeta.put("agentId", agent.getAgentId());
+            return withMeta;
+        } catch (Exception e) {
+            return Map.of("agentId", agent.getAgentId(), "ok", false,
+                          "error", e.getMessage() != null ? e.getMessage() : "control message failed");
+        }
+    }
+
+    /** Every connected agent, in registry order — the fan-out list for a fleet-wide control message. */
+    public List<String> connectedAgentIds() {
+        return registry.list().stream().filter(a -> a.getSession().isOpen())
+                .map(AgentConnection::getAgentId).toList();
+    }
+
     private CompletableFuture<Map<String, Object>> dispatchOne(AgentConnection agent, HttpBatchRequest.Item spec, int fallbackTimeoutMs) {
-        CompletableFuture<Map<String, Object>> future = new CompletableFuture<>();
-        String requestId = registry.trackHttpRequest(future);
         int timeoutMs = spec.getTimeoutMs() != null && spec.getTimeoutMs() > 0 ? spec.getTimeoutMs() : fallbackTimeoutMs;
 
         Map<String, Object> outbound = new LinkedHashMap<>();
         outbound.put("type", "http");
-        outbound.put("requestId", requestId);
         outbound.put("url", spec.getUrl());
         outbound.put("method", spec.getMethod() != null ? spec.getMethod().name() : "GET");
         outbound.put("headers", spec.getHeaders() != null ? spec.getHeaders() : Map.of());
         outbound.put("body", spec.getBody() != null ? spec.getBody() : "");
         outbound.put("timeoutMs", timeoutMs);
 
-        sendJson(agent.getSession(), outbound);
+        String agentId = agent.getAgentId();
+        String requestUrl = spec.getUrl();
+        return send(agent, outbound, timeoutMs).thenApply(result -> {
+            Map<String, Object> withMeta = new LinkedHashMap<>(result);
+            withMeta.put("agentId", agentId);
+            withMeta.put("url", requestUrl);
+            return withMeta;
+        });
+    }
+
+    /**
+     * Registers a reply slot, stamps the message with its request id, sends it, and arms the
+     * timeout that completes the future with an error if the agent never answers — without which a
+     * caller blocked on {@code get()} would wait on an agent that has gone away.
+     */
+    private CompletableFuture<Map<String, Object>> send(AgentConnection agent, Map<String, Object> message, int timeoutMs) {
+        CompletableFuture<Map<String, Object>> future = new CompletableFuture<>();
+        String requestId = registry.trackHttpRequest(future);
+        message.put("requestId", requestId);
+
+        sendJson(agent.getSession(), message);
 
         ScheduledFuture<?> guard = timeoutScheduler.schedule(
                 () -> registry.completeHttpRequest(requestId,
                         Map.of("error", "Timed out waiting for agent " + agent.getAgentId())),
                 timeoutMs + TIMEOUT_GRACE_MS, TimeUnit.MILLISECONDS);
         future.whenComplete((r, ex) -> guard.cancel(false));
-
-        String agentId = agent.getAgentId();
-        String requestUrl = spec.getUrl();
-        return future.thenApply(result -> {
-            Map<String, Object> withMeta = new LinkedHashMap<>(result);
-            withMeta.put("agentId", agentId);
-            withMeta.put("url", requestUrl);
-            return withMeta;
-        });
+        return future;
     }
 
     private void sendJson(WebSocketSession ws, Object payload) {

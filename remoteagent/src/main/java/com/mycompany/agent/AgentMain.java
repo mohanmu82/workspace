@@ -18,6 +18,16 @@ import java.util.Map;
  *   --token             shared secret matching the server's agent.token property
  *   --multicast-group   discovery multicast group (default: 230.0.0.5)
  *   --multicast-port    discovery multicast port (default: 4446)
+ *   --truststore                  path to a JKS/PKCS12 trust store, or a bare .cer/.crt/.pem
+ *                                 certificate, trusted for outbound TLS
+ *   --truststore-password         its password, if it has one
+ *   --truststore-type             JKS or PKCS12 (default: guessed from the file extension)
+ *   --truststore-exclude-defaults use only this store, dropping the JVM's own trust anchors
+ *   --insecure-tls                accept any server certificate (diagnostics only)
+ *
+ * <p>The trust store is loaded before anything dials out, so it applies to the control channel's own
+ * {@code wss://} handshake as well as to the HTTP calls the agent is later asked to make. It can
+ * also be replaced at runtime from the Agent Console without restarting — see {@link TrustStoreManager}.
  */
 public final class AgentMain {
 
@@ -42,13 +52,37 @@ public final class AgentMain {
 
         System.out.println("[agent] starting id=" + agentId + " hostname=" + hostname + " server=" + serverUrl);
 
-        ControlChannel channel = new ControlChannel(serverUrl, agentId, hostname, token);
+        // Trust first: a wss:// server behind an internal CA is unreachable without it, and that
+        // failure looks exactly like the server being down.
+        TrustStoreManager trustStore = new TrustStoreManager();
+        applyStartupTrust(trustStore, opts);
+
+        ControlChannel channel = new ControlChannel(serverUrl, agentId, hostname, token, trustStore);
         channel.start();
 
         DiscoveryListener discovery = new DiscoveryListener(mcGroup, mcPort, token, agentId, hostname, channel);
         discovery.start();
 
         Thread.currentThread().join();
+    }
+
+    /**
+     * Applies whichever trust option was given, loudest first. A failure here is reported and the
+     * agent carries on with the JVM default: refusing to start would leave nothing connected to
+     * push a working trust store to, which is exactly the hole the runtime reload fills.
+     */
+    private static void applyStartupTrust(TrustStoreManager trustStore, Map<String, String> opts) {
+        if ("true".equalsIgnoreCase(opts.get("insecure-tls"))) {
+            trustStore.apply("INSECURE", null, null, null, null, false);
+            return;
+        }
+        String path = opts.get("truststore");
+        if (path == null || path.isBlank()) return;
+
+        trustStore.applyStartupFile(path,
+                opts.get("truststore-password"),
+                opts.get("truststore-type"),
+                !"true".equalsIgnoreCase(opts.get("truststore-exclude-defaults")));
     }
 
     private static Map<String, String> parseArgs(String[] args) {
@@ -74,6 +108,17 @@ public final class AgentMain {
                   --hostname          hostname reported to the console (default: local hostname)
                   --token             shared secret matching the server's agent.token property
                   --multicast-group   discovery multicast group (default: 230.0.0.5)
-                  --multicast-port    discovery multicast port (default: 4446)""");
+                  --multicast-port    discovery multicast port (default: 4446)
+
+                TLS trust (outbound https and wss):
+                  --truststore=PATH             JKS/PKCS12 trust store, or a bare .cer/.crt/.pem
+                                                certificate, trusted for outbound TLS
+                  --truststore-password=SECRET  its password, if it has one
+                  --truststore-type=JKS|PKCS12  default: guessed from the file extension
+                  --truststore-exclude-defaults use only this store, dropping the JVM trust anchors
+                  --insecure-tls                accept any server certificate (diagnostics only)
+
+                A trust store or certificate can also be pushed to a running agent from the
+                Agent Console, which takes effect immediately without a restart.""");
     }
 }

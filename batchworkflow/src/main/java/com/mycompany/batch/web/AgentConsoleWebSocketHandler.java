@@ -31,7 +31,7 @@ import java.util.Map;
  *
  * <p>Protocol (server → browser):
  * <pre>
- * {"type":"agents","agents":[{"agentId":"host1","hostname":"...","connectedAt":"...","lastSeen":"..."}]}
+ * {"type":"agents","agents":[{"agentId":"host1","hostname":"...","connectedAt":"...","lastSeen":"...","trustStore":{...}}]}
  * {"type":"started","requestId":"...","agentId":"host1"}
  * {"type":"line","requestId":"...","text":"..."}
  * {"type":"done","requestId":"...","exitCode":0}
@@ -86,6 +86,8 @@ public class AgentConsoleWebSocketHandler extends TextWebSocketHandler {
         m.put("hostname", a.getHostname());
         m.put("connectedAt", a.getConnectedAt().toString());
         m.put("lastSeen", a.getLastSeen().toString());
+        // So the console can show what each agent trusts for outbound TLS alongside its liveness.
+        m.put("trustStore", a.getTrustStore());
         return m;
     }
 

@@ -12,7 +12,15 @@ import java.util.Map;
  * the grid — see {@link #withoutPayload()}. The full record stays on the server under
  * {@link #executionId} and is fetched per row on demand.
  *
+ * @param startedAt   epoch milliseconds the call left — the ordering key for the Global Runs page,
+ *                    which shows executions from every app together and has no other way to say
+ *                    which of two runs came first
  * @param status      SUCCESS, FAILED (HTTP status 400 or above) or ERROR (nothing came back at all)
+ * @param statusCode  the HTTP response code exactly as the endpoint returned it (200, 404, 503…),
+ *                    or null when the call never got far enough to receive one
+ * @param runIndex    1-based position within this instance's run count, so the repeats of a
+ *                    regression sweep stay distinguishable in the grid
+ * @param runCount    how many repeats this execution was one of — 1 for an ordinary single run
  * @param executedVia {@code LOCAL} when this server made the call, or {@code AGENT:<agentId>} when a
  *                    remote agent did
  * @param jwtToken    the raw bearer token JWT auth obtained for this run — the same value the
@@ -29,6 +37,7 @@ import java.util.Map;
  */
 public record AppUseCaseInstanceOutput(
         String executionId,
+        long startedAt,
         String appUseCaseInstanceId,
         String instanceLabel,
         String appName,
@@ -38,6 +47,8 @@ public record AppUseCaseInstanceOutput(
         Map<String, Object> appUseCaseInstanceInputs,
         String status,
         Integer statusCode,
+        int runIndex,
+        int runCount,
         long timeTaken,
         String url,
         List<String> unresolvedVariables,
@@ -64,8 +75,8 @@ public record AppUseCaseInstanceOutput(
      */
     public AppUseCaseInstanceOutput withoutPayload() {
         return new AppUseCaseInstanceOutput(
-                executionId, appUseCaseInstanceId, instanceLabel, appName, environment, envClass, useCase,
-                appUseCaseInstanceInputs, status, statusCode, timeTaken, url, unresolvedVariables,
+                executionId, startedAt, appUseCaseInstanceId, instanceLabel, appName, environment, envClass, useCase,
+                appUseCaseInstanceInputs, status, statusCode, runIndex, runCount, timeTaken, url, unresolvedVariables,
                 httpMethod, executedVia, jwtToken,
                 null, null, requestHeaders, responseHeaders, null, error,
                 requestBody == null ? 0 : requestBody.length(),
