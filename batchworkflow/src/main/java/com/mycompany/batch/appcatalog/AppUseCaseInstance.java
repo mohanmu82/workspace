@@ -16,10 +16,10 @@ import java.util.stream.Collectors;
  * <p>Identified by a server-generated {@link #appUseCaseInstanceId} so the same use case can be
  * instanced many times over (different environments, different inputs) and cloned freely.
  *
- * <p>One instance can expand into many executions. {@link #appEnvironments} may name several
- * environments and {@link #runCount} says how many times to call each of them, so a single instance
- * covers "this call, against uat and prod, fifty times each" — the cartesian product of the two,
- * which is what makes an instance usable as a regression run rather than a single probe.
+ * <p>One instance can expand into many executions: {@link #appEnvironments} may name several
+ * environments, and it runs against every one of them. How many times to repeat that — once for a
+ * regression pass, a hundred times for a load test — is a choice made when the instance is run, not
+ * part of what gets saved here; see the {@code runCount} parameter on the execute endpoints.
  */
 public class AppUseCaseInstance {
 
@@ -40,11 +40,6 @@ public class AppUseCaseInstance {
      * which is how every instance written before this field existed reads back.
      */
     private List<String> appEnvironments = new ArrayList<>();
-    /**
-     * How many times to run against <em>each</em> environment. 1 is a single probe; a larger count
-     * is a regression sweep, and produces that many result rows per environment.
-     */
-    private int runCount = 1;
     /** Values for the declared use case inputs; highest precedence in the variable merge. */
     private Map<String, Object> appUseCaseInstanceInputs = new LinkedHashMap<>();
 
@@ -66,9 +61,6 @@ public class AppUseCaseInstance {
     public List<String> getAppEnvironments()                                { return appEnvironments; }
     public void setAppEnvironments(List<String> appEnvironments)            { this.appEnvironments = appEnvironments != null ? appEnvironments : new ArrayList<>(); }
 
-    public int  getRunCount()                 { return runCount; }
-    public void setRunCount(int runCount)     { this.runCount = runCount > 0 ? runCount : 1; }
-
     public Map<String, Object> getAppUseCaseInstanceInputs()                                    { return appUseCaseInstanceInputs; }
     public void setAppUseCaseInstanceInputs(Map<String, Object> appUseCaseInstanceInputs)       { this.appUseCaseInstanceInputs = appUseCaseInstanceInputs != null ? appUseCaseInstanceInputs : new LinkedHashMap<>(); }
 
@@ -85,11 +77,5 @@ public class AppUseCaseInstance {
                 .collect(Collectors.toCollection(ArrayList::new));
         if (out.isEmpty() && appEnvironment != null && !appEnvironment.isBlank()) out.add(appEnvironment);
         return out;
-    }
-
-    /** How many executions one run of this instance produces: environments times {@link #runCount}. */
-    @JsonIgnore
-    public int getExpandedRunSize() {
-        return Math.max(1, getEffectiveEnvironments().size()) * Math.max(1, runCount);
     }
 }

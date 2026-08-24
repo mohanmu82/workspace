@@ -11,6 +11,7 @@ import com.mycompany.batch.model.HttpBatchRequest;
 import com.mycompany.batch.model.HttpMethod;
 import com.mycompany.batch.model.JsonataTransform;
 import com.mycompany.batch.service.AgentHttpDispatchService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -48,11 +49,11 @@ import java.util.regex.Pattern;
  * override both. The merged map is then substituted into the URL, headers and body, so the same
  * use case definition can be pointed at different data purely by changing an instance.
  *
- * <p>Each instance first expands into the cartesian product of the environments it names and its
- * run count, so one instance can be a hundred calls against each of three environments. A run
- * executes that expansion in parallel and returns one {@link AppUseCaseInstanceOutput} per call, in
- * the expansion's own order — never throwing for a failed call, since a failure is itself a result
- * worth showing in the grid.
+ * <p>Each instance first expands into the cartesian product of the environments it names and the
+ * run count the caller asked for, so one instance can be a hundred calls against each of three
+ * environments. A run executes that expansion in parallel and returns one
+ * {@link AppUseCaseInstanceOutput} per call, in the expansion's own order — never throwing for a
+ * failed call, since a failure is itself a result worth showing in the grid.
  *
  * <p>The call itself goes out either from this server ({@link ExecutionTarget#LOCAL}) or from a
  * connected remote agent ({@link ExecutionTarget#AGENT}) — everything around it, from the variable
@@ -87,11 +88,14 @@ public class AppExecutionService {
     private static final int RETAINED_HISTORY = 5000;
 
     /**
-     * How many calls a single run makes at once. A run-count of a hundred against three environments
-     * is three hundred calls, and firing all of them together would be a load test of the endpoint
-     * rather than a regression pass over it.
+     * How many calls a single run makes at once, by default. A run-count of a hundred against three
+     * environments is three hundred calls, and firing all of them together would be a load test of
+     * the endpoint rather than a regression pass over it. Configurable via {@code appcatalog.thread-count}
+     * because that ceiling depends on what the target endpoints can actually take; a caller can also
+     * override it per request (see {@link #executeAll(List, ExecutionTarget, String, Integer, Integer)}).
      */
-    private static final int MAX_PARALLEL_RUNS = 10;
+    @Value("${appcatalog.thread-count:10}")
+    private int defaultThreadCount;
 
     private final AppCatalogService catalog;
     private final ObjectMapper objectMapper;
@@ -150,37 +154,52 @@ public class AppExecutionService {
 
     /** Runs several instances concurrently on this server, preserving the caller's ordering. */
     public List<AppUseCaseInstanceOutput> executeAll(List<String> instanceIds) {
-        return executeAll(instanceIds, ExecutionTarget.LOCAL, null);
+        return executeAll(instanceIds, ExecutionTarget.LOCAL, null, null, null);
     }
 
     /**
      * Runs several instances concurrently, preserving the caller's ordering in the result list.
      * Each instance expands first — one call per environment it names, repeated as many times as
-     * its run count asks — so a group of three instances can very well come back as three hundred
-     * results, ordered instance by instance, then environment, then repeat.
+     * {@code runCount} asks — so a group of three instances at a hundred repeats can very well come
+     * back as three hundred results, ordered instance by instance, then environment, then repeat.
      *
      * <p>On {@link ExecutionTarget#AGENT} with no {@code agentId} the calls go out round-robin, so a
      * group run spreads itself across every connected agent.
      */
     public List<AppUseCaseInstanceOutput> executeAll(List<String> instanceIds, ExecutionTarget target, String agentId) {
-        if (instanceIds == null || instanceIds.isEmpty()) return List.of();
-
-        List<RunPlan> plans = new ArrayList<>();
-        for (String id : instanceIds) plans.addAll(plan(id));
-        return executePlans(plans, target, agentId);
+        return executeAll(instanceIds, target, agentId, null, null);
     }
 
     /**
-     * Runs one instance, expanded over its environments and run count — so this returns a list even
-     * for a single instance, and a hundred rows when that instance asks for a hundred repeats.
+     * Same as {@link #executeAll(List, ExecutionTarget, String)}, but lets the caller cap how many
+     * calls run at once instead of taking {@link #defaultThreadCount}, and how many times each
+     * instance repeats against each of its environments. Both null fall back to their defaults — a
+     * cap of {@link #defaultThreadCount} and a single pass — so a caller can ask for a regression
+     * run (repeat 1) or a load test (repeat 100) without either being baked into the instances
+     * themselves.
      */
-    public List<AppUseCaseInstanceOutput> executeInstance(String instanceId, ExecutionTarget target, String agentId) {
-        return executePlans(plan(instanceId), target, agentId);
+    public List<AppUseCaseInstanceOutput> executeAll(List<String> instanceIds, ExecutionTarget target, String agentId,
+                                                     Integer threadCount, Integer runCount) {
+        if (instanceIds == null || instanceIds.isEmpty()) return List.of();
+
+        List<RunPlan> plans = new ArrayList<>();
+        for (String id : instanceIds) plans.addAll(plan(id, runCount));
+        return executePlans(plans, target, agentId, threadCount);
     }
 
-    /** Runs one instance on this server, expanded the same way. */
+    /**
+     * Runs one instance, expanded over its environments and {@code runCount} — so this returns a
+     * list even for a single instance, and a hundred rows when the caller asks for a hundred
+     * repeats. Null or non-positive {@code runCount} means once each.
+     */
+    public List<AppUseCaseInstanceOutput> executeInstance(String instanceId, ExecutionTarget target, String agentId,
+                                                           Integer runCount) {
+        return executePlans(plan(instanceId, runCount), target, agentId, null);
+    }
+
+    /** Runs one instance on this server, once against each of its environments. */
     public List<AppUseCaseInstanceOutput> executeInstance(String instanceId) {
-        return executeInstance(instanceId, ExecutionTarget.LOCAL, null);
+        return executeInstance(instanceId, ExecutionTarget.LOCAL, null, null);
     }
 
     /**
@@ -210,8 +229,11 @@ public class AppExecutionService {
      */
     private record RunPlan(String instanceId, String environment, int runIndex, int runCount) {}
 
-    /** The full expansion of one instance: every environment it names, each repeated run-count times. */
-    private List<RunPlan> plan(String instanceId) {
+    /**
+     * The full expansion of one instance: every environment it names, each repeated {@code runCount}
+     * times. Null or non-positive {@code runCount} means once each.
+     */
+    private List<RunPlan> plan(String instanceId, Integer runCount) {
         AppUseCaseInstance instance = catalog.getInstance(instanceId);
         if (instance == null) return List.of(new RunPlan(instanceId, null, 1, 1));
 
@@ -220,11 +242,11 @@ public class AppExecutionService {
         // than silently dropping an instance the caller asked to run.
         if (environments.isEmpty()) environments = Collections.singletonList(null);
 
-        int runCount = Math.max(1, instance.getRunCount());
-        List<RunPlan> plans = new ArrayList<>(environments.size() * runCount);
+        int effectiveRunCount = runCount != null && runCount > 0 ? runCount : 1;
+        List<RunPlan> plans = new ArrayList<>(environments.size() * effectiveRunCount);
         for (String environment : environments) {
-            for (int run = 1; run <= runCount; run++) {
-                plans.add(new RunPlan(instanceId, environment, run, runCount));
+            for (int run = 1; run <= effectiveRunCount; run++) {
+                plans.add(new RunPlan(instanceId, environment, run, effectiveRunCount));
             }
         }
         return plans;
@@ -239,11 +261,17 @@ public class AppExecutionService {
      * Runs a flat list of plans concurrently and returns the results in the plans' own order — a
      * regression sweep finishes out of order by nature, and a grid that reshuffles itself from one
      * run to the next cannot be compared with the previous one.
+     *
+     * @param threadCount caller-supplied cap on how many plans run at once, or null to use
+     *                    {@link #defaultThreadCount}. Anything less than 1 also falls back to the
+     *                    default rather than deadlocking on a zero-size pool.
      */
-    private List<AppUseCaseInstanceOutput> executePlans(List<RunPlan> plans, ExecutionTarget target, String agentId) {
+    private List<AppUseCaseInstanceOutput> executePlans(List<RunPlan> plans, ExecutionTarget target, String agentId,
+                                                         Integer threadCount) {
         if (plans.isEmpty()) return List.of();
 
-        try (ExecutorService pool = Executors.newFixedThreadPool(Math.min(plans.size(), MAX_PARALLEL_RUNS))) {
+        int effectiveThreadCount = threadCount != null && threadCount > 0 ? threadCount : defaultThreadCount;
+        try (ExecutorService pool = Executors.newFixedThreadPool(Math.min(plans.size(), effectiveThreadCount))) {
             List<Future<AppUseCaseInstanceOutput>> futures = new ArrayList<>(plans.size());
             for (RunPlan runPlan : plans) {
                 futures.add(pool.submit(() -> execute(runPlan, target, agentId)));

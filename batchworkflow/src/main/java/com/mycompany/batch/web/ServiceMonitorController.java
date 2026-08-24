@@ -2,6 +2,9 @@ package com.mycompany.batch.web;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mycompany.batch.model.HttpBatchRequest;
+import com.mycompany.batch.model.HttpMethod;
+import com.mycompany.batch.service.AgentHttpDispatchService;
 import com.mycompany.batch.util.Threads;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -68,10 +71,12 @@ public class ServiceMonitorController {
     private static final long MIN_TIMEOUT_MS = 200;
 
     private final ObjectMapper objectMapper;
+    private final AgentHttpDispatchService agentDispatch;
     private final Map<String, Deque<Map<String, Object>>> history = new ConcurrentHashMap<>();
 
-    public ServiceMonitorController(ObjectMapper objectMapper) {
+    public ServiceMonitorController(ObjectMapper objectMapper, AgentHttpDispatchService agentDispatch) {
         this.objectMapper = objectMapper;
+        this.agentDispatch = agentDispatch;
     }
 
     @PostMapping("/check")
@@ -82,7 +87,7 @@ public class ServiceMonitorController {
         if (type == null || type.isBlank()) return err("type is required");
 
         String authHeader = buildAuth(str(req, "authType"), str(req, "username"), str(req, "password"), str(req, "token"));
-        Map<String, Object> result = runCheck(type, url, authHeader, timeoutMs(req));
+        Map<String, Object> result = runCheck(type, url, authHeader, timeoutMs(req), str(req, "target"), str(req, "agentId"));
         if (result == null) return err("Unknown type: " + type + " (expected http, prometheus, or jolokia)");
         return ResponseEntity.ok(result);
     }
@@ -99,9 +104,11 @@ public class ServiceMonitorController {
         List<Target> targets = parseTargets(req.get("targets"));
         if (targets.isEmpty()) return err("targets is required and must be a non-empty array of valid entries");
         long timeoutMs = timeoutMs(req);
+        String target  = str(req, "target");
+        String agentId = str(req, "agentId");
 
         List<Callable<Map<String, Object>>> tasks = new ArrayList<>(targets.size());
-        for (Target t : targets) tasks.add(() -> buildResult(t, timeoutMs));
+        for (Target t : targets) tasks.add(() -> buildResult(t, timeoutMs, target, agentId));
 
         List<Map<String, Object>> results = new ArrayList<>(tasks.size());
         try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
@@ -148,6 +155,8 @@ public class ServiceMonitorController {
             return emitter;
         }
         long timeoutMs = timeoutMs(req);
+        String target  = str(req, "target");
+        String agentId = str(req, "agentId");
 
         AtomicBoolean cancelled = new AtomicBoolean(false);
         ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor();
@@ -158,7 +167,7 @@ public class ServiceMonitorController {
 
         Threads.startDaemon(() -> {
             CompletionService<Map<String, Object>> cs = new ExecutorCompletionService<>(pool);
-            for (Target t : targets) cs.submit(() -> buildResult(t, timeoutMs));
+            for (Target t : targets) cs.submit(() -> buildResult(t, timeoutMs, target, agentId));
 
             int total = targets.size();
             int done  = 0;
@@ -206,8 +215,8 @@ public class ServiceMonitorController {
         return targets;
     }
 
-    private Map<String, Object> buildResult(Target t, long timeoutMs) {
-        Map<String, Object> r = runCheck(t.type(), t.url(), t.authHeader(), timeoutMs);
+    private Map<String, Object> buildResult(Target t, long timeoutMs, String target, String agentId) {
+        Map<String, Object> r = runCheck(t.type(), t.url(), t.authHeader(), timeoutMs, target, agentId);
         if (r == null) {
             r = new LinkedHashMap<>();
             r.put("ok", false);
@@ -228,11 +237,12 @@ public class ServiceMonitorController {
     }
 
     // ── Dispatch + history recording, shared by /check, /checkBatch, /checkBatchStream ──────
-    private Map<String, Object> runCheck(String type, String url, String authHeader, long timeoutMs) {
+    private Map<String, Object> runCheck(String type, String url, String authHeader, long timeoutMs,
+                                          String target, String agentId) {
         Map<String, Object> m = switch (type) {
-            case "http"       -> checkHttp(url, authHeader, timeoutMs);
-            case "prometheus" -> checkPrometheus(url, authHeader, timeoutMs);
-            case "jolokia"    -> checkJolokia(url, authHeader, timeoutMs);
+            case "http"       -> checkHttp(url, authHeader, timeoutMs, target, agentId);
+            case "prometheus" -> checkPrometheus(url, authHeader, timeoutMs, target, agentId);
+            case "jolokia"    -> checkJolokia(url, authHeader, timeoutMs, target, agentId);
             default -> null;
         };
         if (m == null) return null;
@@ -257,60 +267,112 @@ public class ServiceMonitorController {
     }
 
     // ── HTTP (status 200 = up) ──────────────────────────────────────────────
-    private Map<String, Object> checkHttp(String url, String authHeader, long timeoutMs) {
-        long start = System.currentTimeMillis();
+    private Map<String, Object> checkHttp(String url, String authHeader, long timeoutMs, String target, String agentId) {
+        Map<String, String> headers = new LinkedHashMap<>();
+        if (authHeader != null) headers.put("Authorization", authHeader);
+        FetchResult fr = doFetch("GET", url, headers, null, timeoutMs, target, agentId);
+
         Map<String, Object> m = new LinkedHashMap<>();
-        try {
-            HttpRequest.Builder b = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .timeout(Duration.ofMillis(timeoutMs))
-                    .GET();
-            if (authHeader != null) b.header("Authorization", authHeader);
-            HttpResponse<Void> resp = HTTP.send(b.build(), HttpResponse.BodyHandlers.discarding());
-            long latency = System.currentTimeMillis() - start;
-            boolean up = resp.statusCode() == 200;
-            m.put("ok", true);
-            m.put("status", up ? "UP" : "DOWN");
-            m.put("statusCode", resp.statusCode());
-            m.put("latencyMs", latency);
-            m.put("metrics", Map.of());
-            if (!up) m.put("error", "Unexpected HTTP status: " + resp.statusCode());
-        } catch (Exception e) {
+        m.put("executedVia", fr.executedVia());
+        if (fr.error() != null) {
             m.put("ok", false);
             m.put("status", "DOWN");
-            m.put("error", e.getMessage());
-            m.put("latencyMs", System.currentTimeMillis() - start);
+            m.put("error", fr.error());
+            m.put("latencyMs", fr.latencyMs());
+            return m;
         }
+        boolean up = fr.statusCode() == 200;
+        m.put("ok", true);
+        m.put("status", up ? "UP" : "DOWN");
+        m.put("statusCode", fr.statusCode());
+        m.put("latencyMs", fr.latencyMs());
+        m.put("metrics", Map.of());
+        if (!up) m.put("error", "Unexpected HTTP status: " + fr.statusCode());
         return m;
     }
 
     // ── Prometheus text-exposition ──────────────────────────────────────────
-    private Map<String, Object> checkPrometheus(String url, String authHeader, long timeoutMs) {
-        long start = System.currentTimeMillis();
+    private Map<String, Object> checkPrometheus(String url, String authHeader, long timeoutMs, String target, String agentId) {
+        Map<String, String> headers = new LinkedHashMap<>();
+        headers.put("Accept", "text/plain,application/openmetrics-text;q=0.9,*/*;q=0.8");
+        if (authHeader != null) headers.put("Authorization", authHeader);
+        FetchResult fr = doFetch("GET", url, headers, null, timeoutMs, target, agentId);
+
         Map<String, Object> m = new LinkedHashMap<>();
+        m.put("executedVia", fr.executedVia());
+        if (fr.error() != null) {
+            m.put("ok", false);
+            m.put("status", "DOWN");
+            m.put("error", fr.error());
+            m.put("latencyMs", fr.latencyMs());
+            return m;
+        }
+        boolean up = fr.statusCode() < 400;
+        m.put("ok", true);
+        m.put("status", up ? "UP" : "DOWN");
+        m.put("statusCode", fr.statusCode());
+        m.put("latencyMs", fr.latencyMs());
+        m.put("metrics", up ? parsePrometheusMetrics(fr.body()) : Map.of());
+        if (!up) m.put("error", "Unexpected HTTP status: " + fr.statusCode());
+        return m;
+    }
+
+    /** What came back from an endpoint, however the call was routed. */
+    private record FetchResult(int statusCode, String body, String error, long latencyMs, String executedVia) {}
+
+    /**
+     * Runs one HTTP call either from this server or through a connected remote agent — mirrors
+     * {@code AppExecutionService.sendViaAgent}: the agent is a dumb pipe, everything about the
+     * request (headers, body, timeout) is fully resolved on this side already.
+     */
+    private FetchResult doFetch(String method, String url, Map<String, String> headers, String body,
+                                 long timeoutMs, String target, String agentId) {
+        long start = System.currentTimeMillis();
+        if ("AGENT".equalsIgnoreCase(target)) {
+            try {
+                HttpBatchRequest.Item item = new HttpBatchRequest.Item();
+                item.setUrl(url);
+                item.setMethod(HttpMethod.from(method));
+                item.setHeaders(headers);
+                item.setBody(body);
+                item.setTimeoutMs((int) timeoutMs);
+
+                Map<String, Object> reply = agentDispatch.dispatchSingle(item, (int) timeoutMs, agentId);
+                long latency = System.currentTimeMillis() - start;
+                String ranOn = describeAgent(reply.get("agentId"));
+
+                Object failure = reply.get("error");
+                if (failure != null) return new FetchResult(-1, null, ranOn + " reported: " + failure, latency, ranOn);
+                if (!(reply.get("statusCode") instanceof Number statusCode))
+                    return new FetchResult(-1, null, ranOn + " returned no status code", latency, ranOn);
+
+                String respBody = reply.get("body") == null ? "" : String.valueOf(reply.get("body"));
+                return new FetchResult(statusCode.intValue(), respBody, null, latency, ranOn);
+            } catch (Exception e) {
+                return new FetchResult(-1, null, e.getMessage(), System.currentTimeMillis() - start, "AGENT");
+            }
+        }
+
         try {
             HttpRequest.Builder b = HttpRequest.newBuilder()
                     .uri(URI.create(url))
-                    .timeout(Duration.ofMillis(timeoutMs))
-                    .header("Accept", "text/plain,application/openmetrics-text;q=0.9,*/*;q=0.8")
-                    .GET();
-            if (authHeader != null) b.header("Authorization", authHeader);
+                    .timeout(Duration.ofMillis(timeoutMs));
+            headers.forEach(b::header);
+            b = b.method(method, body != null && !body.isBlank()
+                    ? HttpRequest.BodyPublishers.ofString(body)
+                    : HttpRequest.BodyPublishers.noBody());
             HttpResponse<String> resp = HTTP.send(b.build(), HttpResponse.BodyHandlers.ofString());
             long latency = System.currentTimeMillis() - start;
-            boolean up = resp.statusCode() < 400;
-            m.put("ok", true);
-            m.put("status", up ? "UP" : "DOWN");
-            m.put("statusCode", resp.statusCode());
-            m.put("latencyMs", latency);
-            m.put("metrics", up ? parsePrometheusMetrics(resp.body()) : Map.of());
-            if (!up) m.put("error", "Unexpected HTTP status: " + resp.statusCode());
+            return new FetchResult(resp.statusCode(), resp.body(), null, latency, "LOCAL");
         } catch (Exception e) {
-            m.put("ok", false);
-            m.put("status", "DOWN");
-            m.put("error", e.getMessage());
-            m.put("latencyMs", System.currentTimeMillis() - start);
+            return new FetchResult(-1, null, e.getMessage(), System.currentTimeMillis() - start, "LOCAL");
         }
-        return m;
+    }
+
+    /** How a result names where it ran — {@code LOCAL}, {@code AGENT} or {@code AGENT:orders-host1}. */
+    private String describeAgent(Object agentId) {
+        String id = agentId == null ? null : String.valueOf(agentId);
+        return id == null || id.isBlank() || "null".equals(id) ? "AGENT" : "AGENT:" + id;
     }
 
     private Map<String, Object> parsePrometheusMetrics(String text) {
@@ -373,38 +435,51 @@ public class ServiceMonitorController {
     }
 
     // ── Jolokia (JMX-over-HTTP) ─────────────────────────────────────────────
-    private Map<String, Object> checkJolokia(String baseUrl, String authHeader, long timeoutMs) {
-        long start = System.currentTimeMillis();
+    private Map<String, Object> checkJolokia(String baseUrl, String authHeader, long timeoutMs, String target, String agentId) {
         String base = baseUrl.trim();
         Map<String, Object> m = new LinkedHashMap<>();
+        String body;
         try {
-            String body = objectMapper.writeValueAsString(List.of(
+            body = objectMapper.writeValueAsString(List.of(
                     Map.of("type", "read", "mbean", "java.lang:type=Memory", "attribute", "HeapMemoryUsage"),
                     Map.of("type", "read", "mbean", "java.lang:type=Runtime", "attribute", List.of("Uptime", "Name")),
                     Map.of("type", "read", "mbean", "java.lang:type=Threading", "attribute", "ThreadCount")
             ));
-            HttpRequest.Builder b = HttpRequest.newBuilder()
-                    .uri(URI.create(base))
-                    .timeout(Duration.ofMillis(timeoutMs))
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(body));
-            if (authHeader != null) b.header("Authorization", authHeader);
-            HttpResponse<String> resp = HTTP.send(b.build(), HttpResponse.BodyHandlers.ofString());
-            long latency = System.currentTimeMillis() - start;
+        } catch (Exception e) {
+            m.put("ok", false);
+            m.put("status", "DOWN");
+            m.put("error", e.getMessage());
+            return m;
+        }
 
-            if (resp.statusCode() >= 400) {
-                m.put("ok", true);
-                m.put("status", "DOWN");
-                m.put("statusCode", resp.statusCode());
-                m.put("latencyMs", latency);
-                m.put("metrics", Map.of());
-                m.put("error", "Unexpected HTTP status: " + resp.statusCode());
-                return m;
-            }
+        Map<String, String> headers = new LinkedHashMap<>();
+        headers.put("Content-Type", "application/json");
+        if (authHeader != null) headers.put("Authorization", authHeader);
+        FetchResult fr = doFetch("POST", base, headers, body, timeoutMs, target, agentId);
+        m.put("executedVia", fr.executedVia());
 
+        if (fr.error() != null) {
+            m.put("ok", false);
+            m.put("status", "DOWN");
+            m.put("error", fr.error());
+            m.put("latencyMs", fr.latencyMs());
+            return m;
+        }
+
+        if (fr.statusCode() >= 400) {
+            m.put("ok", true);
+            m.put("status", "DOWN");
+            m.put("statusCode", fr.statusCode());
+            m.put("latencyMs", fr.latencyMs());
+            m.put("metrics", Map.of());
+            m.put("error", "Unexpected HTTP status: " + fr.statusCode());
+            return m;
+        }
+
+        try {
             Map<String, Object> metrics = new LinkedHashMap<>();
             boolean anyOk = false;
-            for (JsonNode entry : objectMapper.readTree(resp.body())) {
+            for (JsonNode entry : objectMapper.readTree(fr.body())) {
                 if (entry.path("status").asInt(0) != 200) continue;
                 anyOk = true;
                 String mbean = entry.path("request").path("mbean").asText("");
@@ -430,15 +505,15 @@ public class ServiceMonitorController {
 
             m.put("ok", true);
             m.put("status", anyOk ? "UP" : "DOWN");
-            m.put("statusCode", resp.statusCode());
-            m.put("latencyMs", latency);
+            m.put("statusCode", fr.statusCode());
+            m.put("latencyMs", fr.latencyMs());
             m.put("metrics", metrics);
             if (!anyOk) m.put("error", "No Jolokia attributes returned a 200 status");
         } catch (Exception e) {
             m.put("ok", false);
             m.put("status", "DOWN");
             m.put("error", e.getMessage());
-            m.put("latencyMs", System.currentTimeMillis() - start);
+            m.put("latencyMs", fr.latencyMs());
         }
         return m;
     }

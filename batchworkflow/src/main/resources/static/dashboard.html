@@ -502,6 +502,9 @@
             <div class="lbl">Down</div><div class="val down" id="sumDown">0</div>
             <div class="hint-tag" id="downFilterHint" style="visibility:hidden">filtering</div>
           </div>
+          <div class="summary-cell" title="HTTP calls the server has made to targets to determine up/down status, persisted across reloads">
+            <div class="lbl">HTTP Calls</div><div class="val" id="sumHttpCalls">0</div>
+          </div>
         </div>
         <div class="field" style="min-width:180px">
           <label>Search</label>
@@ -536,6 +539,21 @@
         <div class="field">
           <label>Timeout (ms)</label>
           <input type="number" id="timeoutInput" min="200" step="100" style="width:90px" onchange="onTimeoutInput()">
+        </div>
+        <div class="field">
+          <label>Run From</label>
+          <select id="targetSelect" onchange="onTargetChange()">
+            <option value="LOCAL">This server (local)</option>
+            <option value="AGENT">Remote agent</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Agent</label>
+          <div style="display:flex; gap:6px">
+            <select id="agentSelect" onchange="saveRunTarget()" disabled></select>
+            <button type="button" class="secondary" onclick="loadAgents(true)" title="Refresh connected agents" style="padding:7px 10px">&#8635;</button>
+          </div>
+          <span class="filter-note" id="agentHint" style="margin-left:0"></span>
         </div>
         <div class="field">
           <button class="secondary" id="checkAllBtn" onclick="checkAll()">Check All Now</button>
@@ -574,9 +592,31 @@
   const VIEWMODE_KEY = 'serviceDashboard.viewMode';
   const SPLIT_WIDTH_KEY = 'serviceDashboard.splitWidth';
   const TIMEOUT_KEY = 'serviceDashboard.timeoutMs';
+  const RUNTARGET_KEY = 'serviceDashboard.runTarget';
   const MIN_TIMEOUT_MS = 200;
   const DEFAULT_TIMEOUT_MS = 3000;
   const VIEW_PAGE = 'serviceDashboard';
+  const HTTPCALLS_KEY = 'serviceDashboard.httpCallCount';
+
+  // Counts HTTP calls the *server* has made to targets to determine up/down status — one per
+  // checkHttp/checkPrometheus/checkJolokia call in ServiceMonitorController, i.e. one per result
+  // the dashboard receives from /check (single) or /checkBatchStream (one per "result" event).
+  // Deliberately excludes calls unrelated to status checks (alert config, saved views, the
+  // dataset widget, …) and the browser's own request to the check endpoint itself — only the
+  // server-to-target call each result represents. Persisted so the count survives reloads.
+  let httpCallCount = (() => {
+    const v = parseInt(localStorage.getItem(HTTPCALLS_KEY), 10);
+    return Number.isFinite(v) ? v : 0;
+  })();
+  function updateHttpCallDisplay() {
+    const el = document.getElementById('sumHttpCalls');
+    if (el) el.textContent = httpCallCount;
+  }
+  function recordServerHttpCalls(n) {
+    httpCallCount += n;
+    localStorage.setItem(HTTPCALLS_KEY, String(httpCallCount));
+    updateHttpCallDisplay();
+  }
 
   // Built-in (non-dataset-attribute) fields a card can optionally show — everything here is
   // opt-in via "Card Fields" so the default card is just the name + a status color, not a wall
@@ -588,13 +628,15 @@
     { key: 'meta', label: 'HTTP Code / Latency' },
     { key: 'error', label: 'Error' },
     { key: 'trend', label: 'Trend Sparkline' },
-    { key: 'metrics', label: 'Metrics (heap/pid/uptime/threads/cpu)' }
+    { key: 'metrics', label: 'Metrics (heap/pid/uptime/threads/cpu)' },
+    { key: 'executedVia', label: 'Executed Via' }
   ];
 
   let targets = loadTargets();
   const results = new Map();   // id -> last check result
   const checking = new Set();  // ids currently in-flight
   let refreshTimer = null;
+  let agents = [];             // agents currently connected over /agent/ws, refreshed via loadAgents()
   let groupByKeys = loadGroupByKeys();   // ordered ['__status' | '__type' | 'attr:<datasetAttribute>', ...] — compound drilldown, built via drag-and-drop
   let cardFields = loadCardFields();     // array of dataset attribute names shown as extra rows on each card
   let orientation = loadOrientation();   // 'vertical' (stacked lanes) | 'horizontal' (side-scrolling lanes)
@@ -664,6 +706,74 @@
     document.getElementById('viewCardsBtn').classList.toggle('active', viewMode === 'cards');
     document.getElementById('viewTableBtn').classList.toggle('active', viewMode === 'table');
     renderGrid();
+  }
+
+  // ── Run target: where checks are made from — this server, or a connected remote agent ─────
+  // Mirrors the "Run From" control on the App Catalog's Instances page (appusecaseinstance.html):
+  // a page-wide LOCAL/AGENT choice, persisted locally, sent along with every check request.
+  function saveRunTarget() {
+    const select = document.getElementById('agentSelect');
+    localStorage.setItem(RUNTARGET_KEY, JSON.stringify({
+      target: document.getElementById('targetSelect').value,
+      // dataset.preferred holds a pinned agent that is not connected right now — keep
+      // remembering it rather than silently falling back to round-robin.
+      agentId: select.value || select.dataset.preferred || ''
+    }));
+  }
+
+  function restoreRunTarget() {
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem(RUNTARGET_KEY) || '{}') || {}; } catch { saved = {}; }
+    document.getElementById('targetSelect').value = saved.target === 'AGENT' ? 'AGENT' : 'LOCAL';
+
+    const select = document.getElementById('agentSelect');
+    if (saved.agentId) select.dataset.preferred = saved.agentId;
+    onTargetChange();
+  }
+
+  function onTargetChange() {
+    const remote = document.getElementById('targetSelect').value === 'AGENT';
+    document.getElementById('agentSelect').disabled = !remote;
+    saveRunTarget();
+    renderAgentHint();
+    if (remote) loadAgents(false);
+  }
+
+  /** Refreshes the connected-agent list. Silent on failure unless the user asked for it. */
+  async function loadAgents(announce) {
+    const select = document.getElementById('agentSelect');
+    const preferred = select.dataset.preferred || select.value;
+    try {
+      const res = await fetch('/agents');
+      agents = await res.json();
+    } catch (e) {
+      agents = [];
+      if (announce) { document.getElementById('agentHint').textContent = 'Could not list agents: ' + e.message; return; }
+    }
+    select.innerHTML = '<option value="">— any agent (round-robin) —</option>' +
+      agents.map(a => '<option value="' + escapeHtml(a.agentId) + '">' +
+        escapeHtml(a.agentId + (a.hostname && a.hostname !== a.agentId ? ' (' + a.hostname + ')' : '')) +
+        '</option>').join('');
+    if (preferred && agents.some(a => a.agentId === preferred)) {
+      select.value = preferred;
+      delete select.dataset.preferred;
+    }
+    renderAgentHint();
+  }
+
+  function renderAgentHint() {
+    const remote = document.getElementById('targetSelect').value === 'AGENT';
+    document.getElementById('agentHint').textContent =
+      !remote ? 'Checks run from this server.'
+      : !agents.length ? 'No agents connected — remote checks will fail.'
+      : document.getElementById('agentSelect').value ? 'Every check is pinned to this agent.'
+      : agents.length + ' connected — checks are spread round-robin.';
+  }
+
+  /** The target every check on this page uses, as request fields. */
+  function runTarget() {
+    const target = document.getElementById('targetSelect').value === 'AGENT' ? 'AGENT' : 'LOCAL';
+    return { target, agentId: target === 'AGENT' ? document.getElementById('agentSelect').value : '' };
   }
 
   function loadTargets() {
@@ -754,12 +864,14 @@
     checking.add(target.id);
     renderGrid();
     try {
+      const rt = runTarget();
       const res = await fetch('/servicemonitor/check', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: target.url, type: target.type, timeoutMs, ...authFields(target) })
+        body: JSON.stringify({ url: target.url, type: target.type, timeoutMs, target: rt.target, agentId: rt.agentId, ...authFields(target) })
       });
       const data = await res.json();
+      recordServerHttpCalls(1);
       applyResult(target, data);
     } catch (e) {
       applyResult(target, { ok: false, status: 'DOWN', error: e.message });
@@ -804,6 +916,7 @@
       if (eventName === 'result') {
         const t = byId.get(data.id);
         checking.delete(data.id);
+        recordServerHttpCalls(1);
         if (t) applyResult(t, data);
         maybeRenderGrid(false);
       } else if (eventName === 'progress') {
@@ -814,10 +927,14 @@
     }
 
     try {
+      const rt = runTarget();
       const res = await fetch('/servicemonitor/checkBatchStream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ timeoutMs, targets: targets.map(t => ({ id: t.id, url: t.url, type: t.type, ...authFields(t) })) })
+        body: JSON.stringify({
+          timeoutMs, target: rt.target, agentId: rt.agentId,
+          targets: targets.map(t => ({ id: t.id, url: t.url, type: t.type, ...authFields(t) }))
+        })
       });
       if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
 
@@ -1322,6 +1439,11 @@
     let errorHtml = '';
     if (cardFields.includes('error') && r && r.error) errorHtml = '<div class="svc-error">' + escapeHtml(r.error) + '</div>';
 
+    let executedViaHtml = '';
+    if (cardFields.includes('executedVia') && r && r.executedVia) {
+      executedViaHtml = '<div class="svc-meta">Via ' + escapeHtml(r.executedVia) + '</div>';
+    }
+
     let sparkHtml = '';
     if (cardFields.includes('trend') && r && r.history && r.history.length > 1) {
       sparkHtml = '<div class="svc-spark-row"><span class="lbl">Trend</span>' + renderSparkline(r.history) + '</div>';
@@ -1370,6 +1492,7 @@
         badgesRowHtml +
         urlHtml +
         metaHtml +
+        executedViaHtml +
         errorHtml +
         sparkHtml +
         metricsHtml +
@@ -1404,6 +1527,7 @@
     const cols = TABLE_BASE_COLUMNS.slice();
     if (cardFields.includes('meta'))  cols.push({ key: 'httpCode', label: 'HTTP Code' }, { key: 'latencyMs', label: 'Latency (ms)' });
     if (cardFields.includes('error')) cols.push({ key: 'error', label: 'Error' });
+    if (cardFields.includes('executedVia')) cols.push({ key: 'executedVia', label: 'Executed Via' });
     return cols.concat(datasetAttrNames().map(a => ({ key: 'attr:' + a, label: a })));
   }
 
@@ -1418,6 +1542,7 @@
     if (key === 'httpCode') return r && r.statusCode != null ? String(r.statusCode) : '';
     if (key === 'latencyMs') return r && r.latencyMs != null ? String(r.latencyMs) : '';
     if (key === 'error') return r && r.error ? r.error : '';
+    if (key === 'executedVia') return r && r.executedVia ? r.executedVia : '';
     if (key.startsWith('attr:')) {
       const v = t.datasetAttrs ? t.datasetAttrs[key.slice(5)] : undefined;
       return v == null ? '' : String(v);
@@ -1726,6 +1851,8 @@
   document.getElementById('orientHorizBtn').classList.toggle('active', orientation === 'horizontal');
   document.getElementById('viewCardsBtn').classList.toggle('active', viewMode === 'cards');
   document.getElementById('viewTableBtn').classList.toggle('active', viewMode === 'table');
+  updateHttpCallDisplay();
+  restoreRunTarget();
   initSplitter();
   renderGrid();
   if (targets.length > 0) checkAll();

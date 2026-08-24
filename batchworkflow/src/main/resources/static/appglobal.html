@@ -201,6 +201,42 @@
     <div id="statusBar" class="status-bar">Loading run history…</div>
 </div>
 
+<!-- Instance picker: every use case instance across every app, as cards, ready to run -->
+<div class="panel">
+    <div class="panel-title">
+        <span class="collapse-toggle" onclick="toggleInstancePicker()" style="display:flex; align-items:center; gap:8px; cursor:pointer">
+            <span class="caret open" id="instancesCaret">&#9654;</span>
+            <span>Use Case Instances</span>
+            <span class="hint" id="instanceSummary"></span>
+        </span>
+        <button class="tool-btn" onclick="loadInstances(true)">&#8635; Refresh</button>
+    </div>
+    <div id="instancesBody">
+        <div class="form-row">
+            <div class="form-group wide">
+                <label for="instanceSearch">Search &mdash; app, use case or instance label</label>
+                <input id="instanceSearch" type="text" placeholder="orders, create-order, nightly…" oninput="onInstanceSearchInput()">
+            </div>
+            <div class="form-group">
+                <label for="threadCountInput">Parallel Threads</label>
+                <input id="threadCountInput" type="number" min="1" max="200" value="10" onchange="onThreadCountChange()">
+                <span class="hint">How many selected instances run at once. Server default is 10 unless configured otherwise.</span>
+            </div>
+            <div class="form-group">
+                <label for="runCountInput">Repeat</label>
+                <input id="runCountInput" type="number" min="1" max="10000" value="1" onchange="onRunCountChange()">
+                <span class="hint">Runs each instance this many times against each of its environments — once for regression, higher for a load test.</span>
+            </div>
+        </div>
+        <div class="toolbar" style="margin-bottom:10px">
+            <button class="tool-btn" onclick="toggleSelectAllInstances()">Select All / None</button>
+            <button class="primary" onclick="runSelectedInstances()">&#9654; Run Selected</button>
+        </div>
+        <div id="instanceCardGrid" class="card-grid"></div>
+        <div id="instanceRunStatusBar" class="status-bar"></div>
+    </div>
+</div>
+
 <!-- Filters -->
 <div class="panel">
     <div class="panel-title">
@@ -362,6 +398,10 @@
     let payloads = new Map();
     let refreshTimer = null;
 
+    let allInstances = [];              // every use case instance, across every app
+    let selectedInstanceIds = new Set();
+    let instanceSearchText = '';
+
     // ── Saved state ──────────────────────────────────────────────────────────
 
     function loadGroupByKeys() {
@@ -501,6 +541,170 @@
         const select = document.getElementById('autoRefresh');
         if (saved && [...select.options].some(o => o.value === saved)) select.value = saved;
         onAutoRefreshChange();
+    }
+
+    // ── Instance picker ─────────────────────────────────────────────────────
+
+    const THREADCOUNT_KEY = 'appCatalog.globalThreadCount';
+    const RUNCOUNT_KEY = 'appCatalog.globalRunCount';
+    const INSTANCES_OPEN_KEY = 'appCatalog.globalInstancesOpen';
+
+    function toggleInstancePicker() {
+        const open = localStorage.getItem(INSTANCES_OPEN_KEY) !== 'false';
+        localStorage.setItem(INSTANCES_OPEN_KEY, open ? 'false' : 'true');
+        applyInstancesPanelState();
+    }
+
+    function applyInstancesPanelState() {
+        const open = localStorage.getItem(INSTANCES_OPEN_KEY) !== 'false';
+        document.getElementById('instancesBody').style.display = open ? '' : 'none';
+        document.getElementById('instancesCaret').classList.toggle('open', open);
+    }
+
+    function restoreThreadCount() {
+        const saved = parseInt(localStorage.getItem(THREADCOUNT_KEY), 10);
+        if (saved > 0) document.getElementById('threadCountInput').value = saved;
+    }
+
+    function onThreadCountChange() {
+        const value = parseInt(document.getElementById('threadCountInput').value, 10);
+        if (value > 0) localStorage.setItem(THREADCOUNT_KEY, String(value));
+    }
+
+    function threadCount() {
+        const value = parseInt(document.getElementById('threadCountInput').value, 10);
+        return value > 0 ? value : 10;
+    }
+
+    function restoreRunCount() {
+        const saved = parseInt(localStorage.getItem(RUNCOUNT_KEY), 10);
+        if (saved > 0) document.getElementById('runCountInput').value = saved;
+    }
+
+    function onRunCountChange() {
+        const value = parseInt(document.getElementById('runCountInput').value, 10);
+        if (value > 0) localStorage.setItem(RUNCOUNT_KEY, String(value));
+    }
+
+    function runCount() {
+        const value = parseInt(document.getElementById('runCountInput').value, 10);
+        return value > 0 ? value : 1;
+    }
+
+    async function loadInstances(announce) {
+        try {
+            allInstances = await AC.listInstances();
+            const known = new Set(allInstances.map(i => i.appUseCaseInstanceId));
+            selectedInstanceIds.forEach(id => { if (!known.has(id)) selectedInstanceIds.delete(id); });
+            renderInstanceCards();
+            if (announce) AC.setStatus('instanceRunStatusBar', allInstances.length + ' instance(s) across every app.', 'ok');
+        } catch (e) {
+            AC.setStatus('instanceRunStatusBar', 'Failed to load instances: ' + e.message, 'error');
+        }
+    }
+
+    function onInstanceSearchInput() {
+        instanceSearchText = document.getElementById('instanceSearch').value.trim().toLowerCase();
+        renderInstanceCards();
+    }
+
+    function matchesInstanceSearch(instance) {
+        if (!instanceSearchText) return true;
+        const haystack = [instance.appName, instance.appUseCaseName, instance.instanceLabel]
+            .join(' ').toLowerCase();
+        return haystack.includes(instanceSearchText);
+    }
+
+    function renderInstanceCards() {
+        const grid = document.getElementById('instanceCardGrid');
+        const shown = allInstances.filter(matchesInstanceSearch);
+
+        document.getElementById('instanceSummary').textContent = !allInstances.length ? ''
+            : shown.length === allInstances.length ? allInstances.length + ' instance(s)'
+            : shown.length + ' of ' + allInstances.length + ' shown';
+
+        if (!allInstances.length) {
+            grid.innerHTML = '<div class="empty-note">No use case instances configured yet — add some from the Instances &amp; Runs tab.</div>';
+            return;
+        }
+        if (!shown.length) {
+            grid.innerHTML = '<div class="empty-note">Nothing matches that search.</div>';
+            return;
+        }
+
+        grid.innerHTML = shown.map(instanceCardHtml).join('');
+    }
+
+    function instanceCardHtml(instance) {
+        const id = instance.appUseCaseInstanceId;
+        const selected = selectedInstanceIds.has(id);
+        const environments = (instance.appEnvironments && instance.appEnvironments.length
+            ? instance.appEnvironments : [instance.appEnvironment]).filter(Boolean);
+
+        return '<div class="pick-card' + (selected ? ' selected' : '') + '" onclick="toggleInstancePick(\'' + AC.attr(id) + '\')">' +
+                    '<div class="pick-card-head">' +
+                        '<input type="checkbox"' + (selected ? ' checked' : '') +
+                            ' onclick="event.stopPropagation()" onchange="toggleInstancePick(\'' + AC.attr(id) + '\', this.checked)">' +
+                        '<span class="pick-card-title">' + AC.esc(instance.instanceLabel || instance.appUseCaseName) + '</span>' +
+                    '</div>' +
+                    '<div class="pick-card-meta">' +
+                        '<span class="badge http">' + AC.esc(instance.appName) + '</span>' +
+                        '<span>' + AC.esc(instance.appUseCaseName) + '</span>' +
+                    '</div>' +
+                    '<div class="pick-card-meta">' +
+                        environments.map(e => '<span class="badge active">' + AC.esc(e) + '</span>').join('') +
+                    '</div>' +
+               '</div>';
+    }
+
+    function toggleInstancePick(id, checked) {
+        const next = checked !== undefined ? checked : !selectedInstanceIds.has(id);
+        next ? selectedInstanceIds.add(id) : selectedInstanceIds.delete(id);
+        renderInstanceCards();
+        renderInstanceRunStatus();
+    }
+
+    function toggleSelectAllInstances() {
+        const shown = allInstances.filter(matchesInstanceSearch);
+        const allPicked = shown.length && shown.every(i => selectedInstanceIds.has(i.appUseCaseInstanceId));
+        shown.forEach(i => allPicked ? selectedInstanceIds.delete(i.appUseCaseInstanceId) : selectedInstanceIds.add(i.appUseCaseInstanceId));
+        renderInstanceCards();
+        renderInstanceRunStatus();
+    }
+
+    function renderInstanceRunStatus() {
+        if (!selectedInstanceIds.size) { AC.setStatus('instanceRunStatusBar', ''); return; }
+        AC.setStatus('instanceRunStatusBar', selectedInstanceIds.size + ' instance(s) selected.');
+    }
+
+    /**
+     * Runs every selected instance in parallel, across however many apps they belong to — the
+     * server expands each one over its environments and run count, flattens the whole selection into
+     * one plan list, and works through it with up to {@link threadCount} calls in flight at once.
+     */
+    async function runSelectedInstances() {
+        if (!selectedInstanceIds.size) { AC.setStatus('instanceRunStatusBar', 'Tick at least one instance first.', 'error'); return; }
+        const ids = [...selectedInstanceIds];
+        const target = runTarget();
+        const threads = threadCount();
+        AC.setStatus('instanceRunStatusBar',
+            'Running ' + ids.length + ' instance(s) ' + targetPhrase() + ' — up to ' + threads + ' at a time…');
+        try {
+            const results = await AC.api('POST', '/appcatalog/execute', {
+                appUseCaseInstanceIds: ids,
+                target: target.target,
+                agentId: target.agentId,
+                threadCount: threads,
+                runCount: runCount()
+            });
+            const failed = results.filter(r => r.status !== 'SUCCESS').length;
+            await loadExecutions(false);
+            AC.setStatus('instanceRunStatusBar',
+                'Ran ' + results.length + ' call(s) from ' + ids.length + ' instance(s) — ' +
+                (results.length - failed) + ' succeeded, ' + failed + ' did not.', failed ? 'error' : 'ok');
+        } catch (e) {
+            AC.setStatus('instanceRunStatusBar', 'Run failed: ' + e.message, 'error');
+        }
     }
 
     // ── Filters ──────────────────────────────────────────────────────────────
@@ -1203,7 +1407,11 @@
     }
 
     AC.applyEmbedding();
+    applyInstancesPanelState();
     applyFiltersPanelState();
+    restoreThreadCount();
+    restoreRunCount();
+    loadInstances(false);
     loadAgents(false).then(restoreRunTarget);
     loadExecutions(false).then(restoreAutoRefresh);
 </script>

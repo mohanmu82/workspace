@@ -130,6 +130,10 @@ public class BrowserSimulatorService {
             List<String> cmd = new ArrayList<>(List.of(chromePath,
                     "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
                     "--disable-extensions", "--hide-scrollbars", "--mute-audio",
+                    // This tool points at internal HTTPS endpoints signed by CAs the OS trust store
+                    // may not have; ignoring cert errors here trades away cert-validity diagnostics
+                    // for actually being able to load the page.
+                    "--ignore-certificate-errors",
                     // Container /dev/shm is commonly capped at 64MB, which crashes Chrome's shared-memory
                     // renderer transport; falling back to disk is slower but harmless outside containers.
                     "--disable-dev-shm-usage",

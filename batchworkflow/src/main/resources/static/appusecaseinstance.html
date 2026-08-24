@@ -242,6 +242,11 @@
             </div>
             <span class="hint" id="agentHint"></span>
         </div>
+        <div class="form-group">
+            <label for="runCount">Repeat</label>
+            <input id="runCount" type="number" min="1" max="10000" value="1" oninput="saveRunTarget(); renderRunPlanHint()">
+            <span class="hint" id="runPlanHint">Runs once per environment — bump this up for a load test.</span>
+        </div>
     </div>
 </div>
 
@@ -286,11 +291,6 @@
                 </label>
                 <div class="env-picker" id="envPicker"></div>
                 <span class="hint">Tick more than one and the instance runs against each of them.</span>
-            </div>
-            <div class="form-group">
-                <label for="runCount">Run Count</label>
-                <input id="runCount" type="number" min="1" max="10000" value="1" oninput="renderRunPlanHint()">
-                <span class="hint" id="runPlanHint"></span>
             </div>
             <div class="form-group wide">
                 <label for="instanceLabel">Label (optional)</label>
@@ -637,7 +637,8 @@
             target:  document.getElementById('targetSelect').value,
             // dataset.preferred holds a pinned agent that is not connected right now — keep
             // remembering it rather than silently falling back to round-robin.
-            agentId: select.value || select.dataset.preferred || ''
+            agentId: select.value || select.dataset.preferred || '',
+            runCount: currentRunCount()
         }));
     }
 
@@ -645,6 +646,7 @@
         let saved = {};
         try { saved = JSON.parse(localStorage.getItem(RUNTARGET_KEY) || '{}') || {}; } catch (e) { saved = {}; }
         document.getElementById('targetSelect').value = saved.target === 'AGENT' ? 'AGENT' : 'LOCAL';
+        document.getElementById('runCount').value = saved.runCount > 0 ? saved.runCount : 1;
 
         const select = document.getElementById('agentSelect');
         if (saved.agentId) {
@@ -652,6 +654,7 @@
             else select.dataset.preferred = saved.agentId;
         }
         onTargetChange();
+        renderRunPlanHint();
     }
 
     function onTargetChange() {
@@ -701,7 +704,8 @@
 
     function targetQuery() {
         const t = runTarget();
-        return '?target=' + encodeURIComponent(t.target) + (t.agentId ? '&agentId=' + encodeURIComponent(t.agentId) : '');
+        return '?target=' + encodeURIComponent(t.target) + (t.agentId ? '&agentId=' + encodeURIComponent(t.agentId) : '') +
+               '&runCount=' + encodeURIComponent(currentRunCount());
     }
 
     function targetPhrase() {
@@ -776,7 +780,6 @@
                 '</label>'
               ).join('')
             : '<div class="empty-note">No environments defined for this app yet.</div>';
-        renderRunPlanHint();
     }
 
     /** The ticked environments, in the order they are listed for the app. */
@@ -792,30 +795,21 @@
     }
 
     function onEnvironmentsChange() {
-        renderRunPlanHint();
         renderUrlPreview();
     }
 
+    /** How many times Run repeats each call — a page-level execution setting, not saved on an instance. */
     function currentRunCount() {
         const entered = parseInt(document.getElementById('runCount').value, 10);
         return Number.isFinite(entered) && entered > 0 ? entered : 1;
     }
 
-    /**
-     * What one click of Run will actually do. Environments times run count is easy to set and easy
-     * to misjudge — three environments at a hundred repeats is three hundred calls, and the number
-     * is worth seeing before the button is pressed rather than after.
-     */
+    /** Describes the Repeat control itself; the "N calls" total is shown per run action instead. */
     function renderRunPlanHint() {
-        const envCount = selectedEnvironments().length;
         const runs = currentRunCount();
-        const total = envCount * runs;
-        const hint = document.getElementById('runPlanHint');
-        if (!envCount) { hint.textContent = 'Tick at least one environment.'; return; }
-        hint.textContent = total === 1
-            ? '1 call per run.'
-            : total + ' calls per run — ' + envCount + ' environment' + (envCount !== 1 ? 's' : '') +
-              ' × ' + runs + ' repeat' + (runs !== 1 ? 's' : '') + '.';
+        document.getElementById('runPlanHint').textContent = runs === 1
+            ? 'Runs once per environment — bump this up for a load test.'
+            : 'Runs ' + runs + ' times against each environment for every instance you run.';
     }
 
     // ── Instance list ────────────────────────────────────────────────────────
@@ -833,9 +827,9 @@
         return instance.appUseCaseName + ' @ ' + (envs.length > 1 ? envs.length + ' environments' : envs[0] || '—');
     }
 
-    /** How many calls running this instance makes: one per environment, times its run count. */
+    /** How many calls running this instance makes right now: one per environment, times the page's Repeat setting. */
     function instanceRunSize(instance) {
-        return Math.max(1, instanceEnvironments(instance).length) * Math.max(1, instance.runCount || 1);
+        return Math.max(1, instanceEnvironments(instance).length) * currentRunCount();
     }
 
     function renderInstanceList() {
@@ -866,9 +860,6 @@
                             '<span>' + AC.esc(instance.appUseCaseName) + '</span>' +
                             instanceEnvironments(instance).map(e =>
                                 '<span class="badge auth">' + AC.esc(e) + '</span>').join('') +
-                            (instance.runCount > 1
-                                ? '<span class="badge warn" title="Runs ' + instance.runCount +
-                                  ' times against each environment">&times;' + instance.runCount + '</span>' : '') +
                             rowStatusHtml(id) +
                         '</div>' +
                     '</div>' +
@@ -1085,7 +1076,6 @@
         document.getElementById('editorTitle').textContent = 'New Instance';
         document.getElementById('instanceIdBadge').style.display = 'none';
         document.getElementById('useCaseSelect').value = '';
-        document.getElementById('runCount').value = 1;
         renderEnvPicker([]);
         document.getElementById('instanceLabel').value = '';
         ['executeBtn', 'cloneBtn', 'deleteBtn'].forEach(id => { document.getElementById(id).style.display = 'none'; });
@@ -1105,9 +1095,6 @@
         badge.style.display = '';
         badge.textContent = instanceId;
         document.getElementById('useCaseSelect').value = instance.appUseCaseName;
-        // Run count before the picker: rendering the picker recomputes the "n calls per run" hint,
-        // which would otherwise be worked out from the previous instance's count.
-        document.getElementById('runCount').value = instance.runCount || 1;
         renderEnvPicker(instanceEnvironments(instance));
         document.getElementById('instanceLabel').value = instance.instanceLabel || '';
         ['executeBtn', 'cloneBtn', 'deleteBtn'].forEach(id => { document.getElementById(id).style.display = ''; });
@@ -1134,7 +1121,6 @@
             // for anything reading one environment off an instance.
             appEnvironment:  picked[0],
             appEnvironments: picked,
-            runCount:        currentRunCount(),
             appUseCaseInstanceInputs: readInstanceInputs()
         };
     }
@@ -1422,7 +1408,8 @@
         ids.forEach(id => lastRunByInstance.set(id, { running: true }));
         renderInstanceList();
         await run(() => AC.api('POST', '/appcatalog/execute',
-                        { appUseCaseInstanceIds: ids, target: target.target, agentId: target.agentId }),
+                        { appUseCaseInstanceIds: ids, target: target.target, agentId: target.agentId,
+                          runCount: currentRunCount() }),
                   ids.length + ' instance(s), ' + calls + ' call' + (calls !== 1 ? 's' : '') + ', ' + targetPhrase(),
                   'statusBar');
     }

@@ -278,19 +278,22 @@ public class AppCatalogController {
      * {@link AppUseCaseInstanceOutput#withoutPayload()}. A grid of results is what the caller
      * actually wants back; the bodies are fetched a row at a time from {@code /executions/{id}}.
      *
-     * @param target  {@code LOCAL} (default) to call from this server, or {@code AGENT} to have a
-     *                connected remote agent make the call
-     * @param agentId with {@code AGENT}, pins the call to one agent; blank round-robins
+     * @param target   {@code LOCAL} (default) to call from this server, or {@code AGENT} to have a
+     *                 connected remote agent make the call
+     * @param agentId  with {@code AGENT}, pins the call to one agent; blank round-robins
+     * @param runCount how many times to repeat the call against each of the instance's environments;
+     *                 null or non-positive means once each — a regression pass rather than a load test
      */
     @PostMapping("/execute/{instanceId}")
     public ResponseEntity<List<AppUseCaseInstanceOutput>> executeInstance(
             @PathVariable String instanceId,
             @RequestParam(required = false) String target,
-            @RequestParam(required = false) String agentId) {
+            @RequestParam(required = false) String agentId,
+            @RequestParam(required = false) Integer runCount) {
         // A list even for one instance: it expands over every environment it names and repeats
         // itself run-count times, so "run this instance" is a batch as soon as either is set.
         return ResponseEntity.ok(withoutPayloads(
-                execution.executeInstance(instanceId, ExecutionTarget.from(target), agentId)));
+                execution.executeInstance(instanceId, ExecutionTarget.from(target), agentId, runCount)));
     }
 
     /** Runs an ad-hoc selection of instances — the multi-select path on the instances page. */
@@ -299,17 +302,20 @@ public class AppCatalogController {
         List<String> ids = request.appUseCaseInstanceIds();
         if (ids == null || ids.isEmpty()) return badRequest("appUseCaseInstanceIds is required");
         return ResponseEntity.ok(withoutPayloads(
-                execution.executeAll(ids, ExecutionTarget.from(request.target()), request.agentId())));
+                execution.executeAll(ids, ExecutionTarget.from(request.target()), request.agentId(),
+                        request.threadCount(), request.runCount())));
     }
 
     @PostMapping("/execute/group/{groupName}")
     public ResponseEntity<?> executeGroup(@PathVariable String groupName,
                                           @RequestParam(required = false) String target,
-                                          @RequestParam(required = false) String agentId) {
+                                          @RequestParam(required = false) String agentId,
+                                          @RequestParam(required = false) Integer runCount) {
         AppUseCaseInstanceGroup group = service.getGroup(groupName);
         if (group == null) return notFound("Group", groupName);
         return ResponseEntity.ok(withoutPayloads(
-                execution.executeAll(group.getAppUseCaseInstanceIds(), ExecutionTarget.from(target), agentId)));
+                execution.executeAll(group.getAppUseCaseInstanceIds(), ExecutionTarget.from(target), agentId,
+                        null, runCount)));
     }
 
     /**
