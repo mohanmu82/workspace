@@ -212,7 +212,26 @@ public class AppExecutionService {
         AppUseCaseInstance instance = catalog.getInstance(instanceId);
         String chosen = environment != null && !environment.isBlank() ? environment
                 : instance != null ? firstEnvironment(instance) : null;
-        return execute(new RunPlan(instanceId, chosen, 1, 1), target, agentId);
+        return execute(new RunPlan(instanceId, chosen, 1, 1, Map.of()), target, agentId);
+    }
+
+    /**
+     * Runs one instance once with the caller's own values layered over its saved inputs — the door a
+     * page's button comes through, where the operator has just typed the order id the instance was
+     * saved with a placeholder for.
+     *
+     * <p>The overrides sit above everything in the variable merge, and an input the caller does not
+     * name keeps whatever the instance was saved with, so a page only has to supply what it varies.
+     * Unlike the grid-facing endpoints this returns the result with its payload intact: the caller
+     * is binding the response into a grid or a dropdown, so the body is the point.
+     */
+    public AppUseCaseInstanceOutput executeWithInputs(String instanceId, String environment,
+                                                      Map<String, Object> inputs,
+                                                      ExecutionTarget target, String agentId) {
+        AppUseCaseInstance instance = catalog.getInstance(instanceId);
+        String chosen = environment != null && !environment.isBlank() ? environment
+                : instance != null ? firstEnvironment(instance) : null;
+        return execute(new RunPlan(instanceId, chosen, 1, 1, inputs != null ? inputs : Map.of()), target, agentId);
     }
 
     // -------------------------------------------------------------------------
@@ -226,8 +245,13 @@ public class AppExecutionService {
      *
      * @param environment the environment to call, or null when the instance names none at all —
      *                    that plan exists only to carry the failure into the grid
+     * @param inputOverrides
+     *                    values supplied by the caller for this run alone, sitting above the
+     *                    instance's own inputs. Empty for every run started from the catalog pages;
+     *                    populated when a page button hands over what the operator typed.
      */
-    private record RunPlan(String instanceId, String environment, int runIndex, int runCount) {}
+    private record RunPlan(String instanceId, String environment, int runIndex, int runCount,
+                           Map<String, Object> inputOverrides) {}
 
     /**
      * The full expansion of one instance: every environment it names, each repeated {@code runCount}
@@ -235,7 +259,7 @@ public class AppExecutionService {
      */
     private List<RunPlan> plan(String instanceId, Integer runCount) {
         AppUseCaseInstance instance = catalog.getInstance(instanceId);
-        if (instance == null) return List.of(new RunPlan(instanceId, null, 1, 1));
+        if (instance == null) return List.of(new RunPlan(instanceId, null, 1, 1, Map.of()));
 
         List<String> environments = instance.getEffectiveEnvironments();
         // No environment at all is still one plan — execute() turns it into a named failure rather
@@ -246,7 +270,7 @@ public class AppExecutionService {
         List<RunPlan> plans = new ArrayList<>(environments.size() * effectiveRunCount);
         for (String environment : environments) {
             for (int run = 1; run <= effectiveRunCount; run++) {
-                plans.add(new RunPlan(instanceId, environment, run, effectiveRunCount));
+                plans.add(new RunPlan(instanceId, environment, run, effectiveRunCount, Map.of()));
             }
         }
         return plans;
@@ -322,6 +346,7 @@ public class AppExecutionService {
 
         try {
             Map<String, Object> variables = mergeVariables(app, useCase, instance);
+            variables.putAll(runPlan.inputOverrides());
 
             // Auth runs before substitution so a JWT token is available to the request as $jwtToken.
             String authorization = applyAuth(app, env, variables);

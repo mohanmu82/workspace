@@ -74,9 +74,10 @@
 
 <script>
     // The sub-pages, in the order you would normally set them up: an app, then where it lives,
-    // then what you can call on it, then the concrete runs. Global Runs sits after them without a
-    // step number — it is not a setup step but the read-across of everything the others produced,
-    // spanning every app rather than the one currently selected. Each is also a standalone page —
+    // then what you can call on it, then the concrete runs, then the pages that put those runs
+    // behind a form someone else can use. Global Runs sits after them without a step number — it is
+    // not a setup step but the read-across of everything the others produced, spanning every app
+    // rather than the one currently selected. Each is also a standalone page —
     // the shell just frames it and keeps the current tab in the URL hash so a tab is linkable and
     // survives a refresh.
     const TABS = [
@@ -84,6 +85,7 @@
         { id: 'environments',step: 2, label: 'Environments',      file: 'appenvironments.html' },
         { id: 'usecases',    step: 3, label: 'Use Cases',         file: 'appusecases.html' },
         { id: 'instances',   step: 4, label: 'Instances & Runs',  file: 'appusecaseinstance.html' },
+        { id: 'pages',       step: 5, label: 'Pages',             file: 'apppage.html' },
         { id: 'global',               label: 'Global Runs',       file: 'appglobal.html' }
     ];
 

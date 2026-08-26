@@ -1,0 +1,1522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>App Pages</title>
+    <link rel="stylesheet" href="appcatalog.css">
+    <style>
+        /* Palette | canvas | properties. The canvas is the only part that grows. */
+        .designer { display: grid; grid-template-columns: 210px 1fr 330px; gap: 14px; align-items: start; }
+        @media (max-width: 1200px) { .designer { grid-template-columns: 1fr; } }
+
+        .palette-item {
+            display: flex; align-items: center; gap: 8px;
+            padding: 7px 10px; margin-bottom: 5px;
+            border: 1px solid #dfe1e6; border-radius: 4px;
+            background: #fff; cursor: grab; font-size: 13px;
+        }
+        .palette-item:hover { border-color: #4c9aff; background: #f7faff; }
+        .palette-item .glyph { font-size: 12px; color: #5e6c84; width: 16px; text-align: center; }
+
+        /* The page surface: twelve columns, fixed-height rows, so a control's row/col is a real
+           coordinate and dropping one somewhere leaves it there. Rows are drawn in halves (38px
+           plus the 8px gap makes an 84px full row) so a control can be half a row tall. */
+        .canvas {
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            grid-auto-rows: 38px;
+            gap: 8px;
+            min-height: 420px;
+            padding: 10px;
+            border: 1px dashed #c1c7d0;
+            border-radius: 6px;
+            background: #fafbfc;
+            background-image: linear-gradient(90deg, rgba(0,82,204,.045) 1px, transparent 1px);
+            background-size: calc((100% - 20px) / 12) 100%;
+            background-position: 10px 0;
+        }
+        .canvas.drag-over { border-color: #0052cc; background-color: #f0f6ff; }
+
+        .dctl {
+            position: relative;
+            border: 1px solid #dfe1e6; border-radius: 4px; background: #fff;
+            padding: 6px 8px; cursor: grab; overflow: hidden; min-width: 0;
+        }
+        .dctl:hover { border-color: #4c9aff; }
+        .dctl.selected { border-color: #0052cc; box-shadow: 0 0 0 2px rgba(76,154,255,.3); }
+        .dctl .dctl-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; min-width: 0; }
+        .dctl .dctl-label { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .dctl .dctl-field { font-size: 10px; color: #97a0af; font-family: "Cascadia Code", Consolas, monospace; }
+        .dctl .req { color: #de350b; font-weight: 700; }
+        .dctl .fake {
+            font-size: 11px; color: #97a0af; background: #f4f5f7;
+            border: 1px solid #e4e6ea; border-radius: 3px; padding: 4px 6px;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .dctl .fake.btn { background: #deebff; color: #0747a6; border-color: #b3d4ff; text-align: center; font-weight: 600; }
+        .dctl .fake.link { background: none; border: none; color: #0052cc; text-decoration: underline; padding: 2px 0; }
+        .dctl .fake.grid { height: calc(100% - 4px); }
+        .dctl.hidden-ctl { border-style: dashed; background: #f7f8f9; }
+
+        /* Half a row leaves no room for a preview underneath the label, so it shows the label alone. */
+        .dctl.short { padding: 3px 8px; }
+        .dctl.short .dctl-head { margin-bottom: 0; }
+        .dctl.short .fake { display: none; }
+
+        /* Drag the right edge to widen a control, the bottom edge to make it taller or thinner. */
+        .dctl .resize { position: absolute; top: 0; right: 0; width: 8px; height: 100%; cursor: ew-resize; }
+        .dctl .resize:hover { background: rgba(0,82,204,.12); }
+        .dctl .resize-v { position: absolute; left: 0; bottom: 0; height: 7px; width: 100%; cursor: ns-resize; }
+        .dctl .resize-v:hover { background: rgba(0,82,204,.12); }
+
+        .type-badge {
+            font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px;
+            padding: 1px 5px; border-radius: 8px; background: #f4f5f7; color: #5e6c84; flex: none;
+        }
+        .type-badge.button { background: #deebff; color: #0747a6; }
+        .type-badge.link   { background: #deebff; color: #0747a6; }
+        .type-badge.select { background: #e3fcef; color: #006644; }
+        .type-badge.grid   { background: #eae6ff; color: #403294; }
+        .type-badge.hidden { background: #ebecf0; color: #5e6c84; }
+
+        /* Repeating editors in the properties panel (static options, action inputs, actions). */
+        .props-section { border-top: 1px solid #f0f1f3; margin-top: 12px; padding-top: 10px; }
+        .props-section > .props-title {
+            font-size: 11px; font-weight: 700; color: #5e6c84; text-transform: uppercase;
+            letter-spacing: .4px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;
+        }
+        .opt-row { display: grid; grid-template-columns: 1fr 1fr 30px; gap: 6px; margin-bottom: 5px; }
+        .action-card { border: 1px solid #dfe1e6; border-radius: 5px; padding: 9px; margin-bottom: 8px; background: #fbfcfd; }
+        .action-card .action-head { display: flex; align-items: center; gap: 6px; margin-bottom: 7px; }
+        .action-card .action-num {
+            font-size: 10px; font-weight: 700; color: #fff; background: #0052cc;
+            border-radius: 9px; padding: 1px 7px; flex: none;
+        }
+        .mini { font-size: 11px; }
+        .mini label { font-size: 10px !important; }
+        .mini input, .mini select, .mini textarea { padding: 5px 7px; font-size: 12px; }
+        .stack { display: flex; flex-direction: column; gap: 7px; }
+        .inline-check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #172b4d; }
+        .inline-check input { width: auto; }
+
+        /* ── Run mode ───────────────────────────────────────────────────────── */
+
+        .run-shell { background: #fff; border: 1px solid #dfe1e6; border-radius: 6px; padding: 16px; }
+        .run-title { font-size: 16px; font-weight: 600; margin-bottom: 2px; }
+        .run-desc { font-size: 12px; color: #5e6c84; margin-bottom: 14px; }
+
+        /* The page's own error section — one place every failure lands, whether it came from a
+           missing mandatory field or from the use case instance behind a button. */
+        .page-errors {
+            border: 1px solid #ffbdad; background: #ffebe6; border-radius: 5px;
+            padding: 10px 12px; margin-bottom: 14px;
+        }
+        .page-errors .err-title { font-size: 11px; font-weight: 700; color: #bf2600; text-transform: uppercase; letter-spacing: .4px; margin-bottom: 6px; }
+        .page-errors ul { margin: 0; padding-left: 18px; }
+        .page-errors li { font-size: 13px; color: #bf2600; margin-bottom: 3px; }
+
+        /* Same half-row geometry as the design canvas, so what was laid out is what runs. */
+        .run-canvas { display: grid; grid-template-columns: repeat(12, 1fr); grid-auto-rows: minmax(38px, auto); gap: 8px; }
+        .run-ctl { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+        .run-ctl > label { font-size: 11px; font-weight: 600; color: #5e6c84; text-transform: uppercase; letter-spacing: .4px; }
+        .run-ctl.button-ctl { justify-content: flex-end; }
+        .run-ctl.button-ctl button { width: 100%; }
+        .run-ctl.static-label { justify-content: center; font-size: 14px; }
+
+        /* A link runs the same actions a button does but claims a line of text rather than a block. */
+        .run-ctl.link-ctl { justify-content: center; }
+        .run-link {
+            font-size: 13px; color: #0052cc; background: none; border: none; padding: 0;
+            font-family: inherit; text-align: left; text-decoration: underline; cursor: pointer;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .run-link:hover { color: #0747a6; }
+
+        /* ── Grids ──────────────────────────────────────────────────────────── */
+
+        .data-grid { display: flex; flex-direction: column; min-height: 0; flex: 1; gap: 5px; }
+        .grid-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .grid-tools .grid-count { font-size: 11px; color: #5e6c84; margin-right: auto; }
+        .grid-box { border: 1px solid #dfe1e6; border-radius: 4px; overflow: auto; background: #fff; flex: 1; min-height: 0; }
+        .grid-box table { width: 100%; }
+        .grid-box th { position: sticky; top: 0; background: #f4f5f7; z-index: 1; }
+        .grid-box th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+        .grid-box th.sortable:hover { background: #ebecf0; }
+        .grid-box th .sort-arrow { color: #0052cc; font-size: 10px; margin-left: 3px; }
+        .grid-box tr.filter-row th { top: 30px; padding: 3px 4px; background: #fafbfc; }
+        .grid-box tr.filter-row input {
+            width: 100%; min-width: 60px; padding: 2px 5px; font-size: 11px;
+            border: 1px solid #dfe1e6; border-radius: 3px; font-family: inherit;
+        }
+        .grid-box .grid-empty { font-size: 12px; color: #97a0af; font-style: italic; padding: 10px; }
+
+        /* Grids an action stacks rather than reuses: newest first, each keeping its own tools. */
+        #stackedGrids { margin-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+        .stacked-grid { border: 1px solid #dfe1e6; border-radius: 5px; background: #fbfcfd; padding: 9px 10px; }
+        .stacked-grid .stacked-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+        .stacked-grid .stacked-title { font-size: 13px; font-weight: 600; }
+        .stacked-grid .stacked-when { font-size: 11px; color: #5e6c84; }
+        .stacked-grid .stacked-head .icon-btn { margin-left: auto; }
+        .stacked-grid .grid-box { max-height: 320px; }
+
+        .busy { opacity: .6; pointer-events: none; }
+        .req { color: #de350b; font-weight: 700; }
+
+        /* apppage.html?page=…&mode=run is the operator's link: nothing but the page itself. */
+        body.standalone .page-nav,
+        body.standalone > h1,
+        body.standalone > .subtitle,
+        body.standalone #identityPanel { display: none; }
+    </style>
+</head>
+<body>
+
+<div class="page-nav"><a href="app.html">&larr; App Catalog</a></div>
+<h1>App Pages</h1>
+<div class="subtitle">Assemble a screen out of the catalog's use case instances — from any app: fields the operator fills in, buttons and links that run instances with those values, grids, dropdowns and text boxes the results land in.</div>
+
+<!-- Page picker / identity -->
+<div class="panel" id="identityPanel">
+    <div class="form-row">
+        <div class="form-group">
+            <label for="pageSelect">Page</label>
+            <select id="pageSelect" onchange="onPageSelected()"></select>
+        </div>
+        <div class="form-group">
+            <label for="pageName">Page Name</label>
+            <input id="pageName" type="text" placeholder="order-lookup" autocomplete="off">
+            <span class="hint" id="pageNameHint">Unique across the catalog.</span>
+        </div>
+        <div class="form-group">
+            <label for="pageTitle">Title</label>
+            <input id="pageTitle" type="text" placeholder="Order Lookup" oninput="onHeaderInput()">
+        </div>
+        <div class="form-group wide">
+            <label for="pageDescription">Description</label>
+            <input id="pageDescription" type="text" placeholder="Look an order up by id and re-send its confirmation." oninput="onHeaderInput()">
+        </div>
+    </div>
+    <div class="toolbar">
+        <button class="primary" onclick="savePage()">Save</button>
+        <button class="secondary" onclick="newPage()">New</button>
+        <button class="secondary" id="runBtn" onclick="setMode('run')">Preview &amp; Run</button>
+        <button class="secondary" id="designBtn" onclick="setMode('design')" style="display:none">Back to Design</button>
+        <a id="standaloneLink" class="hint" style="display:none" target="_blank" rel="noopener"></a>
+        <button class="danger" id="deleteBtn" onclick="deletePage()" style="display:none">Delete</button>
+    </div>
+    <div id="statusBar" class="status-bar"></div>
+</div>
+
+<!-- Design mode -->
+<div class="designer" id="designer">
+
+    <div class="panel">
+        <div class="panel-title"><span>Controls</span></div>
+        <div id="palette"></div>
+        <div class="panel-title" style="margin-top:16px"><span>On This Page</span></div>
+        <div class="record-list" id="controlList"></div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-title">
+            <span>Layout</span>
+            <span class="hint">Drag a control onto the grid, drag it again to move it, drag its right edge to widen it or its bottom edge to change its height — down to half a row.</span>
+        </div>
+        <div id="canvas" class="canvas"></div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-title"><span>Properties</span></div>
+        <div id="props"></div>
+    </div>
+
+</div>
+
+<!-- Run mode -->
+<div id="runner" style="display:none">
+    <div class="run-shell">
+        <div class="run-title" id="runTitle"></div>
+        <div class="run-desc" id="runDesc"></div>
+        <div id="pageErrors"></div>
+        <div id="runStatus" class="status-bar" style="margin:0 0 12px"></div>
+        <div class="run-canvas" id="runCanvas"></div>
+        <div id="stackedGrids"></div>
+    </div>
+</div>
+
+<script src="appcatalog.js"></script>
+<script>
+    // Placement grid — must match .canvas / .run-canvas in the stylesheet, since a drop position is
+    // worked out from pixels and turned straight into a row/column. The CSS grid is drawn in half
+    // rows so a control can be half a row tall; a control's own row stays in whole rows, and only
+    // its height is allowed the half step.
+    const COLUMNS = 12;
+    const HALF_ROW = 38;
+    const ROW_GAP = 8;
+    const ROW_PITCH = (HALF_ROW + ROW_GAP) * 2;   // one whole row, gap included: 92px
+    const MIN_ROW_SPAN = 0.5;
+
+    // Sentinel target: instead of filling a control that is already on the page, every run stacks
+    // another grid underneath the form, newest on top.
+    const NEW_GRID = '__new_grid__';
+
+    const PALETTE = [
+        { type: 'text',     glyph: 'ab',  label: 'Text' },
+        { type: 'textarea', glyph: '¶', label: 'Text Area' },
+        { type: 'number',   glyph: '12', label: 'Number' },
+        { type: 'date',     glyph: '▦', label: 'Date' },
+        { type: 'checkbox', glyph: '✓', label: 'Checkbox' },
+        { type: 'select',   glyph: '▾', label: 'Select' },
+        { type: 'hidden',   glyph: '∅', label: 'Hidden' },
+        { type: 'label',    glyph: 'T',  label: 'Label' },
+        { type: 'button',   glyph: '▶', label: 'Button' },
+        { type: 'link',     glyph: '↗', label: 'Link' },
+        { type: 'grid',     glyph: '☷', label: 'Grid' }
+    ];
+
+    // Controls that hold a value the operator supplies — the ones with a field name, the ones a
+    // mandatory check applies to, and the ones an action's ${placeholder} can read.
+    const VALUE_TYPES = ['text', 'textarea', 'number', 'date', 'hidden', 'select', 'checkbox'];
+
+    // Controls that run use case instances when clicked, and the ones a response can land in.
+    const ACTION_TYPES = ['button', 'link'];
+    const TARGET_TYPES = ['grid', 'select', 'text', 'textarea'];
+
+    let instances = [];         // every instance in the catalog — a page may span apps
+    let apps = [];               // every app — backs the app picker for a select's ENVIRONMENTS source
+    let pages = [];
+    let page = null;            // the AppPage being edited
+    let savedPageName = null;   // null while the page has never been saved — decides POST vs PUT
+    let selectedId = null;
+    let mode = 'design';
+
+    // Run-mode state, rebuilt from scratch every time the page is previewed.
+    let values = {};
+    let errors = [];
+    // Per-grid rows plus the sort and column filters the operator has applied to them, keyed by the
+    // grid's own id — a placed control's id, or a generated one for each stacked grid.
+    let gridState = {};
+    let stackedCount = 0;
+
+    // ── Loading ──────────────────────────────────────────────────────────────
+
+    /**
+     * A page is not tied to an app — it routinely reaches across them — so both lists are loaded
+     * whole rather than filtered by a selected app.
+     */
+    async function loadCatalog() {
+        try {
+            [instances, apps, pages] = await Promise.all([
+                AC.listInstances(),
+                AC.listApps(),
+                AC.api('GET', '/appcatalog/pages')
+            ]);
+        } catch (e) {
+            instances = instances || [];
+            apps = apps || [];
+            pages = pages || [];
+            AC.setStatus('statusBar', 'Failed to load the catalog: ' + e.message, 'error');
+        }
+        renderPageSelect();
+        newPage();
+    }
+
+    function renderPageSelect() {
+        AC.fillSelect(document.getElementById('pageSelect'), pages.map(p => p.pageName),
+            pages.length ? '— new page —' : 'No pages yet');
+        document.getElementById('pageSelect').value = savedPageName || '';
+    }
+
+    async function onPageSelected() {
+        const name = document.getElementById('pageSelect').value;
+        if (!name) { newPage(); return; }
+        try {
+            page = await AC.api('GET', '/appcatalog/pages/' + encodeURIComponent(name));
+            page.controls = page.controls || [];
+            savedPageName = page.pageName;
+            selectedId = null;
+            setMode('design');
+            renderAll();
+            AC.setStatus('statusBar', '');
+        } catch (e) {
+            AC.setStatus('statusBar', 'Failed to load page: ' + e.message, 'error');
+        }
+    }
+
+    function newPage() {
+        page = { pageName: '', title: '', description: '', controls: [] };
+        savedPageName = null;
+        selectedId = null;
+        setMode('design');
+        renderAll();
+    }
+
+    // ── Rendering ────────────────────────────────────────────────────────────
+
+    function renderAll() {
+        document.getElementById('pageName').value = page.pageName || '';
+        document.getElementById('pageName').disabled = !!savedPageName;
+        document.getElementById('pageNameHint').textContent = savedPageName
+            ? 'Fixed once saved — create a new page to use a different name.'
+            : 'Unique across the catalog.';
+        document.getElementById('pageTitle').value = page.title || '';
+        document.getElementById('pageDescription').value = page.description || '';
+        document.getElementById('deleteBtn').style.display = savedPageName ? '' : 'none';
+
+        const link = document.getElementById('standaloneLink');
+        if (savedPageName) {
+            link.style.display = '';
+            link.href = 'apppage.html?page=' + encodeURIComponent(savedPageName) + '&mode=run';
+            link.textContent = 'Open standalone ↗';
+        } else {
+            link.style.display = 'none';
+        }
+
+        renderPalette();
+        renderControlList();
+        renderCanvas();
+        renderProps();
+    }
+
+    function renderPalette() {
+        document.getElementById('palette').innerHTML = PALETTE.map(p =>
+            '<div class="palette-item" draggable="true" data-new="' + p.type + '">' +
+                '<span class="glyph">' + AC.esc(p.glyph) + '</span>' + AC.esc(p.label) +
+            '</div>'
+        ).join('');
+        document.querySelectorAll('#palette .palette-item').forEach(el => {
+            el.addEventListener('dragstart', e => {
+                e.dataTransfer.setData('text/plain', 'new:' + el.dataset.new);
+                e.dataTransfer.effectAllowed = 'copy';
+            });
+        });
+    }
+
+    function renderControlList() {
+        const list = document.getElementById('controlList');
+        if (!page.controls.length) {
+            list.innerHTML = '<div class="empty-note">Nothing placed yet.</div>';
+            return;
+        }
+        list.innerHTML = page.controls.map(c =>
+            '<div class="record' + (c.controlId === selectedId ? ' selected' : '') + '" onclick="selectControl(\'' + AC.attr(c.controlId) + '\')">' +
+                '<div class="record-name">' + AC.esc(controlTitle(c)) + '</div>' +
+                '<div class="record-meta">' +
+                    '<span class="type-badge ' + AC.esc(c.type) + '">' + AC.esc(c.type) + '</span>' +
+                    '<span>r' + c.row + ' c' + c.col + ' · ' + c.span + ' col'
+                        + (rowSpanOf(c) !== 1 ? ' · h' + rowSpanOf(c) : '') + '</span>' +
+                    (c.mandatory ? '<span class="badge err">required</span>' : '') +
+                '</div>' +
+            '</div>'
+        ).join('');
+    }
+
+    function controlTitle(c) {
+        return c.label || c.fieldName || '(' + c.type + ')';
+    }
+
+    function renderCanvas() {
+        const canvas = document.getElementById('canvas');
+        const rows = Math.max(5, ...page.controls.map(c => c.row + Math.ceil(rowSpanOf(c)))) + 1;
+        canvas.style.gridTemplateRows = 'repeat(' + (rows * 2) + ', ' + HALF_ROW + 'px)';
+
+        canvas.innerHTML = page.controls.map(c => {
+            return '<div class="dctl' + (c.controlId === selectedId ? ' selected' : '')
+                + (c.type === 'hidden' ? ' hidden-ctl' : '')
+                + (rowSpanOf(c) <= 0.5 ? ' short' : '') + '" style="' + placement(c) + '"'
+                + ' draggable="true" data-id="' + AC.attr(c.controlId) + '">'
+                + '<div class="dctl-head">'
+                    + '<span class="type-badge ' + AC.esc(c.type) + '">' + AC.esc(c.type) + '</span>'
+                    + '<span class="dctl-label"' + colorStyle(c) + '>' + AC.esc(controlTitle(c)) + (c.mandatory ? ' <span class="req">*</span>' : '') + '</span>'
+                + '</div>'
+                + designPreview(c)
+                + '<div class="resize" data-resize="' + AC.attr(c.controlId) + '"></div>'
+                + '<div class="resize-v" data-resize-v="' + AC.attr(c.controlId) + '"></div>'
+            + '</div>';
+        }).join('');
+
+        canvas.querySelectorAll('.dctl').forEach(el => {
+            el.addEventListener('click', () => selectControl(el.dataset.id));
+            el.addEventListener('dragstart', e => {
+                e.dataTransfer.setData('text/plain', 'move:' + el.dataset.id);
+                e.dataTransfer.effectAllowed = 'move';
+            });
+        });
+        canvas.querySelectorAll('.resize').forEach(el => {
+            el.addEventListener('mousedown', e => startResize(e, el.dataset.resize));
+            el.addEventListener('dragstart', e => e.preventDefault());
+        });
+        canvas.querySelectorAll('.resize-v').forEach(el => {
+            el.addEventListener('mousedown', e => startResizeHeight(e, el.dataset.resizeV));
+            el.addEventListener('dragstart', e => e.preventDefault());
+        });
+    }
+
+    function rowSpanOf(c) {
+        const value = Number(c.rowSpan);
+        return value > 0 ? value : 1;
+    }
+
+    /** Row and height are in whole/half rows; the CSS grid counts in halves, so both double. */
+    function placement(c) {
+        return 'grid-column:' + (c.col + 1) + '/span ' + c.span
+             + ';grid-row:' + (c.row * 2 + 1) + '/span ' + Math.round(rowSpanOf(c) * 2);
+    }
+
+    /** Keeps a color property to characters a CSS color value can actually use, dropping anything
+     *  that could break out of the style attribute it lands in. */
+    function cssColor(value) {
+        const v = (value || '').trim();
+        return /^[#a-zA-Z0-9\s.,%()-]*$/.test(v) ? v : '';
+    }
+
+    /** A `style="color:…"` attribute for a control that named one, or nothing at all. */
+    function colorStyle(c) {
+        const color = cssColor(c.color);
+        return color ? ' style="color:' + AC.esc(color) + '"' : '';
+    }
+
+    /** A faint stand-in for what the control will look like once the page runs. */
+    function designPreview(c) {
+        if (c.type === 'button' || c.type === 'link') {
+            const count = (c.actions || []).length;
+            return '<div class="fake ' + (c.type === 'link' ? 'link' : 'btn') + '">'
+                + AC.esc(c.label || (c.type === 'link' ? 'Link' : 'Button'))
+                + (count ? ' · ' + count + ' action' + (count > 1 ? 's' : '') : '') + '</div>';
+        }
+        if (c.type === 'grid')   return '<div class="fake grid">grid — ' + (c.columns && c.columns.length ? AC.esc(c.columns.join(', ')) : 'columns follow the data') + '</div>';
+        if (c.type === 'label')  return '<div class="fake">' + AC.esc(c.defaultValue || c.label || 'text') + '</div>';
+        if (c.type === 'hidden') return '<div class="fake">' + AC.esc(c.fieldName || 'field') + ' = ' + AC.esc(c.defaultValue || '') + '</div>';
+        if (c.type === 'select') {
+            const source = c.optionSource || {};
+            const from = source.mode === 'STATIC' ? (source.staticOptions || []).length + ' fixed options'
+                       : source.mode === 'USECASE' ? (source.appUseCaseInstanceId || 'no instance')
+                       : source.mode === 'ENVIRONMENTS' ? (source.appName || 'no app') + ' environments'
+                       : 'empty';
+            return '<div class="fake">▾ ' + AC.esc(from) + '</div>';
+        }
+        return '<div class="fake">' + AC.esc(c.defaultValue || c.placeholder || c.type) + '</div>';
+    }
+
+    // ── Placement: drag, drop, resize ────────────────────────────────────────
+
+    const canvasEl = document.getElementById('canvas');
+
+    canvasEl.addEventListener('dragover', e => {
+        e.preventDefault();
+        canvasEl.classList.add('drag-over');
+    });
+    canvasEl.addEventListener('dragleave', () => canvasEl.classList.remove('drag-over'));
+    canvasEl.addEventListener('drop', e => {
+        e.preventDefault();
+        canvasEl.classList.remove('drag-over');
+
+        const payload = e.dataTransfer.getData('text/plain') || '';
+        const cell = cellAt(e.clientX, e.clientY);
+
+        if (payload.startsWith('new:')) {
+            addControl(payload.slice(4), cell);
+        } else if (payload.startsWith('move:')) {
+            const control = findControl(payload.slice(5));
+            if (!control) return;
+            control.row = cell.row;
+            control.col = Math.min(cell.col, COLUMNS - control.span);
+            renderAll();
+        }
+    });
+
+    /** Turns a pointer position into the row/column of the cell under it. */
+    function cellAt(clientX, clientY) {
+        const rect = canvasEl.getBoundingClientRect();
+        const usable = rect.width - 20;                       // the canvas' own 10px padding
+        const col = Math.floor((clientX - rect.left - 10) / (usable / COLUMNS));
+        const row = Math.floor((clientY - rect.top - 10) / ROW_PITCH);
+        return { row: Math.max(0, row), col: Math.min(Math.max(0, col), COLUMNS - 1) };
+    }
+
+    function startResize(e, controlId) {
+        e.preventDefault();
+        e.stopPropagation();
+        const control = findControl(controlId);
+        if (!control) return;
+
+        const cellWidth = (canvasEl.getBoundingClientRect().width - 20) / COLUMNS;
+        const startX = e.clientX;
+        const startSpan = control.span;
+
+        function onMove(move) {
+            const span = startSpan + Math.round((move.clientX - startX) / cellWidth);
+            const clamped = Math.min(Math.max(span, 1), COLUMNS - control.col);
+            if (clamped !== control.span) { control.span = clamped; renderCanvas(); }
+        }
+        function onUp() {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            renderAll();
+        }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    }
+
+    /**
+     * Drags the bottom edge to change height. Snaps to half a row, which is as thin as a control
+     * goes — enough for a link or a one-line label without a whole row's worth of padding.
+     */
+    function startResizeHeight(e, controlId) {
+        e.preventDefault();
+        e.stopPropagation();
+        const control = findControl(controlId);
+        if (!control) return;
+
+        const startY = e.clientY;
+        const startSpan = rowSpanOf(control);
+
+        function onMove(move) {
+            const moved = (move.clientY - startY) / ROW_PITCH;
+            const span = Math.round((startSpan + moved) * 2) / 2;
+            const clamped = Math.min(Math.max(span, MIN_ROW_SPAN), 12);
+            if (clamped !== rowSpanOf(control)) { control.rowSpan = clamped; renderCanvas(); }
+        }
+        function onUp() {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            renderAll();
+        }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    }
+
+    function addControl(type, cell) {
+        const control = {
+            controlId: 'c-' + Math.random().toString(36).slice(2, 10),
+            fieldName: VALUE_TYPES.includes(type) ? nextFieldName(type) : '',
+            label: type === 'button' ? 'Run' : type.charAt(0).toUpperCase() + type.slice(1),
+            type: type,
+            defaultValue: '',
+            mandatory: false,
+            placeholder: '',
+            helpText: '',
+            color: '',
+            row: cell.row,
+            col: cell.col,
+            span: type === 'grid' ? 12 : type === 'button' ? 2 : 3,
+            // A link is meant to sit in the flow of a form rather than block it out, so it starts
+            // half a row tall.
+            rowSpan: type === 'grid' ? 3 : type === 'link' ? 0.5 : 1,
+            optionSource: type === 'select' ? { mode: 'NONE', staticOptions: [], appUseCaseInstanceId: '', arrayPath: '', keyField: '', labelField: '', appName: '' } : null,
+            actions: [],
+            columns: []
+        };
+        control.col = Math.min(control.col, COLUMNS - control.span);
+        page.controls.push(control);
+        selectedId = control.controlId;
+        renderAll();
+    }
+
+    function nextFieldName(type) {
+        const taken = page.controls.map(c => c.fieldName);
+        let n = 1;
+        while (taken.includes(type + n)) n++;
+        return type + n;
+    }
+
+    function findControl(controlId) {
+        return page.controls.find(c => c.controlId === controlId) || null;
+    }
+
+    function selectControl(controlId) {
+        selectedId = controlId;
+        renderControlList();
+        renderCanvas();
+        renderProps();
+    }
+
+    function deleteControl() {
+        const control = findControl(selectedId);
+        if (!control || !confirm('Remove "' + controlTitle(control) + '" from the page?')) return;
+        page.controls = page.controls.filter(c => c.controlId !== selectedId);
+        // Any action pointing at it would save as a dangling target, so drop the reference too.
+        page.controls.forEach(c => (c.actions || []).forEach(a => {
+            if (a.targetControlId === selectedId) a.targetControlId = '';
+        }));
+        selectedId = null;
+        renderAll();
+    }
+
+    // ── Properties panel ─────────────────────────────────────────────────────
+
+    function renderProps() {
+        const host = document.getElementById('props');
+        const c = findControl(selectedId);
+        if (!c) {
+            host.innerHTML = '<div class="empty-note">Select a control to edit it, or drag a new one onto the layout.</div>';
+            return;
+        }
+
+        const isValue = VALUE_TYPES.includes(c.type);
+        let html = '<div class="stack mini">';
+
+        html += field('Label', '<input type="text" value="' + AC.attr(c.label || '') + '" oninput="setProp(\'label\', this.value)">');
+        html += field('Color', '<input type="text" value="' + AC.attr(c.color || '') + '" placeholder="blue, #d63384, rgb(0,82,204)" oninput="setProp(\'color\', this.value)">',
+            'CSS color applied to this control\'s label and value when the page runs.');
+        if (isValue) {
+            html += field('Field Name', '<input type="text" value="' + AC.attr(c.fieldName || '') + '" oninput="setProp(\'fieldName\', this.value)">',
+                'How actions refer to this value: <code>${' + AC.esc(c.fieldName || 'name') + '}</code>');
+        }
+        html += field('Type', typeSelect(c));
+
+        if (isValue || c.type === 'label') {
+            html += field('Default Value', '<input type="text" value="' + AC.attr(c.defaultValue || '') + '" oninput="setProp(\'defaultValue\', this.value)">');
+        }
+        if (['text', 'textarea', 'number', 'date'].includes(c.type)) {
+            html += field('Placeholder', '<input type="text" value="' + AC.attr(c.placeholder || '') + '" oninput="setProp(\'placeholder\', this.value)">');
+        }
+        if (isValue) {
+            html += '<label class="inline-check"><input type="checkbox"' + (c.mandatory ? ' checked' : '')
+                 + ' onchange="setProp(\'mandatory\', this.checked)"> Mandatory</label>';
+            html += field('Help Text', '<input type="text" value="' + AC.attr(c.helpText || '') + '" oninput="setProp(\'helpText\', this.value)">');
+        }
+
+        html += '<div class="form-row" style="margin-bottom:0">'
+             + field('Row', '<input type="number" min="0" value="' + c.row + '" oninput="setProp(\'row\', +this.value)">')
+             + field('Column', '<input type="number" min="0" max="11" value="' + c.col + '" oninput="setProp(\'col\', +this.value)">')
+             + field('Width', '<input type="number" min="1" max="12" value="' + c.span + '" oninput="setProp(\'span\', +this.value)">')
+             + field('Height', '<input type="number" min="0.5" max="12" step="0.5" value="' + rowSpanOf(c) + '" oninput="setProp(\'rowSpan\', +this.value)">')
+             + '</div>'
+             + '<span class="hint" style="margin-top:-4px">Height goes down to 0.5 — half a row, for something that should sit thinner than a field.</span>';
+
+        if (c.type === 'select') html += selectProps(c);
+        if (c.type === 'grid')   html += gridProps(c);
+        if (ACTION_TYPES.includes(c.type)) html += buttonProps(c);
+
+        html += '<div class="toolbar" style="margin-top:10px"><button class="danger" onclick="deleteControl()">Remove Control</button></div>';
+        host.innerHTML = html + '</div>';
+    }
+
+    function field(label, control, hint) {
+        return '<div class="form-group"><label>' + AC.esc(label) + '</label>' + control
+            + (hint ? '<span class="hint">' + hint + '</span>' : '') + '</div>';
+    }
+
+    function typeSelect(c) {
+        return '<select onchange="changeType(this.value)">'
+            + PALETTE.map(p => '<option value="' + p.type + '"' + (p.type === c.type ? ' selected' : '') + '>' + AC.esc(p.label) + '</option>').join('')
+            + '</select>';
+    }
+
+    /** Grouped by app: the list spans every app, so the app is what tells two instances apart. */
+    function instanceOptions(selected) {
+        const byApp = new Map();
+        instances.forEach(i => {
+            const app = i.appName || '(no app)';
+            if (!byApp.has(app)) byApp.set(app, []);
+            byApp.get(app).push(i);
+        });
+        return '<option value="">— select an instance —</option>'
+            + [...byApp.entries()].map(([app, list]) =>
+                '<optgroup label="' + AC.attr(app) + '">'
+                + list.map(i => {
+                    const label = i.instanceLabel || (i.appUseCaseName + ' @ ' + i.appEnvironment);
+                    return '<option value="' + AC.attr(i.appUseCaseInstanceId) + '"' + (i.appUseCaseInstanceId === selected ? ' selected' : '') + '>'
+                        + AC.esc(label) + '</option>';
+                }).join('')
+                + '</optgroup>').join('');
+    }
+
+    /** Plain app names — the App field of a select's ENVIRONMENTS source. */
+    function appOptions(selected) {
+        return '<option value="">— select an app —</option>'
+            + apps.map(a => '<option value="' + AC.attr(a.appName) + '"' + (a.appName === selected ? ' selected' : '') + '>'
+                + AC.esc(a.appName) + '</option>').join('');
+    }
+
+    function selectProps(c) {
+        const source = c.optionSource || (c.optionSource = { mode: 'NONE', staticOptions: [] });
+        let html = '<div class="props-section"><div class="props-title"><span>Options</span></div>';
+        html += field('Source',
+            '<select onchange="setOption(\'mode\', this.value); renderProps()">'
+            + ['NONE', 'STATIC', 'USECASE', 'ENVIRONMENTS'].map(m => '<option value="' + m + '"' + (source.mode === m ? ' selected' : '') + '>'
+                + (m === 'NONE' ? 'Empty' : m === 'STATIC' ? 'Static list' : m === 'USECASE' ? 'Use case instance' : 'App environments') + '</option>').join('')
+            + '</select>');
+
+        if (source.mode === 'STATIC') {
+            const options = source.staticOptions || [];
+            html += '<div class="form-group"><label>Key / Value</label>'
+                + options.map((o, i) =>
+                    '<div class="opt-row">'
+                        + '<input type="text" placeholder="key" value="' + AC.attr(o.key || '') + '" oninput="setStaticOption(' + i + ', \'key\', this.value)">'
+                        + '<input type="text" placeholder="value" value="' + AC.attr(o.value || '') + '" oninput="setStaticOption(' + i + ', \'value\', this.value)">'
+                        + '<button class="icon-btn" onclick="removeStaticOption(' + i + ')" title="Remove">×</button>'
+                    + '</div>').join('')
+                + '<button class="tool-btn" onclick="addStaticOption()">+ Add Option</button>'
+                + '<span class="hint">The key is what the use case input receives; the value is what the operator sees.</span></div>';
+        }
+
+        if (source.mode === 'USECASE') {
+            html += field('Instance', '<select onchange="setOption(\'appUseCaseInstanceId\', this.value)">' + instanceOptions(source.appUseCaseInstanceId) + '</select>',
+                'Run when the page opens; its response fills this dropdown.');
+            html += field('Array Path', '<input type="text" value="' + AC.attr(source.arrayPath || '') + '" placeholder="data.items" oninput="setOption(\'arrayPath\', this.value)">',
+                'Blank when the response is itself the array.');
+            html += '<div class="form-row" style="margin-bottom:0">'
+                 + field('Key Field', '<input type="text" value="' + AC.attr(source.keyField || '') + '" placeholder="id" oninput="setOption(\'keyField\', this.value)">')
+                 + field('Label Field', '<input type="text" value="' + AC.attr(source.labelField || '') + '" placeholder="name" oninput="setOption(\'labelField\', this.value)">')
+                 + '</div>';
+        }
+
+        if (source.mode === 'ENVIRONMENTS') {
+            html += field('App', '<select onchange="setOption(\'appName\', this.value)">' + appOptions(source.appName) + '</select>',
+                'Lists every environment configured for this app.');
+        }
+        return html + '</div>';
+    }
+
+    function gridProps(c) {
+        return '<div class="props-section"><div class="props-title"><span>Grid</span></div>'
+            + field('Columns', '<input type="text" value="' + AC.attr((c.columns || []).join(', ')) + '" placeholder="id, status, amount" oninput="setColumns(this.value)">',
+                'Comma-separated field names. Leave blank to show whatever fields the rows carry.')
+            + '<span class="hint">When the page runs, every grid sorts and filters by any column and exports what is on screen to CSV or a plain HTML table.</span>'
+            + '</div>';
+    }
+
+    function buttonProps(c) {
+        const targets = page.controls.filter(t => TARGET_TYPES.includes(t.type));
+        let html = '<div class="props-section"><div class="props-title"><span>Actions</span>'
+                 + '<button class="tool-btn" onclick="addAction()">+ Add</button></div>';
+
+        if (!(c.actions || []).length) {
+            html += '<div class="empty-note">No actions — this ' + AC.esc(c.type) + ' does nothing yet.</div>';
+        }
+
+        (c.actions || []).forEach((a, i) => {
+            const target = targets.find(t => t.controlId === a.targetControlId);
+            // A text target is filled from one attribute, so it asks for a value path instead of
+            // the array path the many-row targets need.
+            const singleValue = target && (target.type === 'text' || target.type === 'textarea');
+            const isGridTarget = a.targetControlId === NEW_GRID || (target && target.type === 'grid');
+            html += '<div class="action-card">'
+                + '<div class="action-head"><span class="action-num">' + (i + 1) + '</span>'
+                + '<input type="text" placeholder="action name" value="' + AC.attr(a.actionLabel || '') + '" oninput="setAction(' + i + ', \'actionLabel\', this.value)">'
+                + (i > 0 ? '<button class="tool-btn" onclick="moveAction(' + i + ', -1)" title="Earlier">↑</button>' : '')
+                + (i < c.actions.length - 1 ? '<button class="tool-btn" onclick="moveAction(' + i + ', 1)" title="Later">↓</button>' : '')
+                + '<button class="icon-btn" onclick="removeAction(' + i + ')" title="Remove">×</button>'
+                + '</div>'
+                + field('Instance', '<select onchange="setAction(' + i + ', \'appUseCaseInstanceId\', this.value)">' + instanceOptions(a.appUseCaseInstanceId) + '</select>')
+                + field('Inputs', '<textarea spellcheck="false" placeholder=\'{"orderId": "${orderId}"}\' oninput="setActionInputs(' + i + ', this.value)">'
+                    + AC.esc(a.inputs && Object.keys(a.inputs).length ? JSON.stringify(a.inputs, null, 2) : '') + '</textarea>',
+                    'Use case input name to a value. <code>${fieldName}</code> picks up a control; anything else is passed as written. Unnamed inputs keep the instance\'s own value.')
+                + field('Target', '<select onchange="setAction(' + i + ', \'targetControlId\', this.value)">'
+                    + '<option value="">— no target —</option>'
+                    + '<option value="' + NEW_GRID + '"' + (a.targetControlId === NEW_GRID ? ' selected' : '') + '>+ New grid (one per run)</option>'
+                    + targets.map(t => '<option value="' + AC.attr(t.controlId) + '"' + (t.controlId === a.targetControlId ? ' selected' : '') + '>'
+                        + AC.esc(controlTitle(t)) + ' (' + t.type + ')</option>').join('')
+                    + '</select>',
+                    a.targetControlId === NEW_GRID
+                        ? 'Every run adds its own grid below the form, newest on top, instead of replacing the last one.'
+                        : undefined)
+                + (singleValue
+                    ? field('Value Path', '<input type="text" value="' + AC.attr(a.valuePath || '') + '" placeholder="data.order.status" oninput="setAction(' + i + ', \'valuePath\', this.value)">',
+                        'Path to the one attribute this box shows — <code>data.order.status</code> or <code>$.items[0].name</code>. Blank puts the whole response in.')
+                    : field('Array Path', '<input type="text" value="' + AC.attr(a.arrayPath || '') + '" placeholder="data.items" oninput="setAction(' + i + ', \'arrayPath\', this.value)">'))
+                + (isGridTarget
+                    ? '<label class="inline-check"><input type="checkbox"' + (a.keyValueGrid ? ' checked' : '')
+                        + ' onchange="setAction(' + i + ', \'keyValueGrid\', this.checked)"> Show an object result as a key/value grid</label>'
+                    : '')
+                + (target && target.type === 'select'
+                    ? '<div class="form-row" style="margin-bottom:0">'
+                        + field('Key Field', '<input type="text" value="' + AC.attr(a.keyField || '') + '" oninput="setAction(' + i + ', \'keyField\', this.value)">')
+                        + field('Label Field', '<input type="text" value="' + AC.attr(a.labelField || '') + '" oninput="setAction(' + i + ', \'labelField\', this.value)">')
+                      + '</div>'
+                    : '')
+                + '</div>';
+        });
+        return html + '</div>';
+    }
+
+    // ── Property mutations ───────────────────────────────────────────────────
+    // Text inputs update the model and redraw the canvas only: redrawing the properties panel on
+    // every keystroke would take the caret with it.
+
+    function setProp(name, value) {
+        const c = findControl(selectedId);
+        if (!c) return;
+        if (name === 'col')     value = Math.min(Math.max(value || 0, 0), COLUMNS - 1);
+        if (name === 'row')     value = Math.max(value || 0, 0);
+        if (name === 'span')    value = Math.min(Math.max(value || 1, 1), COLUMNS);
+        // Half a row is as thin as the grid draws, so the height snaps to that step.
+        if (name === 'rowSpan') value = Math.min(Math.max(Math.round((value || 1) * 2) / 2, MIN_ROW_SPAN), 12);
+        c[name] = value;
+        renderControlList();
+        renderCanvas();
+    }
+
+    function changeType(type) {
+        const c = findControl(selectedId);
+        if (!c) return;
+        c.type = type;
+        if (type === 'select' && !c.optionSource) c.optionSource = { mode: 'NONE', staticOptions: [] };
+        // A button and a link differ only in how much room they take, so switching between the two
+        // keeps the actions that were already wired up.
+        if (!ACTION_TYPES.includes(type)) c.actions = [];
+        if (!VALUE_TYPES.includes(type)) { c.fieldName = ''; c.mandatory = false; }
+        else if (!c.fieldName) c.fieldName = nextFieldName(type);
+        renderAll();
+    }
+
+    function setOption(name, value) {
+        const c = findControl(selectedId);
+        if (!c) return;
+        c.optionSource = c.optionSource || { mode: 'NONE', staticOptions: [] };
+        c.optionSource[name] = value;
+        renderCanvas();
+    }
+
+    function addStaticOption() {
+        const c = findControl(selectedId);
+        c.optionSource.staticOptions = c.optionSource.staticOptions || [];
+        c.optionSource.staticOptions.push({ key: '', value: '' });
+        renderProps();
+        renderCanvas();
+    }
+
+    function setStaticOption(index, name, value) {
+        findControl(selectedId).optionSource.staticOptions[index][name] = value;
+    }
+
+    function removeStaticOption(index) {
+        const c = findControl(selectedId);
+        c.optionSource.staticOptions.splice(index, 1);
+        renderProps();
+        renderCanvas();
+    }
+
+    function setColumns(text) {
+        const c = findControl(selectedId);
+        c.columns = text.split(',').map(s => s.trim()).filter(Boolean);
+        renderCanvas();
+    }
+
+    function addAction() {
+        const c = findControl(selectedId);
+        c.actions = c.actions || [];
+        c.actions.push({ actionLabel: 'Action ' + (c.actions.length + 1), appUseCaseInstanceId: '', inputs: {},
+                         targetControlId: '', arrayPath: '', valuePath: '', keyField: '', labelField: '', keyValueGrid: false });
+        renderProps();
+        renderCanvas();
+    }
+
+    function setAction(index, name, value) {
+        const c = findControl(selectedId);
+        c.actions[index][name] = value;
+        // The target's type decides whether key/label fields are even asked for, so that one redraws.
+        if (name === 'targetControlId') renderProps();
+        renderCanvas();
+    }
+
+    /** Inputs are typed as JSON; an unparseable draft is kept as-is rather than thrown away mid-edit. */
+    function setActionInputs(index, text) {
+        const c = findControl(selectedId);
+        try {
+            c.actions[index].inputs = text.trim() ? JSON.parse(text) : {};
+            AC.setStatus('statusBar', '');
+        } catch (e) {
+            AC.setStatus('statusBar', 'Action inputs are not valid JSON yet: ' + e.message, 'error');
+        }
+    }
+
+    function moveAction(index, delta) {
+        const actions = findControl(selectedId).actions;
+        const target = index + delta;
+        if (target < 0 || target >= actions.length) return;
+        [actions[index], actions[target]] = [actions[target], actions[index]];
+        renderProps();
+    }
+
+    function removeAction(index) {
+        findControl(selectedId).actions.splice(index, 1);
+        renderProps();
+        renderCanvas();
+    }
+
+    function onHeaderInput() {
+        page.title = document.getElementById('pageTitle').value;
+        page.description = document.getElementById('pageDescription').value;
+    }
+
+    // ── Save / delete ────────────────────────────────────────────────────────
+
+    async function savePage() {
+        page.pageName = document.getElementById('pageName').value.trim();
+        onHeaderInput();
+
+        if (!page.pageName) { AC.setStatus('statusBar', 'Page name is required.', 'error'); return; }
+
+        try {
+            const saved = savedPageName
+                ? await AC.api('PUT', '/appcatalog/pages/' + encodeURIComponent(savedPageName), page)
+                : await AC.api('POST', '/appcatalog/pages', page);
+            page = saved;
+            page.controls = page.controls || [];
+            savedPageName = saved.pageName;
+            pages = await AC.api('GET', '/appcatalog/pages');
+            renderPageSelect();
+            renderAll();
+            AC.setStatus('statusBar', 'Saved "' + saved.pageName + '".', 'ok');
+        } catch (e) {
+            AC.setStatus('statusBar', 'Save failed: ' + e.message, 'error');
+        }
+    }
+
+    async function deletePage() {
+        if (!savedPageName || !AC.confirmDelete('page', savedPageName)) return;
+        try {
+            await AC.api('DELETE', '/appcatalog/pages/' + encodeURIComponent(savedPageName));
+            pages = pages.filter(p => p.pageName !== savedPageName);
+            renderPageSelect();
+            newPage();
+            AC.setStatus('statusBar', 'Deleted.', 'ok');
+        } catch (e) {
+            AC.setStatus('statusBar', 'Delete failed: ' + e.message, 'error');
+        }
+    }
+
+    // ── Run mode ─────────────────────────────────────────────────────────────
+
+    function setMode(next) {
+        mode = next;
+        document.getElementById('designer').style.display = next === 'design' ? '' : 'none';
+        document.getElementById('runner').style.display = next === 'run' ? '' : 'none';
+        document.getElementById('runBtn').style.display = next === 'design' ? '' : 'none';
+        document.getElementById('designBtn').style.display = next === 'run' ? '' : 'none';
+        if (next === 'run') startRun();
+    }
+
+    function startRun() {
+        values = {};
+        errors = [];
+        gridState = {};
+        document.getElementById('stackedGrids').innerHTML = '';
+        page.controls.forEach(c => {
+            if (!VALUE_TYPES.includes(c.type)) return;
+            values[c.fieldName] = c.type === 'checkbox' ? c.defaultValue === 'true' : (c.defaultValue || '');
+        });
+        renderRun();
+        loadSelectOptions();
+    }
+
+    function renderRun() {
+        document.getElementById('runTitle').textContent = page.title || page.pageName || 'Untitled page';
+        document.getElementById('runDesc').textContent = page.description || '';
+        renderErrors();
+
+        const canvas = document.getElementById('runCanvas');
+        // Hidden controls carry a value but occupy no space — laying them out would leave holes.
+        canvas.innerHTML = page.controls.filter(c => c.type !== 'hidden').map(c =>
+            '<div class="run-ctl ' + AC.esc(c.type) + '-ctl" style="' + placement(c) + '" id="rc-' + AC.attr(c.controlId) + '">'
+                + runControl(c) + '</div>').join('');
+
+        page.controls.forEach(c => {
+            const host = document.getElementById('rc-' + c.controlId);
+            if (!host) return;
+            const input = host.querySelector('[data-field]');
+            if (input) {
+                input.addEventListener(c.type === 'select' || c.type === 'checkbox' ? 'change' : 'input', () => {
+                    values[c.fieldName] = c.type === 'checkbox' ? input.checked : input.value;
+                });
+            }
+            const trigger = host.querySelector('[data-run]');
+            if (trigger) trigger.addEventListener('click', () => runButton(c, trigger));
+            if (c.type === 'grid') paintGrid(c.controlId);
+        });
+    }
+
+    function runControl(c) {
+        const style = colorStyle(c);
+        const label = '<label' + style + '>' + AC.esc(c.label || c.fieldName || '') + (c.mandatory ? ' <span class="req">*</span>' : '') + '</label>';
+        const hint = c.helpText ? '<span class="hint">' + AC.esc(c.helpText) + '</span>' : '';
+        const value = values[c.fieldName];
+
+        switch (c.type) {
+            case 'button':
+                return '<button class="primary" data-run="1"' + style + '>' + AC.esc(c.label || 'Run') + '</button>';
+            case 'link':
+                return '<button type="button" class="run-link" data-run="1"' + style + '>' + AC.esc(c.label || 'Run') + '</button>';
+            case 'label':
+                return '<div class="static-label"' + style + '>' + AC.esc(c.defaultValue || c.label || '') + '</div>';
+            case 'grid':
+                return label + '<div class="data-grid" data-grid="' + AC.attr(c.controlId) + '"></div>';
+            case 'select':
+                return label + '<select data-field="' + AC.attr(c.fieldName) + '"' + style + '><option value="">—</option></select>' + hint;
+            case 'textarea':
+                return label + '<textarea data-field="' + AC.attr(c.fieldName) + '" placeholder="' + AC.attr(c.placeholder || '') + '"' + style + '>' + AC.esc(value || '') + '</textarea>' + hint;
+            case 'checkbox':
+                return label + '<label class="inline-check"' + style + '><input type="checkbox" data-field="' + AC.attr(c.fieldName) + '"'
+                    + (value ? ' checked' : '') + '> ' + AC.esc(c.placeholder || '') + '</label>' + hint;
+            default:
+                return label + '<input type="' + (c.type === 'number' ? 'number' : c.type === 'date' ? 'date' : 'text')
+                    + '" data-field="' + AC.attr(c.fieldName) + '" value="' + AC.attr(value || '')
+                    + '" placeholder="' + AC.attr(c.placeholder || '') + '"' + style + '>' + hint;
+        }
+    }
+
+    /** The page's error section: every failure the run produced, in one place, or nothing at all. */
+    function renderErrors() {
+        const host = document.getElementById('pageErrors');
+        if (!errors.length) { host.innerHTML = ''; return; }
+        host.innerHTML = '<div class="page-errors"><div class="err-title">' + errors.length
+            + (errors.length === 1 ? ' problem' : ' problems') + '</div><ul>'
+            + errors.map(e => '<li>' + AC.esc(e) + '</li>').join('') + '</ul></div>';
+    }
+
+    function addError(message) {
+        errors.push(message);
+        renderErrors();
+    }
+
+    async function loadSelectOptions() {
+        for (const c of page.controls) {
+            if (c.type !== 'select') continue;
+            const source = c.optionSource || {};
+            if (source.mode === 'STATIC') {
+                fillOptions(c, (source.staticOptions || []).map(o => ({ value: o.key, label: o.value || o.key })));
+            } else if (source.mode === 'USECASE' && source.appUseCaseInstanceId) {
+                const name = 'Options for "' + controlTitle(c) + '"';
+                try {
+                    const data = await runInstance(source.appUseCaseInstanceId, {}, name);
+                    const rows = rowsAt(data, source.arrayPath, name);
+                    fillOptions(c, rows.map(r => optionOf(r, source.keyField, source.labelField)));
+                } catch (e) {
+                    addError(e.message);
+                }
+            } else if (source.mode === 'ENVIRONMENTS' && source.appName) {
+                try {
+                    const envs = await AC.listEnvironments(source.appName);
+                    fillOptions(c, envs.map(e => ({ value: e.environment, label: e.environment + (e.envClass ? ' (' + e.envClass + ')' : '') })));
+                } catch (e) {
+                    addError('Options for "' + controlTitle(c) + '": ' + e.message);
+                }
+            }
+        }
+    }
+
+    function optionOf(row, keyField, labelField) {
+        if (row === null || typeof row !== 'object') return { value: String(row), label: String(row) };
+        const value = keyField ? row[keyField] : Object.values(row)[0];
+        const label = labelField ? row[labelField] : value;
+        return { value: value === undefined || value === null ? '' : String(value),
+                 label: label === undefined || label === null ? '' : String(label) };
+    }
+
+    function fillOptions(c, options) {
+        const select = document.querySelector('#rc-' + CSS.escape(c.controlId) + ' select');
+        if (!select) return;
+        const previous = values[c.fieldName];
+        select.innerHTML = '<option value="">—</option>'
+            + options.map(o => '<option value="' + AC.attr(o.value) + '">' + AC.esc(o.label) + '</option>').join('');
+        // Keep whatever was already chosen (or the control's default) when it survives the refresh.
+        if (previous && [...select.options].some(o => o.value === previous)) select.value = previous;
+        values[c.fieldName] = select.value;
+    }
+
+    /**
+     * Runs a button or a link: nothing goes out until every mandatory field is filled, then the
+     * actions run in order and stop at the first failure — a second action usually depends on the
+     * first having worked, and running it anyway just produces a second, more confusing error.
+     */
+    async function runButton(control, button) {
+        errors = [];
+        renderErrors();
+        AC.setStatus('runStatus', '');
+
+        const missing = page.controls.filter(c => c.mandatory && VALUE_TYPES.includes(c.type)
+            && (values[c.fieldName] === '' || values[c.fieldName] === undefined || values[c.fieldName] === null));
+        if (missing.length) {
+            missing.forEach(c => addError((c.label || c.fieldName) + ' is required.'));
+            return;
+        }
+        if (!(control.actions || []).length) {
+            addError('"' + (control.label || controlTitle(control)) + '" has no actions configured.');
+            return;
+        }
+
+        button.classList.add('busy');
+        AC.setStatus('runStatus', 'Running ' + control.actions.length + ' action'
+            + (control.actions.length > 1 ? 's' : '') + '…');
+        try {
+            let done = 0;
+            for (const action of control.actions) {
+                const name = action.actionLabel || action.appUseCaseInstanceId || 'Action';
+                const data = await runInstance(action.appUseCaseInstanceId, resolveInputs(action.inputs), name);
+                done++;
+                if (!action.targetControlId) continue;
+
+                if (action.targetControlId === NEW_GRID) {
+                    const stacked = rowsForGridAction(data, action, name);
+                    pushStackedGrid(name, stacked.rows, stacked.columns);
+                    continue;
+                }
+                const target = findControl(action.targetControlId);
+                if (!target) { addError(name + ': its target is no longer on this page.'); break; }
+                if (target.type === 'grid') {
+                    const bound = rowsForGridAction(data, action, name);
+                    bindGrid(target, bound.rows, bound.columns);
+                } else if (target.type === 'text' || target.type === 'textarea') {
+                    bindValue(target, pathGet(data, action.valuePath), action.valuePath, name);
+                } else {
+                    fillOptions(target, rowsAt(data, action.arrayPath, name)
+                        .map(r => optionOf(r, action.keyField, action.labelField)));
+                }
+            }
+            AC.setStatus('runStatus', errors.length ? '' : done + ' of ' + control.actions.length + ' action'
+                + (control.actions.length > 1 ? 's' : '') + ' completed.', 'ok');
+        } catch (e) {
+            AC.setStatus('runStatus', '');
+            addError(e.message);
+        } finally {
+            button.classList.remove('busy');
+        }
+    }
+
+    /** Replaces ${field} / $field in each input with the page's current values. */
+    function resolveInputs(inputs) {
+        const resolved = {};
+        Object.entries(inputs || {}).forEach(([name, template]) => {
+            if (typeof template !== 'string') { resolved[name] = template; return; }
+            const whole = template.match(/^\$\{([A-Za-z0-9_.\-]+)\}$|^\$([A-Za-z_][A-Za-z0-9_]*)$/);
+            if (whole) {
+                const field = whole[1] || whole[2];
+                // A template that is nothing but one placeholder passes the value through with its
+                // own type, so a checkbox stays a boolean instead of becoming "true". A placeholder
+                // no control on this page answers to is left out entirely, so the instance keeps
+                // the value it was saved with rather than being handed an empty one.
+                if (field in values) resolved[name] = values[field];
+                return;
+            }
+            resolved[name] = template.replace(/\$\{([A-Za-z0-9_.\-]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g,
+                (match, braced, bare) => {
+                    const value = values[braced || bare];
+                    return value === undefined || value === null ? match : String(value);
+                });
+        });
+        return resolved;
+    }
+
+    /**
+     * Runs one instance and hands back its response, whole. What the caller wants out of it — an
+     * array of rows, or one attribute — is a separate question, since the same response can feed a
+     * grid, a dropdown or a text box. A failed call is reported through the thrown message, which
+     * the caller puts into the page's error section.
+     */
+    async function runInstance(instanceId, inputs, name) {
+        if (!instanceId) throw new Error(name + ': no use case instance is configured.');
+
+        const result = await AC.api('POST', '/appcatalog/pages/run', { appUseCaseInstanceId: instanceId, inputs: inputs });
+        if (result.status !== 'SUCCESS') {
+            throw new Error(name + ' failed: ' + (result.error || ('HTTP ' + (result.statusCode || '?'))));
+        }
+        let data = result.transformedResponse;
+        if (data === undefined || data === null) {
+            try { data = JSON.parse(result.responseBody || 'null'); } catch (e) { data = null; }
+        }
+        return data;
+    }
+
+    /** The array a grid or a dropdown needs, or an explanation of why the response is not one. */
+    function rowsAt(data, arrayPath, name) {
+        const found = pathGet(data, arrayPath);
+        if (found === undefined || found === null) throw new Error(name + ': nothing found at path "' + (arrayPath || '') + '".');
+        if (!Array.isArray(found)) throw new Error(name + ': expected an array' + (arrayPath ? ' at "' + arrayPath + '"' : '') + ', got ' + typeof found + '.');
+        return found;
+    }
+
+    /**
+     * The rows a grid-bound action produces. An array works exactly like {@link #rowsAt} always did;
+     * when {@link AppPageAction#keyValueGrid} is on and the response is a JSON object instead, its
+     * own top-level properties become the rows of a two-column key/value grid rather than failing
+     * the action.
+     */
+    function rowsForGridAction(data, action, name) {
+        const found = pathGet(data, action.arrayPath);
+        if (found === undefined || found === null) throw new Error(name + ': nothing found at path "' + (action.arrayPath || '') + '".');
+        if (Array.isArray(found)) return { rows: found, columns: null };
+        if (action.keyValueGrid && typeof found === 'object') {
+            const rows = Object.entries(found).map(([key, value]) =>
+                ({ key, value: (value !== null && typeof value === 'object') ? JSON.stringify(value) : value }));
+            return { rows, columns: ['key', 'value'] };
+        }
+        throw new Error(name + ': expected an array' + (action.arrayPath ? ' at "' + action.arrayPath + '"' : '') + ', got ' + typeof found + '.');
+    }
+
+    /** Dotted path with optional array indexes and a leading $: {@code $.data.items[0].name}. */
+    function pathGet(data, path) {
+        if (!path) return data;
+        return String(path).replace(/^\$\.?/, '').replace(/\[(\d+)\]/g, '.$1').split('.')
+            .filter(key => key !== '')
+            .reduce((current, key) => (current === null || current === undefined) ? current : current[key], data);
+    }
+
+    /** Fills a text box or text area from one attribute of a response. */
+    function bindValue(control, value, valuePath, name) {
+        if (value === undefined || value === null) {
+            addError(name + ': nothing found at path "' + (valuePath || '') + '".');
+            return;
+        }
+        const text = typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value);
+        values[control.fieldName] = text;
+        const input = document.querySelector('#rc-' + CSS.escape(control.controlId) + ' [data-field]');
+        if (input) input.value = text;
+    }
+
+    // ── Grids ────────────────────────────────────────────────────────────────
+    // Every grid on a running page — the ones placed in the layout and the ones an action stacks —
+    // is the same thing: rows, the columns to show them under, and whatever sort and column filters
+    // the operator has applied. The rows are kept as they arrived so filtering and sorting stay
+    // views over them rather than edits to them, and so an export can follow what is on screen.
+
+    /** `forcedColumns` overrides the grid's own configured columns — used for a key/value result. */
+    function bindGrid(control, rows, forcedColumns) {
+        setGridData(control.controlId, rows, forcedColumns || control.columns, controlTitle(control));
+    }
+
+    function setGridData(gridId, rows, fixedColumns, title) {
+        gridState[gridId] = {
+            rows: rows,
+            columns: (fixedColumns && fixedColumns.length) ? fixedColumns : columnsOf(rows),
+            filters: {},
+            sort: null,
+            direction: 1,
+            title: title
+        };
+        paintGrid(gridId);
+    }
+
+    function columnsOf(rows) {
+        return [...new Set(rows.flatMap(r => (r && typeof r === 'object') ? Object.keys(r) : ['value']))];
+    }
+
+    /** One cell as the text it is shown, filtered, sorted and exported by. */
+    function cellText(row, column) {
+        const cell = (row && typeof row === 'object') ? row[column] : row;
+        if (cell === undefined || cell === null) return '';
+        return typeof cell === 'object' ? JSON.stringify(cell) : String(cell);
+    }
+
+    /** The rows actually on screen: every column filter applied, then the chosen sort. */
+    function visibleRows(state) {
+        const filters = Object.entries(state.filters).filter(([, text]) => text && text.trim());
+        const rows = state.rows.filter(row => filters.every(([column, text]) =>
+            cellText(row, column).toLowerCase().includes(text.trim().toLowerCase())));
+        if (!state.sort) return rows;
+        return rows.slice().sort((a, b) =>
+            compareCells(cellText(a, state.sort), cellText(b, state.sort)) * state.direction);
+    }
+
+    /** Numbers compare as numbers so a column of ids does not sort 1, 10, 2. */
+    function compareCells(a, b) {
+        if (a !== '' && b !== '' && !isNaN(Number(a)) && !isNaN(Number(b))) return Number(a) - Number(b);
+        return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+    }
+
+    function paintGrid(gridId) {
+        const host = document.querySelector('[data-grid="' + CSS.escape(gridId) + '"]');
+        if (!host) return;
+        const state = gridState[gridId];
+        if (!state) {
+            host.innerHTML = '<div class="grid-box"><div class="grid-empty">No data yet.</div></div>';
+            return;
+        }
+
+        const rows = visibleRows(state);
+
+        // "Clear filters" is always in the markup and only shown when it would do something —
+        // typing in a filter redraws the rows alone, and a button that appeared then disappeared
+        // would move the others out from under the pointer.
+        host.innerHTML = '<div class="grid-tools">'
+                + '<span class="grid-count">' + gridCount(state, rows) + '</span>'
+                + '<button class="tool-btn" data-act="clear"' + (isFiltered(state) ? '' : ' hidden') + '>Clear filters</button>'
+                + '<button class="tool-btn" data-act="csv">Export CSV</button>'
+                + '<button class="tool-btn" data-act="html">View as HTML</button>'
+            + '</div>'
+            + '<div class="grid-box">'
+                + (state.rows.length ? gridTable(state, rows) : '<div class="grid-empty">No rows returned.</div>')
+            + '</div>';
+
+        host.querySelectorAll('[data-act]').forEach(el => el.addEventListener('click', () => {
+            if (el.dataset.act === 'csv')   exportCsv(gridId);
+            if (el.dataset.act === 'html')  viewAsHtml(gridId);
+            if (el.dataset.act === 'clear') { state.filters = {}; paintGrid(gridId); }
+        }));
+        host.querySelectorAll('[data-sort]').forEach(el => el.addEventListener('click', () => {
+            const column = el.dataset.sort;
+            state.direction = state.sort === column ? -state.direction : 1;
+            state.sort = column;
+            paintGrid(gridId);
+        }));
+        host.querySelectorAll('[data-filter]').forEach(el => el.addEventListener('input', () => {
+            state.filters[el.dataset.filter] = el.value;
+            // Only the rows are redrawn: rebuilding the header would take the caret with it.
+            refreshGridRows(gridId);
+        }));
+    }
+
+    function isFiltered(state) {
+        return Object.values(state.filters).some(text => text && text.trim());
+    }
+
+    function gridCount(state, rows) {
+        const total = state.rows.length;
+        return (rows.length === total ? total : rows.length + ' of ' + total)
+             + ' row' + (total === 1 ? '' : 's');
+    }
+
+    function gridTable(state, rows) {
+        const arrow = column => state.sort !== column ? ''
+            : '<span class="sort-arrow">' + (state.direction > 0 ? '▲' : '▼') + '</span>';
+        return '<table><thead>'
+            + '<tr>' + state.columns.map(column =>
+                // Plain escaping, not attr(): these come back through dataset as the column key
+                // itself, and a name carrying an apostrophe has to survive the round trip.
+                '<th class="sortable" data-sort="' + AC.esc(column) + '" title="Sort by ' + AC.esc(column) + '">'
+                + AC.esc(column) + arrow(column) + '</th>').join('') + '</tr>'
+            + '<tr class="filter-row">' + state.columns.map(column =>
+                '<th><input type="text" placeholder="filter" data-filter="' + AC.esc(column) + '"'
+                + ' value="' + AC.esc(state.filters[column] || '') + '"></th>').join('') + '</tr>'
+            + '</thead><tbody>' + gridRows(state, rows) + '</tbody></table>';
+    }
+
+    function gridRows(state, rows) {
+        if (!rows.length) return '<tr><td colspan="' + state.columns.length
+            + '"><div class="grid-empty">No rows match the filters.</div></td></tr>';
+        return rows.map(row => '<tr>' + state.columns.map(column =>
+            '<td>' + AC.esc(cellText(row, column)) + '</td>').join('') + '</tr>').join('');
+    }
+
+    function refreshGridRows(gridId) {
+        const host = document.querySelector('[data-grid="' + CSS.escape(gridId) + '"]');
+        const state = gridState[gridId];
+        if (!host || !state) return;
+        const rows = visibleRows(state);
+        const body = host.querySelector('tbody');
+        if (body) body.innerHTML = gridRows(state, rows);
+        host.querySelector('.grid-count').textContent = gridCount(state, rows);
+        const clear = host.querySelector('[data-act="clear"]');
+        if (clear) clear.hidden = !isFiltered(state);
+    }
+
+    /**
+     * A target of "new grid" builds another grid per run instead of overwriting one, newest first,
+     * so two runs can be read against each other. Each keeps its own filters and sort.
+     */
+    function pushStackedGrid(name, rows, columns) {
+        const gridId = 'stacked-' + (++stackedCount);
+        const box = document.createElement('div');
+        box.className = 'stacked-grid';
+        box.innerHTML = '<div class="stacked-head">'
+                + '<span class="stacked-title">' + AC.esc(name) + '</span>'
+                + '<span class="stacked-when">' + AC.esc(new Date().toLocaleTimeString()) + '</span>'
+                + '<button class="icon-btn" title="Remove this grid">×</button>'
+            + '</div>'
+            + '<div class="data-grid" data-grid="' + AC.attr(gridId) + '"></div>';
+        box.querySelector('.icon-btn').addEventListener('click', () => {
+            box.remove();
+            delete gridState[gridId];
+        });
+        document.getElementById('stackedGrids').prepend(box);
+        setGridData(gridId, rows, columns || null, name);
+    }
+
+    // ── Taking a grid elsewhere ──────────────────────────────────────────────
+    // Both exports follow what is on screen — the filters and the sort the operator applied — since
+    // that selection is usually the reason they are exporting at all.
+
+    function exportCsv(gridId) {
+        const state = gridState[gridId];
+        const rows = visibleRows(state);
+        const lines = [state.columns.map(csvCell).join(',')]
+            .concat(rows.map(row => state.columns.map(column => csvCell(cellText(row, column))).join(',')));
+        // The BOM is what makes Excel read the file as UTF-8 rather than the local code page.
+        download(fileName(state.title, 'csv'), 'text/csv;charset=utf-8', String.fromCharCode(0xFEFF) + lines.join('\r\n'));
+    }
+
+    function csvCell(text) {
+        const value = String(text === undefined || text === null ? '' : text);
+        return /[",\r\n]/.test(value) ? '"' + value.replace(/"/g, '""') + '"' : value;
+    }
+
+    function download(name, type, content) {
+        const url = URL.createObjectURL(new Blob([content], { type: type }));
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = name;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+    }
+
+    /** Opens the rows as a plain HTML table in their own tab — printable, and easy to paste on. */
+    function viewAsHtml(gridId) {
+        const state = gridState[gridId];
+        const rows = visibleRows(state);
+        const title = state.title || 'Grid';
+        const html = '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'
+            + '<title>' + AC.esc(title) + '</title><style>'
+            + 'body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#172b4d;margin:24px}'
+            + 'h1{font-size:18px;margin:0 0 4px}p{font-size:12px;color:#5e6c84;margin:0 0 16px}'
+            + 'table{border-collapse:collapse;font-size:13px}'
+            + 'th,td{border:1px solid #dfe1e6;padding:6px 10px;text-align:left;vertical-align:top}'
+            + 'th{background:#f4f5f7;font-weight:600}tr:nth-child(even) td{background:#fafbfc}'
+            + '</style></head><body><h1>' + AC.esc(title) + '</h1>'
+            + '<p>' + rows.length + ' row' + (rows.length === 1 ? '' : 's')
+            + ' · ' + AC.esc(new Date().toLocaleString()) + '</p>'
+            + '<table><thead><tr>' + state.columns.map(column => '<th>' + AC.esc(column) + '</th>').join('') + '</tr></thead>'
+            + '<tbody>' + rows.map(row => '<tr>' + state.columns.map(column =>
+                '<td>' + AC.esc(cellText(row, column)) + '</td>').join('') + '</tr>').join('') + '</tbody></table>'
+            + '</body></html>';
+
+        const win = window.open('', '_blank');
+        if (!win) { addError('The browser blocked the new tab — allow pop-ups to view a grid as HTML.'); return; }
+        win.document.write(html);
+        win.document.close();
+    }
+
+    function fileName(title, extension) {
+        const base = (title || 'grid').replace(/[^\w.\- ]+/g, '_').trim() || 'grid';
+        return base + '-' + new Date().toISOString().slice(0, 10) + '.' + extension;
+    }
+
+    // ── Start ────────────────────────────────────────────────────────────────
+
+    AC.applyEmbedding();
+    start();
+
+    /**
+     * apppage.html?page=x&mode=run opens a saved page straight into its running form — the link
+     * handed to whoever is meant to use the page rather than build it. That reader has no business
+     * with the builder's chrome, so the page picker, the name and description fields and the
+     * designer's own heading are all dropped: the form itself is the whole screen.
+     */
+    async function start() {
+        const params = new URLSearchParams(location.search);
+        const wanted = params.get('page');
+        const standalone = !!wanted && params.get('mode') === 'run';
+
+        await loadCatalog();
+        if (!wanted) return;
+        if (!pages.some(p => p.pageName === wanted)) {
+            // Said in the builder's status bar, so the chrome stays put until there is a page to show.
+            AC.setStatus('statusBar', 'Could not open page "' + wanted + '": no such page.', 'error');
+            return;
+        }
+
+        document.getElementById('pageSelect').value = wanted;
+        await onPageSelected();
+        if (standalone) {
+            document.body.classList.add('standalone');
+            setMode('run');
+        }
+    }
+</script>
+
+</body>
+</html>

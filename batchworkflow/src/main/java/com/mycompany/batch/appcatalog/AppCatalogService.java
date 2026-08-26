@@ -40,6 +40,7 @@ public class AppCatalogService {
     private final List<AppUseCase>              useCases     = new CopyOnWriteArrayList<>();
     private final List<AppUseCaseInstance>      instances    = new CopyOnWriteArrayList<>();
     private final List<AppUseCaseInstanceGroup> groups       = new CopyOnWriteArrayList<>();
+    private final List<AppPage>                 pages        = new CopyOnWriteArrayList<>();
 
     public AppCatalogService(ObjectMapper objectMapper, ServerPropertiesLoader serverPropertiesLoader) {
         this.objectMapper = objectMapper;
@@ -53,6 +54,7 @@ public class AppCatalogService {
         useCases.addAll(read("appusecases.json", new TypeReference<List<AppUseCase>>() {}));
         instances.addAll(read("appusecaseinstances.json", new TypeReference<List<AppUseCaseInstance>>() {}));
         groups.addAll(read("appusecaseinstancegroups.json", new TypeReference<List<AppUseCaseInstanceGroup>>() {}));
+        pages.addAll(read("apppages.json", new TypeReference<List<AppPage>>() {}));
     }
 
     // -------------------------------------------------------------------------
@@ -86,6 +88,8 @@ public class AppCatalogService {
                 .collect(Collectors.toList());
         instances.removeIf(i -> appName.equals(i.getAppName()));
         groups.forEach(g -> g.getAppUseCaseInstanceIds().removeAll(orphaned));
+        // Pages survive: they span apps, so one app going away leaves the rest of the page working.
+        // An action left pointing at a deleted instance reports that when it runs.
 
         write("appdefinitions.json", apps);
         write("appenvironments.json", environments);
@@ -289,6 +293,116 @@ public class AppCatalogService {
     public synchronized void deleteGroup(String groupName) throws Exception {
         groups.removeIf(g -> g.getGroupName().equals(groupName));
         write("appusecaseinstancegroups.json", groups);
+    }
+
+    // -------------------------------------------------------------------------
+    // Pages
+    // -------------------------------------------------------------------------
+
+    public List<AppPage> listPages(String appName) {
+        return pages.stream()
+                .filter(p -> appName == null || appName.equals(p.getAppName()))
+                .collect(Collectors.toList());
+    }
+
+    public AppPage getPage(String pageName) {
+        return pages.stream().filter(p -> pageName.equals(p.getPageName())).findFirst().orElse(null);
+    }
+
+    /**
+     * Saves a page after checking it hangs together: every control is addressable, every value
+     * control has a distinct field name, and every instance and target a select, button or link
+     * points at really exists. A page that half-resolves is worse than one that refuses to save —
+     * the parts that do resolve make it look like it works.
+     */
+    public synchronized AppPage savePage(AppPage page) throws Exception {
+        requireName(page.getPageName(), "pageName");
+        validateControls(page);
+
+        pages.removeIf(p -> p.getPageName().equals(page.getPageName()));
+        pages.add(page);
+        write("apppages.json", pages);
+        return page;
+    }
+
+    public synchronized void deletePage(String pageName) throws Exception {
+        pages.removeIf(p -> pageName.equals(p.getPageName()));
+        write("apppages.json", pages);
+    }
+
+    /** Control types that hold a value the operator supplies, and so need a field name. */
+    private static final List<String> VALUE_TYPES =
+            List.of("text", "textarea", "number", "date", "hidden", "select", "checkbox");
+
+    /** Control types that run use case instances when clicked. */
+    private static final List<String> ACTION_TYPES = List.of("button", "link");
+
+    /** Control types an action can put a response into. */
+    private static final List<String> TARGET_TYPES = List.of("grid", "select", "text", "textarea");
+
+    private void validateControls(AppPage page) {
+        List<String> controlIds = new ArrayList<>();
+        List<String> fieldNames = new ArrayList<>();
+
+        for (AppPageControl control : page.getControls()) {
+            if (control.getControlId() == null || control.getControlId().isBlank()) {
+                control.setControlId("c-" + UUID.randomUUID().toString().substring(0, 8));
+            }
+            if (controlIds.contains(control.getControlId()))
+                throw new IllegalArgumentException("Duplicate control id: " + control.getControlId());
+            controlIds.add(control.getControlId());
+
+            String where = "Control '" + describe(control) + "'";
+            if (VALUE_TYPES.contains(control.getType())) {
+                requireName(control.getFieldName(), where + " field name");
+                if (fieldNames.contains(control.getFieldName()))
+                    throw new IllegalArgumentException("Duplicate field name: " + control.getFieldName());
+                fieldNames.add(control.getFieldName());
+            }
+            if ("select".equals(control.getType()) && control.getOptionSource() != null) {
+                AppPageOptionSource source = control.getOptionSource();
+                if ("USECASE".equals(source.getMode())) {
+                    requireInstance(source.getAppUseCaseInstanceId(), where + " option source");
+                } else if ("ENVIRONMENTS".equals(source.getMode())) {
+                    if (source.getAppName() == null || source.getAppName().isBlank())
+                        throw new IllegalArgumentException(where + " option source names no app");
+                    if (getApp(source.getAppName()) == null)
+                        throw new IllegalArgumentException(where + " option source names an unknown app: " + source.getAppName());
+                }
+            }
+        }
+
+        for (AppPageControl control : page.getControls()) {
+            if (!ACTION_TYPES.contains(control.getType())) continue;
+            for (AppPageAction action : control.getActions()) {
+                String where = "Action '" + (action.getActionLabel() != null && !action.getActionLabel().isBlank()
+                        ? action.getActionLabel() : describe(control)) + "'";
+                requireInstance(action.getAppUseCaseInstanceId(), where);
+
+                String target = action.getTargetControlId();
+                if (target == null || target.isBlank() || AppPageAction.NEW_GRID.equals(target)) continue;
+                AppPageControl targetControl = page.getControls().stream()
+                        .filter(c -> target.equals(c.getControlId())).findFirst().orElse(null);
+                if (targetControl == null)
+                    throw new IllegalArgumentException(where + " targets a control that is not on this page");
+                if (!TARGET_TYPES.contains(targetControl.getType()))
+                    throw new IllegalArgumentException(where + " must target a grid, select, text or text area, not a "
+                            + targetControl.getType());
+            }
+        }
+    }
+
+    private void requireInstance(String instanceId, String where) {
+        if (instanceId == null || instanceId.isBlank())
+            throw new IllegalArgumentException(where + " names no use case instance");
+        if (getInstance(instanceId) == null)
+            throw new IllegalArgumentException(where + " names an unknown instance: " + instanceId);
+    }
+
+    private static String describe(AppPageControl control) {
+        if (control.getLabel() != null && !control.getLabel().isBlank())         return control.getLabel();
+        if (control.getFieldName() != null && !control.getFieldName().isBlank()) return control.getFieldName();
+        return control.getType();
     }
 
     // -------------------------------------------------------------------------
