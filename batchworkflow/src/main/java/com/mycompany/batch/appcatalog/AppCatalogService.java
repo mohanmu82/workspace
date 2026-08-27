@@ -343,6 +343,7 @@ public class AppCatalogService {
     private void validateControls(AppPage page) {
         List<String> controlIds = new ArrayList<>();
         List<String> fieldNames = new ArrayList<>();
+        List<String> actionIds = validatePageActions(page);
 
         for (AppPageControl control : page.getControls()) {
             if (control.getControlId() == null || control.getControlId().isBlank()) {
@@ -373,23 +374,60 @@ public class AppCatalogService {
         }
 
         for (AppPageControl control : page.getControls()) {
+            for (String id : control.getActionIds()) {
+                if (!actionIds.contains(id))
+                    throw new IllegalArgumentException("Control '" + describe(control)
+                            + "' triggers an action that is not on this page: " + id);
+            }
             if (!ACTION_TYPES.contains(control.getType())) continue;
             for (AppPageAction action : control.getActions()) {
-                String where = "Action '" + (action.getActionLabel() != null && !action.getActionLabel().isBlank()
-                        ? action.getActionLabel() : describe(control)) + "'";
-                requireInstance(action.getAppUseCaseInstanceId(), where);
-
-                String target = action.getTargetControlId();
-                if (target == null || target.isBlank() || AppPageAction.NEW_GRID.equals(target)) continue;
-                AppPageControl targetControl = page.getControls().stream()
-                        .filter(c -> target.equals(c.getControlId())).findFirst().orElse(null);
-                if (targetControl == null)
-                    throw new IllegalArgumentException(where + " targets a control that is not on this page");
-                if (!TARGET_TYPES.contains(targetControl.getType()))
-                    throw new IllegalArgumentException(where + " must target a grid, select, text or text area, not a "
-                            + targetControl.getType());
+                validateAction(page, action, "Action '" + actionName(action, describe(control)) + "'");
             }
         }
+
+        for (String id : page.getOnLoadActionIds()) {
+            if (!actionIds.contains(id))
+                throw new IllegalArgumentException("The page's on-load list names an action that is not on this page: " + id);
+        }
+    }
+
+    /**
+     * Checks the page's own action library and hands back its ids for the controls to be checked
+     * against. Ids are minted here when missing, so a page built in the designer never has to invent
+     * them, and duplicates are refused: two actions answering to one id would make "which action does
+     * this button run" unanswerable.
+     */
+    private List<String> validatePageActions(AppPage page) {
+        List<String> ids = new ArrayList<>();
+        for (AppPageAction action : page.getActions()) {
+            if (action.getActionId() == null || action.getActionId().isBlank()) {
+                action.setActionId("a-" + UUID.randomUUID().toString().substring(0, 8));
+            }
+            if (ids.contains(action.getActionId()))
+                throw new IllegalArgumentException("Duplicate action id: " + action.getActionId());
+            ids.add(action.getActionId());
+            validateAction(page, action, "Page action '" + actionName(action, action.getActionId()) + "'");
+        }
+        return ids;
+    }
+
+    /** The instance an action runs and the control it fills both have to be real. */
+    private void validateAction(AppPage page, AppPageAction action, String where) {
+        requireInstance(action.getAppUseCaseInstanceId(), where);
+
+        String target = action.getTargetControlId();
+        if (target == null || target.isBlank() || AppPageAction.NEW_GRID.equals(target)) return;
+        AppPageControl targetControl = page.getControls().stream()
+                .filter(c -> target.equals(c.getControlId())).findFirst().orElse(null);
+        if (targetControl == null)
+            throw new IllegalArgumentException(where + " targets a control that is not on this page");
+        if (!TARGET_TYPES.contains(targetControl.getType()))
+            throw new IllegalArgumentException(where + " must target a grid, select, text or text area, not a "
+                    + targetControl.getType());
+    }
+
+    private static String actionName(AppPageAction action, String fallback) {
+        return action.getActionLabel() != null && !action.getActionLabel().isBlank() ? action.getActionLabel() : fallback;
     }
 
     private void requireInstance(String instanceId, String where) {

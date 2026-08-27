@@ -150,6 +150,9 @@
             border: 1px solid #dfe1e6; border-radius: 3px; font-family: inherit;
         }
         .grid-box .grid-empty { font-size: 12px; color: #97a0af; font-style: italic; padding: 10px; }
+        /* Only a window of a large result is drawn; this is the way to the rest of it. */
+        .grid-more { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; flex: none; }
+        .grid-more .hint { margin: 0; }
 
         /* Grids an action stacks rather than reuses: newest first, each keeping its own tools. */
         #stackedGrids { margin-top: 14px; display: flex; flex-direction: column; gap: 10px; }
@@ -261,6 +264,16 @@
     // another grid underneath the form, newest on top.
     const NEW_GRID = '__new_grid__';
 
+    // How much of a large result a grid puts in the document at once, and how much of it it reads to
+    // work out its columns. A response of tens of thousands of rows is a normal thing for one of
+    // these endpoints to return and a fatal thing to render whole — see moreBar().
+    const GRID_PAGE = 200;
+    const COLUMN_SCAN = 200;
+    // Rows past which "Show all" asks first rather than simply obliging.
+    const BIG_GRID = 2000;
+    // How long typing in a column filter settles before the rows are refiltered.
+    const FILTER_DEBOUNCE = 180;
+
     const PALETTE = [
         { type: 'text',     glyph: 'ab',  label: 'Text' },
         { type: 'textarea', glyph: '¶', label: 'Text Area' },
@@ -322,6 +335,21 @@
         newPage();
     }
 
+    /**
+     * Fills in the lists a page saved before page-level actions does not carry, so nothing downstream
+     * has to keep asking whether they are there.
+     */
+    function hydratePage() {
+        page.controls = page.controls || [];
+        page.actions = page.actions || [];
+        page.onLoadActionIds = page.onLoadActionIds || [];
+        page.controls.forEach(c => {
+            c.actions = c.actions || [];
+            c.actionIds = c.actionIds || [];
+            c.trigger = c.trigger === 'CHANGE' ? 'CHANGE' : 'CLICK';
+        });
+    }
+
     function renderPageSelect() {
         AC.fillSelect(document.getElementById('pageSelect'), pages.map(p => p.pageName),
             pages.length ? '— new page —' : 'No pages yet');
@@ -333,7 +361,7 @@
         if (!name) { newPage(); return; }
         try {
             page = await AC.api('GET', '/appcatalog/pages/' + encodeURIComponent(name));
-            page.controls = page.controls || [];
+            hydratePage();
             savedPageName = page.pageName;
             selectedId = null;
             setMode('design');
@@ -345,7 +373,7 @@
     }
 
     function newPage() {
-        page = { pageName: '', title: '', description: '', controls: [] };
+        page = { pageName: '', title: '', description: '', controls: [], actions: [], onLoadActionIds: [] };
         savedPageName = null;
         selectedId = null;
         setMode('design');
@@ -636,10 +664,11 @@
         const control = findControl(selectedId);
         if (!control || !confirm('Remove "' + controlTitle(control) + '" from the page?')) return;
         page.controls = page.controls.filter(c => c.controlId !== selectedId);
-        // Any action pointing at it would save as a dangling target, so drop the reference too.
-        page.controls.forEach(c => (c.actions || []).forEach(a => {
-            if (a.targetControlId === selectedId) a.targetControlId = '';
-        }));
+        // Any action pointing at it would save as a dangling target, so drop the reference too —
+        // from the page's library as much as from the controls, since either can name it.
+        const clearTarget = a => { if (a.targetControlId === selectedId) a.targetControlId = ''; };
+        page.controls.forEach(c => (c.actions || []).forEach(clearTarget));
+        (page.actions || []).forEach(clearTarget);
         selectedId = null;
         renderAll();
     }
@@ -650,7 +679,8 @@
         const host = document.getElementById('props');
         const c = findControl(selectedId);
         if (!c) {
-            host.innerHTML = '<div class="empty-note">Select a control to edit it, or drag a new one onto the layout.</div>';
+            host.innerHTML = '<div class="empty-note">Select a control to edit it, or drag a new one onto the layout.</div>'
+                + pageProps();
             return;
         }
 
@@ -688,6 +718,7 @@
 
         if (c.type === 'select') html += selectProps(c);
         if (c.type === 'grid')   html += gridProps(c);
+        if (c.type !== 'grid' && c.type !== 'label') html += triggerProps(c);
         if (ACTION_TYPES.includes(c.type)) html += buttonProps(c);
 
         html += '<div class="toolbar" style="margin-top:10px"><button class="danger" onclick="deleteControl()">Remove Control</button></div>';
@@ -779,58 +810,167 @@
             + '</div>';
     }
 
-    function buttonProps(c) {
+    /** Every metadata field an action can bind, for the cheat-sheet the METADATA source puts up. */
+    const META_FIELDS = ['url', 'statusCode', 'status', 'httpMethod', 'timeTaken', 'appName', 'environment',
+        'envClass', 'useCase', 'executionId', 'requestSize', 'responseSize', 'executedVia', 'instanceLabel',
+        'appUseCaseInstanceId', 'startedAt', 'startedAtText', 'runIndex', 'runCount', 'unresolvedVariables', 'error'];
+
+    /**
+     * One action's editor. Identical whether the action lives on a control or in the page's library —
+     * only which mutators the inputs call differs, which `fns` carries — so the two can never drift
+     * into offering different fields.
+     */
+    function actionCard(a, i, count, fns) {
         const targets = page.controls.filter(t => TARGET_TYPES.includes(t.type));
-        let html = '<div class="props-section"><div class="props-title"><span>Actions</span>'
+        const target = targets.find(t => t.controlId === a.targetControlId);
+        // A text target is filled from one attribute, so it asks for a value path instead of
+        // the array path the many-row targets need.
+        const singleValue = target && (target.type === 'text' || target.type === 'textarea');
+        const isGridTarget = a.targetControlId === NEW_GRID || (target && target.type === 'grid');
+        const meta = a.source === 'METADATA';
+        const set = (name, expr) => fns.set + '(' + i + ', \'' + name + '\', ' + expr + ')';
+
+        return '<div class="action-card">'
+            + '<div class="action-head"><span class="action-num">' + (i + 1) + '</span>'
+            + '<input type="text" placeholder="action name" value="' + AC.attr(a.actionLabel || '') + '" oninput="' + set('actionLabel', 'this.value') + '">'
+            + (i > 0 ? '<button class="tool-btn" onclick="' + fns.move + '(' + i + ', -1)" title="Earlier">↑</button>' : '')
+            + (i < count - 1 ? '<button class="tool-btn" onclick="' + fns.move + '(' + i + ', 1)" title="Later">↓</button>' : '')
+            + '<button class="icon-btn" onclick="' + fns.remove + '(' + i + ')" title="Remove">×</button>'
+            + '</div>'
+            + field('Instance', '<select onchange="' + set('appUseCaseInstanceId', 'this.value') + '">' + instanceOptions(a.appUseCaseInstanceId) + '</select>')
+            + field('Environment', '<input type="text" value="' + AC.attr(a.environmentOverride || '') + '" placeholder="${envSelect}" oninput="' + set('environmentOverride', 'this.value') + '">',
+                'Overrides which environment this run calls. <code>${fieldName}</code> picks up a control (usually a select sourced from App environments); leave blank to use the instance\'s own environment.')
+            + field('Inputs', '<textarea spellcheck="false" placeholder=\'{"orderId": "${orderId}"}\' oninput="' + fns.inputs + '(' + i + ', this.value)">'
+                + AC.esc(a.inputs && Object.keys(a.inputs).length ? JSON.stringify(a.inputs, null, 2) : '') + '</textarea>',
+                'Use case input name to a value. <code>${fieldName}</code> picks up a control; anything else is passed as written. Unnamed inputs keep the instance\'s own value.')
+            + field('Bind From', '<select onchange="' + fns.source + '(' + i + ', this.value)">'
+                + '<option value="PAYLOAD"' + (meta ? '' : ' selected') + '>Response payload</option>'
+                + '<option value="METADATA"' + (meta ? ' selected' : '') + '>Call metadata (URL, status, timing)</option>'
+                + '</select>',
+                meta
+                    ? 'Binds the call\'s own record instead of its body — and the body is never sent to the browser at all, so this stays cheap however large the response is. A failed call still binds, which is the point: the status code is what you came for. Fields: <code>'
+                        + META_FIELDS.join('</code>, <code>') + '</code>.'
+                    : 'The response body, as every action has always bound.')
+            + field('Target', '<select onchange="' + set('targetControlId', 'this.value') + '">'
+                + '<option value="">— no target —</option>'
+                + '<option value="' + NEW_GRID + '"' + (a.targetControlId === NEW_GRID ? ' selected' : '') + '>+ New grid (one per run)</option>'
+                + targets.map(t => '<option value="' + AC.attr(t.controlId) + '"' + (t.controlId === a.targetControlId ? ' selected' : '') + '>'
+                    + AC.esc(controlTitle(t)) + ' (' + t.type + ')</option>').join('')
+                + '</select>',
+                a.targetControlId === NEW_GRID
+                    ? 'Every run adds its own grid below the form, newest on top, instead of replacing the last one.'
+                    : undefined)
+            + (singleValue
+                ? field('Value Path', '<input type="text" value="' + AC.attr(a.valuePath || '') + '" placeholder="' + (meta ? 'statusCode' : 'data.order.status') + '" oninput="' + set('valuePath', 'this.value') + '">',
+                    meta
+                        ? 'Which metadata field this box shows — <code>statusCode</code>, <code>url</code>, <code>timeTaken</code>. Blank puts the whole record in as JSON.'
+                        : 'Path to the one attribute this box shows — <code>data.order.status</code> or <code>$.items[0].name</code>. Blank puts the whole response in.')
+                : field('Array Path', '<input type="text" value="' + AC.attr(a.arrayPath || '') + '" placeholder="data.items" oninput="' + set('arrayPath', 'this.value') + '">',
+                    meta ? 'Leave blank — the metadata record is what gets bound.' : undefined))
+            + (isGridTarget
+                ? '<label class="inline-check"><input type="checkbox"' + (a.keyValueGrid ? ' checked' : '')
+                    + ' onchange="' + set('keyValueGrid', 'this.checked') + '"> '
+                    + (meta ? 'Down the page as key/value (off: one row per run, so runs stack into a comparable table)'
+                            : 'Show an object result as a key/value grid') + '</label>'
+                : '')
+            + (target && target.type === 'select'
+                ? '<div class="form-row" style="margin-bottom:0">'
+                    + field('Key Field', '<input type="text" value="' + AC.attr(a.keyField || '') + '" oninput="' + set('keyField', 'this.value') + '">')
+                    + field('Label Field', '<input type="text" value="' + AC.attr(a.labelField || '') + '" oninput="' + set('labelField', 'this.value') + '">')
+                  + '</div>'
+                : '')
+            + '</div>';
+    }
+
+    const CONTROL_FNS = { set: 'setAction', move: 'moveAction', remove: 'removeAction',
+                          inputs: 'setActionInputs', source: 'setActionSource' };
+    const PAGE_FNS    = { set: 'setPageAction', move: 'movePageAction', remove: 'removePageAction',
+                          inputs: 'setPageActionInputs', source: 'setPageActionSource' };
+
+    function buttonProps(c) {
+        const actions = c.actions || [];
+        let html = '<div class="props-section"><div class="props-title"><span>Actions On This ' + AC.esc(c.type) + '</span>'
                  + '<button class="tool-btn" onclick="addAction()">+ Add</button></div>';
 
-        if (!(c.actions || []).length) {
-            html += '<div class="empty-note">No actions — this ' + AC.esc(c.type) + ' does nothing yet.</div>';
+        if (!actions.length && !(c.actionIds || []).length) {
+            html += '<div class="empty-note">No actions — this ' + AC.esc(c.type) + ' does nothing yet. '
+                 + 'Add one here, or attach a page action above to share it with other controls.</div>';
+        }
+        actions.forEach((a, i) => { html += actionCard(a, i, actions.length, CONTROL_FNS); });
+        return html + '</div>';
+    }
+
+    /**
+     * Which of the page's actions this control triggers, and what sets them off. Offered for every
+     * control, not just buttons: a select that reloads a grid when it changes is the same wiring as
+     * a button that reloads it when clicked.
+     */
+    function triggerProps(c) {
+        const library = page.actions || [];
+        const chosen = c.actionIds || [];
+        let html = '<div class="props-section"><div class="props-title"><span>Page Actions</span></div>';
+
+        if (!library.length) {
+            return html + '<div class="empty-note">The page has no actions yet. Click empty canvas to '
+                 + 'deselect, and add them under Page Actions — then attach them here.</div></div>';
         }
 
-        (c.actions || []).forEach((a, i) => {
-            const target = targets.find(t => t.controlId === a.targetControlId);
-            // A text target is filled from one attribute, so it asks for a value path instead of
-            // the array path the many-row targets need.
-            const singleValue = target && (target.type === 'text' || target.type === 'textarea');
-            const isGridTarget = a.targetControlId === NEW_GRID || (target && target.type === 'grid');
-            html += '<div class="action-card">'
-                + '<div class="action-head"><span class="action-num">' + (i + 1) + '</span>'
-                + '<input type="text" placeholder="action name" value="' + AC.attr(a.actionLabel || '') + '" oninput="setAction(' + i + ', \'actionLabel\', this.value)">'
-                + (i > 0 ? '<button class="tool-btn" onclick="moveAction(' + i + ', -1)" title="Earlier">↑</button>' : '')
-                + (i < c.actions.length - 1 ? '<button class="tool-btn" onclick="moveAction(' + i + ', 1)" title="Later">↓</button>' : '')
-                + '<button class="icon-btn" onclick="removeAction(' + i + ')" title="Remove">×</button>'
-                + '</div>'
-                + field('Instance', '<select onchange="setAction(' + i + ', \'appUseCaseInstanceId\', this.value)">' + instanceOptions(a.appUseCaseInstanceId) + '</select>')
-                + field('Inputs', '<textarea spellcheck="false" placeholder=\'{"orderId": "${orderId}"}\' oninput="setActionInputs(' + i + ', this.value)">'
-                    + AC.esc(a.inputs && Object.keys(a.inputs).length ? JSON.stringify(a.inputs, null, 2) : '') + '</textarea>',
-                    'Use case input name to a value. <code>${fieldName}</code> picks up a control; anything else is passed as written. Unnamed inputs keep the instance\'s own value.')
-                + field('Target', '<select onchange="setAction(' + i + ', \'targetControlId\', this.value)">'
-                    + '<option value="">— no target —</option>'
-                    + '<option value="' + NEW_GRID + '"' + (a.targetControlId === NEW_GRID ? ' selected' : '') + '>+ New grid (one per run)</option>'
-                    + targets.map(t => '<option value="' + AC.attr(t.controlId) + '"' + (t.controlId === a.targetControlId ? ' selected' : '') + '>'
-                        + AC.esc(controlTitle(t)) + ' (' + t.type + ')</option>').join('')
-                    + '</select>',
-                    a.targetControlId === NEW_GRID
-                        ? 'Every run adds its own grid below the form, newest on top, instead of replacing the last one.'
-                        : undefined)
-                + (singleValue
-                    ? field('Value Path', '<input type="text" value="' + AC.attr(a.valuePath || '') + '" placeholder="data.order.status" oninput="setAction(' + i + ', \'valuePath\', this.value)">',
-                        'Path to the one attribute this box shows — <code>data.order.status</code> or <code>$.items[0].name</code>. Blank puts the whole response in.')
-                    : field('Array Path', '<input type="text" value="' + AC.attr(a.arrayPath || '') + '" placeholder="data.items" oninput="setAction(' + i + ', \'arrayPath\', this.value)">'))
-                + (isGridTarget
-                    ? '<label class="inline-check"><input type="checkbox"' + (a.keyValueGrid ? ' checked' : '')
-                        + ' onchange="setAction(' + i + ', \'keyValueGrid\', this.checked)"> Show an object result as a key/value grid</label>'
-                    : '')
-                + (target && target.type === 'select'
-                    ? '<div class="form-row" style="margin-bottom:0">'
-                        + field('Key Field', '<input type="text" value="' + AC.attr(a.keyField || '') + '" oninput="setAction(' + i + ', \'keyField\', this.value)">')
-                        + field('Label Field', '<input type="text" value="' + AC.attr(a.labelField || '') + '" oninput="setAction(' + i + ', \'labelField\', this.value)">')
-                      + '</div>'
-                    : '')
-                + '</div>';
-        });
+        html += field('Runs On', '<select onchange="setProp(\'trigger\', this.value); renderProps()">'
+                + '<option value="CLICK"' + (c.trigger === 'CHANGE' ? '' : ' selected') + '>Click</option>'
+                + '<option value="CHANGE"' + (c.trigger === 'CHANGE' ? ' selected' : '') + '>Value change</option>'
+                + '</select>',
+            ACTION_TYPES.includes(c.type)
+                ? 'A button or link normally runs on click.'
+                : 'Value change fires when the operator picks a different option or leaves the field — not on every keystroke.');
+
+        html += '<div class="form-group"><label>Attached</label>'
+             + library.map(a => {
+                 const on = chosen.includes(a.actionId);
+                 const order = on ? chosen.indexOf(a.actionId) + 1 : 0;
+                 return '<label class="inline-check"><input type="checkbox"' + (on ? ' checked' : '')
+                     + ' onchange="toggleControlAction(\'' + AC.attr(a.actionId) + '\', this.checked)"> '
+                     + (order ? '<b>' + order + '.</b> ' : '') + AC.esc(a.actionLabel || a.actionId) + '</label>';
+             }).join('')
+             + '<span class="hint">Run in the order they were attached. The same action can be attached to as many controls as you like.</span></div>';
+
         return html + '</div>';
+    }
+
+    /**
+     * The panel shown when nothing is selected: the page's own action library and what runs when the
+     * page opens. Deliberately where "no control selected" already lived — a page-level thing belongs
+     * in the properties panel when the properties panel is not busy with a control.
+     */
+    function pageProps() {
+        const actions = page.actions || [];
+        let html = '<div class="stack mini">'
+            + '<div class="props-section"><div class="props-title"><span>Page Actions</span>'
+            + '<button class="tool-btn" onclick="addPageAction()">+ Add</button></div>'
+            + '<span class="hint">Actions defined once here and attached to any number of controls — a button, a '
+            + 'select that reloads on change, the page opening. Select a control to attach them.</span>';
+
+        if (!actions.length) {
+            html += '<div class="empty-note">No page actions yet.</div>';
+        }
+        actions.forEach((a, i) => { html += actionCard(a, i, actions.length, PAGE_FNS); });
+        html += '</div>';
+
+        html += '<div class="props-section"><div class="props-title"><span>On Page Load</span></div>';
+        if (!actions.length) {
+            html += '<div class="empty-note">Add a page action first.</div>';
+        } else {
+            const chosen = page.onLoadActionIds || [];
+            html += actions.map(a => {
+                const on = chosen.includes(a.actionId);
+                const order = on ? chosen.indexOf(a.actionId) + 1 : 0;
+                return '<label class="inline-check"><input type="checkbox"' + (on ? ' checked' : '')
+                    + ' onchange="togglePageLoadAction(\'' + AC.attr(a.actionId) + '\', this.checked)"> '
+                    + (order ? '<b>' + order + '.</b> ' : '') + AC.esc(a.actionLabel || a.actionId) + '</label>';
+            }).join('')
+            + '<span class="hint">Run once as soon as the page opens, in the order attached — after every select has '
+            + 'filled its own options, so an action may read what they settled on.</span>';
+        }
+        return html + '</div></div>';
     }
 
     // ── Property mutations ───────────────────────────────────────────────────
@@ -857,7 +997,10 @@
         if (type === 'select' && !c.optionSource) c.optionSource = { mode: 'NONE', staticOptions: [] };
         // A button and a link differ only in how much room they take, so switching between the two
         // keeps the actions that were already wired up.
-        if (!ACTION_TYPES.includes(type)) c.actions = [];
+        // Inline actions belong to a button or a link; page-level ones the control triggers survive
+        // the change, so a button turned into a select keeps its wiring and just fires on change.
+        if (!ACTION_TYPES.includes(type)) { c.actions = []; c.trigger = 'CHANGE'; }
+        else c.trigger = 'CLICK';
         if (!VALUE_TYPES.includes(type)) { c.fieldName = ''; c.mandatory = false; }
         else if (!c.fieldName) c.fieldName = nextFieldName(type);
         renderAll();
@@ -896,11 +1039,16 @@
         renderCanvas();
     }
 
+    function blankAction(label) {
+        return { actionLabel: label, appUseCaseInstanceId: '', environmentOverride: '', inputs: {},
+                 targetControlId: '', arrayPath: '', valuePath: '', keyField: '', labelField: '',
+                 keyValueGrid: false, source: 'PAYLOAD' };
+    }
+
     function addAction() {
         const c = findControl(selectedId);
         c.actions = c.actions || [];
-        c.actions.push({ actionLabel: 'Action ' + (c.actions.length + 1), appUseCaseInstanceId: '', inputs: {},
-                         targetControlId: '', arrayPath: '', valuePath: '', keyField: '', labelField: '', keyValueGrid: false });
+        c.actions.push(blankAction('Action ' + (c.actions.length + 1)));
         renderProps();
         renderCanvas();
     }
@@ -910,6 +1058,19 @@
         c.actions[index][name] = value;
         // The target's type decides whether key/label fields are even asked for, so that one redraws.
         if (name === 'targetControlId') renderProps();
+        renderCanvas();
+    }
+
+    /**
+     * Switching an action to metadata turns the key/value grid on, since a metadata record read down
+     * the page is what a "call details" panel wants; switching back turns it off again, because an
+     * ordinary array response has no use for it.
+     */
+    function setActionSource(index, value) {
+        const a = findControl(selectedId).actions[index];
+        a.source = value;
+        a.keyValueGrid = value === 'METADATA';
+        renderProps();
         renderCanvas();
     }
 
@@ -938,6 +1099,76 @@
         renderCanvas();
     }
 
+    // ── The page's own action library ────────────────────────────────────────
+    // The same four mutations as above against page.actions rather than a control's, plus the
+    // reference-keeping a shared action needs: removing one has to take it off every control that
+    // triggers it, or the page would refuse to save pointing at an action that is not there.
+
+    function addPageAction() {
+        page.actions = page.actions || [];
+        const action = blankAction('Action ' + (page.actions.length + 1));
+        action.actionId = 'a-' + Math.random().toString(36).substring(2, 10);
+        page.actions.push(action);
+        renderProps();
+    }
+
+    function setPageAction(index, name, value) {
+        page.actions[index][name] = value;
+        if (name === 'targetControlId') renderProps();
+        if (name === 'actionLabel') renderControlList();
+    }
+
+    function setPageActionSource(index, value) {
+        const a = page.actions[index];
+        a.source = value;
+        a.keyValueGrid = value === 'METADATA';
+        renderProps();
+    }
+
+    function setPageActionInputs(index, text) {
+        try {
+            page.actions[index].inputs = text.trim() ? JSON.parse(text) : {};
+            AC.setStatus('statusBar', '');
+        } catch (e) {
+            AC.setStatus('statusBar', 'Action inputs are not valid JSON yet: ' + e.message, 'error');
+        }
+    }
+
+    function movePageAction(index, delta) {
+        const target = index + delta;
+        if (target < 0 || target >= page.actions.length) return;
+        [page.actions[index], page.actions[target]] = [page.actions[target], page.actions[index]];
+        renderProps();
+    }
+
+    function removePageAction(index) {
+        const [removed] = page.actions.splice(index, 1);
+        page.controls.forEach(c => {
+            c.actionIds = (c.actionIds || []).filter(id => id !== removed.actionId);
+        });
+        page.onLoadActionIds = (page.onLoadActionIds || []).filter(id => id !== removed.actionId);
+        renderProps();
+        renderCanvas();
+    }
+
+    /** Attaching appends, so the order actions are ticked in is the order they run in. */
+    function toggleControlAction(actionId, on) {
+        const c = findControl(selectedId);
+        if (!c) return;
+        c.actionIds = c.actionIds || [];
+        c.actionIds = on ? c.actionIds.concat([actionId]).filter((id, i, all) => all.indexOf(id) === i)
+                         : c.actionIds.filter(id => id !== actionId);
+        renderProps();
+        renderCanvas();
+    }
+
+    function togglePageLoadAction(actionId, on) {
+        page.onLoadActionIds = page.onLoadActionIds || [];
+        page.onLoadActionIds = on ? page.onLoadActionIds.concat([actionId]).filter((id, i, all) => all.indexOf(id) === i)
+                                  : page.onLoadActionIds.filter(id => id !== actionId);
+        renderProps();
+    }
+
     function onHeaderInput() {
         page.title = document.getElementById('pageTitle').value;
         page.description = document.getElementById('pageDescription').value;
@@ -956,7 +1187,7 @@
                 ? await AC.api('PUT', '/appcatalog/pages/' + encodeURIComponent(savedPageName), page)
                 : await AC.api('POST', '/appcatalog/pages', page);
             page = saved;
-            page.controls = page.controls || [];
+            hydratePage();
             savedPageName = saved.pageName;
             pages = await AC.api('GET', '/appcatalog/pages');
             renderPageSelect();
@@ -991,7 +1222,7 @@
         if (next === 'run') startRun();
     }
 
-    function startRun() {
+    async function startRun() {
         values = {};
         errors = [];
         gridState = {};
@@ -1001,7 +1232,11 @@
             values[c.fieldName] = c.type === 'checkbox' ? c.defaultValue === 'true' : (c.defaultValue || '');
         });
         renderRun();
-        loadSelectOptions();
+        // Options first: an on-load action routinely reads a select the operator has not touched
+        // yet, and it should see the value that select actually settled on.
+        await loadSelectOptions();
+        const onLoad = actionsByIds(page.onLoadActionIds);
+        if (onLoad.length) await runActions(onLoad, 'Page load', null);
     }
 
     function renderRun() {
@@ -1023,9 +1258,19 @@
                 input.addEventListener(c.type === 'select' || c.type === 'checkbox' ? 'change' : 'input', () => {
                     values[c.fieldName] = c.type === 'checkbox' ? input.checked : input.value;
                 });
+                // A value control wired to CHANGE runs its actions whenever the operator moves it —
+                // picking a different environment and having the grid below reload itself. Bound on
+                // 'change' even for a text box, so it fires when the field is left rather than on
+                // every keystroke; nobody means to make a call per character typed.
+                if (c.trigger === 'CHANGE' && actionsFor(c).length) {
+                    input.addEventListener('change', () => {
+                        values[c.fieldName] = c.type === 'checkbox' ? input.checked : input.value;
+                        runControlActions(c, input);
+                    });
+                }
             }
             const trigger = host.querySelector('[data-run]');
-            if (trigger) trigger.addEventListener('click', () => runButton(c, trigger));
+            if (trigger) trigger.addEventListener('click', () => runControlActions(c, trigger));
             if (c.type === 'grid') paintGrid(c.controlId);
         });
     }
@@ -1119,11 +1364,34 @@
     }
 
     /**
-     * Runs a button or a link: nothing goes out until every mandatory field is filled, then the
-     * actions run in order and stop at the first failure — a second action usually depends on the
-     * first having worked, and running it anyway just produces a second, more confusing error.
+     * The actions a control actually runs: the page-level ones it names, in the order it names them,
+     * then any written directly onto it. Both forms are honoured because the inline form predates the
+     * page library and every page saved before it must keep working; a control that has been moved
+     * over to the library simply has nothing left in the inline list.
      */
-    async function runButton(control, button) {
+    function actionsFor(control) {
+        return actionsByIds(control.actionIds).concat(control.actions || []);
+    }
+
+    /** Page-level actions by id, skipping any the library no longer holds. */
+    function actionsByIds(ids) {
+        return (ids || []).map(id => (page.actions || []).find(a => a.actionId === id)).filter(Boolean);
+    }
+
+    /** Runs a control's actions — its click, or its value changing, depending on how it is wired. */
+    function runControlActions(control, element) {
+        return runActions(actionsFor(control), control.label || controlTitle(control), element);
+    }
+
+    /**
+     * Runs a list of actions in order: nothing goes out until every mandatory field is filled, then
+     * they stop at the first failure — a second action usually depends on the first having worked,
+     * and running it anyway just produces a second, more confusing error.
+     *
+     * <p>A metadata action binds before that check, so a failed call still fills in the URL and the
+     * status code that explain it. The chain still stops; the diagnosis just survives it.
+     */
+    async function runActions(actions, label, element) {
         errors = [];
         renderErrors();
         AC.setStatus('runStatus', '');
@@ -1134,46 +1402,56 @@
             missing.forEach(c => addError((c.label || c.fieldName) + ' is required.'));
             return;
         }
-        if (!(control.actions || []).length) {
-            addError('"' + (control.label || controlTitle(control)) + '" has no actions configured.');
+        if (!actions.length) {
+            addError('"' + label + '" has no actions configured.');
             return;
         }
 
-        button.classList.add('busy');
-        AC.setStatus('runStatus', 'Running ' + control.actions.length + ' action'
-            + (control.actions.length > 1 ? 's' : '') + '…');
+        if (element) element.classList.add('busy');
+        AC.setStatus('runStatus', 'Running ' + actions.length + ' action' + (actions.length > 1 ? 's' : '') + '…');
         try {
             let done = 0;
-            for (const action of control.actions) {
+            for (const action of actions) {
                 const name = action.actionLabel || action.appUseCaseInstanceId || 'Action';
-                const data = await runInstance(action.appUseCaseInstanceId, resolveInputs(action.inputs), name);
-                done++;
-                if (!action.targetControlId) continue;
+                const result = await runExecution(action.appUseCaseInstanceId, resolveInputs(action.inputs), name,
+                        resolveTemplate(action.environmentOverride), isMetadataAction(action));
 
-                if (action.targetControlId === NEW_GRID) {
-                    const stacked = rowsForGridAction(data, action, name);
-                    pushStackedGrid(name, stacked.rows, stacked.columns);
-                    continue;
-                }
-                const target = findControl(action.targetControlId);
-                if (!target) { addError(name + ': its target is no longer on this page.'); break; }
-                if (target.type === 'grid') {
-                    const bound = rowsForGridAction(data, action, name);
-                    bindGrid(target, bound.rows, bound.columns);
-                } else if (target.type === 'text' || target.type === 'textarea') {
-                    bindValue(target, pathGet(data, action.valuePath), action.valuePath, name);
-                } else {
-                    fillOptions(target, rowsAt(data, action.arrayPath, name)
-                        .map(r => optionOf(r, action.keyField, action.labelField)));
-                }
+                // A metadata action is bound whatever the call did — the status code of a failure is
+                // the whole reason someone put a metadata panel on the page.
+                if (isMetadataAction(action)) bindAction(action, rootFor(result, action), name);
+                requireSuccess(result, name);
+                done++;
+                if (!isMetadataAction(action)) bindAction(action, rootFor(result, action), name);
             }
-            AC.setStatus('runStatus', errors.length ? '' : done + ' of ' + control.actions.length + ' action'
-                + (control.actions.length > 1 ? 's' : '') + ' completed.', 'ok');
+            AC.setStatus('runStatus', errors.length ? '' : done + ' of ' + actions.length + ' action'
+                + (actions.length > 1 ? 's' : '') + ' completed.', 'ok');
         } catch (e) {
             AC.setStatus('runStatus', '');
             addError(e.message);
         } finally {
-            button.classList.remove('busy');
+            if (element) element.classList.remove('busy');
+        }
+    }
+
+    /** Puts one action's result where it is aimed — a stacked grid, a placed grid, a box, a dropdown. */
+    function bindAction(action, data, name) {
+        if (!action.targetControlId) return;
+
+        if (action.targetControlId === NEW_GRID) {
+            const stacked = rowsForGridAction(data, action, name);
+            pushStackedGrid(name, stacked.rows, stacked.columns);
+            return;
+        }
+        const target = findControl(action.targetControlId);
+        if (!target) { addError(name + ': its target is no longer on this page.'); return; }
+        if (target.type === 'grid') {
+            const bound = rowsForGridAction(data, action, name);
+            bindGrid(target, bound.rows, bound.columns);
+        } else if (target.type === 'text' || target.type === 'textarea') {
+            bindValue(target, pathGet(data, action.valuePath), action.valuePath, name);
+        } else {
+            fillOptions(target, rowsAt(data, action.arrayPath, name)
+                .map(r => optionOf(r, action.keyField, action.labelField)));
         }
     }
 
@@ -1202,23 +1480,113 @@
     }
 
     /**
-     * Runs one instance and hands back its response, whole. What the caller wants out of it — an
-     * array of rows, or one attribute — is a separate question, since the same response can feed a
-     * grid, a dropdown or a text box. A failed call is reported through the thrown message, which
-     * the caller puts into the page's error section.
+     * A single template resolved the same way {@link #resolveInputs} resolves each input — but
+     * missing values disappear rather than surviving as literal {@code ${name}} text, since this
+     * feeds the environment override, where an unresolved placeholder is not a sensible thing to
+     * send: it should mean "no override" instead.
      */
-    async function runInstance(instanceId, inputs, name) {
-        if (!instanceId) throw new Error(name + ': no use case instance is configured.');
+    function resolveTemplate(template) {
+        if (!template) return '';
+        return String(template).replace(/\$\{([A-Za-z0-9_.\-]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g,
+            (match, braced, bare) => {
+                const value = values[braced || bare];
+                return value === undefined || value === null ? '' : String(value);
+            });
+    }
 
-        const result = await AC.api('POST', '/appcatalog/pages/run', { appUseCaseInstanceId: instanceId, inputs: inputs });
+    /**
+     * Runs one instance and hands back the whole execution record — the response and the call's own
+     * metadata together. Whether the caller wants rows, one attribute, or the status code is a
+     * separate question answered by {@link #rootFor}, since the same run can feed a grid, a dropdown,
+     * a text box or a metadata panel.
+     *
+     * <p>Nothing is thrown for a failed call: a 500 is a perfectly good thing to bind metadata from,
+     * and it is the caller that knows whether this run was allowed to fail. See {@link #requireSuccess}.
+     *
+     * @param environment  overrides which of the instance's environments this call goes to; blank
+     *                     leaves the instance's own environment untouched
+     * @param metadataOnly when true the bodies are left on the server — nothing downstream is going
+     *                     to read them, and a 30 MB response is not worth the wire or the heap
+     */
+    async function runExecution(instanceId, inputs, name, environment, metadataOnly) {
+        if (!instanceId) throw new Error(name + ': no use case instance is configured.');
+        return AC.api('POST', '/appcatalog/pages/run', {
+            appUseCaseInstanceId: instanceId,
+            inputs: inputs,
+            environment: environment || '',
+            includePayload: !metadataOnly
+        });
+    }
+
+    function requireSuccess(result, name) {
         if (result.status !== 'SUCCESS') {
             throw new Error(name + ' failed: ' + (result.error || ('HTTP ' + (result.statusCode || '?'))));
         }
+    }
+
+    /** The response body of a result, parsed — the transform's output when the instance has one. */
+    function payloadOf(result) {
         let data = result.transformedResponse;
         if (data === undefined || data === null) {
             try { data = JSON.parse(result.responseBody || 'null'); } catch (e) { data = null; }
         }
         return data;
+    }
+
+    /**
+     * The call's metadata as a flat object, which is what makes it bindable by exactly the machinery
+     * the payload uses: a key/value grid of the whole thing, a text box showing
+     * <code>statusCode</code>, a stacked grid per run. Flat and shallow on purpose — every value here
+     * is meant to be read in a cell without being drilled into.
+     *
+     * <p>Sizes come off the record when the server computed them and off the bodies otherwise: a run
+     * that shipped its payload reports them as null, since nothing had dropped the bodies to measure.
+     */
+    function metaOf(result) {
+        const size = (reported, body) =>
+            (reported !== undefined && reported !== null) ? reported : (body ? String(body).length : 0);
+        return {
+            executionId:  result.executionId,
+            status:       result.status,
+            statusCode:   result.statusCode,
+            httpMethod:   result.httpMethod,
+            url:          result.url,
+            timeTaken:    result.timeTaken,
+            appName:      result.appName,
+            environment:  result.environment,
+            envClass:     result.envClass,
+            useCase:      result.useCase,
+            instanceLabel:        result.instanceLabel,
+            appUseCaseInstanceId: result.appUseCaseInstanceId,
+            requestSize:  size(result.requestBodySize, result.requestBody),
+            responseSize: size(result.responseBodySize, result.responseBody),
+            executedVia:  result.executedVia,
+            startedAt:    result.startedAt,
+            startedAtText: result.startedAt ? new Date(result.startedAt).toLocaleString() : '',
+            runIndex:     result.runIndex,
+            runCount:     result.runCount,
+            unresolvedVariables: (result.unresolvedVariables || []).join(', '),
+            error:        result.error || ''
+        };
+    }
+
+    /** Which object an action's paths are resolved against — the body, or the call's metadata. */
+    function rootFor(result, action) {
+        return isMetadataAction(action) ? metaOf(result) : payloadOf(result);
+    }
+
+    function isMetadataAction(action) {
+        return (action && action.source) === 'METADATA';
+    }
+
+    /**
+     * Runs an instance and hands back its payload, failing loudly — the older, narrower contract,
+     * still exactly what a select filling its own options wants.
+     */
+    async function runInstance(instanceId, inputs, name, environment) {
+        const result = await runExecution(instanceId, inputs, name, environment, false);
+        requireSuccess(result, name);
+        return payloadOf(result);
     }
 
     /** The array a grid or a dropdown needs, or an explanation of why the response is not one. */
@@ -1234,15 +1602,23 @@
      * when {@link AppPageAction#keyValueGrid} is on and the response is a JSON object instead, its
      * own top-level properties become the rows of a two-column key/value grid rather than failing
      * the action.
+     *
+     * <p>A metadata action is never an array — the record it binds is one call — so an object there
+     * is always meant, and the checkbox chooses how to read it: down the page as key/value, which is
+     * how a "call details" panel wants it, or across as a single row, which is what makes each run
+     * stack into a table comparable with the ones above it.
      */
     function rowsForGridAction(data, action, name) {
         const found = pathGet(data, action.arrayPath);
         if (found === undefined || found === null) throw new Error(name + ': nothing found at path "' + (action.arrayPath || '') + '".');
         if (Array.isArray(found)) return { rows: found, columns: null };
-        if (action.keyValueGrid && typeof found === 'object') {
-            const rows = Object.entries(found).map(([key, value]) =>
-                ({ key, value: (value !== null && typeof value === 'object') ? JSON.stringify(value) : value }));
-            return { rows, columns: ['key', 'value'] };
+        if (typeof found === 'object') {
+            if (action.keyValueGrid) {
+                const rows = Object.entries(found).map(([key, value]) =>
+                    ({ key, value: (value !== null && typeof value === 'object') ? JSON.stringify(value) : value }));
+                return { rows, columns: ['key', 'value'] };
+            }
+            if (isMetadataAction(action)) return { rows: [found], columns: null };
         }
         throw new Error(name + ': expected an array' + (action.arrayPath ? ' at "' + action.arrayPath + '"' : '') + ', got ' + typeof found + '.');
     }
@@ -1285,13 +1661,27 @@
             filters: {},
             sort: null,
             direction: 1,
-            title: title
+            title: title,
+            shown: GRID_PAGE,   // how many of the matching rows are actually in the DOM
+            view: null          // the filtered/sorted rows, cached until something invalidates them
         };
         paintGrid(gridId);
     }
 
+    /**
+     * The columns a set of rows implies. Only the first {@link #COLUMN_SCAN} rows are looked at: a
+     * response whose hundredth row introduces a new field is vanishingly rare next to the cost of
+     * walking every key of every row, and that walk used to build one intermediate array holding a
+     * string per field per row before the Set ever saw it.
+     */
     function columnsOf(rows) {
-        return [...new Set(rows.flatMap(r => (r && typeof r === 'object') ? Object.keys(r) : ['value']))];
+        const found = new Set();
+        for (let i = 0; i < rows.length && i < COLUMN_SCAN; i++) {
+            const row = rows[i];
+            if (row && typeof row === 'object') Object.keys(row).forEach(key => found.add(key));
+            else found.add('value');
+        }
+        return [...found];
     }
 
     /** One cell as the text it is shown, filtered, sorted and exported by. */
@@ -1301,14 +1691,42 @@
         return typeof cell === 'object' ? JSON.stringify(cell) : String(cell);
     }
 
-    /** The rows actually on screen: every column filter applied, then the chosen sort. */
+    /**
+     * Every row that matches the filters, in the chosen order. Cached on the state and thrown away
+     * by {@link #invalidateView} whenever a filter or the sort changes, so scrolling further down a
+     * 27,000-row result does not re-filter and re-sort it for each page shown.
+     *
+     * <p>The sort decorates rather than comparing cells in place: the old form called
+     * {@link #cellText} — and so <code>JSON.stringify</code> on any object cell — twice per
+     * comparison, which is O(n log n) stringifications of the same values. Now each row's key is
+     * computed once.
+     */
     function visibleRows(state) {
-        const filters = Object.entries(state.filters).filter(([, text]) => text && text.trim());
-        const rows = state.rows.filter(row => filters.every(([column, text]) =>
-            cellText(row, column).toLowerCase().includes(text.trim().toLowerCase())));
-        if (!state.sort) return rows;
-        return rows.slice().sort((a, b) =>
-            compareCells(cellText(a, state.sort), cellText(b, state.sort)) * state.direction);
+        if (state.view) return state.view;
+
+        const filters = Object.entries(state.filters)
+            .filter(([, text]) => text && text.trim())
+            .map(([column, text]) => [column, text.trim().toLowerCase()]);
+
+        let rows = filters.length
+            ? state.rows.filter(row => filters.every(([column, text]) =>
+                cellText(row, column).toLowerCase().includes(text)))
+            : state.rows;
+
+        if (state.sort) {
+            const column = state.sort;
+            rows = rows.map(row => ({ row, key: cellText(row, column) }));
+            rows.sort((a, b) => compareCells(a.key, b.key) * state.direction);
+            rows = rows.map(entry => entry.row);
+        }
+        state.view = rows;
+        return rows;
+    }
+
+    /** Drops the cached view — the next paint recomputes it. */
+    function invalidateView(state) {
+        state.view = null;
+        state.shown = GRID_PAGE;
     }
 
     /** Numbers compare as numbers so a column of ids does not sort 1, 10, 2. */
@@ -1339,24 +1757,64 @@
             + '</div>'
             + '<div class="grid-box">'
                 + (state.rows.length ? gridTable(state, rows) : '<div class="grid-empty">No rows returned.</div>')
-            + '</div>';
+            + '</div>'
+            + moreBar(state, rows);
 
         host.querySelectorAll('[data-act]').forEach(el => el.addEventListener('click', () => {
             if (el.dataset.act === 'csv')   exportCsv(gridId);
             if (el.dataset.act === 'html')  viewAsHtml(gridId);
-            if (el.dataset.act === 'clear') { state.filters = {}; paintGrid(gridId); }
+            if (el.dataset.act === 'more')  showMore(gridId, GRID_PAGE);
+            if (el.dataset.act === 'all')   showMore(gridId, Infinity);
+            if (el.dataset.act === 'clear') { state.filters = {}; invalidateView(state); paintGrid(gridId); }
         }));
         host.querySelectorAll('[data-sort]').forEach(el => el.addEventListener('click', () => {
             const column = el.dataset.sort;
             state.direction = state.sort === column ? -state.direction : 1;
             state.sort = column;
+            invalidateView(state);
             paintGrid(gridId);
         }));
         host.querySelectorAll('[data-filter]').forEach(el => el.addEventListener('input', () => {
             state.filters[el.dataset.filter] = el.value;
-            // Only the rows are redrawn: rebuilding the header would take the caret with it.
-            refreshGridRows(gridId);
+            // Filtering tens of thousands of rows on every keystroke is what makes a big grid feel
+            // broken, so the redraw waits until typing pauses. Only the rows are redrawn when it
+            // does: rebuilding the header would take the caret with it.
+            clearTimeout(state.filterTimer);
+            state.filterTimer = setTimeout(() => {
+                invalidateView(state);
+                refreshGridRows(gridId);
+            }, FILTER_DEBOUNCE);
         }));
+    }
+
+    /**
+     * The "showing 200 of 27,000" footer. Rendering every row is what put the tab on the floor: a
+     * 27,000-row response over twenty columns is over half a million table cells, and the browser
+     * needs far more memory per cell than the row behind it costs. The rows all stay in memory —
+     * they are cheap, and the filters, the sort and both exports still see every one of them — but
+     * only a window of them is ever in the document.
+     */
+    function moreBar(state, rows) {
+        const hidden = rows.length - Math.min(state.shown, rows.length);
+        if (hidden <= 0) return '';
+        return '<div class="grid-more">'
+            + '<button class="tool-btn" data-act="more">Show ' + Math.min(GRID_PAGE, hidden).toLocaleString() + ' more</button>'
+            + '<button class="tool-btn" data-act="all">Show all ' + rows.length.toLocaleString() + '</button>'
+            + '<span class="hint">' + hidden.toLocaleString() + ' more not shown — filter, sort or export to reach them.</span>'
+            + '</div>';
+    }
+
+    function showMore(gridId, by) {
+        const state = gridState[gridId];
+        if (!state) return;
+        const rows = visibleRows(state);
+        if (by === Infinity && rows.length > BIG_GRID
+            && !confirm('Put all ' + rows.length.toLocaleString() + ' rows on the page?\n\n'
+                + 'That is roughly ' + (rows.length * state.columns.length).toLocaleString()
+                + ' cells and may make the tab slow or run it out of memory. Exporting to CSV keeps every row '
+                + 'without drawing it.')) return;
+        state.shown = by === Infinity ? rows.length : state.shown + by;
+        paintGrid(gridId);
     }
 
     function isFiltered(state) {
@@ -1365,8 +1823,11 @@
 
     function gridCount(state, rows) {
         const total = state.rows.length;
-        return (rows.length === total ? total : rows.length + ' of ' + total)
-             + ' row' + (total === 1 ? '' : 's');
+        const drawn = Math.min(state.shown, rows.length);
+        const matching = rows.length === total ? total.toLocaleString()
+            : rows.length.toLocaleString() + ' of ' + total.toLocaleString();
+        return (drawn < rows.length ? 'showing ' + drawn.toLocaleString() + ' · ' : '')
+             + matching + ' row' + (total === 1 ? '' : 's');
     }
 
     function gridTable(state, rows) {
@@ -1384,11 +1845,17 @@
             + '</thead><tbody>' + gridRows(state, rows) + '</tbody></table>';
     }
 
+    /** Only the window of rows currently shown — see {@link #moreBar} for why that is not all of them. */
     function gridRows(state, rows) {
         if (!rows.length) return '<tr><td colspan="' + state.columns.length
             + '"><div class="grid-empty">No rows match the filters.</div></td></tr>';
-        return rows.map(row => '<tr>' + state.columns.map(column =>
-            '<td>' + AC.esc(cellText(row, column)) + '</td>').join('') + '</tr>').join('');
+        const limit = Math.min(state.shown, rows.length);
+        const out = [];
+        for (let i = 0; i < limit; i++) {
+            out.push('<tr>' + state.columns.map(column =>
+                '<td>' + AC.esc(cellText(rows[i], column)) + '</td>').join('') + '</tr>');
+        }
+        return out.join('');
     }
 
     function refreshGridRows(gridId) {
@@ -1401,6 +1868,14 @@
         host.querySelector('.grid-count').textContent = gridCount(state, rows);
         const clear = host.querySelector('[data-act="clear"]');
         if (clear) clear.hidden = !isFiltered(state);
+        // The footer's counts move with the filter, and it appears and disappears with it.
+        const more = host.querySelector('.grid-more');
+        const wanted = moreBar(state, rows);
+        if (more) more.outerHTML = wanted;
+        else if (wanted) host.insertAdjacentHTML('beforeend', wanted);
+        host.querySelectorAll('.grid-more [data-act]').forEach(el => el.addEventListener('click', () => {
+            showMore(gridId, el.dataset.act === 'all' ? Infinity : GRID_PAGE);
+        }));
     }
 
     /**

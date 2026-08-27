@@ -86,13 +86,48 @@
     /* Trust store rows */
     .ts-row {
       display: grid;
-      grid-template-columns: 1.1fr 1.6fr 1fr 0.8fr auto;
+      grid-template-columns: 1.1fr 1.6fr 1fr 0.8fr auto auto;
       gap: 8px;
       align-items: end;
       margin-bottom: 10px;
     }
     .ts-row .field label { font-size: 0.68rem; }
-    .ts-row:last-of-type { margin-bottom: 0; }
+    .ts-row:last-of-type { margin-bottom: 10px; }
+
+    /* Saved trust store presets */
+    .saved-ts-section { margin-top: 16px; padding-top: 14px; border-top: 1px solid #eceff3; }
+    .saved-ts-title { font-size: 0.72rem; font-weight: 700; color: #666; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 8px; }
+    .saved-ts-list { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+    .saved-ts-empty { font-size: 0.8rem; color: #888; }
+
+    .ts-chip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: #f8f9fb;
+      border: 1px solid #dde1e7;
+      border-radius: 16px;
+      padding: 4px 6px 4px 12px;
+      font-size: 0.8rem;
+    }
+    .ts-chip.is-default { border-color: #0078d4; background: #eaf3fb; }
+    .ts-chip .ts-chip-name { font-weight: 600; }
+    .ts-chip .ts-chip-path { color: #777; font-family: monospace; font-size: 0.74rem; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ts-chip button {
+      padding: 2px 8px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      border-radius: 10px;
+    }
+    .ts-chip .default-btn { background: transparent; color: #999; border: 1px solid #ccc; }
+    .ts-chip .default-btn:hover { background: #eee; color: #333; }
+    .ts-chip.is-default .default-btn { background: #0078d4; color: #fff; border-color: #0078d4; }
+    .ts-chip .remove-btn { background: transparent; color: #a93226; border: 1px solid #e3b3ac; }
+    .ts-chip .remove-btn:hover { background: #f8d7da; }
+
+    .saved-ts-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .saved-ts-form input[type=text] { width: 180px; }
+    .saved-ts-form input#savedTsPath { width: 280px; }
 
     .status-msg { font-size: 0.82rem; margin-top: 10px; }
     .status-err { color: #842029; }
@@ -170,6 +205,17 @@
   </div>
   <div id="tsRows"></div>
   <div class="hint">Leave Path blank to test against the JVM default trust store (cacerts). Type is auto-detected from the file extension (.p12/.pfx &rarr; PKCS12, otherwise JKS) if left blank.</div>
+
+  <div class="saved-ts-section">
+    <div class="saved-ts-title">Saved Trust Stores</div>
+    <div id="savedTsList" class="saved-ts-list"></div>
+    <div class="saved-ts-form">
+      <input type="text" id="savedTsName" placeholder="Name (e.g. Prod Trust Store)">
+      <input type="text" id="savedTsPath" placeholder="Path (e.g. C:/certs/truststore.jks)">
+      <button class="small secondary" onclick="addSavedTrustStore()">+ Save Trust Store</button>
+    </div>
+    <div class="hint">Saved trust stores are permanent and shared by everyone opening this page. Click a chip to add it as a row above; the star marks the default used to pre-fill this page on load.</div>
+  </div>
 </div>
 
 <!-- ===== Load from Static Dataset ===== -->
@@ -272,6 +318,7 @@
           <option value="JCEKS" ${type === 'JCEKS' ? 'selected' : ''}>JCEKS</option>
         </select>
       </div>
+      <button class="secondary small" title="Permanently save this name + path" onclick="saveRowAsPreset('${id}')">Save</button>
       <button class="danger small" onclick="removeTrustStoreRow('${id}')">Remove</button>`;
     wrap.appendChild(row);
   }
@@ -290,6 +337,115 @@
       password: row.querySelector('.ts-password').value,
       type:     row.querySelector('.ts-type').value
     }));
+  }
+
+  // =====================================================================
+  // Saved trust store presets (permanent, server-side)
+  // =====================================================================
+
+  let savedPresets = [];
+
+  async function initTrustStores() {
+    await initTrustStorePresets();
+
+    const def = savedPresets.find(p => p.defaultStore);
+    if (def) {
+      addTrustStoreRow(def.name, def.path, '', '');
+    } else {
+      addTrustStoreRow('Default (JVM)', '', '', '');
+    }
+  }
+
+  function renderSavedPresets() {
+    const wrap = document.getElementById('savedTsList');
+    wrap.innerHTML = '';
+    if (savedPresets.length === 0) {
+      wrap.innerHTML = '<span class="saved-ts-empty">No saved trust stores yet — save one from a row above, or use the form below.</span>';
+      return;
+    }
+    savedPresets.forEach(p => {
+      const chip = document.createElement('div');
+      chip.className = 'ts-chip' + (p.defaultStore ? ' is-default' : '');
+      chip.innerHTML = `
+        <span class="ts-chip-name" title="Click to add as a row" style="cursor:pointer">${escHtml(p.name)}</span>
+        <span class="ts-chip-path">${escHtml(p.path || '(JVM default)')}</span>
+        <button class="default-btn" title="Set as default">&#9733;</button>
+        <button class="remove-btn" title="Delete permanently">&times;</button>`;
+      chip.querySelector('.ts-chip-name').addEventListener('click', () => addTrustStoreRow(p.name, p.path, '', ''));
+      chip.querySelector('.default-btn').addEventListener('click', () => setDefaultPreset(p.name));
+      chip.querySelector('.remove-btn').addEventListener('click', () => deletePreset(p.name));
+      wrap.appendChild(chip);
+    });
+  }
+
+  async function saveRowAsPreset(rowId) {
+    const row = document.getElementById(rowId);
+    const name = row.querySelector('.ts-label').value.trim();
+    const path = row.querySelector('.ts-path').value.trim();
+    if (!name) { setStatus('Give the trust store a Label before saving it.', true); return; }
+    await persistPreset(name, path);
+  }
+
+  async function addSavedTrustStore() {
+    const nameEl = document.getElementById('savedTsName');
+    const pathEl = document.getElementById('savedTsPath');
+    const name = nameEl.value.trim();
+    const path = pathEl.value.trim();
+    if (!name) { setStatus('Enter a name for the saved trust store.', true); return; }
+    const ok = await persistPreset(name, path);
+    if (ok) { nameEl.value = ''; pathEl.value = ''; }
+  }
+
+  async function persistPreset(name, path) {
+    const existing = savedPresets.find(p => p.name === name);
+    try {
+      const r = await fetch('/truststorepresets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, path, defaultStore: existing ? existing.defaultStore : false })
+      });
+      const d = await r.json();
+      if (!r.ok) { setStatus(d.error || 'Failed to save trust store', true); return false; }
+      await initTrustStorePresets();
+      setStatus('Saved trust store "' + name + '".', false);
+      return true;
+    } catch (e) {
+      setStatus('Request error: ' + e.message, true);
+      return false;
+    }
+  }
+
+  async function setDefaultPreset(name) {
+    try {
+      const r = await fetch('/truststorepresets/' + encodeURIComponent(name) + '/default', { method: 'POST' });
+      const d = await r.json();
+      if (!r.ok) { setStatus(d.error || 'Failed to set default', true); return; }
+      await initTrustStorePresets();
+      setStatus('"' + name + '" is now the default trust store.', false);
+    } catch (e) {
+      setStatus('Request error: ' + e.message, true);
+    }
+  }
+
+  async function deletePreset(name) {
+    if (!confirm('Permanently remove saved trust store "' + name + '"?')) return;
+    try {
+      const r = await fetch('/truststorepresets/' + encodeURIComponent(name), { method: 'DELETE' });
+      if (!r.ok) { const d = await r.json(); setStatus(d.error || 'Failed to remove trust store', true); return; }
+      await initTrustStorePresets();
+    } catch (e) {
+      setStatus('Request error: ' + e.message, true);
+    }
+  }
+
+  async function initTrustStorePresets() {
+    try {
+      const r = await fetch('/truststorepresets');
+      savedPresets = r.ok ? await r.json() : [];
+    } catch (e) {
+      savedPresets = [];
+    }
+    renderSavedPresets();
   }
 
   // =====================================================================
@@ -454,8 +610,8 @@
     return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
   }
 
-  // Seed with one default row (JVM trust store).
-  addTrustStoreRow('Default (JVM)', '', '', '');
+  // Seed with one row: the saved default trust store if one is set, else the JVM default.
+  initTrustStores();
 
   StaticDatasetWidget.mount({
     containerId: 'dsWidget',

@@ -312,28 +312,34 @@ public class AppCatalogController {
      * Runs one instance for a page — a button's action, or a select filling its options — with the
      * values the operator entered layered over the instance's own inputs.
      *
-     * <p>Answers with the payload intact, unlike the grid-facing execute endpoints: the page is
-     * binding the response into a grid or a dropdown, so making it fetch the body separately would
-     * only double the round trips.
+     * <p>Answers with the payload intact by default, unlike the grid-facing execute endpoints: the
+     * page is binding the response into a grid or a dropdown, so making it fetch the body separately
+     * would only double the round trips. An action that binds metadata rather than the body says so
+     * with {@code includePayload: false} and gets the bodies dropped — which is what keeps
+     * "show me the URL and the status code" cheap even when the response is tens of megabytes.
      */
     @PostMapping(value = "/pages/run", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<?> runForPage(@RequestBody PageRunRequest request) {
         String instanceId = request.appUseCaseInstanceId();
         if (instanceId == null || instanceId.isBlank()) return badRequest("appUseCaseInstanceId is required");
         if (service.getInstance(instanceId) == null) return notFound("Instance", instanceId);
-        return ResponseEntity.ok(execution.executeWithInputs(instanceId, request.environment(), request.inputs(),
-                ExecutionTarget.from(request.target()), request.agentId()));
+        AppUseCaseInstanceOutput output = execution.executeWithInputs(instanceId, request.environment(),
+                request.inputs(), ExecutionTarget.from(request.target()), request.agentId());
+        return ResponseEntity.ok(Boolean.FALSE.equals(request.includePayload()) ? output.withoutPayload() : output);
     }
 
     /**
      * Body for {@code POST /appcatalog/pages/run}.
      *
-     * @param environment which of the instance's environments to call; blank takes its first, so a
-     *                    page pinned to no environment still runs somewhere predictable
-     * @param inputs      the page's own values for the use case's inputs — highest precedence
+     * @param environment    which of the instance's environments to call; blank takes its first, so a
+     *                       page pinned to no environment still runs somewhere predictable
+     * @param inputs         the page's own values for the use case's inputs — highest precedence
+     * @param includePayload false to get the result without its request and response bodies, keeping
+     *                       only their sizes. Null (the default) keeps them, since that is what a
+     *                       page binding a response into a grid needs.
      */
     public record PageRunRequest(String appUseCaseInstanceId, String environment, Map<String, Object> inputs,
-                                 String target, String agentId) {}
+                                 String target, String agentId, Boolean includePayload) {}
 
     // -------------------------------------------------------------------------
     // Execution

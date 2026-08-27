@@ -68,6 +68,67 @@
       margin: 28px 0 10px;
     }
     .section-label:first-of-type { margin-top: 0; }
+
+    .search-wrap {
+      margin-top: 16px;
+      position: relative;
+      max-width: 420px;
+    }
+    .search-wrap input {
+      width: 100%;
+      font-family: inherit;
+      font-size: 0.88rem;
+      color: #222;
+      background: #fff;
+      border: 1px solid #dde1e7;
+      border-radius: 8px;
+      padding: 10px 32px 10px 34px;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .search-wrap input:focus {
+      border-color: #0078d4;
+      box-shadow: 0 0 0 3px rgba(0,120,212,0.12);
+    }
+    .search-wrap .search-icon {
+      position: absolute;
+      left: 11px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 0.9rem;
+      color: #888;
+      pointer-events: none;
+    }
+    .search-wrap .search-clear {
+      position: absolute;
+      right: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      border: none;
+      background: none;
+      font-family: inherit;
+      font-size: 1rem;
+      line-height: 1;
+      color: #888;
+      cursor: pointer;
+      padding: 4px 6px;
+      border-radius: 4px;
+      display: none;
+    }
+    .search-wrap .search-clear:hover { color: #222; background: #eef1f5; }
+    .search-wrap.has-value .search-clear { display: block; }
+
+    .hit { background: #ffe9a8; border-radius: 2px; }
+
+    .is-hidden { display: none !important; }
+
+    .no-results {
+      font-size: 0.88rem;
+      color: #666;
+      padding: 18px 0;
+      display: none;
+    }
+    .no-results.is-shown { display: block; }
   </style>
 </head>
 <body>
@@ -75,7 +136,14 @@
 <header>
   <h1>Batch Workflow</h1>
   <p>Select a tool to get started.</p>
+  <div class="search-wrap" id="searchWrap">
+    <span class="search-icon">&#128269;</span>
+    <input type="search" id="tileSearch" placeholder="Search operations&hellip;" autocomplete="off" spellcheck="false" aria-label="Search operations">
+    <button type="button" class="search-clear" id="searchClear" title="Clear search" aria-label="Clear search">&times;</button>
+  </div>
 </header>
+
+<div class="no-results" id="noResults">No operations match <strong id="noResultsTerm"></strong>.</div>
 
 <p class="section-label">Batch Operations</p>
 <div class="grid">
@@ -382,5 +450,125 @@
 
 </div>
 
+<script>
+(function () {
+  var input      = document.getElementById('tileSearch');
+  var wrap       = document.getElementById('searchWrap');
+  var clearBtn   = document.getElementById('searchClear');
+  var noResults  = document.getElementById('noResults');
+  var noTerm     = document.getElementById('noResultsTerm');
+
+  // Snapshot every tile with its section, original text and the nodes we highlight into.
+  var sections = [].map.call(document.querySelectorAll('.grid'), function (grid) {
+    var label = grid.previousElementSibling;
+    if (label && !label.classList.contains('section-label')) label = null;
+    var tiles = [].map.call(grid.querySelectorAll('.tile'), function (el) {
+      var titleEl = el.querySelector('.tile-title');
+      var descEl  = el.querySelector('.tile-desc');
+      var title   = titleEl ? titleEl.textContent : '';
+      var desc    = descEl  ? descEl.textContent  : '';
+      return {
+        el: el,
+        titleEl: titleEl,
+        descEl: descEl,
+        title: title,
+        desc: desc,
+        href: el.getAttribute('href') || '',
+        haystack: (title + ' ' + desc + ' ' + (el.getAttribute('href') || '')).toLowerCase()
+      };
+    });
+    return { label: label, grid: grid, tiles: tiles };
+  });
+
+  function escapeHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // Re-render text with every occurrence of each term wrapped in <mark class="hit">.
+  function highlight(el, text, terms) {
+    if (!el) return;
+    if (!terms.length) { el.textContent = text; return; }
+    var lower = text.toLowerCase();
+    var marks = new Array(text.length);
+    terms.forEach(function (t) {
+      var from = 0, i;
+      while ((i = lower.indexOf(t, from)) !== -1) {
+        for (var k = i; k < i + t.length; k++) marks[k] = true;
+        from = i + t.length;
+      }
+    });
+    var html = '', run = '', on = false;
+    for (var i = 0; i <= text.length; i++) {
+      var m = i < text.length ? !!marks[i] : !on;
+      if (i === text.length || m !== on) {
+        html += on ? '<mark class="hit">' + escapeHtml(run) + '</mark>' : escapeHtml(run);
+        run = '';
+        on = m;
+      }
+      if (i < text.length) run += text.charAt(i);
+    }
+    el.innerHTML = html;
+  }
+
+  function apply() {
+    var q = input.value.trim().toLowerCase();
+    var terms = q ? q.split(/\s+/) : [];
+    var total = 0;
+
+    wrap.classList.toggle('has-value', q.length > 0);
+
+    sections.forEach(function (section) {
+      var shown = 0;
+      section.tiles.forEach(function (tile) {
+        // Every term must appear somewhere in title, description or link.
+        var match = terms.every(function (t) { return tile.haystack.indexOf(t) !== -1; });
+        tile.el.classList.toggle('is-hidden', !match);
+        if (match) {
+          shown++;
+          highlight(tile.titleEl, tile.title, terms);
+          highlight(tile.descEl, tile.desc, terms);
+        }
+      });
+      total += shown;
+      section.grid.classList.toggle('is-hidden', shown === 0);
+      if (section.label) section.label.classList.toggle('is-hidden', shown === 0);
+    });
+
+    noTerm.textContent = '"' + input.value.trim() + '"';
+    noResults.classList.toggle('is-shown', total === 0 && q.length > 0);
+  }
+
+  input.addEventListener('input', apply);
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { input.value = ''; apply(); }
+    // Enter opens the only remaining match.
+    if (e.key === 'Enter') {
+      var visible = [].filter.call(document.querySelectorAll('.tile'), function (el) {
+        return !el.classList.contains('is-hidden');
+      });
+      if (visible.length === 1) window.location.href = visible[0].getAttribute('href');
+    }
+  });
+
+  clearBtn.addEventListener('click', function () {
+    input.value = '';
+    apply();
+    input.focus();
+  });
+
+  // "/" anywhere on the page jumps to the search box.
+  document.addEventListener('keydown', function (e) {
+    if (e.key === '/' && document.activeElement !== input) {
+      e.preventDefault();
+      input.focus();
+      input.select();
+    }
+  });
+
+  input.focus();
+})();
+</script>
+
 </body>
+
 </html>

@@ -1079,8 +1079,14 @@
         };
 
         ws.onmessage = e => {
-            appendLog('← ' + e.data, 'msg-recv');
-            tryLoadGrid(e.data);
+            if (e.data instanceof Blob) {
+                e.data.arrayBuffer().then(handleBinaryMessage);
+            } else if (e.data instanceof ArrayBuffer) {
+                handleBinaryMessage(e.data);
+            } else {
+                appendLog('← ' + e.data, 'msg-recv');
+                tryLoadGrid(e.data);
+            }
         };
 
         ws.onerror = () => {
@@ -1110,6 +1116,24 @@
         if (!text.trim()) return;
         ws.send(text);
         appendLog('→ ' + text, 'msg-sent');
+    }
+
+    function handleBinaryMessage(buf) {
+        const bytes = new Uint8Array(buf);
+        let text = null;
+        try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { text = null; }
+
+        if (text !== null) {
+            appendLog('← ' + text + '  [binary, ' + bytes.length + ' bytes]', 'msg-recv');
+            tryLoadGrid(text);
+        } else {
+            appendLog('← [binary, ' + bytes.length + ' bytes] ' + toHexPreview(bytes), 'msg-recv');
+        }
+    }
+
+    function toHexPreview(bytes, max = 64) {
+        const hex = Array.from(bytes.subarray(0, max), b => b.toString(16).padStart(2, '0')).join(' ');
+        return hex + (bytes.length > max ? ' …' : '');
     }
 
     function tryLoadGrid(raw) {

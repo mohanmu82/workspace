@@ -18,6 +18,11 @@ import java.util.List;
  */
 public class AppPageControl {
 
+    /** {@link #trigger}: the control is clicked — a button or a link. */
+    public static final String ON_CLICK  = "CLICK";
+    /** {@link #trigger}: the operator changes the control's value — typically a select. */
+    public static final String ON_CHANGE = "CHANGE";
+
     /** Stable id, unique within the page — what actions point at when they name a target. */
     private String controlId;
     private String fieldName;
@@ -43,8 +48,26 @@ public class AppPageControl {
 
     /** Select controls only. */
     private AppPageOptionSource optionSource;
-    /** Button controls only — run in order, stopping at the first failure. */
+    /**
+     * Actions written directly onto this control — run in order, stopping at the first failure.
+     * Predates the page-level library and is still honoured, so every page saved before it keeps
+     * working; a control may carry both, and its {@link #actionIds} run first.
+     */
     private List<AppPageAction> actions = new ArrayList<>();
+    /**
+     * Ids of {@link AppPage#getActions() page-level actions} this control triggers, in order. The
+     * same action id may appear on any number of controls — that is the point of the library.
+     */
+    private List<String> actionIds = new ArrayList<>();
+    /**
+     * What makes this control's actions run: {@link #ON_CLICK} for a button or link, or
+     * {@link #ON_CHANGE} for a value control whose actions fire whenever the operator changes it —
+     * picking a different environment in a select and having the grid reload itself.
+     *
+     * <p>Page load is deliberately not one of these: it belongs to the page, not to a control, and
+     * lives on {@link AppPage#getOnLoadActionIds()}.
+     */
+    private String trigger = ON_CLICK;
     /** Grid controls only; empty means the columns follow the fields of the returned rows. */
     private List<String> columns = new ArrayList<>();
 
@@ -93,6 +116,12 @@ public class AppPageControl {
 
     public List<AppPageAction> getActions()                        { return actions; }
     public void setActions(List<AppPageAction> actions)            { this.actions = actions != null ? actions : new ArrayList<>(); }
+
+    public List<String> getActionIds()                             { return actionIds; }
+    public void setActionIds(List<String> actionIds)               { this.actionIds = actionIds != null ? actionIds : new ArrayList<>(); }
+
+    public String getTrigger()                { return trigger; }
+    public void   setTrigger(String trigger)  { this.trigger = ON_CHANGE.equalsIgnoreCase(trigger) ? ON_CHANGE : ON_CLICK; }
 
     public List<String> getColumns()                     { return columns; }
     public void setColumns(List<String> columns)         { this.columns = columns != null ? columns : new ArrayList<>(); }

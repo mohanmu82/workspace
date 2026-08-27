@@ -81,6 +81,17 @@ public class AppExecutionService {
     private static final int RETAINED_EXECUTIONS = 200;
 
     /**
+     * The largest response body kept in {@link #recentExecutions}. A count alone is not a bound on
+     * anything: two hundred retained executions of an endpoint that answers with a 30 MB array is
+     * six gigabytes of heap held by a convenience feature, and the parsed
+     * {@link AppUseCaseInstanceOutput#transformedResponse()} beside it costs several times the text
+     * again. Past this size the result is retained payload-free — it still appears in the history
+     * and still reports its sizes, it just cannot be expanded a second time without re-running.
+     */
+    @Value("${appcatalog.max-retained-body-bytes:2097152}")
+    private int maxRetainedBodyBytes;
+
+    /**
      * How many executions the Global Runs page can look back over. These are payload-free — a few
      * hundred bytes each — so the window can be far longer than the one that keeps bodies, which is
      * what makes "every run across every app" a useful view rather than a glimpse of the last batch.
@@ -508,14 +519,25 @@ public class AppExecutionService {
     /**
      * Keeps the full result addressable so the browser can pull its bodies back on demand, and adds
      * a payload-free copy to the head of the global history the Global Runs page reads.
+     *
+     * <p>What is <em>returned</em> is always the whole result — the caller that just made the call
+     * gets everything it asked for. Only what is <em>kept</em> is trimmed: a body over
+     * {@link #maxRetainedBodyBytes} is dropped from the retained copy rather than held for two
+     * hundred executions' worth of heap. See that field for why a count is not a bound.
      */
     private AppUseCaseInstanceOutput retain(AppUseCaseInstanceOutput output) {
-        recentExecutions.put(output.executionId(), output);
+        recentExecutions.put(output.executionId(), tooBigToKeep(output) ? output.withoutPayload() : output);
         synchronized (history) {
             history.addFirst(output.withoutPayload());
             while (history.size() > RETAINED_HISTORY) history.removeLast();
         }
         return output;
+    }
+
+    private boolean tooBigToKeep(AppUseCaseInstanceOutput output) {
+        int response = output.responseBody() == null ? 0 : output.responseBody().length();
+        int request  = output.requestBody()  == null ? 0 : output.requestBody().length();
+        return response + request > maxRetainedBodyBytes;
     }
 
     // -------------------------------------------------------------------------

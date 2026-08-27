@@ -11,6 +11,11 @@ import java.util.List;
  * re-send its confirmation from another — so its buttons may wire up any instance in the catalog.
  * Identified by {@link #pageName}, unique across the catalog, which is what the standalone run link
  * addresses.
+ *
+ * <p>{@link #actions} is the page's library of named actions. An action defined there is attached to
+ * as many controls as want it (see {@link AppPageControl#getActionIds()}) instead of being copied
+ * onto each, which is what lets one "reload the grid" be triggered by a button, by a dropdown
+ * changing, and by the page opening, and stay one thing when it is edited.
  */
 public class AppPage {
 
@@ -24,6 +29,14 @@ public class AppPage {
     private String title;
     private String description;
     private List<AppPageControl> controls = new ArrayList<>();
+    /** The page's named actions, each addressable by {@link AppPageAction#getActionId()}. */
+    private List<AppPageAction> actions = new ArrayList<>();
+    /**
+     * Actions run once as soon as the page opens, in this order — the "on load of page" trigger.
+     * A page event rather than a control's, so it is held here rather than on a control that would
+     * only be standing in for the page.
+     */
+    private List<String> onLoadActionIds = new ArrayList<>();
 
     public String getPageName()                  { return pageName; }
     public void   setPageName(String pageName)   { this.pageName = pageName; }
@@ -39,4 +52,10 @@ public class AppPage {
 
     public List<AppPageControl> getControls()                        { return controls; }
     public void setControls(List<AppPageControl> controls)           { this.controls = controls != null ? controls : new ArrayList<>(); }
+
+    public List<AppPageAction> getActions()                          { return actions; }
+    public void setActions(List<AppPageAction> actions)              { this.actions = actions != null ? actions : new ArrayList<>(); }
+
+    public List<String> getOnLoadActionIds()                         { return onLoadActionIds; }
+    public void setOnLoadActionIds(List<String> onLoadActionIds)     { this.onLoadActionIds = onLoadActionIds != null ? onLoadActionIds : new ArrayList<>(); }
 }
