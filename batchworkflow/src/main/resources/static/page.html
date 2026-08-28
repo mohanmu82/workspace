@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pages</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        html, body { height: 100%; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f4f5f7;
+            color: #172b4d;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* ── Header ──────────────────────────────────────────────────────── */
+
+        header {
+            background: #fff;
+            border-bottom: 1px solid #dfe1e6;
+            padding: 14px 20px 12px;
+            flex: none;
+        }
+        .nav { margin-bottom: 8px; }
+        .nav a { font-size: 13px; color: #0052cc; text-decoration: none; }
+        .nav a:hover { text-decoration: underline; }
+        .title-row { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+        h1 { font-size: 19px; font-weight: 600; }
+        .subtitle { font-size: 13px; color: #5e6c84; }
+
+        /* ── Split: the list of pages, and the page itself ───────────────── */
+
+        .split { flex: 1; min-height: 0; display: flex; }
+
+        .sidebar {
+            width: 280px;
+            flex: none;
+            background: #fff;
+            border-right: 1px solid #dfe1e6;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+        .sidebar-head { padding: 12px 14px 10px; border-bottom: 1px solid #dfe1e6; flex: none; }
+        .sidebar-head input {
+            width: 100%; padding: 6px 9px; font-size: 13px; font-family: inherit;
+            border: 1px solid #dfe1e6; border-radius: 4px; outline: none;
+        }
+        .sidebar-head input:focus { border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.2); }
+        .sidebar-count { font-size: 11px; color: #97a0af; margin-top: 7px; display: block; }
+
+        .page-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px; }
+
+        /* A real link, so middle-click and "open in new tab" reach the standalone run form the
+           same way a plain click reaches the pane on the right. */
+        .page-link {
+            display: block;
+            padding: 8px 10px;
+            border-radius: 4px;
+            border: 1px solid transparent;
+            text-decoration: none;
+            color: inherit;
+            margin-bottom: 2px;
+        }
+        .page-link:hover { background: #f4f5f7; border-color: #dfe1e6; }
+        .page-link.active { background: #deebff; border-color: #b3d4ff; }
+        .page-link .pl-title { font-size: 13px; font-weight: 600; display: block; }
+        .page-link.active .pl-title { color: #0747a6; }
+        .page-link .pl-name {
+            font-size: 10px; color: #97a0af; font-family: "Cascadia Code", Consolas, monospace;
+            display: block; margin-top: 1px;
+        }
+        .page-link .pl-desc {
+            font-size: 11px; color: #5e6c84; margin-top: 3px;
+            display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+        }
+
+        .list-empty { font-size: 12px; color: #97a0af; font-style: italic; padding: 12px 10px; }
+        .list-error { font-size: 12px; color: #de350b; padding: 12px 10px; }
+
+        /* ── The viewer ──────────────────────────────────────────────────── */
+
+        .viewer { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+        .viewer-bar {
+            flex: none;
+            background: #fff;
+            border-bottom: 1px solid #dfe1e6;
+            padding: 8px 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .viewer-bar .vb-title { font-size: 13px; font-weight: 600; }
+        .viewer-bar .vb-name {
+            font-size: 11px; color: #97a0af; font-family: "Cascadia Code", Consolas, monospace;
+        }
+        .viewer-bar .spacer { flex: 1; }
+        .viewer-bar a, .viewer-bar button {
+            font-size: 12px; color: #0052cc; background: none; border: none;
+            padding: 3px 6px; cursor: pointer; font-family: inherit; text-decoration: none;
+            border-radius: 3px;
+        }
+        .viewer-bar a:hover, .viewer-bar button:hover { background: #f4f5f7; text-decoration: underline; }
+
+        .frame-wrap { flex: 1; min-height: 0; background: #f4f5f7; }
+        iframe { width: 100%; height: 100%; border: none; display: block; }
+
+        .placeholder {
+            flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+            gap: 6px; text-align: center; padding: 30px;
+        }
+        .placeholder .ph-glyph { font-size: 28px; color: #c1c7d0; }
+        .placeholder .ph-title { font-size: 14px; font-weight: 600; color: #5e6c84; }
+        .placeholder .ph-hint { font-size: 12px; color: #97a0af; max-width: 380px; line-height: 1.5; }
+
+        @media (max-width: 820px) {
+            .split { flex-direction: column; }
+            .sidebar { width: auto; border-right: none; border-bottom: 1px solid #dfe1e6; max-height: 45%; }
+        }
+    </style>
+</head>
+<body>
+
+<header>
+    <div class="nav"><a href="/">&larr; Batch Workflow</a> &nbsp;&middot;&nbsp; <a href="app.html#pages">App Catalog &rsaquo; Pages</a></div>
+    <div class="title-row">
+        <h1>Pages</h1>
+        <span class="subtitle">Every page built in the App Catalog, ready to run. Pick one on the left and it opens here in its running form &mdash; the same screen its operator gets.</span>
+    </div>
+</header>
+
+<div class="split">
+
+    <aside class="sidebar">
+        <div class="sidebar-head">
+            <input id="filter" type="text" placeholder="Filter pages&hellip;" autocomplete="off">
+            <span class="sidebar-count" id="count"></span>
+        </div>
+        <nav class="page-list" id="pageList"></nav>
+    </aside>
+
+    <section class="viewer">
+        <div class="viewer-bar" id="viewerBar" style="display:none">
+            <span class="vb-title" id="vbTitle"></span>
+            <span class="vb-name" id="vbName"></span>
+            <span class="spacer"></span>
+            <button type="button" id="reloadBtn" title="Run the page again from the top">Reload</button>
+            <a id="newTabLink" target="_blank" rel="noopener" title="Open the running page on its own">Open in new tab &#8599;</a>
+            <a id="editLink" target="_blank" rel="noopener" title="Open this page in the designer">Edit &#8599;</a>
+        </div>
+
+        <div class="placeholder" id="placeholder">
+            <div class="ph-glyph">&#9776;</div>
+            <div class="ph-title" id="phTitle">Nothing selected</div>
+            <div class="ph-hint" id="phHint">Choose a page on the left to run it.</div>
+        </div>
+
+        <div class="frame-wrap" id="frameWrap" style="display:none">
+            <iframe id="pageFrame" title="Running page"></iframe>
+        </div>
+    </section>
+
+</div>
+
+<script src="appcatalog.js"></script>
+<script>
+    // A directory over the pages app.html#pages builds. It owns no run state of its own: what it
+    // frames is apppage.html's own standalone mode, so a page behaves in this list exactly as it
+    // does on the link handed to whoever actually uses it, and every fix to the runner arrives
+    // here without this file having to know the runner exists.
+
+    let pages = [];
+    let selected = null;    // pageName currently framed, or null
+
+    function pageTitle(p) {
+        return p.title || p.pageName || 'Untitled page';
+    }
+
+    function runUrl(pageName) {
+        return 'apppage.html?page=' + encodeURIComponent(pageName) + '&mode=run';
+    }
+
+    function designUrl(pageName) {
+        return 'apppage.html?page=' + encodeURIComponent(pageName);
+    }
+
+    async function load() {
+        try {
+            pages = (await AC.api('GET', '/appcatalog/pages')) || [];
+        } catch (e) {
+            pages = [];
+            document.getElementById('pageList').innerHTML =
+                '<div class="list-error">Could not load the pages: ' + AC.esc(e.message) + '</div>';
+            document.getElementById('count').textContent = '';
+            showPlaceholder('Pages unavailable', 'The catalog did not answer, so there is nothing to list yet.');
+            return;
+        }
+        // Sorted by what the rows actually show, so a name is where the eye expects to find it.
+        pages.sort((a, b) => pageTitle(a).localeCompare(pageTitle(b), undefined, { sensitivity: 'base' }));
+        renderList();
+        showFromHash();
+    }
+
+    /** What the filter box leaves — matched against everything a row displays. */
+    function matching() {
+        const text = document.getElementById('filter').value.trim().toLowerCase();
+        if (!text) return pages;
+        return pages.filter(p => (pageTitle(p) + ' ' + (p.pageName || '') + ' ' + (p.description || ''))
+            .toLowerCase().includes(text));
+    }
+
+    function renderList() {
+        const shown = matching();
+        const list = document.getElementById('pageList');
+
+        if (!pages.length) {
+            list.innerHTML = '<div class="list-empty">No pages yet.</div>';
+        } else if (!shown.length) {
+            list.innerHTML = '<div class="list-empty">No page matches that filter.</div>';
+        } else {
+            list.innerHTML = shown.map(p =>
+                // The href is the run form itself rather than this page's own hash: a middle-click
+                // is asking for the page, not for a second copy of the directory around it. The
+                // handler below is what keeps a plain left-click in the pane on the right.
+                '<a class="page-link' + (p.pageName === selected ? ' active' : '') + '"'
+                    + ' href="' + AC.esc(runUrl(p.pageName)) + '"'
+                    + ' data-page="' + AC.esc(p.pageName) + '">'
+                    + '<span class="pl-title">' + AC.esc(pageTitle(p)) + '</span>'
+                    + (p.title ? '<span class="pl-name">' + AC.esc(p.pageName) + '</span>' : '')
+                    + (p.description ? '<span class="pl-desc">' + AC.esc(p.description) + '</span>' : '')
+                + '</a>').join('');
+
+            list.querySelectorAll('.page-link').forEach(link => link.addEventListener('click', e => {
+                // Ctrl/cmd/shift-click and the context menu are left to the browser.
+                if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+                e.preventDefault();
+                selectPage(link.dataset.page);
+            }));
+        }
+
+        document.getElementById('count').textContent = !pages.length ? ''
+            : shown.length === pages.length
+                ? pages.length + (pages.length === 1 ? ' page' : ' pages')
+                : shown.length + ' of ' + pages.length + ' pages';
+    }
+
+    /**
+     * Selection lives in the hash so a chosen page is linkable and survives a refresh, the way
+     * app.html keeps its tab there. Setting it when it is already set fires no hashchange, so the
+     * click is followed through by hand rather than being silently dropped.
+     */
+    function selectPage(pageName) {
+        const wanted = '#' + encodeURIComponent(pageName);
+        if (location.hash === wanted) showFromHash();
+        else location.hash = wanted;
+    }
+
+    function showFromHash() {
+        const raw = (location.hash || '').replace('#', '');
+        let wanted = raw;
+        // A page name written into the bar by hand may not be encoded; an undecodable hash is
+        // taken as it stands rather than throwing the whole listing away.
+        try { wanted = decodeURIComponent(raw); } catch (e) { /* keep raw */ }
+
+        if (!wanted) {
+            selected = null;
+            renderList();
+            showPlaceholder(pages.length ? 'Nothing selected' : 'No pages yet',
+                pages.length ? 'Choose a page on the left to run it.'
+                             : 'Pages are built under App Catalog › Pages. Once one is saved it shows up here.');
+            return;
+        }
+
+        const page = pages.find(p => p.pageName === wanted);
+        if (!page) {
+            selected = null;
+            renderList();
+            showPlaceholder('No such page', 'Nothing in the catalog is called "' + wanted + '".');
+            return;
+        }
+
+        // Re-selecting the page already framed must not reload it: whoever is using it may be
+        // half-way through filling it in, and a reload throws that away. Reload is a button.
+        const changed = selected !== page.pageName;
+        selected = page.pageName;
+        renderList();
+
+        document.getElementById('placeholder').style.display = 'none';
+        document.getElementById('viewerBar').style.display = '';
+        document.getElementById('frameWrap').style.display = '';
+        document.getElementById('vbTitle').textContent = pageTitle(page);
+        document.getElementById('vbName').textContent = page.title ? page.pageName : '';
+        document.getElementById('newTabLink').href = runUrl(page.pageName);
+        document.getElementById('editLink').href = designUrl(page.pageName);
+        if (changed) document.getElementById('pageFrame').src = runUrl(page.pageName);
+        document.title = pageTitle(page) + ' · Pages';
+    }
+
+    function showPlaceholder(title, hint) {
+        document.getElementById('viewerBar').style.display = 'none';
+        document.getElementById('frameWrap').style.display = 'none';
+        // Dropped rather than merely hidden, so a page left framed cannot go on calling unseen.
+        document.getElementById('pageFrame').removeAttribute('src');
+        document.getElementById('placeholder').style.display = '';
+        document.getElementById('phTitle').textContent = title;
+        document.getElementById('phHint').textContent = hint;
+        document.title = 'Pages';
+    }
+
+    document.getElementById('filter').addEventListener('input', renderList);
+    document.getElementById('reloadBtn').addEventListener('click', () => {
+        if (selected) document.getElementById('pageFrame').src = runUrl(selected);
+    });
+    window.addEventListener('hashchange', showFromHash);
+
+    load();
+</script>
+
+</body>
+</html>

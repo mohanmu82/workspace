@@ -5,6 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>App Pages</title>
     <link rel="stylesheet" href="appcatalog.css">
+    <!-- Page-level transforms: a chain of steps run in the browser, against what an action just
+         bound, so reshaping a response costs no round trip and the designer can try one out on the
+         spot. JSONata comes from the same CDN utils.html already uses; the XML-to-JSON step needs
+         nothing beyond the browser's own DOMParser. -->
+    <script src="https://cdn.jsdelivr.net/npm/jsonata/jsonata.min.js"></script>
     <style>
         /* Palette | canvas | properties. The canvas is the only part that grows. */
         .designer { display: grid; grid-template-columns: 210px 1fr 330px; gap: 14px; align-items: start; }
@@ -97,6 +102,31 @@
         .mini label { font-size: 10px !important; }
         .mini input, .mini select, .mini textarea { padding: 5px 7px; font-size: 12px; }
         .stack { display: flex; flex-direction: column; gap: 7px; }
+        /* A named transform, same card shape as an action so the two libraries read alike. */
+        .xform-card { border: 1px solid #dfe1e6; border-radius: 5px; padding: 9px; margin-bottom: 8px; background: #fbfcfd; }
+        .xform-card .xform-head { display: flex; align-items: center; gap: 6px; margin-bottom: 7px; }
+        .xform-card .xform-head input { font-family: "Cascadia Code", Consolas, monospace; }
+        .xform-card textarea { font-family: "Cascadia Code", Consolas, monospace; min-height: 64px; }
+        .xform-tag {
+            font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px;
+            padding: 1px 5px; border-radius: 8px; background: #eae6ff; color: #403294; flex: none;
+        }
+        /* An XML step is a different kind of thing from an expression, so it reads as one. */
+        .xform-tag.xml { background: #e3fcef; color: #006644; }
+
+        /* One step of an action's transform chain: its place in the order, what it runs, and the
+           handles to move or drop it. Numbered because the order is the whole point — xml→json has
+           to come before the JSONata that reads the result. */
+        .chain-step { display: flex; align-items: center; gap: 5px; margin-bottom: 5px; }
+        .chain-step .chain-num {
+            font-size: 10px; font-weight: 700; color: #403294; background: #eae6ff;
+            border-radius: 8px; padding: 1px 6px; flex: none;
+        }
+        .chain-step select { flex: 1; min-width: 0; }
+
+        /* The way into the page-level library from wherever you are — see #showPageActions. */
+        .props-jump { display: flex; gap: 6px; }
+        .props-jump button { white-space: nowrap; }
         .inline-check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #172b4d; }
         .inline-check input { width: auto; }
 
@@ -230,7 +260,11 @@
     </div>
 
     <div class="panel">
-        <div class="panel-title"><span>Properties</span></div>
+        <div class="panel-title"><span>Properties</span>
+            <span class="props-jump">
+                <button class="tool-btn" id="pageActionsBtn" onclick="showPageActions()" title="The page's shared actions and transform library">Page Actions</button>
+            </span>
+        </div>
         <div id="props"></div>
     </div>
 
@@ -311,6 +345,21 @@
     // grid's own id — a placed control's id, or a generated one for each stacked grid.
     let gridState = {};
     let stackedCount = 0;
+    // One trigger's HTTP calls, keyed by everything the server is told. Two actions that resolve to
+    // the same instance, environment and inputs share one call: writing the same endpoint twice to
+    // read its response two ways is the normal way to build one of these pages, and it should not
+    // cost two round trips. Null outside a trigger, so a stray call is never served from a stale one.
+    let callCache = null;
+    // Which instances something in this trigger reads a body from. Settled per instance rather than
+    // per action, or a metadata action and a grid action on the same endpoint would ask for two
+    // different responses and defeat the sharing above.
+    let payloadNeeded = null;
+    // How many runs are inside the window. The page opening its selects and then its on-load actions
+    // is one window with two things in it, and the inner one must not close it on the outer one.
+    let callBatchDepth = 0;
+    // JSONata is compiled once per expression and evaluated many times — a page run re-evaluates far
+    // more often than it re-edits. Cleared when a run starts, so an edited expression recompiles.
+    let compiledTransforms = new Map();
 
     // ── Loading ──────────────────────────────────────────────────────────────
 
@@ -343,11 +392,29 @@
         page.controls = page.controls || [];
         page.actions = page.actions || [];
         page.onLoadActionIds = page.onLoadActionIds || [];
+        page.transforms = page.transforms || [];
+        page.transforms.forEach(t => { t.type = t.type === 'XML2JSON' ? 'XML2JSON' : 'JSONATA'; });
+        page.actions.forEach(hydrateAction);
         page.controls.forEach(c => {
             c.actions = c.actions || [];
             c.actionIds = c.actionIds || [];
+            c.actions.forEach(hydrateAction);
             c.trigger = c.trigger === 'CHANGE' ? 'CHANGE' : 'CLICK';
         });
+    }
+
+    /**
+     * An action's chain, as a list, whatever it was saved as. A page written before chains existed
+     * carried one transformName; that is the first — and only — step of the chain it always was, so
+     * it is folded in and the old key dropped rather than being carried alongside the list where the
+     * two could disagree about which one runs.
+     */
+    function hydrateAction(a) {
+        a.transformNames = a.transformNames || [];
+        if (a.transformName) {
+            if (!a.transformNames.length) a.transformNames = [a.transformName];
+            delete a.transformName;
+        }
     }
 
     function renderPageSelect() {
@@ -373,7 +440,7 @@
     }
 
     function newPage() {
-        page = { pageName: '', title: '', description: '', controls: [], actions: [], onLoadActionIds: [] };
+        page = { pageName: '', title: '', description: '', controls: [], actions: [], onLoadActionIds: [], transforms: [] };
         savedPageName = null;
         selectedId = null;
         setMode('design');
@@ -405,6 +472,31 @@
         renderControlList();
         renderCanvas();
         renderProps();
+    }
+
+    /**
+     * The way to the page-level library from anywhere. It has always lived in the properties panel
+     * under "nothing selected", which is the right place for it and an unguessable one: the only way
+     * in was to know that clicking empty canvas would reveal it. The button says so instead, and
+     * carries the counts so the library is visible even while a control is selected.
+     */
+    function showPageActions() {
+        selectedId = null;
+        renderControlList();
+        renderCanvas();
+        renderProps();
+        const panel = document.getElementById('props');
+        if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    /** Keeps the jump button showing what is in the library, so an empty one is obvious. */
+    function renderPageActionsButton() {
+        const button = document.getElementById('pageActionsBtn');
+        if (!button) return;
+        const actions = (page.actions || []).length;
+        const transforms = (page.transforms || []).length;
+        button.textContent = 'Page Actions' + (actions ? ' (' + actions + ')' : '')
+            + (transforms ? ' · Transforms (' + transforms + ')' : '');
     }
 
     function renderPalette() {
@@ -676,10 +768,13 @@
     // ── Properties panel ─────────────────────────────────────────────────────
 
     function renderProps() {
+        renderPageActionsButton();
         const host = document.getElementById('props');
         const c = findControl(selectedId);
         if (!c) {
-            host.innerHTML = '<div class="empty-note">Select a control to edit it, or drag a new one onto the layout.</div>'
+            host.innerHTML = '<div class="empty-note">Select a control to edit it, or drag a new one onto the layout. '
+                + 'Below is the page itself: the actions any control can trigger, and the transforms they may reshape a '
+                + 'response with.</div>'
                 + pageProps();
             return;
         }
@@ -816,6 +911,15 @@
         'appUseCaseInstanceId', 'startedAt', 'startedAtText', 'runIndex', 'runCount', 'unresolvedVariables', 'error'];
 
     /**
+     * What a path can do beyond dotted names, said once because both path fields say it. The
+     * placeholder part is the reason it is worth saying: a path is resolved when the action runs, so
+     * it can name the row the operator picked rather than a row fixed at design time.
+     */
+    const PATH_HINT = 'Segments split on <code>.</code> or <code>/</code>; <code>[0]</code> indexes and '
+        + '<code>[id="A-7"]</code> filters; <code>${fieldName}</code> fills in a control\'s value — '
+        + '<code>data[id="${auctionId}"]/referenceEntities</code>. A name read off an array maps over it.';
+
+    /**
      * One action's editor. Identical whether the action lives on a control or in the page's library —
      * only which mutators the inputs call differs, which `fns` carries — so the two can never drift
      * into offering different fields.
@@ -851,6 +955,12 @@
                     ? 'Binds the call\'s own record instead of its body — and the body is never sent to the browser at all, so this stays cheap however large the response is. A failed call still binds, which is the point: the status code is what you came for. Fields: <code>'
                         + META_FIELDS.join('</code>, <code>') + '</code>.'
                     : 'The response body, as every action has always bound.')
+            + field('Transforms', chainEditor(a, i, fns),
+                (page.transforms || []).length
+                    ? 'The page\'s named steps, run in the order listed over what was bound, before the path below '
+                        + 'reads out of the last one\'s output. An XML response wants an <code>xml&#8594;json</code> step '
+                        + 'first, then whatever JSONata reshapes the result. Add none to bind the response as it arrived.'
+                    : 'No transforms yet — add them under Transforms in the page\'s own panel, then any action can chain them.')
             + field('Target', '<select onchange="' + set('targetControlId', 'this.value') + '">'
                 + '<option value="">— no target —</option>'
                 + '<option value="' + NEW_GRID + '"' + (a.targetControlId === NEW_GRID ? ' selected' : '') + '>+ New grid (one per run)</option>'
@@ -864,9 +974,9 @@
                 ? field('Value Path', '<input type="text" value="' + AC.attr(a.valuePath || '') + '" placeholder="' + (meta ? 'statusCode' : 'data.order.status') + '" oninput="' + set('valuePath', 'this.value') + '">',
                     meta
                         ? 'Which metadata field this box shows — <code>statusCode</code>, <code>url</code>, <code>timeTaken</code>. Blank puts the whole record in as JSON.'
-                        : 'Path to the one attribute this box shows — <code>data.order.status</code> or <code>$.items[0].name</code>. Blank puts the whole response in.')
-                : field('Array Path', '<input type="text" value="' + AC.attr(a.arrayPath || '') + '" placeholder="data.items" oninput="' + set('arrayPath', 'this.value') + '">',
-                    meta ? 'Leave blank — the metadata record is what gets bound.' : undefined))
+                        : 'Path to the one attribute this box shows — <code>data.order.status</code> or <code>$.items[0].name</code>. ' + PATH_HINT + ' Blank puts the whole response in.')
+                : field('Array Path', '<input type="text" value="' + AC.attr(a.arrayPath || '') + '" placeholder="data[id=&quot;${auctionId}&quot;]/entities" oninput="' + set('arrayPath', 'this.value') + '">',
+                    meta ? 'Leave blank — the metadata record is what gets bound.' : PATH_HINT))
             + (isGridTarget
                 ? '<label class="inline-check"><input type="checkbox"' + (a.keyValueGrid ? ' checked' : '')
                     + ' onchange="' + set('keyValueGrid', 'this.checked') + '"> '
@@ -879,13 +989,62 @@
                     + field('Label Field', '<input type="text" value="' + AC.attr(a.labelField || '') + '" oninput="' + set('labelField', 'this.value') + '">')
                   + '</div>'
                 : '')
+            + '<label class="inline-check"><input type="checkbox"' + (a.ownCall ? ' checked' : '')
+                + ' onchange="' + set('ownCall', 'this.checked') + '"> Always make its own call</label>'
+            + '<span class="hint">Off, this action shares one HTTP call with any other action in the same '
+                + 'trigger that resolves to the same instance, environment and inputs — writing two actions to read '
+                + 'one response two ways costs one call. Tick it when the call itself is the point and must go out '
+                + 'every time, like a POST that re-sends something.</span>'
             + '</div>';
     }
 
+    /**
+     * One action's chain of transforms: the steps it runs, in order, and a way to add another. Shown
+     * as a numbered list rather than one select because the order is not incidental — an
+     * xml&#8594;json step has to come before the JSONata that reads what it produced, and a chain
+     * that is drawn out of order is a chain nobody can see is out of order.
+     */
+    function chainEditor(a, i, fns) {
+        const chain = a.transformNames || [];
+        const call = (op, at, value) => fns.chain + '(' + i + ', \'' + op + '\', ' + at + ', ' + value + ')';
+        let html = chain.map((name, s) =>
+            '<div class="chain-step"><span class="chain-num">' + (s + 1) + '</span>'
+            + '<select onchange="' + call('set', s, 'this.value') + '">'
+            + transformOptions(name, '— remove this step —') + '</select>'
+            + (s > 0 ? '<button class="tool-btn" onclick="' + call('move', s, '-1') + '" title="Earlier">↑</button>' : '')
+            + (s < chain.length - 1 ? '<button class="tool-btn" onclick="' + call('move', s, '1') + '" title="Later">↓</button>' : '')
+            + '<button class="icon-btn" onclick="' + call('remove', s, 'null') + '" title="Remove">×</button>'
+            + '</div>').join('');
+        return html + '<select onchange="' + call('add', -1, 'this.value') + '">'
+            + transformOptions('', chain.length ? '+ add another step' : '+ add a transform') + '</select>';
+    }
+
+    /**
+     * The page's transform library as options, headed by whatever the blank one means where it is
+     * used — "add a step" on the chain's last select, "remove this step" on a step's own. The type
+     * rides along in the label so a chain reads as what it does rather than as names alone.
+     *
+     * <p>Plain escaping, not attr(): a name is a key matched against an action's chain and it comes
+     * back out through <code>this.value</code>, so it has to survive the round trip. attr() escapes
+     * for a JS string as well, which would put a backslash in front of an apostrophe and stop the
+     * name matching itself — the same reason a grid's column headers escape plainly.
+     */
+    function transformOptions(selected, blankLabel) {
+        return '<option value="">' + AC.esc(blankLabel || '— none —') + '</option>'
+            + (page.transforms || []).filter(t => t.name).map(t =>
+                '<option value="' + AC.esc(t.name) + '"' + (t.name === selected ? ' selected' : '') + '>'
+                + AC.esc(t.name) + ' (' + transformTypeLabel(t) + ')</option>').join('');
+    }
+
+    /** How a step's kind is written wherever one is named. */
+    function transformTypeLabel(t) {
+        return t && t.type === 'XML2JSON' ? 'xml→json' : 'jsonata';
+    }
+
     const CONTROL_FNS = { set: 'setAction', move: 'moveAction', remove: 'removeAction',
-                          inputs: 'setActionInputs', source: 'setActionSource' };
+                          inputs: 'setActionInputs', source: 'setActionSource', chain: 'chainAction' };
     const PAGE_FNS    = { set: 'setPageAction', move: 'movePageAction', remove: 'removePageAction',
-                          inputs: 'setPageActionInputs', source: 'setPageActionSource' };
+                          inputs: 'setPageActionInputs', source: 'setPageActionSource', chain: 'chainPageAction' };
 
     function buttonProps(c) {
         const actions = c.actions || [];
@@ -911,8 +1070,9 @@
         let html = '<div class="props-section"><div class="props-title"><span>Page Actions</span></div>';
 
         if (!library.length) {
-            return html + '<div class="empty-note">The page has no actions yet. Click empty canvas to '
-                 + 'deselect, and add them under Page Actions — then attach them here.</div></div>';
+            return html + '<div class="empty-note">The page has no actions yet — '
+                 + '<button class="tool-btn" onclick="showPageActions()">add one</button> and it can be attached here.'
+                 + '</div></div>';
         }
 
         html += field('Runs On', '<select onchange="setProp(\'trigger\', this.value); renderProps()">'
@@ -954,6 +1114,8 @@
         }
         actions.forEach((a, i) => { html += actionCard(a, i, actions.length, PAGE_FNS); });
         html += '</div>';
+
+        html += transformProps();
 
         html += '<div class="props-section"><div class="props-title"><span>On Page Load</span></div>';
         if (!actions.length) {
@@ -1042,7 +1204,7 @@
     function blankAction(label) {
         return { actionLabel: label, appUseCaseInstanceId: '', environmentOverride: '', inputs: {},
                  targetControlId: '', arrayPath: '', valuePath: '', keyField: '', labelField: '',
-                 keyValueGrid: false, source: 'PAYLOAD' };
+                 keyValueGrid: false, source: 'PAYLOAD', transformNames: [], ownCall: false };
     }
 
     function addAction() {
@@ -1099,6 +1261,34 @@
         renderCanvas();
     }
 
+    /**
+     * Every edit to an action's chain, against whichever list the action lives in. One function for
+     * four operations because they all end the same way — the chain is the order it is drawn in, so
+     * any change to it has to redraw — and because a step select set back to blank means "drop this
+     * step", which is the same splice as the × beside it.
+     */
+    function chainSteps(actions, index, op, at, value) {
+        const a = actions[index];
+        const chain = a.transformNames = a.transformNames || [];
+        if (op === 'add') {
+            if (!value) return;
+            chain.push(value);
+        } else if (op === 'set') {
+            if (value) chain[at] = value; else chain.splice(at, 1);
+        } else if (op === 'remove') {
+            chain.splice(at, 1);
+        } else if (op === 'move') {
+            const target = at + value;
+            if (target < 0 || target >= chain.length) return;
+            [chain[at], chain[target]] = [chain[target], chain[at]];
+        }
+        renderProps();
+    }
+
+    function chainAction(index, op, at, value) {
+        chainSteps(findControl(selectedId).actions, index, op, at, value);
+    }
+
     // ── The page's own action library ────────────────────────────────────────
     // The same four mutations as above against page.actions rather than a control's, plus the
     // reference-keeping a shared action needs: removing one has to take it off every control that
@@ -1134,6 +1324,10 @@
         }
     }
 
+    function chainPageAction(index, op, at, value) {
+        chainSteps(page.actions, index, op, at, value);
+    }
+
     function movePageAction(index, delta) {
         const target = index + delta;
         if (target < 0 || target >= page.actions.length) return;
@@ -1149,6 +1343,106 @@
         page.onLoadActionIds = (page.onLoadActionIds || []).filter(id => id !== removed.actionId);
         renderProps();
         renderCanvas();
+    }
+
+    // ── The page's transform library ─────────────────────────────────────────
+    // Named steps rather than ones written on each action: the endpoint that returns an auction
+    // returns it the same way whichever button asked for it, so the expression that flattens it into
+    // rows is one expression however many actions bind it — and the step that turns that endpoint's
+    // XML into JSON is one step however many expressions run after it.
+
+    /** Every action on the page, wherever it lives — the library's and the ones written on controls. */
+    function allActions() {
+        return (page.actions || []).concat(...page.controls.map(c => c.actions || []));
+    }
+
+    /** Which actions chain a step, so an unused one is visible as unused. */
+    function transformUsers(name) {
+        if (!name) return [];
+        return allActions().filter(a => (a.transformNames || []).includes(name))
+            .map(a => a.actionLabel || a.actionId || 'an action');
+    }
+
+    function transformProps() {
+        const transforms = page.transforms || [];
+        let html = '<div class="props-section"><div class="props-title"><span>Transforms</span>'
+            + '<button class="tool-btn" onclick="addTransform()">+ Add</button></div>'
+            + '<span class="hint">Named steps, run in the browser over whatever an action bound, before that '
+            + 'action&#39;s path reads out of the result. An action chains as many as it needs — '
+            + '<code>xml&#8594;json</code> then JSONata then more JSONata — so each reshaping is written once and '
+            + 'every action that wants it names it.</span>';
+
+        if (!transforms.length) {
+            html += '<div class="empty-note">No transforms yet.</div>';
+        }
+
+        transforms.forEach((t, i) => {
+            const users = transformUsers(t.name);
+            const xml = t.type === 'XML2JSON';
+            html += '<div class="xform-card">'
+                + '<div class="xform-head"><span class="xform-tag' + (xml ? ' xml' : '') + '">' + transformTypeLabel(t) + '</span>'
+                + '<input type="text" placeholder="name" value="' + AC.esc(t.name || '') + '" oninput="setTransform(' + i + ', \'name\', this.value)">'
+                + (i > 0 ? '<button class="tool-btn" onclick="moveTransform(' + i + ', -1)" title="Earlier">↑</button>' : '')
+                + (i < transforms.length - 1 ? '<button class="tool-btn" onclick="moveTransform(' + i + ', 1)" title="Later">↓</button>' : '')
+                + '<button class="icon-btn" onclick="removeTransform(' + i + ')" title="Remove">×</button>'
+                + '</div>'
+                + field('Does', '<select onchange="setTransform(' + i + ', \'type\', this.value)">'
+                    + '<option value="JSONATA"' + (xml ? '' : ' selected') + '>JSONata expression</option>'
+                    + '<option value="XML2JSON"' + (xml ? ' selected' : '') + '>XML &#8594; JSON</option>'
+                    + '</select>')
+                + (xml
+                    ? '<span class="hint">Parses what it is handed as an XML document — elements become keys, repeats '
+                        + 'become arrays, attributes land under <code>@attributes</code> and text under <code>#text</code>. '
+                        + 'Nothing to write; it reads the body as it arrived, so it goes first in a chain.</span>'
+                    : field('Expression', '<textarea spellcheck="false" placeholder=\'data.items.{"id": id, "who": owner.name}\''
+                        + ' oninput="setTransform(' + i + ', \'expression\', this.value)">' + AC.esc(t.expression || '') + '</textarea>'))
+                + field('Notes', '<input type="text" value="' + AC.esc(t.description || '') + '" placeholder="what it reshapes"'
+                    + ' oninput="setTransform(' + i + ', \'description\', this.value)">')
+                + '<span class="hint">' + (users.length
+                    ? 'Chained by ' + users.length + ' action' + (users.length > 1 ? 's' : '') + ': ' + AC.esc(users.join(', ')) + '.'
+                    : 'Not chained by anything yet — add it under Transforms on an action.') + '</span>'
+                + '</div>';
+        });
+        return html + '</div>';
+    }
+
+    function addTransform() {
+        page.transforms = page.transforms || [];
+        page.transforms.push({ name: 'transform' + (page.transforms.length + 1), type: 'JSONATA',
+                               expression: '', description: '' });
+        renderProps();
+    }
+
+    /**
+     * Renaming takes the chains that name it along, so a step can be renamed after it has been wired
+     * up. Without that every action pointing at the old name would quietly drop that step — a page
+     * that still saves and still runs, just not as designed.
+     */
+    function setTransform(index, name, value) {
+        const transform = page.transforms[index];
+        if (name === 'name') {
+            const previous = transform.name;
+            if (previous) allActions().forEach(a =>
+                a.transformNames = (a.transformNames || []).map(n => n === previous ? value : n));
+        }
+        transform[name] = value;
+        // The type decides whether an expression is even asked for, and shows in every chain naming
+        // this step, so that one redraws — a select has no caret to lose to it.
+        if (name === 'type') renderProps(); else renderPageActionsButton();
+    }
+
+    function moveTransform(index, delta) {
+        const target = index + delta;
+        if (target < 0 || target >= page.transforms.length) return;
+        [page.transforms[index], page.transforms[target]] = [page.transforms[target], page.transforms[index]];
+        renderProps();
+    }
+
+    function removeTransform(index) {
+        const [removed] = page.transforms.splice(index, 1);
+        allActions().forEach(a =>
+            a.transformNames = (a.transformNames || []).filter(n => n !== removed.name));
+        renderProps();
     }
 
     /** Attaching appends, so the order actions are ticked in is the order they run in. */
@@ -1231,12 +1525,54 @@
             if (!VALUE_TYPES.includes(c.type)) return;
             values[c.fieldName] = c.type === 'checkbox' ? c.defaultValue === 'true' : (c.defaultValue || '');
         });
+        compiledTransforms = new Map();
         renderRun();
-        // Options first: an on-load action routinely reads a select the operator has not touched
-        // yet, and it should see the value that select actually settled on.
-        await loadSelectOptions();
-        const onLoad = actionsByIds(page.onLoadActionIds);
-        if (onLoad.length) await runActions(onLoad, 'Page load', null);
+        // One call window over the whole opening of the page: two selects sourced from the same
+        // instance, or an on-load action over the endpoint a select already fetched, are one call.
+        beginCallBatch(actionsByIds(page.onLoadActionIds));
+        try {
+            // Options first: an on-load action routinely reads a select the operator has not touched
+            // yet, and it should see the value that select actually settled on.
+            await loadSelectOptions();
+            const onLoad = actionsByIds(page.onLoadActionIds);
+            if (onLoad.length) await runActions(onLoad, 'Page load', null);
+        } finally {
+            endCallBatch();
+        }
+    }
+
+    /**
+     * Opens the window inside which identical calls are shared, and adds what this run is going to
+     * want a body from. A nested run — the on-load actions inside the page's own opening — joins
+     * the window already open rather than starting a second, so the sharing spans the whole event
+     * and the inner run cannot close the window on the outer one.
+     */
+    function beginCallBatch(actions) {
+        if (callBatchDepth++ === 0) {
+            callCache = new Map();
+            payloadNeeded = new Set();
+        }
+        (actions || []).forEach(a => {
+            if (!isMetadataAction(a) && a.appUseCaseInstanceId) payloadNeeded.add(a.appUseCaseInstanceId);
+        });
+    }
+
+    function endCallBatch() {
+        if (--callBatchDepth > 0) return;
+        callBatchDepth = 0;
+        callCache = null;
+        payloadNeeded = null;
+    }
+
+    /**
+     * Whether this action's call may leave its bodies on the server. A metadata action normally can
+     * — that is the point of it — but not when something else in the same trigger is going to bind
+     * the body of the same instance, because then the two can be one call and the body is coming
+     * over regardless.
+     */
+    function isMetadataOnly(action) {
+        return isMetadataAction(action)
+            && !(payloadNeeded && payloadNeeded.has(action.appUseCaseInstanceId));
     }
 
     function renderRun() {
@@ -1380,7 +1716,51 @@
 
     /** Runs a control's actions — its click, or its value changing, depending on how it is wired. */
     function runControlActions(control, element) {
-        return runActions(actionsFor(control), control.label || controlTitle(control), element);
+        const actions = actionsFor(control);
+        // Everything these actions are aimed at is emptied before the first call goes out, so a
+        // failure — or a chain that stops at its second action — leaves the page blank rather than
+        // showing the previous trigger's rows underneath the inputs that did not produce them.
+        // Picking a different environment and getting an error has to look like nothing came back,
+        // because nothing did; a grid still holding the old environment's rows reads as if it had.
+        clearActionTargets(actions, control.controlId);
+        return runActions(actions, control.label || controlTitle(control), element);
+    }
+
+    /**
+     * Empties every control this list of actions binds into.
+     *
+     * <p>The control that triggered the run is skipped: it is holding the value the operator has
+     * just chosen, and an action that refills its own dropdown would otherwise throw that choice
+     * away the moment the call behind it failed. A "new grid" target is skipped too — it builds
+     * another grid per run rather than overwriting one, so it has nothing of its own to go stale.
+     */
+    function clearActionTargets(actions, triggeredById) {
+        const cleared = new Set();
+        (actions || []).forEach(action => {
+            const id = action.targetControlId;
+            if (!id || id === NEW_GRID || id === triggeredById || cleared.has(id)) return;
+            cleared.add(id);
+            const target = findControl(id);
+            if (target) clearControl(target);
+        });
+    }
+
+    /** One control back to the state it was in before anything had been bound into it. */
+    function clearControl(control) {
+        if (control.type === 'grid') {
+            // Dropped rather than set to no rows: "No data yet" is the truthful thing to say before
+            // a call has answered, where "No rows returned" would claim one already had.
+            delete gridState[control.controlId];
+            paintGrid(control.controlId);
+            return;
+        }
+        if (control.type === 'select') {
+            fillOptions(control, []);
+            return;
+        }
+        values[control.fieldName] = '';
+        const input = document.querySelector('#rc-' + CSS.escape(control.controlId) + ' [data-field]');
+        if (input) input.value = '';
     }
 
     /**
@@ -1409,19 +1789,20 @@
 
         if (element) element.classList.add('busy');
         AC.setStatus('runStatus', 'Running ' + actions.length + ' action' + (actions.length > 1 ? 's' : '') + '…');
+        beginCallBatch(actions);
         try {
             let done = 0;
             for (const action of actions) {
                 const name = action.actionLabel || action.appUseCaseInstanceId || 'Action';
                 const result = await runExecution(action.appUseCaseInstanceId, resolveInputs(action.inputs), name,
-                        resolveTemplate(action.environmentOverride), isMetadataAction(action));
+                        resolveTemplate(action.environmentOverride), isMetadataOnly(action), action.ownCall);
 
                 // A metadata action is bound whatever the call did — the status code of a failure is
                 // the whole reason someone put a metadata panel on the page.
-                if (isMetadataAction(action)) bindAction(action, rootFor(result, action), name);
+                if (isMetadataAction(action)) bindAction(action, await rootFor(result, action, name), name);
                 requireSuccess(result, name);
                 done++;
-                if (!isMetadataAction(action)) bindAction(action, rootFor(result, action), name);
+                if (!isMetadataAction(action)) bindAction(action, await rootFor(result, action, name), name);
             }
             AC.setStatus('runStatus', errors.length ? '' : done + ' of ' + actions.length + ' action'
                 + (actions.length > 1 ? 's' : '') + ' completed.', 'ok');
@@ -1429,6 +1810,7 @@
             AC.setStatus('runStatus', '');
             addError(e.message);
         } finally {
+            endCallBatch();
             if (element) element.classList.remove('busy');
         }
     }
@@ -1437,22 +1819,49 @@
     function bindAction(action, data, name) {
         if (!action.targetControlId) return;
 
+        // Both paths are resolved here rather than where they are read, so a path naming a control
+        // sees the values as they stand at the moment this action binds — including anything an
+        // earlier action in the same trigger has just put on the page.
+        const arrayPath = resolvePath(action.arrayPath, name);
+        const valuePath = resolvePath(action.valuePath, name);
+
         if (action.targetControlId === NEW_GRID) {
-            const stacked = rowsForGridAction(data, action, name);
+            const stacked = rowsForGridAction(data, action, arrayPath, name);
             pushStackedGrid(name, stacked.rows, stacked.columns);
             return;
         }
         const target = findControl(action.targetControlId);
         if (!target) { addError(name + ': its target is no longer on this page.'); return; }
         if (target.type === 'grid') {
-            const bound = rowsForGridAction(data, action, name);
+            const bound = rowsForGridAction(data, action, arrayPath, name);
             bindGrid(target, bound.rows, bound.columns);
         } else if (target.type === 'text' || target.type === 'textarea') {
-            bindValue(target, pathGet(data, action.valuePath), action.valuePath, name);
+            bindValue(target, pathGet(data, valuePath), valuePath, name);
         } else {
-            fillOptions(target, rowsAt(data, action.arrayPath, name)
+            fillOptions(target, rowsAt(data, arrayPath, name)
                 .map(r => optionOf(r, action.keyField, action.labelField)));
         }
+    }
+
+    /**
+     * A path with the page's own values filled in — {@code data[id="${auctionId}"]/referenceEntities}
+     * reads the row the operator picked rather than one fixed when the page was designed. Only the
+     * braced form is substituted: a bare {@code $} starts a path far more often than it names a
+     * field, and {@code $.items[0]} has always been a legal thing to write here.
+     *
+     * <p>An unanswered placeholder throws rather than becoming empty. An empty filter silently
+     * matches nothing, and "the grid came back empty" is a much worse thing to hand someone than
+     * "the path needs a value this page has not got".
+     */
+    function resolvePath(path, name) {
+        if (!path) return path || '';
+        return String(path).replace(/\$\{([A-Za-z0-9_.\-]+)\}/g, (match, field) => {
+            const value = values[field];
+            if (value === undefined || value === null || value === '') {
+                throw new Error(name + ': the path needs ' + match + ', and "' + field + '" has no value on this page.');
+            }
+            return String(value);
+        });
     }
 
     /** Replaces ${field} / $field in each input with the page's current values. */
@@ -1507,15 +1916,29 @@
      *                     leaves the instance's own environment untouched
      * @param metadataOnly when true the bodies are left on the server — nothing downstream is going
      *                     to read them, and a 30 MB response is not worth the wire or the heap
+     * @param ownCall      keeps this call off the trigger's shared cache. Two actions that ask for
+     *                     the same instance, environment and inputs otherwise share one response,
+     *                     which is what you want when they only differ in how they read it and
+     *                     exactly what you do not want when the call itself is the point — a POST
+     *                     that re-sends something has to go out as many times as it is asked to
      */
-    async function runExecution(instanceId, inputs, name, environment, metadataOnly) {
+    async function runExecution(instanceId, inputs, name, environment, metadataOnly, ownCall) {
         if (!instanceId) throw new Error(name + ': no use case instance is configured.');
-        return AC.api('POST', '/appcatalog/pages/run', {
+        const request = {
             appUseCaseInstanceId: instanceId,
             inputs: inputs,
             environment: environment || '',
             includePayload: !metadataOnly
-        });
+        };
+        if (ownCall || !callCache) return AC.api('POST', '/appcatalog/pages/run', request);
+
+        // Everything the server is told, with the inputs put in a fixed order so two actions that
+        // happen to list them differently still recognise each other as the same call. The promise
+        // is what is cached, not the result, so actions asking at the same time share one flight.
+        const key = JSON.stringify([request.appUseCaseInstanceId, request.environment, request.includePayload,
+            Object.keys(inputs || {}).sort().map(k => [k, inputs[k]])]);
+        if (!callCache.has(key)) callCache.set(key, AC.api('POST', '/appcatalog/pages/run', request));
+        return callCache.get(key);
     }
 
     function requireSuccess(result, name) {
@@ -1524,11 +1947,18 @@
         }
     }
 
-    /** The response body of a result, parsed — the transform's output when the instance has one. */
+    /**
+     * The response body of a result, parsed — the transform's output when the instance has one.
+     *
+     * <p>A body that is not JSON is handed back as the text it arrived as rather than as nothing,
+     * which is what makes an <code>xml&#8594;json</code> step possible: the step needs the document,
+     * and by the time anything else looks at it the parse has already failed. A path read out of a
+     * string finds nothing, exactly as it found nothing in the null this used to return.
+     */
     function payloadOf(result) {
         let data = result.transformedResponse;
         if (data === undefined || data === null) {
-            try { data = JSON.parse(result.responseBody || 'null'); } catch (e) { data = null; }
+            try { data = JSON.parse(result.responseBody || 'null'); } catch (e) { data = result.responseBody; }
         }
         return data;
     }
@@ -1570,9 +2000,106 @@
         };
     }
 
-    /** Which object an action's paths are resolved against — the body, or the call's metadata. */
-    function rootFor(result, action) {
-        return isMetadataAction(action) ? metaOf(result) : payloadOf(result);
+    /**
+     * Which object an action's paths are read out of: the body, or the call's metadata, put through
+     * the action's chain of transforms. Order matters and is deliberate — the chain reshapes, then
+     * the path picks out of what it produced, so the steps can turn an awkward response into the
+     * plain array a grid wants and the path can stay empty.
+     */
+    async function rootFor(result, action, name) {
+        const root = isMetadataAction(action) ? metaOf(result) : payloadOf(result);
+        return applyTransforms(root, action, name);
+    }
+
+    /** One of the page's named steps by name, or nothing. */
+    function transformNamed(name) {
+        return (page.transforms || []).find(t => t.name === name) || null;
+    }
+
+    /**
+     * Runs the action's chain, each step over what the one before it produced, or hands the data
+     * straight back when the chain is empty. A name the library no longer holds is skipped rather
+     * than fatal: binding the response as it arrived is what every action did before transforms
+     * existed, so a deleted step degrades to the old behaviour rather than breaking the page.
+     */
+    async function applyTransforms(data, action, name) {
+        let current = data;
+        for (const stepName of (action && action.transformNames) || []) {
+            current = await applyTransformStep(current, stepName, name);
+        }
+        return current;
+    }
+
+    /** One step of a chain: an XML parse, or a JSONata evaluation, over whatever it was handed. */
+    async function applyTransformStep(data, stepName, name) {
+        const transform = transformNamed(stepName);
+        if (!transform) return data;
+        if (transform.type === 'XML2JSON') return xmlToJsonValue(data, stepName, name);
+        if (!transform.expression || !String(transform.expression).trim()) return data;
+        if (typeof jsonata !== 'function') {
+            throw new Error(name + ': the JSONata library did not load, so "' + stepName
+                + '" cannot run — this page needs the network for it.');
+        }
+        const text = transform.expression;
+        try {
+            if (!compiledTransforms.has(text)) compiledTransforms.set(text, jsonata(text));
+            return await compiledTransforms.get(text).evaluate(data);
+        } catch (e) {
+            compiledTransforms.delete(text);
+            throw new Error(name + ': JSONata "' + stepName + '" failed: ' + (e.message || e));
+        }
+    }
+
+    /**
+     * The XML step. It converts a document, so it wants the response as text — which is what it gets
+     * when it runs first, since a body that would not parse as JSON is passed along as it arrived.
+     * Handed anything else, it says so rather than quietly producing an object of nothing: a chain
+     * with this step in the wrong place is a mistake worth reading about.
+     */
+    function xmlToJsonValue(data, stepName, name) {
+        if (data === null || data === undefined || data === '') {
+            throw new Error(name + ': transform "' + stepName + '" had no XML to convert — the response was empty.');
+        }
+        if (typeof data !== 'string') {
+            throw new Error(name + ': transform "' + stepName + '" converts XML text, but this far along the chain '
+                + 'it was handed ' + (Array.isArray(data) ? 'an array' : 'a ' + typeof data)
+                + ' — an xml→json step belongs first, on the body as it arrived.');
+        }
+        const doc = new DOMParser().parseFromString(data.trim(), 'application/xml');
+        const failure = doc.querySelector('parsererror');
+        if (failure) {
+            throw new Error(name + ': transform "' + stepName + '" could not parse the response as XML: '
+                + failure.textContent.trim().split('\n')[0]);
+        }
+        return xmlNodeToObj(doc.documentElement);
+    }
+
+    /**
+     * An XML element as a plain object, the same shape the catalog's XML-to-JSON utility produces —
+     * elements become keys, a tag that repeats becomes an array, attributes land under
+     * <code>@attributes</code>, text under <code>#text</code>, and an element that is only text
+     * collapses to that text so a leaf reads as a value in a grid cell.
+     */
+    function xmlNodeToObj(node) {
+        const obj = {};
+        if (node.attributes && node.attributes.length > 0) {
+            obj['@attributes'] = {};
+            for (const attr of node.attributes) obj['@attributes'][attr.name] = attr.value;
+        }
+        for (const child of node.childNodes) {
+            if (child.nodeType === Node.TEXT_NODE || child.nodeType === Node.CDATA_SECTION_NODE) {
+                const text = child.nodeValue.trim();
+                if (text) obj['#text'] = (obj['#text'] ? obj['#text'] + text : text);
+            } else if (child.nodeType === Node.ELEMENT_NODE) {
+                const key = child.tagName;
+                const value = xmlNodeToObj(child);
+                if (obj[key] === undefined) obj[key] = value;
+                else if (Array.isArray(obj[key])) obj[key].push(value);
+                else obj[key] = [obj[key], value];
+            }
+        }
+        const keys = Object.keys(obj);
+        return keys.length === 1 && keys[0] === '#text' ? obj['#text'] : obj;
     }
 
     function isMetadataAction(action) {
@@ -1608,9 +2135,9 @@
      * how a "call details" panel wants it, or across as a single row, which is what makes each run
      * stack into a table comparable with the ones above it.
      */
-    function rowsForGridAction(data, action, name) {
-        const found = pathGet(data, action.arrayPath);
-        if (found === undefined || found === null) throw new Error(name + ': nothing found at path "' + (action.arrayPath || '') + '".');
+    function rowsForGridAction(data, action, arrayPath, name) {
+        const found = pathGet(data, arrayPath);
+        if (found === undefined || found === null) throw new Error(name + ': nothing found at path "' + (arrayPath || '') + '".');
         if (Array.isArray(found)) return { rows: found, columns: null };
         if (typeof found === 'object') {
             if (action.keyValueGrid) {
@@ -1620,15 +2147,77 @@
             }
             if (isMetadataAction(action)) return { rows: [found], columns: null };
         }
-        throw new Error(name + ': expected an array' + (action.arrayPath ? ' at "' + action.arrayPath + '"' : '') + ', got ' + typeof found + '.');
+        throw new Error(name + ': expected an array' + (arrayPath ? ' at "' + arrayPath + '"' : '') + ', got ' + typeof found + '.');
     }
 
-    /** Dotted path with optional array indexes and a leading $: {@code $.data.items[0].name}. */
+    /**
+     * Reads a value out of a response by path. Beyond the dotted names it has always taken —
+     * {@code $.data.items[0].name} still means what it meant:
+     *
+     * <ul>
+     *   <li>{@code /} separates segments as well as {@code .}, so a path written the way the people
+     *       who own the endpoint write it works as written;</li>
+     *   <li>{@code [id="A-7"]} keeps the elements whose field matches, and {@code [id!="A-7"]} the
+     *       ones whose does not — a filter always hands back a list, so a grid bound to one that
+     *       matched a single row gets a one-row table rather than an object it would refuse;</li>
+     *   <li>a name read off an array maps over its elements and flattens what comes back, the way
+     *       JSONata does, so {@code data[id="A-7"]/referenceEntities} reaches the entities of the row
+     *       that matched with no index in between.</li>
+     * </ul>
+     *
+     * <p>Placeholders are long gone by the time this runs — see {@link #resolvePath}.
+     */
     function pathGet(data, path) {
         if (!path) return data;
-        return String(path).replace(/^\$\.?/, '').replace(/\[(\d+)\]/g, '.$1').split('.')
-            .filter(key => key !== '')
-            .reduce((current, key) => (current === null || current === undefined) ? current : current[key], data);
+        const text = String(path).replace(/^\$\.?/, '');
+        // A name, or a bracket and whatever is inside it. Separators are simply what is left over.
+        const token = /([^.\/\[\]]+)|\[([^\]]*)\]/g;
+        let current = data;
+        let match;
+        while ((match = token.exec(text)) !== null) {
+            if (current === undefined || current === null) return current;
+            current = match[1] !== undefined ? nameStep(current, match[1]) : filterStep(current, match[2].trim());
+        }
+        return current;
+    }
+
+    /**
+     * One name of a path. Reading a name off an array maps over it instead of coming back undefined,
+     * which is what makes a filter worth having: the segment after it would otherwise need an index
+     * to get past the list the filter produced.
+     */
+    function nameStep(current, key) {
+        if (!Array.isArray(current) || /^\d+$/.test(key)) return current[key];
+        const out = [];
+        let flattened = false;
+        current.forEach(item => {
+            const value = (item === undefined || item === null) ? undefined : item[key];
+            if (value === undefined || value === null) return;
+            if (Array.isArray(value)) { flattened = true; out.push(...value); }
+            else out.push(value);
+        });
+        // One match that was not itself a list reads as the thing rather than as a list holding it —
+        // the same collapse JSONata makes, and what a value path bound to a text box wants.
+        return (out.length === 1 && !flattened) ? out[0] : out;
+    }
+
+    /** A bracket: an index, or a comparison that keeps the elements it matches. */
+    function filterStep(current, inside) {
+        if (inside === '') return current;
+        if (/^\d+$/.test(inside)) return current[Number(inside)];
+        const parts = inside.match(/^(.+?)\s*(!=|=)\s*([\s\S]*)$/);
+        if (!parts) return undefined;
+        const key = parts[1].trim();
+        const negate = parts[2] === '!=';
+        // Quotes are optional: the value is compared as text either way, since that is the only
+        // comparison that behaves the same for an id of 7 and an id of "A-7".
+        const wanted = parts[3].trim().replace(/^(["'])([\s\S]*)\1$/, '$2');
+        const list = Array.isArray(current) ? current : [current];
+        return list.filter(item => {
+            const value = (item === undefined || item === null) ? undefined : pathGet(item, key);
+            const same = String(value === undefined || value === null ? '' : value) === wanted;
+            return negate ? !same : same;
+        });
     }
 
     /** Fills a text box or text area from one attribute of a response. */

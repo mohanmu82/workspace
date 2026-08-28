@@ -1,6 +1,8 @@
 package com.mycompany.batch.appcatalog;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -24,6 +26,11 @@ import java.util.Map;
  *
  * <p>{@link #source} decides what the paths are read out of: the response payload as before, or the
  * call's own metadata — the URL, the status code, how long it took. See {@link #METADATA}.
+ *
+ * <p>{@link #transformNames} optionally reshapes that root with the page's named transforms first,
+ * in the order given — XML into JSON, then JSONata over the result, then more JSONata if that is
+ * what it takes — so an endpoint whose response two actions read differently is written once per
+ * reading rather than being flattened by hand in each path.
  */
 public class AppPageAction {
 
@@ -65,7 +72,13 @@ public class AppPageAction {
     private String environmentOverride;
     private Map<String, String> inputs = new LinkedHashMap<>();
     private String targetControlId;
-    /** Dotted path to the array inside the response; blank when the response is the array. */
+    /**
+     * Path to the array inside the response; blank when the response is the array. Segments are
+     * separated by {@code .} or {@code /}, may index ({@code items[0]}) or filter
+     * ({@code data[id="A-7"]}), and may carry {@code ${fieldName}} placeholders that pick up the
+     * page's own control values — {@code data[id="${auctionId}"]/referenceEntities} reads the row the
+     * operator selected. Reading a property off an array maps over it, as JSONata does.
+     */
     private String arrayPath;
     /**
      * Path to the single attribute a text or text area target is filled from — {@code data.order.id}
@@ -84,6 +97,23 @@ public class AppPageAction {
     private boolean keyValueGrid;
     /** {@link #PAYLOAD} or {@link #METADATA}; anything unrecognised reads as PAYLOAD. */
     private String source = PAYLOAD;
+    /**
+     * Names the page's {@link AppPageTransform}s to run over what this action bound, in order, before
+     * {@link #arrayPath} or {@link #valuePath} is read out of the last one's output. Empty binds the
+     * response exactly as it arrived, which is what every action did before transforms existed.
+     *
+     * <p>A chain rather than a single name because reshaping a response is routinely more than one
+     * move: an XML body has to become JSON before any JSONata can touch it, and the expression that
+     * flattens the result is a different, separately reusable thing from the one that converted it.
+     */
+    private List<String> transformNames = new ArrayList<>();
+    /**
+     * Keeps this action off the per-trigger call cache. Two actions that resolve to the same
+     * instance, environment and inputs normally share one HTTP call — the usual reason to write them
+     * twice is to process one response two ways. Set this when the call is the point rather than the
+     * response: a POST that re-sends a confirmation should go out as many times as it is asked to.
+     */
+    private boolean ownCall;
 
     public String getActionId()                    { return actionId; }
     public void   setActionId(String actionId)     { this.actionId = actionId == null || actionId.isBlank() ? null : actionId.trim(); }
@@ -120,6 +150,28 @@ public class AppPageAction {
 
     public String getSource()                { return source; }
     public void   setSource(String source)   { this.source = METADATA.equalsIgnoreCase(source) ? METADATA : PAYLOAD; }
+
+    public List<String> getTransformNames()                          { return transformNames; }
+    public void setTransformNames(List<String> transformNames) {
+        this.transformNames = new ArrayList<>();
+        if (transformNames == null) return;
+        for (String name : transformNames) {
+            if (name != null && !name.isBlank()) this.transformNames.add(name.trim());
+        }
+    }
+
+    /**
+     * Reads the single {@code transformName} pages written before chains existed carried, folding it
+     * into {@link #transformNames} as the one step it always was. Deserialize-only — there is no
+     * getter, so a page saved from here on carries the list alone and the old key retires with the
+     * pages that hold it.
+     */
+    public void setTransformName(String transformName) {
+        if (transformName != null && !transformName.isBlank()) this.transformNames.add(transformName.trim());
+    }
+
+    public boolean isOwnCall()                    { return ownCall; }
+    public void    setOwnCall(boolean ownCall)    { this.ownCall = ownCall; }
 
     /** Whether this action reads the call's metadata rather than its response body. */
     public boolean isMetadata()   { return METADATA.equals(source); }

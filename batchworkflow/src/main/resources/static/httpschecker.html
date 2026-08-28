@@ -167,7 +167,63 @@
     .badge-failed { background: #f8d7da; color: #842029; }
 
     .comments-cell { font-size: 0.78rem; color: #842029; }
-    .resp-ms { font-size: 0.78rem; color: #555; }
+    .note-cell     { font-size: 0.78rem; color: #666; }
+    .resp-ms       { font-size: 0.78rem; color: #555; white-space: nowrap; }
+    .nowrap-cell   { white-space: nowrap; }
+    .cert-warn     { color: #8a5a00; font-weight: 600; }
+    .cert-expired  { color: #842029; font-weight: 700; }
+
+    /* Column chooser */
+    .col-chooser { position: relative; }
+    .col-panel {
+      display: none;
+      position: absolute;
+      z-index: 20;
+      top: calc(100% + 6px);
+      left: 0;
+      width: 290px;
+      background: #fff;
+      border: 1px solid #dde1e7;
+      border-radius: 6px;
+      box-shadow: 0 6px 18px rgba(0,0,0,.14);
+      padding: 10px 12px;
+    }
+    .col-panel.open { display: block; }
+    .col-panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      margin-bottom: 8px;
+    }
+    .col-panel-head .btns { display: flex; gap: 6px; }
+    .col-panel-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      max-height: 320px;
+      overflow-y: auto;
+    }
+    .col-panel-list label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.82rem;
+      font-weight: 400;
+      color: #222;
+      text-transform: none;
+      letter-spacing: 0;
+      cursor: pointer;
+      padding: 3px 4px;
+      border-radius: 4px;
+    }
+    .col-panel-list label:hover { background: #f4f6f9; }
+    .col-panel-list input { cursor: pointer; }
 
     /* Summary */
     .summary-grid { display: flex; gap: 20px; flex-wrap: wrap; }
@@ -251,20 +307,25 @@
   <div class="card-title">Results</div>
   <div class="toolbar">
     <input type="text" id="filterInput" placeholder="Filter by URL, trust store, status…" oninput="filterRows()">
+    <div class="col-chooser">
+      <button class="secondary" style="padding:6px 14px" onclick="toggleColumnPanel(event)">Columns &#9662;</button>
+      <div class="col-panel" id="colPanel" onclick="event.stopPropagation()">
+        <div class="col-panel-head">
+          <span>Show columns</span>
+          <span class="btns">
+            <button class="small secondary" onclick="setAllColumns()">All</button>
+            <button class="small secondary" onclick="resetColumns()">Reset</button>
+          </span>
+        </div>
+        <div class="col-panel-list" id="colPanelList"></div>
+      </div>
+    </div>
     <button class="secondary" style="padding:6px 14px" onclick="exportCsv()">Export CSV</button>
     <span class="result-count" id="resultCount"></span>
   </div>
   <div class="tbl-wrap">
     <table>
-      <thead>
-        <tr>
-          <th>HTTPS URL</th>
-          <th>Trust Store</th>
-          <th>Status</th>
-          <th>Failure Comments</th>
-          <th>Response</th>
-        </tr>
-      </thead>
+      <thead><tr id="resultHead"></tr></thead>
       <tbody id="resultBody"></tbody>
     </table>
   </div>
@@ -494,42 +555,169 @@
   // Table
   // =====================================================================
 
+  // Every available column. `on` marks the ones shown before the user chooses.
+  const COLUMNS = [
+    { key: 'httpsUrl',        label: 'HTTPS URL',        on: true,  cls: 'url-cell' },
+    { key: 'trustStore',      label: 'Trust Store',      on: true,  cls: 'ts-cell' },
+    { key: 'status',          label: 'Status',           on: true,
+      html: d => `<span class="badge ${d.status === 'OK' ? 'badge-ok' : 'badge-failed'}">${d.status === 'OK' ? 'OK' : 'FAILED'}</span>` },
+    { key: 'httpVersion',     label: 'HTTP Version',     on: true,  cls: 'nowrap-cell' },
+    { key: 'httpStatus',      label: 'HTTP Code',        on: true,  cls: 'nowrap-cell' },
+    { key: 'httpStatusText',  label: 'Code Description', on: true,  cls: 'nowrap-cell' },
+    { key: 'responseMs',      label: 'Time Taken',       on: true,  cls: 'resp-ms',
+      text: d => d.responseMs == null ? '' : d.responseMs + ' ms' },
+    { key: 'tlsVersion',      label: 'TLS Version',      on: true,  cls: 'nowrap-cell' },
+    { key: 'authType',        label: 'Auth Type',        on: true,  cls: 'nowrap-cell' },
+    { key: 'cipherSuite',     label: 'Cipher Suite',     on: false, cls: 'nowrap-cell' },
+    { key: 'remoteIp',        label: 'Remote IP',        on: true,  cls: 'nowrap-cell' },
+    { key: 'certSubject',     label: 'Cert Subject (CN)',on: false },
+    { key: 'certIssuer',      label: 'Cert Issuer (CN)', on: false },
+    { key: 'certIssuedOn',    label: 'Cert Issued',      on: true,  cls: 'nowrap-cell' },
+    { key: 'certExpiresOn',   label: 'Cert Expiry',      on: true,
+      cls: d => ('nowrap-cell ' + expiryClass(d.certExpiresOn)).trim() },
+    { key: 'failureComments', label: 'Failure Comments', on: true,
+      cls: d => d.status === 'OK' ? 'note-cell' : 'comments-cell' }
+  ];
+
+  const COL_STORAGE_KEY = 'httpschecker.columns';
+  let visibleCols = loadColumnPrefs();
+
+  function defaultCols() { return COLUMNS.filter(c => c.on).map(c => c.key); }
+
+  function activeColumns() { return COLUMNS.filter(c => visibleCols.includes(c.key)); }
+
+  function loadColumnPrefs() {
+    try {
+      const raw = localStorage.getItem(COL_STORAGE_KEY);
+      if (raw) {
+        const keys = JSON.parse(raw).filter(k => COLUMNS.some(c => c.key === k));
+        if (keys.length) return keys;
+      }
+    } catch (e) { /* fall through to defaults */ }
+    return defaultCols();
+  }
+
+  function saveColumnPrefs() {
+    try { localStorage.setItem(COL_STORAGE_KEY, JSON.stringify(visibleCols)); } catch (e) { /* ignore */ }
+  }
+
+  function cellText(col, d) {
+    if (col.text) return col.text(d);
+    const v = d[col.key];
+    return v === undefined || v === null ? '' : String(v);
+  }
+
+  function cellHtml(col, d) {
+    if (col.html) return col.html(d);
+    return escHtml(cellText(col, d));
+  }
+
+  function cellClass(col, d) {
+    return typeof col.cls === 'function' ? col.cls(d) : (col.cls || '');
+  }
+
+  /** Flag certificates that have expired, or are close to it. */
+  function expiryClass(value) {
+    if (!value) return '';
+    const t = Date.parse(String(value).replace(' ', 'T'));
+    if (isNaN(t)) return '';
+    const days = (t - Date.now()) / 86400000;
+    if (days < 0)  return 'cert-expired';
+    if (days < 30) return 'cert-warn';
+    return '';
+  }
+
+  // =====================================================================
+  // Column chooser
+  // =====================================================================
+
+  function renderColumnPanel() {
+    const list = document.getElementById('colPanelList');
+    list.innerHTML = '';
+    COLUMNS.forEach(c => {
+      const label = document.createElement('label');
+      const cb    = document.createElement('input');
+      cb.type     = 'checkbox';
+      cb.checked  = visibleCols.includes(c.key);
+      cb.addEventListener('change', () => toggleColumn(c.key, cb));
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(c.label));
+      list.appendChild(label);
+    });
+  }
+
+  function toggleColumn(key, cb) {
+    if (cb.checked) {
+      if (!visibleCols.includes(key)) visibleCols.push(key);
+    } else {
+      if (visibleCols.length <= 1) {
+        cb.checked = true;
+        setStatus('Keep at least one column visible.', true);
+        return;
+      }
+      visibleCols = visibleCols.filter(k => k !== key);
+    }
+    saveColumnPrefs();
+    filterRows();
+  }
+
+  function setAllColumns() { visibleCols = COLUMNS.map(c => c.key); applyColumnChange(); }
+  function resetColumns()  { visibleCols = defaultCols();           applyColumnChange(); }
+
+  function applyColumnChange() {
+    saveColumnPrefs();
+    renderColumnPanel();
+    filterRows();
+  }
+
+  function toggleColumnPanel(evt) {
+    if (evt) evt.stopPropagation();
+    document.getElementById('colPanel').classList.toggle('open');
+  }
+
+  document.addEventListener('click', () => {
+    const panel = document.getElementById('colPanel');
+    if (panel) panel.classList.remove('open');
+  });
+
+  // =====================================================================
+  // Rows
+  // =====================================================================
+
   function renderRows(rows) {
-    const tbody = document.getElementById('resultBody');
-    tbody.innerHTML = '';
-    rows.forEach(r => tbody.appendChild(buildRow(r)));
+    renderHeader();
+    fillBody(rows);
     document.getElementById('resultsCard').style.display = rows.length ? '' : 'none';
     updateResultCount(rows.length);
   }
 
+  function renderHeader() {
+    document.getElementById('resultHead').innerHTML =
+      activeColumns().map(c => `<th>${escHtml(c.label)}</th>`).join('');
+  }
+
+  function fillBody(rows) {
+    const tbody = document.getElementById('resultBody');
+    tbody.innerHTML = '';
+    rows.forEach(r => tbody.appendChild(buildRow(r)));
+  }
+
   function buildRow(d) {
     const tr = document.createElement('tr');
-    const ok = d.status === 'OK';
-    const respHtml = d.httpStatus !== undefined && d.httpStatus !== null
-        ? `HTTP ${d.httpStatus}` + (d.responseMs !== undefined ? ` · ${d.responseMs} ms` : '')
-        : (d.responseMs !== undefined ? `${d.responseMs} ms` : '—');
-
-    tr.innerHTML = `
-      <td class="url-cell">${escHtml(d.httpsUrl || '')}</td>
-      <td class="ts-cell">${escHtml(d.trustStore || '')}</td>
-      <td><span class="badge ${ok ? 'badge-ok' : 'badge-failed'}">${ok ? 'OK' : 'FAILED'}</span></td>
-      <td class="comments-cell">${escHtml(d.failureComments || '')}</td>
-      <td class="resp-ms">${respHtml}</td>`;
+    tr.innerHTML = activeColumns().map(c => {
+      const html = cellHtml(c, d);
+      return `<td class="${cellClass(c, d)}">${html === '' ? '—' : html}</td>`;
+    }).join('');
     return tr;
   }
 
   function filterRows() {
     const q = document.getElementById('filterInput').value.toLowerCase();
     const filtered = q
-      ? allRows.filter(r =>
-          (r.httpsUrl        || '').toLowerCase().includes(q) ||
-          (r.trustStore      || '').toLowerCase().includes(q) ||
-          (r.status          || '').toLowerCase().includes(q) ||
-          (r.failureComments || '').toLowerCase().includes(q))
+      ? allRows.filter(r => COLUMNS.some(c => cellText(c, r).toLowerCase().includes(q)))
       : allRows;
-    const tbody = document.getElementById('resultBody');
-    tbody.innerHTML = '';
-    filtered.forEach(r => tbody.appendChild(buildRow(r)));
+    renderHeader();
+    fillBody(filtered);
     updateResultCount(filtered.length);
   }
 
@@ -566,14 +754,10 @@
   // =====================================================================
 
   function exportCsv() {
-    const lines = ['httpsUrl,trustStore,status,failureComments'];
+    const cols  = activeColumns();
+    const lines = [cols.map(c => csvCell(c.label)).join(',')];
     allRows.forEach(r => {
-      lines.push([
-        csvCell(r.httpsUrl || ''),
-        csvCell(r.trustStore || ''),
-        csvCell(r.status || ''),
-        csvCell(r.failureComments || '')
-      ].join(','));
+      lines.push(cols.map(c => csvCell(cellText(c, r))).join(','));
     });
     const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
     const a    = document.createElement('a');
@@ -612,6 +796,7 @@
 
   // Seed with one row: the saved default trust store if one is set, else the JVM default.
   initTrustStores();
+  renderColumnPanel();
 
   StaticDatasetWidget.mount({
     containerId: 'dsWidget',

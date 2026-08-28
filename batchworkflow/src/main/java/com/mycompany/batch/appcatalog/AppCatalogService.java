@@ -343,7 +343,8 @@ public class AppCatalogService {
     private void validateControls(AppPage page) {
         List<String> controlIds = new ArrayList<>();
         List<String> fieldNames = new ArrayList<>();
-        List<String> actionIds = validatePageActions(page);
+        List<String> transformNames = validateTransforms(page);
+        List<String> actionIds = validatePageActions(page, transformNames);
 
         for (AppPageControl control : page.getControls()) {
             if (control.getControlId() == null || control.getControlId().isBlank()) {
@@ -381,7 +382,7 @@ public class AppCatalogService {
             }
             if (!ACTION_TYPES.contains(control.getType())) continue;
             for (AppPageAction action : control.getActions()) {
-                validateAction(page, action, "Action '" + actionName(action, describe(control)) + "'");
+                validateAction(page, action, transformNames, "Action '" + actionName(action, describe(control)) + "'");
             }
         }
 
@@ -397,7 +398,7 @@ public class AppCatalogService {
      * them, and duplicates are refused: two actions answering to one id would make "which action does
      * this button run" unanswerable.
      */
-    private List<String> validatePageActions(AppPage page) {
+    private List<String> validatePageActions(AppPage page, List<String> transformNames) {
         List<String> ids = new ArrayList<>();
         for (AppPageAction action : page.getActions()) {
             if (action.getActionId() == null || action.getActionId().isBlank()) {
@@ -406,14 +407,38 @@ public class AppCatalogService {
             if (ids.contains(action.getActionId()))
                 throw new IllegalArgumentException("Duplicate action id: " + action.getActionId());
             ids.add(action.getActionId());
-            validateAction(page, action, "Page action '" + actionName(action, action.getActionId()) + "'");
+            validateAction(page, action, transformNames, "Page action '" + actionName(action, action.getActionId()) + "'");
         }
         return ids;
     }
 
-    /** The instance an action runs and the control it fills both have to be real. */
-    private void validateAction(AppPage page, AppPageAction action, String where) {
+    /**
+     * Checks the page's transform library and hands back its names for the actions to be checked
+     * against. A blank name would be unnameable and a duplicate would make "which step does this
+     * action run" unanswerable, so both are refused rather than silently picking one. Only a JSONata
+     * step needs an expression: an XML-to-JSON step is fully described by its type.
+     */
+    private List<String> validateTransforms(AppPage page) {
+        List<String> names = new ArrayList<>();
+        for (AppPageTransform transform : page.getTransforms()) {
+            requireName(transform.getName(), "Transform name");
+            if (names.contains(transform.getName()))
+                throw new IllegalArgumentException("Duplicate transform name: " + transform.getName());
+            names.add(transform.getName());
+            if (!transform.isXml2Json()
+                    && (transform.getExpression() == null || transform.getExpression().isBlank()))
+                throw new IllegalArgumentException("Transform '" + transform.getName() + "' has no JSONata expression");
+        }
+        return names;
+    }
+
+    /** The instance an action runs, the transforms it chains and the control it fills all have to be real. */
+    private void validateAction(AppPage page, AppPageAction action, List<String> transformNames, String where) {
         requireInstance(action.getAppUseCaseInstanceId(), where);
+        for (String name : action.getTransformNames()) {
+            if (!transformNames.contains(name))
+                throw new IllegalArgumentException(where + " applies a transform that is not on this page: " + name);
+        }
 
         String target = action.getTargetControlId();
         if (target == null || target.isBlank() || AppPageAction.NEW_GRID.equals(target)) return;

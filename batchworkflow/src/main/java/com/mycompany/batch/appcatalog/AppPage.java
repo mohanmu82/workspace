@@ -16,6 +16,10 @@ import java.util.List;
  * as many controls as want it (see {@link AppPageControl#getActionIds()}) instead of being copied
  * onto each, which is what lets one "reload the grid" be triggered by a button, by a dropdown
  * changing, and by the page opening, and stay one thing when it is edited.
+ *
+ * <p>{@link #transforms} is the same idea for reshaping: named steps — JSONata expressions and
+ * XML-to-JSON conversions — that any action can chain, in whatever order it needs, to rework a
+ * response before it lands in a control.
  */
 public class AppPage {
 
@@ -37,6 +41,13 @@ public class AppPage {
      * only be standing in for the page.
      */
     private List<String> onLoadActionIds = new ArrayList<>();
+    /**
+     * Named reshaping steps actions may chain over what they bound. Held on the page rather than on
+     * the action for the same reason {@link #actions} is: one reshaping of one endpoint's response
+     * is one step, however many actions want it — and a step written for one chain (turning a SOAP
+     * body into JSON, say) is the same step the next chain starts with.
+     */
+    private List<AppPageTransform> transforms = new ArrayList<>();
 
     public String getPageName()                  { return pageName; }
     public void   setPageName(String pageName)   { this.pageName = pageName; }
@@ -58,4 +69,7 @@ public class AppPage {
 
     public List<String> getOnLoadActionIds()                         { return onLoadActionIds; }
     public void setOnLoadActionIds(List<String> onLoadActionIds)     { this.onLoadActionIds = onLoadActionIds != null ? onLoadActionIds : new ArrayList<>(); }
+
+    public List<AppPageTransform> getTransforms()                    { return transforms; }
+    public void setTransforms(List<AppPageTransform> transforms)     { this.transforms = transforms != null ? transforms : new ArrayList<>(); }
 }
