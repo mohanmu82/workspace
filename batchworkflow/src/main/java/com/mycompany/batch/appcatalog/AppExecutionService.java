@@ -46,8 +46,9 @@ import java.util.regex.Pattern;
  *
  * <p>The heart of this class is the three-layer variable merge: an app's {@code appVariables} are
  * the base, a use case's {@code appUseCaseVariables} override them, and an instance's inputs
- * override both. The merged map is then substituted into the URL, headers and body, so the same
- * use case definition can be pointed at different data purely by changing an instance.
+ * override both. The merged map is then substituted into the URL, headers, body and the use case's
+ * JSONata transform, so the same use case definition can be pointed at different data — and have
+ * its response read differently — purely by changing an instance.
  *
  * <p>Each instance first expands into the cartesian product of the environments it names and the
  * run count the caller asked for, so one instance can be a hundred calls against each of three
@@ -68,6 +69,16 @@ public class AppExecutionService {
 
     /** Matches {@code ${name}} and bare {@code $name} placeholders in a URL, header or body. */
     private static final Pattern VARIABLE = Pattern.compile("\\$\\{([A-Za-z0-9_.\\-]+)\\}|\\$([A-Za-z_][A-Za-z0-9_]*)");
+
+    /**
+     * The braced form alone — the only placeholder a JSONata expression may carry.
+     *
+     * <p>JSONata spends {@code $} on itself: {@code $sum}, {@code $map}, {@code $$} and a bare
+     * {@code $} for the context are ordinary parts of an expression, so substituting the bare
+     * {@code $name} form there would rewrite the language out from under whoever wrote it.
+     * {@code ${name}} is not JSONata syntax at all, which is what makes it safe to claim.
+     */
+    private static final Pattern BRACED_VARIABLE = Pattern.compile("\\$\\{([A-Za-z0-9_.\\-]+)\\}");
 
     private static final HttpClient HTTP = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(15))
@@ -380,7 +391,7 @@ public class AppExecutionService {
             Object transformed = null;
             String transformError = null;
             try {
-                transformed = transform(outcome.body(), useCase);
+                transformed = transform(outcome.body(), useCase, variables);
             } catch (Exception e) {
                 transformError = "Transform failed: " + rootMessage(e);
             }
@@ -756,8 +767,11 @@ public class AppExecutionService {
      * Evaluates the use case's JSONata expression against the response body, parsed according to
      * its output format. Returns null when no transform is configured — the raw body is already
      * on the output, so echoing a parsed copy of it would only double the payload.
+     *
+     * <p>The expression itself is resolved against {@code variables} first — see
+     * {@link #resolveExpression} — so it may read the values this call was made with.
      */
-    private Object transform(String body, AppUseCase useCase) throws Exception {
+    private Object transform(String body, AppUseCase useCase, Map<String, Object> variables) throws Exception {
         JsonataTransform transform = useCase.getJsonataTransform();
         if (transform == null || transform.value() == null || transform.value().isBlank()) return null;
         if (body == null || body.isBlank()) return null;
@@ -767,7 +781,48 @@ public class AppExecutionService {
             case "xml"  -> parseXml(body);
             default     -> body;
         };
-        return Jsonata.jsonata(transform.value()).evaluate(parsed);
+        return Jsonata.jsonata(resolveExpression(transform.value(), variables)).evaluate(parsed);
+    }
+
+    /**
+     * Fills a JSONata expression's {@code ${name}} placeholders in from the run's own variables, so
+     * the expression can name what this call was made with: {@code data[orderId = "${orderId}"]}
+     * keeps the row the operator asked about rather than one fixed when the use case was written.
+     * The same merged map the URL and the body were built from is used, so an instance input, a
+     * page's value for it and an app-level variable all answer to the name they answer to
+     * everywhere else on the request.
+     *
+     * <p>Substituted as written, without quoting: whether a value belongs in the expression as a
+     * string or as a number is the author's decision, and they make it by writing
+     * {@code id = "${orderId}"} or {@code seq = ${seq}}. Quoting here would take that choice away
+     * and make a numeric comparison impossible to write.
+     *
+     * <p>A placeholder nothing answers to stops the transform rather than going through to the
+     * parser. It would fail there anyway — {@code ${x}} is not JSONata — but as a syntax error
+     * pointing at a column, where what actually went wrong is that the run had no value for
+     * {@code x}.
+     */
+    String resolveExpression(String expression, Map<String, Object> variables) {
+        if (expression == null || expression.isEmpty()) return expression;
+
+        Matcher matcher = BRACED_VARIABLE.matcher(expression);
+        StringBuilder out = new StringBuilder();
+        List<String> missing = new ArrayList<>();
+        while (matcher.find()) {
+            String name = matcher.group(1);
+            Object value = variables == null ? null : variables.get(name);
+            if (value == null && !missing.contains(name)) missing.add(name);
+            matcher.appendReplacement(out, Matcher.quoteReplacement(value == null ? "" : stringify(value)));
+        }
+        matcher.appendTail(out);
+
+        if (!missing.isEmpty()) {
+            StringBuilder names = new StringBuilder();
+            for (String name : missing) names.append(names.isEmpty() ? "" : ", ").append("${").append(name).append("}");
+            throw new IllegalArgumentException("the expression uses " + names
+                    + ", and this run has no value for " + (missing.size() == 1 ? "it" : "them"));
+        }
+        return out.toString();
     }
 
     /**

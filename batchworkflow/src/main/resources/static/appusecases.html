@@ -129,7 +129,13 @@
             <div class="form-group wide">
                 <label for="jsonataTransform">JSONata Transform (optional)</label>
                 <textarea id="jsonataTransform" spellcheck="false" placeholder='{"id": order.id, "total": order.amount}'></textarea>
-                <span class="hint">Applied to the parsed response; the result comes back as <code>transformedResponse</code>.</span>
+                <span class="hint">Applied to the parsed response; the result comes back as <code>transformedResponse</code>.
+                    <code>${name}</code> fills in one of this run's own values — an input, an instance input or an app
+                    variable — before the expression is evaluated, so
+                    <code>data[orderId = "${orderId}"]</code> keeps the row that was actually asked for. Write your own
+                    quotes: the value goes in as it stands, which is what lets a number compare as a number. Only the
+                    braced form is substituted — <code>$sum</code>, <code>$map</code> and a bare <code>$</code> stay
+                    JSONata's.</span>
             </div>
         </div>
 

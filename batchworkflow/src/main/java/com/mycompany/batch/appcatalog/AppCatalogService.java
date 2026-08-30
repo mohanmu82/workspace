@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -337,8 +338,29 @@ public class AppCatalogService {
     /** Control types that run use case instances when clicked. */
     private static final List<String> ACTION_TYPES = List.of("button", "link");
 
-    /** Control types an action can put a response into. */
-    private static final List<String> TARGET_TYPES = List.of("grid", "select", "text", "textarea");
+    /**
+     * Control types an action can put a response into. A link is here as well as in
+     * {@link #ACTION_TYPES}, and the two mean different halves of it: it runs actions when clicked,
+     * and what an action binds into it is the address it points at.
+     */
+    private static final List<String> TARGET_TYPES = List.of("grid", "select", "text", "textarea", "link");
+
+    /**
+     * Control types another control can write a value into. Wider than {@link #TARGET_TYPES}: a
+     * response needs somewhere that can hold rows or be read back, while an assignment is only a
+     * value being put somewhere — every value control takes one, and a label takes one to show.
+     */
+    private static final List<String> ASSIGN_TYPES =
+            List.of("text", "textarea", "number", "date", "hidden", "select", "checkbox", "label");
+
+    /**
+     * Control types nothing sets off, and which therefore have nothing to set or run. A hidden field
+     * belongs here with the grids, the labels and the tab sets: it carries a value the rest of the
+     * page reads, but it is never drawn, so it is never clicked or changed — and a value arriving in
+     * it deliberately does not fire its own trigger either. An assignment written on one would sit in
+     * the saved page looking wired up and never once run.
+     */
+    private static final List<String> TRIGGERLESS_TYPES = List.of("grid", "label", "tabs", "hidden", "pie");
 
     private void validateControls(AppPage page) {
         List<String> controlIds = new ArrayList<>();
@@ -361,6 +383,8 @@ public class AppCatalogService {
                     throw new IllegalArgumentException("Duplicate field name: " + control.getFieldName());
                 fieldNames.add(control.getFieldName());
             }
+            validateSlices(control, where);
+            validateLinkUrl(control, where);
             if ("select".equals(control.getType()) && control.getOptionSource() != null) {
                 AppPageOptionSource source = control.getOptionSource();
                 if ("USECASE".equals(source.getMode())) {
@@ -380,6 +404,8 @@ public class AppCatalogService {
                     throw new IllegalArgumentException("Control '" + describe(control)
                             + "' triggers an action that is not on this page: " + id);
             }
+            validateAssignments(page, control);
+            validateColumnLinks(page, control, actionIds);
             if (!ACTION_TYPES.contains(control.getType())) continue;
             for (AppPageAction action : control.getActions()) {
                 validateAction(page, action, transformNames, "Action '" + actionName(action, describe(control)) + "'");
@@ -389,6 +415,172 @@ public class AppCatalogService {
         for (String id : page.getOnLoadActionIds()) {
             if (!actionIds.contains(id))
                 throw new IllegalArgumentException("The page's on-load list names an action that is not on this page: " + id);
+        }
+
+        validateTabs(page);
+    }
+
+    /**
+     * A pie's slices: a name and a size each, and the size has to be a number.
+     *
+     * <p>The size is typed into a text box like everything else on a control, so "12 orders" or an
+     * empty box are both things the designer can leave behind — and both are angles that cannot be
+     * worked out, which would leave the saved page with a slice the chart silently drops. It is
+     * refused here instead, where the message can say which slice and what it says.
+     *
+     * <p>Negative sizes go the same way: a pie shows each slice's share of the whole, and a share
+     * below zero has no wedge to be drawn as. Zero is allowed — a slice that is genuinely nothing
+     * this time still belongs in the legend beside the ones that are not.
+     */
+    private static final Pattern SLICE_NUMBER = Pattern.compile("[+-]?(\\d+\\.?\\d*|\\.\\d+)([eE][+-]?\\d+)?");
+
+    private void validateSlices(AppPageControl control, String where) {
+        if (control.getSlices().isEmpty()) return;
+        if (!"pie".equals(control.getType()))
+            throw new IllegalArgumentException(where + " is a " + control.getType()
+                    + " — only a pie chart has slices");
+        List<String> names = new ArrayList<>();
+        for (AppPageOption slice : control.getSlices()) {
+            requireName(slice.key(), where + " slice name");
+            if (names.contains(slice.key()))
+                throw new IllegalArgumentException(where + " has two slices named " + slice.key());
+            names.add(slice.key());
+            String text = slice.value() == null ? "" : slice.value().trim();
+            // Matched before it is parsed, and against plainly-a-number rather than against whatever
+            // Double.parseDouble will take: it accepts "1d" and "0x1p3", which the browser drawing
+            // the chart does not, and a page that saves with a slice the chart then leaves out is the
+            // one thing this check exists to prevent. Mirrors #sliceNumber in apppage.html.
+            if (!SLICE_NUMBER.matcher(text).matches())
+                throw new IllegalArgumentException(where + " slice '" + slice.key() + "' has a value that is not a number: "
+                        + (text.isBlank() ? "(blank)" : text));
+            double size = Double.parseDouble(text);
+            if (!Double.isFinite(size) || size < 0)
+                throw new IllegalArgumentException(where + " slice '" + slice.key()
+                        + "' has a value a pie cannot draw: " + slice.value());
+        }
+    }
+
+    /**
+     * A link's own address, when the designer gave it one. Only {@code http}, {@code https} and a
+     * path rooted on this server are allowed through, and it is the same rule the running page
+     * applies to an address an action binds — the value ends up in an href either way, and a
+     * {@code javascript:} one there would be whatever was typed running as the page.
+     *
+     * <p>Refused at the save rather than left to the browser, which drops such an address silently:
+     * the page would store a link that looked wired up and went nowhere, with nothing anywhere to
+     * say why. Here the message can name the link and the address it was given.
+     */
+    static void validateLinkUrl(AppPageControl control, String where) {
+        if (!"link".equals(control.getType())) return;
+        String url = control.getDefaultValue() == null ? "" : control.getDefaultValue().trim();
+        if (url.isEmpty()) return;
+        // A leading "//" is another host, not a path on this one, so it is held to the same rule as
+        // any other absolute address rather than let through as if it were rooted here.
+        boolean rooted   = url.startsWith("/") && !url.startsWith("//");
+        boolean absolute = url.regionMatches(true, 0, "http://", 0, 7)
+                        || url.regionMatches(true, 0, "https://", 0, 8);
+        if (!rooted && !absolute)
+            throw new IllegalArgumentException(where + " has a URL a link cannot point at: " + url
+                    + " — http, https, or a path on this server.");
+    }
+
+    /**
+     * What a control writes into other controls has to be somewhere a value can actually go: a
+     * control on this page, one that holds or shows a value, and not the control doing the writing.
+     * A page that saves an assignment aimed at nothing looks wired up and quietly does nothing when
+     * the operator triggers it, which is the failure this refuses to store.
+     */
+    private void validateAssignments(AppPage page, AppPageControl control) {
+        String where = "Control '" + describe(control) + "'";
+        if (!control.getAssignments().isEmpty() && TRIGGERLESS_TYPES.contains(control.getType()))
+            throw new IllegalArgumentException(where + " is a " + control.getType()
+                    + " — nothing triggers it, so it cannot set a value");
+        checkAssignments(page, control.getAssignments(), control.getControlId(), where);
+    }
+
+    /**
+     * The checks an assignment answers to wherever it was written: on a control, or on one of a
+     * grid's clickable columns. Held apart from {@link #validateAssignments} because only the first
+     * of those has a type that could be triggerless — a column link is triggered by definition, and
+     * lives on a grid, which is exactly the type that check refuses.
+     *
+     * @param owner the control the assignment belongs to, so writing into itself can be refused;
+     *              null where there is nothing to write into itself
+     */
+    static void checkAssignments(AppPage page, List<AppPageAssignment> assignments, String owner, String where) {
+        for (AppPageAssignment assignment : assignments) {
+            String target = assignment.getTargetControlId();
+            if (target == null || target.isBlank())
+                throw new IllegalArgumentException(where + " sets a value into no control");
+            if (target.equals(owner))
+                throw new IllegalArgumentException(where + " sets a value into itself");
+            AppPageControl targetControl = page.getControls().stream()
+                    .filter(c -> target.equals(c.getControlId())).findFirst().orElse(null);
+            if (targetControl == null)
+                throw new IllegalArgumentException(where + " sets a value into a control that is not on this page: " + target);
+            if (!ASSIGN_TYPES.contains(targetControl.getType()))
+                throw new IllegalArgumentException(where + " sets a value into a " + targetControl.getType()
+                        + " — a value goes into an input, a hidden field or a label");
+        }
+    }
+
+    /**
+     * A grid's clickable columns: only a grid has them, each names a column once, and each does
+     * something when it is clicked.
+     *
+     * <p>That last check is the one worth having. A column marked clickable that sets nothing and
+     * runs nothing draws itself as a link on the running page and answers a click with nothing at
+     * all — the operator is told the cell is live by the only means the page has of telling them,
+     * and it is not. The column name itself cannot be checked against anything: a grid whose columns
+     * follow the response does not know what they are until a call answers.
+     */
+    static void validateColumnLinks(AppPage page, AppPageControl control, List<String> actionIds) {
+        if (control.getColumnLinks().isEmpty()) return;
+        String where = "Control '" + describe(control) + "'";
+        if (!"grid".equals(control.getType()))
+            throw new IllegalArgumentException(where + " is a " + control.getType()
+                    + " — only a grid has clickable columns");
+        List<String> named = new ArrayList<>();
+        for (AppPageColumnLink link : control.getColumnLinks()) {
+            requireName(link.getColumn(), where + " clickable column name");
+            if (named.contains(link.getColumn()))
+                throw new IllegalArgumentException(where + " makes the column '" + link.getColumn() + "' clickable twice");
+            named.add(link.getColumn());
+
+            String on = where + " column '" + link.getColumn() + "'";
+            if (link.getAssignments().isEmpty() && link.getActionIds().isEmpty())
+                throw new IllegalArgumentException(on + " is clickable but neither sets a value nor runs an action, "
+                        + "so a click on it would do nothing");
+            checkAssignments(page, link.getAssignments(), control.getControlId(), on);
+            for (String id : link.getActionIds()) {
+                if (!actionIds.contains(id))
+                    throw new IllegalArgumentException(on + " runs an action that is not on this page: " + id);
+            }
+        }
+    }
+
+    /**
+     * A tab set holds grids that are on the same page and holds each of them once. Both checks are
+     * about the same thing: a tab is only a place to put a grid, so a name in the list that answers
+     * to no grid — or to a grid another tab set has already claimed — leaves the page with a tab
+     * that shows nothing, or with a grid whose home has two answers. Neither survives a save.
+     */
+    private void validateTabs(AppPage page) {
+        List<String> claimed = new ArrayList<>();
+        for (AppPageControl control : page.getControls()) {
+            if (!"tabs".equals(control.getType())) continue;
+            String where = "Tabs control '" + describe(control) + "'";
+            for (String id : control.getTabControlIds()) {
+                AppPageControl child = page.getControls().stream()
+                        .filter(c -> id.equals(c.getControlId())).findFirst().orElse(null);
+                if (child == null)
+                    throw new IllegalArgumentException(where + " holds a control that is not on this page: " + id);
+                if (!"grid".equals(child.getType()))
+                    throw new IllegalArgumentException(where + " holds a " + child.getType() + " — a tab set holds grids");
+                if (claimed.contains(id))
+                    throw new IllegalArgumentException("Grid '" + describe(child) + "' is in more than one tab set");
+                claimed.add(id);
+            }
         }
     }
 
@@ -447,7 +639,7 @@ public class AppCatalogService {
         if (targetControl == null)
             throw new IllegalArgumentException(where + " targets a control that is not on this page");
         if (!TARGET_TYPES.contains(targetControl.getType()))
-            throw new IllegalArgumentException(where + " must target a grid, select, text or text area, not a "
+            throw new IllegalArgumentException(where + " must target a grid, select, text, text area or link, not a "
                     + targetControl.getType());
     }
 

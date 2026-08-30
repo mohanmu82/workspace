@@ -19,10 +19,12 @@ import java.util.Map;
  * literal is passed through as written. Whatever the map does not name keeps the value the instance
  * was saved with, so a page only has to supply what it actually varies.
  *
- * <p>{@link #targetControlId} names a grid, select, text or text area control on the same page, or
- * the {@link #NEW_GRID} sentinel to stack a freshly built grid above the previous ones instead of
+ * <p>{@link #targetControlId} names a grid, select, text, text area or link control on the same page,
+ * or the {@link #NEW_GRID} sentinel to stack a freshly built grid above the previous ones instead of
  * reusing a placed control. Blank runs the instance for its effect alone and reports only success
- * or failure.
+ * or failure. A link takes the address it points at rather than text to show, which is what makes a
+ * metadata action binding {@code url} worth having: the operator clicks through to the endpoint the
+ * call actually went to.
  *
  * <p>{@link #source} decides what the paths are read out of: the response payload as before, or the
  * call's own metadata — the URL, the status code, how long it took. See {@link #METADATA}.
@@ -81,9 +83,14 @@ public class AppPageAction {
      */
     private String arrayPath;
     /**
-     * Path to the single attribute a text or text area target is filled from — {@code data.order.id}
-     * or {@code $.items[0].name}. Used instead of {@link #arrayPath}, which only makes sense for a
-     * target that shows many rows.
+     * Path to the single attribute a text, text area or link target is filled from —
+     * {@code data.order.id} or {@code $.items[0].name}. Used instead of {@link #arrayPath}, which
+     * only makes sense for a target that shows many rows.
+     *
+     * <p>For a link this is the address it will point at. Only {@code http}, {@code https} and a
+     * path rooted on this server are taken; anything else is reported on the page and the link is
+     * left without an address, since an address bound out of a response is data and a
+     * {@code javascript:} one in an href would be that data running as the page.
      */
     private String valuePath;
     /** Which element fields become a select's value and text; ignored for a grid target. */
