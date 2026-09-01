@@ -570,7 +570,7 @@
     </div>
 
     <div class="card">
-      <div class="card-title">Services<span class="filter-note" id="svcFilterNote"></span></div>
+      <div class="card-title">Services<span class="filter-note" id="svcFilterNote"></span><span class="filter-note" id="dsFilterNote"></span></div>
       <div id="targetGrid" class="target-grid"></div>
       <div id="targetTableWrap" class="table-wrap" style="display:none">
         <table class="svc-table" id="targetTable">
@@ -593,6 +593,7 @@
   const SPLIT_WIDTH_KEY = 'serviceDashboard.splitWidth';
   const TIMEOUT_KEY = 'serviceDashboard.timeoutMs';
   const RUNTARGET_KEY = 'serviceDashboard.runTarget';
+  const DSFILTER_KEY = 'serviceDashboard.datasetFilter';
   const MIN_TIMEOUT_MS = 200;
   const DEFAULT_TIMEOUT_MS = 3000;
   const VIEW_PAGE = 'serviceDashboard';
@@ -633,6 +634,7 @@
   ];
 
   let targets = loadTargets();
+  let datasetFilter = loadDatasetFilter(); // the dataset + conditions behind the current target list, if it came whole from one filter
   const results = new Map();   // id -> last check result
   const checking = new Set();  // ids currently in-flight
   let refreshTimer = null;
@@ -787,6 +789,45 @@
     localStorage.setItem(STORAGE_KEY, JSON.stringify(targets));
   }
 
+  // ── Dataset filter: what a "Show Services" load asked for, rather than what it returned ──────
+  // Holding the filter, not just the rows it produced, is what lets "Check All Now" hand the
+  // server a condition instead of a list — one call that filters and checks, rather than the whole
+  // target list going back up the wire on every refresh. It also means a re-check sees the dataset
+  // as it stands now: a service that has since started matching the filter is picked up rather
+  // than missed until someone reloads the panel.
+  //
+  // Only a whole-list load ("Show Services") sets it. Adding to the list, or editing it by hand,
+  // clears it — once the grid is a mix of a filter's rows and other things, no single filter
+  // describes what is on screen, and the explicit target list is the honest thing to send.
+  function loadDatasetFilter() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(DSFILTER_KEY) || 'null');
+      return raw && raw.dataset ? raw : null;
+    } catch { return null; }
+  }
+
+  function saveDatasetFilter() {
+    if (datasetFilter) localStorage.setItem(DSFILTER_KEY, JSON.stringify(datasetFilter));
+    else localStorage.removeItem(DSFILTER_KEY);
+  }
+
+  function clearDatasetFilter() {
+    if (!datasetFilter) return;
+    datasetFilter = null;
+    saveDatasetFilter();
+    renderDatasetFilterNote();
+  }
+
+  function renderDatasetFilterNote() {
+    const el = document.getElementById('dsFilterNote');
+    if (!el) return;
+    if (!datasetFilter) { el.textContent = ''; return; }
+    const conds = (datasetFilter.conditions || [])
+      .map(c => c.attribute + ' ' + c.op + ' "' + c.value + '"').join(' and ');
+    el.textContent = '— checking "' + datasetFilter.dataset + '"' + (conds ? ' where ' + conds : '') +
+      ', filtered on the server';
+  }
+
   function setAddStatus(msg, cls) {
     const el = document.getElementById('addStatusMsg');
     el.textContent = msg;
@@ -816,6 +857,7 @@
 
     const target = { id: 't' + Date.now() + Math.random().toString(36).slice(2, 7), name: name || url, type, url, auth };
     targets.push(target);
+    clearDatasetFilter();   // a hand-added target is not something a dataset filter describes
     saveTargets();
     document.getElementById('newName').value = '';
     document.getElementById('newUrl').value = '';
@@ -836,6 +878,7 @@
   function removeTarget(id) {
     targets = targets.filter(t => t.id !== id);
     results.delete(id);
+    clearDatasetFilter();   // the list no longer matches what the filter would return
     saveTargets();
     renderGrid();
   }
@@ -846,6 +889,7 @@
     results.clear();
     checking.clear();
     saveTargets();
+    clearDatasetFilter();
     renderGrid();
   }
 
@@ -897,9 +941,16 @@
   // at hundreds of targets that wait can be many seconds of a blank "checking…" grid. A plain
   // EventSource can't POST a body, so this drives the same wire format by hand: fetch() + a
   // manual reader over the text/event-stream response.
+  //
+  // What gets sent depends on where the grid came from. A list built by hand goes up as a list.
+  // A list that came whole from one dataset filter goes up as that filter instead, and the server
+  // works out the targets — one call that filters and checks, against the dataset as it stands
+  // now rather than as it stood when the panel was last loaded.
   async function checkAll() {
-    if (targets.length === 0) return;
-    const byId = new Map(targets.map(t => [t.id, t]));
+    // With a dataset filter in hand the server works out what to check, so an empty local list is
+    // not a reason to skip: the filter may well match services this browser has not heard of yet.
+    if (!datasetFilter && targets.length === 0) return;
+    let byId = new Map(targets.map(t => [t.id, t]));
     targets.forEach(t => checking.add(t.id));
     renderGrid();
 
@@ -912,8 +963,49 @@
     progressFill.style.width = '0%';
     progressLabel.textContent = '0 / ' + targets.length;
 
+    let streamError = null;
+
+    /**
+     * Reconciles the grid against the "targets" event a filtered run opens with. The server has
+     * just re-evaluated the filter against the dataset as it stands, so this is the authoritative
+     * answer to what the filter names — a service that has started matching appears, one that has
+     * stopped matching goes, and everything else keeps the id, and therefore the history and the
+     * last result, it already had.
+     */
+    function adoptTargets(list) {
+      const named = new Set();
+      const next = [];
+      list.forEach(d => {
+        if (!d.url) return;
+        named.add(d.id);
+        const existing = byId.get(d.id);
+        if (existing) {
+          existing.name = d.name || existing.name;
+          existing.url  = d.url;
+          existing.type = d.type || existing.type;
+          if (d.attributes) existing.datasetAttrs = d.attributes;
+          next.push(existing);
+        } else {
+          next.push({ id: d.id, name: d.name || d.url, type: d.type || 'http', url: d.url, datasetAttrs: d.attributes });
+        }
+      });
+      targets.forEach(t => {
+        if (named.has(t.id)) return;
+        results.delete(t.id);
+        checking.delete(t.id);
+      });
+      targets = next;
+      byId = new Map(targets.map(t => [t.id, t]));
+      targets.forEach(t => checking.add(t.id));
+      saveTargets();
+      progressLabel.textContent = '0 / ' + targets.length;
+      maybeRenderGrid(true);
+    }
+
     function handleEvent(eventName, data) {
-      if (eventName === 'result') {
+      if (eventName === 'targets') {
+        adoptTargets(data.targets || []);
+      } else if (eventName === 'result') {
         const t = byId.get(data.id);
         checking.delete(data.id);
         recordServerHttpCalls(1);
@@ -923,18 +1015,33 @@
         const pct = data.total > 0 ? Math.round((data.checked / data.total) * 100) : 0;
         progressFill.style.width = pct + '%';
         progressLabel.textContent = data.checked + ' / ' + data.total;
+      } else if (eventName === 'error') {
+        streamError = data.error || 'The server refused the batch.';
       }
     }
 
     try {
       const rt = runTarget();
+      const body = { timeoutMs, target: rt.target, agentId: rt.agentId };
+      if (datasetFilter) {
+        // The condition goes up, not the list — the server filters the dataset and checks what
+        // matched in the same call, so a few hundred targets no longer ride the wire every refresh.
+        const mapping   = datasetFilter.mapping || {};
+        const fallbacks = datasetFilter.fallbacks || {};
+        body.dataset     = datasetFilter.dataset;
+        body.conditions  = datasetFilter.conditions || [];
+        body.urlField    = mapping.url  || '';
+        body.nameField   = mapping.name || '';
+        body.typeField   = mapping.type || '';
+        body.defaultType = fallbacks.type || 'http';
+      } else {
+        body.targets = targets.map(t => ({ id: t.id, name: t.name, url: t.url, type: t.type, ...authFields(t) }));
+      }
+
       const res = await fetch('/servicemonitor/checkBatchStream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          timeoutMs, target: rt.target, agentId: rt.agentId,
-          targets: targets.map(t => ({ id: t.id, url: t.url, type: t.type, ...authFields(t) }))
-        })
+        body: JSON.stringify(body)
       });
       if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
 
@@ -955,13 +1062,23 @@
             else if (line.startsWith('data:')) dataStr += line.slice(5).trim();
           });
           if (!dataStr) continue;
-          try { handleEvent(eventName, JSON.parse(dataStr)); } catch { /* ignore malformed chunk */ }
+          let parsed;
+          try { parsed = JSON.parse(dataStr); } catch { continue; /* ignore malformed chunk */ }
+          handleEvent(eventName, parsed);
         }
       }
+      if (streamError) throw new Error(streamError);
     } catch (e) {
       targets.forEach(t => {
         if (checking.has(t.id)) applyResult(t, { ok: false, status: 'DOWN', error: e.message });
       });
+      // A filter that matched nothing, or names a dataset that has gone, leaves no target to carry
+      // the message — so it goes beside the card title, where an empty grid would otherwise be the
+      // only clue that anything went wrong.
+      if (datasetFilter && targets.length === 0) {
+        const note = document.getElementById('dsFilterNote');
+        if (note) note.textContent = '— ' + e.message;
+      }
     } finally {
       checking.clear();
       btn.disabled = false;
@@ -1855,7 +1972,8 @@
   restoreRunTarget();
   initSplitter();
   renderGrid();
-  if (targets.length > 0) checkAll();
+  renderDatasetFilterNote();
+  if (targets.length > 0 || datasetFilter) checkAll();
   applyRefreshInterval();
   loadSavedViews();
   loadAlertConfig();
@@ -1896,6 +2014,22 @@
         targets.push({ id, name, type, url, datasetAttrs: row._row });
         added++;
       });
+      // "Show Services" replaces the list wholesale, so from here the filter — not the rows it
+      // just produced — describes the grid, and every later check can be that filter sent to the
+      // server rather than this list sent back to it. "Add to Services" leaves a mixed list that
+      // no single filter describes, so it gives that up.
+      if (meta && meta.replace && meta.dataset) {
+        datasetFilter = {
+          dataset: meta.dataset,
+          conditions: meta.conditions || [],
+          mapping: meta.mapping || {},
+          fallbacks: meta.fallbacks || {}
+        };
+        saveDatasetFilter();
+        renderDatasetFilterNote();
+      } else {
+        clearDatasetFilter();
+      }
       saveTargets();
       renderGrid();
       checkAll();

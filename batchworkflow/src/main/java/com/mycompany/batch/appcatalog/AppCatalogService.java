@@ -10,7 +10,11 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.regex.Pattern;
@@ -342,8 +346,13 @@ public class AppCatalogService {
      * Control types an action can put a response into. A link is here as well as in
      * {@link #ACTION_TYPES}, and the two mean different halves of it: it runs actions when clicked,
      * and what an action binds into it is the address it points at.
+     *
+     * <p>A pie chart is here without being in {@link #ACTION_TYPES}, and is in
+     * {@link #TRIGGERLESS_TYPES} as well, which is not a contradiction: nothing sets a chart off,
+     * and an action can still fill it. The rows it binds become the wedges, named and sized by two
+     * fields of each row. Mirrors TARGET_TYPES in apppage.html.
      */
-    private static final List<String> TARGET_TYPES = List.of("grid", "select", "text", "textarea", "link");
+    private static final List<String> TARGET_TYPES = List.of("grid", "select", "text", "textarea", "link", "pie");
 
     /**
      * Control types another control can write a value into. Wider than {@link #TARGET_TYPES}: a
@@ -398,6 +407,14 @@ public class AppCatalogService {
             }
         }
 
+        // Ids for the inline actions too, unique across the whole page and not only within the
+        // library: an action is waited for by id, and two answering to one would make "which of them
+        // does this wait for" unanswerable. Collected as they are minted, so an inline id can never
+        // land on a library one.
+        List<String> seenActionIds = new ArrayList<>(actionIds);
+        Map<String, AppPageAction> library = new LinkedHashMap<>();
+        for (AppPageAction action : page.getActions()) library.put(action.getActionId(), action);
+
         for (AppPageControl control : page.getControls()) {
             for (String id : control.getActionIds()) {
                 if (!actionIds.contains(id))
@@ -407,9 +424,23 @@ public class AppCatalogService {
             validateAssignments(page, control);
             validateColumnLinks(page, control, actionIds);
             if (!ACTION_TYPES.contains(control.getType())) continue;
+            // What an action written here may wait for: the library, plus this control's own list.
+            // Not narrowed to the actions the control currently triggers — detaching a page action
+            // leaves the wait unmet rather than invalid, and the designer says so where the two are
+            // wired together, which is the place it can be put right.
+            Map<String, AppPageAction> reachable = new LinkedHashMap<>(library);
             for (AppPageAction action : control.getActions()) {
+                if (action.getActionId() == null || action.getActionId().isBlank()) {
+                    action.setActionId("a-" + UUID.randomUUID().toString().substring(0, 8));
+                }
+                if (seenActionIds.contains(action.getActionId()))
+                    throw new IllegalArgumentException("Duplicate action id: " + action.getActionId());
+                seenActionIds.add(action.getActionId());
+                reachable.put(action.getActionId(), action);
                 validateAction(page, action, transformNames, "Action '" + actionName(action, describe(control)) + "'");
             }
+            validateDependencies(control.getActions(), reachable, "Action",
+                    " on control '" + describe(control) + "'");
         }
 
         for (String id : page.getOnLoadActionIds()) {
@@ -601,7 +632,52 @@ public class AppCatalogService {
             ids.add(action.getActionId());
             validateAction(page, action, transformNames, "Page action '" + actionName(action, action.getActionId()) + "'");
         }
+        // A library action may only wait for another library action: it runs wherever it happens to
+        // be attached, and one particular control's own action is not there to be waited for from
+        // the next control along.
+        Map<String, AppPageAction> library = new LinkedHashMap<>();
+        for (AppPageAction action : page.getActions()) library.put(action.getActionId(), action);
+        validateDependencies(page.getActions(), library, "Page action", "");
         return ids;
+    }
+
+    /**
+     * What an action is allowed to wait for: something that exists, is not itself, and is reachable
+     * from where the action lives — see {@link AppPageAction#getDependsOnActionId()}.
+     *
+     * <p>And nothing that waits, however indirectly, on itself. A circle of actions waiting on each
+     * other has no member that could go first, so no member of it would ever go at all; the running
+     * page refuses to send them and says which, and storing a page whose trigger is known in advance
+     * to be partly dead is not worth doing. The walk follows each action's chain of waits rather than
+     * only its first step, so a circle of three is caught as surely as one of two.
+     *
+     * @param kind   what to call one of these actions in a message
+     * @param on     where they live, for the same message; empty for the page's own library
+     */
+    private static void validateDependencies(List<AppPageAction> actions,
+                                             Map<String, AppPageAction> reachable, String kind, String on) {
+        for (AppPageAction action : actions) {
+            String waited = action.getDependsOnActionId();
+            if (waited == null || waited.isBlank()) continue;
+            String where = kind + " '" + actionName(action, action.getActionId()) + "'" + on;
+            if (waited.equals(action.getActionId()))
+                throw new IllegalArgumentException(where + " waits for itself");
+            if (!reachable.containsKey(waited))
+                throw new IllegalArgumentException(where + " waits for an action it cannot see: " + waited);
+        }
+        for (AppPageAction action : actions) {
+            Set<String> walked = new LinkedHashSet<>();
+            AppPageAction step = action;
+            while (step != null) {
+                if (!walked.add(step.getActionId())) {
+                    throw new IllegalArgumentException(kind + " '" + actionName(action, action.getActionId()) + "'" + on
+                            + " is in a circle of actions waiting on each other, so none of them could go first: "
+                            + String.join(" then ", walked));
+                }
+                String next = step.getDependsOnActionId();
+                step = (next == null || next.isBlank()) ? null : reachable.get(next);
+            }
+        }
     }
 
     /**
@@ -639,7 +715,8 @@ public class AppCatalogService {
         if (targetControl == null)
             throw new IllegalArgumentException(where + " targets a control that is not on this page");
         if (!TARGET_TYPES.contains(targetControl.getType()))
-            throw new IllegalArgumentException(where + " must target a grid, select, text, text area or link, not a "
+            throw new IllegalArgumentException(where
+                    + " must target a grid, select, text, text area, link or pie chart, not a "
                     + targetControl.getType());
     }
 

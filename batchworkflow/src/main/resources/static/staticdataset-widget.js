@@ -17,8 +17,10 @@
  *                       options: [{value:'http',label:'HTTP'}, {value:'prometheus',label:'Prometheus'}] } }
  *       ],
  *       loadLabel: 'Load Targets',
- *       onLoad(rows) {
+ *       onLoad(rows, meta) {
  *         // rows: [{ url, name, type, _dataset, _row }, ...] — already filtered + mapped
+ *         // meta: { replace, dataset, conditions, mapping, fallbacks } — the filter that
+ *         //       produced them, so a caller can ask the server to re-run it later
  *         return rows.length + ' row(s) loaded.';
  *       }
  *     });
@@ -28,6 +30,13 @@
  * filter conditions (attribute/operator/value) persisted on the dataset itself via
  * POST/DELETE /staticdataset/{name}/favorites, so it is reusable on every page that
  * mounts this widget against the same dataset.
+ *
+ * The filtering itself happens server-side: this panel sends its conditions to
+ * POST /staticdataset/{name}/query and is handed back only the rows that matched, rather than
+ * pulling every row down to narrow it here. That keeps a large dataset off the wire when a page
+ * wants a handful of rows out of it, and — because the condition is the thing being sent — lets
+ * a caller with no UI at all (an App Catalog page, a scheduled check) ask for the same filter by
+ * naming a favorite. The same query backs the live "23 of 500 rows match" count, debounced.
  *
  * The field -> attribute mapping (and any fallback values) is likewise persisted server-side,
  * keyed by `page` + dataset name, via GET/PUT /pagepreference — so once an operator maps
@@ -110,19 +119,30 @@
     document.head.appendChild(style);
   }
 
-  function matchCondition(row, cond) {
-    if (!cond.attribute) return true;
-    const raw = row[cond.attribute] != null ? String(row[cond.attribute]) : '';
-    const a = raw.toLowerCase(), b = String(cond.value || '').toLowerCase();
-    switch (cond.op) {
-      case 'equals':      return a === b;
-      case 'notEquals':   return a !== b;
-      case 'contains':    return a.includes(b);
-      case 'notContains': return !a.includes(b);
-      case 'startsWith':  return a.startsWith(b);
-      case 'endsWith':    return a.endsWith(b);
-      default:            return true;
-    }
+  // How long a keystroke in a condition settles before the match count is asked for again —
+  // the count is a server call now, and one per character typed is a call per character wasted.
+  const COUNT_DEBOUNCE = 250;
+
+  /**
+   * Asks the server which rows of `dataset` match — conditions are sent, rows come back, and the
+   * browser never sees the ones that did not match. `countOnly` asks for the counts alone, which
+   * is all the "23 of 500 rows match" line under the conditions needs.
+   */
+  async function queryDataset(dataset, conditions, countOnly) {
+    const body = {
+      conditions: (conditions || [])
+        .filter(c => c.attribute)
+        .map(c => ({ attribute: c.attribute, op: c.op, value: c.value })),
+      countOnly: !!countOnly
+    };
+    const res = await fetch('/staticdataset/' + encodeURIComponent(dataset) + '/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data && data.error ? data.error : 'HTTP ' + res.status);
+    return data;
   }
 
   function mount(opts) {
@@ -138,10 +158,14 @@
     const state = {
       datasetName: null,
       attributes: [],
-      rows: [],
+      // How many rows the dataset holds in total. The rows themselves are deliberately not kept:
+      // the server is the one that filters now, so the browser only ever sees what matched.
+      total: 0,
       favorites: [],
       conditions: [{ attribute: '', op: 'equals', value: '' }]
     };
+    let countTimer = null;   // debounces the match-count call while a condition is being typed
+    let countToken = 0;      // guards against a slow count landing after a newer one
 
     container.innerHTML = `
       <div class="sdw-row">
@@ -309,24 +333,36 @@
         '</span>').join('');
     }
 
-    function filteredRows() {
-      const active = state.conditions.filter(c => c.attribute);
-      if (!active.length) return state.rows;
-      return state.rows.filter(row => active.every(c => matchCondition(row, c)));
-    }
-
+    /**
+     * Refreshes the "23 of 500 rows match" line by asking the server, debounced so typing a
+     * condition costs one call rather than one per keystroke. A stale answer is dropped rather
+     * than painted: with the count coming over the network, a slow earlier call can otherwise land
+     * after a faster later one and leave the wrong number under the conditions the user is looking at.
+     */
     function updateCount() {
       if (!state.datasetName) { el.count.textContent = ''; return; }
-      el.count.textContent = filteredRows().length + ' of ' + state.rows.length + ' rows match';
+      clearTimeout(countTimer);
+      const token = ++countToken;
+      countTimer = setTimeout(async () => {
+        try {
+          const data = await queryDataset(state.datasetName, state.conditions, true);
+          if (token !== countToken) return;
+          el.count.textContent = data.count + ' of ' + data.total + ' rows match';
+        } catch (e) {
+          if (token === countToken) el.count.textContent = '';
+        }
+      }, COUNT_DEBOUNCE);
     }
 
     async function onDatasetChange() {
       const name = el.dataset.value;
       state.datasetName = name || null;
       state.attributes = [];
-      state.rows = [];
+      state.total = 0;
       state.favorites = [];
       state.conditions = [{ attribute: '', op: 'equals', value: '' }];
+      countToken++;                       // anything already in flight belongs to the old dataset
+      clearTimeout(countTimer);
       renderMapping();
       renderConditions();
       renderFavorites();
@@ -334,17 +370,19 @@
 
       setStatus('Loading dataset…');
       try {
-        const res = await fetch('/staticdataset/' + encodeURIComponent(name) + '/data');
+        // The summary, not the rows: attributes and favorites are all this panel needs to offer a
+        // filter, and the rows arrive later as the ones that matched it.
+        const res = await fetch('/staticdataset/' + encodeURIComponent(name));
         const data = await res.json();
         if (!res.ok) { setStatus(data.error || 'Failed to load dataset.', 'sdw-err'); return; }
         state.attributes = data.attributes || [];
-        state.rows = data.rows || [];
+        state.total = data.count || 0;
         state.favorites = data.favorites || [];
         const preset = await loadMappingPreference();
         renderMapping(preset);
         renderConditions();
         renderFavorites();
-        setStatus(state.rows.length + ' rows available.', 'sdw-ok');
+        setStatus(state.total + ' rows available.', 'sdw-ok');
       } catch (e) {
         setStatus('Failed to load dataset: ' + e.message, 'sdw-err');
       }
@@ -397,7 +435,7 @@
       renderFavorites();
     }
 
-    function doLoad(replace) {
+    async function doLoad(replace) {
       if (!state.datasetName) { setStatus('Select a dataset first.', 'sdw-err'); return; }
 
       const mapping = {};
@@ -415,7 +453,23 @@
         }
       }
 
-      const rows = filteredRows();
+      // The conditions go out and the matching rows come back — the ones that did not match are
+      // never sent, which is the whole point of the filter living on the server.
+      const conditions = state.conditions
+        .filter(c => c.attribute)
+        .map(c => ({ attribute: c.attribute, op: c.op, value: c.value }));
+
+      let rows;
+      setStatus('Filtering…');
+      try {
+        const data = await queryDataset(state.datasetName, conditions, false);
+        rows = data.rows || [];
+        state.total = data.total != null ? data.total : state.total;
+        el.count.textContent = data.count + ' of ' + data.total + ' rows match';
+      } catch (e) {
+        setStatus('Failed to filter dataset: ' + e.message, 'sdw-err');
+        return;
+      }
       if (!rows.length) { setStatus('No rows match the current filter.', 'sdw-err'); return; }
 
       const mappedRows = rows.map(row => {
@@ -431,7 +485,19 @@
 
       let result;
       try {
-        result = opts.onLoad ? opts.onLoad(mappedRows, { replace: !!replace }) : undefined;
+        // The dataset name, the conditions and the field mapping ride along with the rows so a
+        // page that wants to re-run this filter later — the dashboard re-checking what a filter
+        // names, rather than the list it happened to load — can ask the server for it directly
+        // instead of reconstructing it from the rows it was handed.
+        result = opts.onLoad
+          ? opts.onLoad(mappedRows, {
+              replace: !!replace,
+              dataset: state.datasetName,
+              conditions,
+              mapping,
+              fallbacks: fallbackValues
+            })
+          : undefined;
       } catch (e) {
         setStatus('onLoad handler failed: ' + e.message, 'sdw-err');
         return;

@@ -1,5 +1,6 @@
 package com.mycompany.batch.web;
 
+import com.mycompany.batch.staticdataset.DatasetQuery;
 import com.mycompany.batch.staticdataset.FilterFavorite;
 import com.mycompany.batch.staticdataset.StaticDatasetDef;
 import com.mycompany.batch.staticdataset.StaticDatasetService;
@@ -56,6 +57,38 @@ public class StaticDatasetController {
         response.put("loadedTime", s != null ? s.loadedTime() : null);
         response.put("error", s != null ? s.error() : null);
         response.put("favorites", def.getFavorites());
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * The rows of {@code name} that match a filter — a saved favourite by name, ad-hoc conditions,
+     * or both AND-ed — evaluated here rather than in the caller.
+     *
+     * <p>This is the server-side half of the dataset widget's filter: the browser sends the
+     * condition and gets back only what matched, instead of pulling every row down to narrow it
+     * itself. {@code countOnly} answers "how many match" without the rows, which is what keeps the
+     * live match count cheap while someone is still typing a condition.
+     */
+    @PostMapping(value = "/{name}/query", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<?> query(@PathVariable String name, @RequestBody(required = false) DatasetQuery query) {
+        if (service.get(name) == null) return notFound(name);
+        DatasetQuery q = query != null ? query : new DatasetQuery();
+
+        StaticDatasetService.FilterResult result;
+        try {
+            result = service.filter(name, q.getFavorite(), q.getConditions());
+        } catch (IllegalArgumentException e) {
+            return badRequest(e.getMessage());
+        }
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("name", name);
+        response.put("attributes", result.attributes());
+        response.put("count", result.rows().size());
+        response.put("total", result.total());
+        if (!q.isCountOnly()) response.put("rows", result.rows());
+        response.put("loadedTime", result.loadedTime());
+        response.put("error", result.error());
         return ResponseEntity.ok(response);
     }
 

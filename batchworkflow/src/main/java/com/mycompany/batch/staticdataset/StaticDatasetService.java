@@ -90,6 +90,95 @@ public class StaticDatasetService {
         return state.get(name);
     }
 
+    // -------------------------------------------------------------------------
+    // Filtering — the same AND-ed attribute/operator/value conditions the UI has always
+    // offered, evaluated here rather than in the browser. Moving it server-side is what lets a
+    // caller ask for "the rows that match" instead of downloading every row to throw most of
+    // them away, and is what makes a saved favourite usable by a caller that has no UI at all.
+    // -------------------------------------------------------------------------
+
+    /**
+     * Rows matching a filter, alongside how many there were before it — {@code total} is what
+     * makes "23 of 500 rows match" answerable without a second call.
+     */
+    public record FilterResult(
+            List<Map<String, Object>> rows,
+            int total,
+            List<String> attributes,
+            String loadedTime,
+            String error) {}
+
+    /**
+     * Applies {@code favoriteName}'s saved conditions and {@code conditions} together — every one
+     * of them has to match, so naming a favourite and passing conditions narrows that favourite
+     * rather than replacing it. Both empty matches every row.
+     *
+     * @throws IllegalArgumentException if the dataset, or a named favourite, does not exist. An
+     *         unknown favourite is refused rather than quietly matching everything: a caller asking
+     *         for one filter's worth of services should not silently be handed all of them.
+     */
+    public FilterResult filter(String name, String favoriteName, List<FilterFavorite.FilterCondition> conditions) {
+        StaticDatasetDef def = defs.get(name);
+        if (def == null) throw new IllegalArgumentException("Unknown static dataset: " + name);
+
+        List<FilterFavorite.FilterCondition> active = new ArrayList<>();
+        if (favoriteName != null && !favoriteName.isBlank()) {
+            active.addAll(favoriteConditions(def, favoriteName.trim()));
+        }
+        if (conditions != null) active.addAll(conditions);
+        active.removeIf(c -> c == null || c.getAttribute() == null || c.getAttribute().isBlank());
+
+        DatasetState s = state.get(name);
+        List<Map<String, Object>> all = s != null ? s.rows() : List.of();
+
+        List<Map<String, Object>> matched;
+        if (active.isEmpty()) {
+            matched = new ArrayList<>(all);
+        } else {
+            matched = new ArrayList<>();
+            for (Map<String, Object> row : all) {
+                if (matchesAll(row, active)) matched.add(row);
+            }
+        }
+        return new FilterResult(
+                matched,
+                all.size(),
+                s != null ? s.attributes() : def.getAttributes(),
+                s != null ? s.loadedTime() : null,
+                s != null ? s.error() : null);
+    }
+
+    private List<FilterFavorite.FilterCondition> favoriteConditions(StaticDatasetDef def, String favoriteName) {
+        for (FilterFavorite f : def.getFavorites()) {
+            if (favoriteName.equals(f.getName())) return f.getConditions();
+        }
+        throw new IllegalArgumentException(
+                "Unknown favorite '" + favoriteName + "' on static dataset '" + def.getName() + "'");
+    }
+
+    private boolean matchesAll(Map<String, Object> row, List<FilterFavorite.FilterCondition> conditions) {
+        for (FilterFavorite.FilterCondition c : conditions) {
+            if (!matches(row, c)) return false;
+        }
+        return true;
+    }
+
+    /** Case-insensitive, and a missing attribute reads as empty — the same rules the widget applied. */
+    private boolean matches(Map<String, Object> row, FilterFavorite.FilterCondition c) {
+        Object raw = row.get(c.getAttribute());
+        String a = raw == null ? "" : String.valueOf(raw).toLowerCase(Locale.ROOT);
+        String b = c.getValue() == null ? "" : c.getValue().toLowerCase(Locale.ROOT);
+        return switch (c.getOp() == null ? "equals" : c.getOp()) {
+            case "notEquals"   -> !a.equals(b);
+            case "contains"    -> a.contains(b);
+            case "notContains" -> !a.contains(b);
+            case "startsWith"  -> a.startsWith(b);
+            case "endsWith"    -> a.endsWith(b);
+            case "equals"      -> a.equals(b);
+            default            -> true;
+        };
+    }
+
     public synchronized StaticDatasetDef save(StaticDatasetDef def) throws Exception {
         if (def.getName() == null || !def.getName().matches("[\\w\\-]+"))
             throw new IllegalArgumentException("name is required and must contain only word characters or dashes");

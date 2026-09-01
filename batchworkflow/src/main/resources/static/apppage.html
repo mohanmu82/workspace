@@ -62,6 +62,7 @@
         .dctl .fake.btn { background: #deebff; color: #0747a6; border-color: #b3d4ff; text-align: center; font-weight: 600; }
         .dctl .fake.link { background: none; border: none; color: #0052cc; text-decoration: underline; padding: 2px 0; }
         .dctl .fake.grid { height: calc(100% - 4px); }
+        .dctl .fake.area { height: calc(100% - 4px); white-space: pre-wrap; }
         .dctl.hidden-ctl { border-style: dashed; background: #f7f8f9; }
 
         /* Half a row leaves no room for a preview underneath the label, so it shows the label alone. */
@@ -208,6 +209,8 @@
         /* A slice whose value is not a number is not drawn, so the chart says which one and why
            rather than quietly coming out a wedge short. */
         .pie-bad { font-size: 11px; color: #bf2600; }
+        /* Where the wedges would have been, when the call that was to fill them did not. */
+        .pie-fail { font-size: 12px; color: #bf2600; display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
         .dctl .fake.pie { display: flex; align-items: center; gap: 6px; height: calc(100% - 4px); background: none; border-style: dashed; }
 
         .tabset { display: flex; flex-direction: column; flex: 1; min-height: 0; }
@@ -312,6 +315,15 @@
         .page-errors .err-title { font-size: 11px; font-weight: 700; color: #bf2600; text-transform: uppercase; letter-spacing: .4px; margin-bottom: 6px; }
         .page-errors ul { margin: 0; padding-left: 18px; }
         .page-errors li { font-size: 13px; color: #bf2600; margin-bottom: 3px; }
+        /* A failure the page can show the call behind. It opens Technical Details on that one call
+           rather than on the whole trigger — a run of six actions is six sections to hunt through,
+           and the one worth reading is the one that just complained. */
+        .page-errors li .err-why {
+            font-family: inherit; font-size: 11px; color: #bf2600; background: #fff;
+            border: 1px solid #ffbdad; border-radius: 3px; padding: 0 6px; margin-left: 7px;
+            cursor: pointer; white-space: nowrap;
+        }
+        .page-errors li .err-why:hover { background: #ffebe6; }
 
         /* Same half-row geometry as the design canvas, so what was laid out is what runs. */
         .run-canvas { display: grid; grid-template-columns: repeat(24, 1fr); grid-auto-rows: minmax(38px, auto); gap: 8px; }
@@ -320,6 +332,13 @@
         .run-ctl.button-ctl { justify-content: flex-end; }
         .run-ctl.button-ctl button { width: 100%; }
         .run-ctl.label-ctl { justify-content: center; font-size: 14px; }
+
+        /* A text area takes the height its control was laid out with rather than the browser's two
+           lines: set Height to 20 on the layout and twenty rows of text is what runs, with no
+           dragging the corner open first. min-height 0 is what lets it, since the stylesheet's
+           floor of 70px would otherwise be the only height it ever had. Still resizable, for the
+           response that turns out longer than the room made for it. */
+        .run-ctl.textarea-ctl textarea { flex: 1 1 auto; min-height: 0; }
 
         /* A link runs the same actions a button does but claims a line of text rather than a block,
            and may carry an address as well — see linkRun(). Drawn as an anchor either way, so it is
@@ -482,6 +501,10 @@
     const ROW_GAP = 8;
     const ROW_PITCH = (HALF_ROW + ROW_GAP) * 2;   // one whole row, gap included: 92px
     const MIN_ROW_SPAN = 0.5;
+    // As tall as a control may be asked to be. A text area laid out to hold a whole response, or a
+    // grid meant to be read rather than glanced at, is routinely taller than the twelve rows this used
+    // to stop at — and the page scrolls, so there was never much behind the lower ceiling.
+    const MAX_ROW_SPAN = 40;
 
     // Sentinel target: instead of filling a control that is already on the page, every run stacks
     // another grid underneath the form, newest on top.
@@ -530,7 +553,10 @@
     // filled in — and a link with both does both, opening in a new tab so the page it ran from is
     // still there behind it.
     const ACTION_TYPES = ['button', 'link'];
-    const TARGET_TYPES = ['grid', 'select', 'text', 'textarea', 'link'];
+    // A pie chart is a target without being something the operator sets off — it is in
+    // TRIGGERLESS_TYPES for that — and the two are different questions. The rows an action binds
+    // become its wedges, named and sized by two fields of each row. See #bindPie.
+    const TARGET_TYPES = ['grid', 'select', 'text', 'textarea', 'link', 'pie'];
 
     // Controls another control can write a value into. Wider than TARGET_TYPES: a response has to
     // land somewhere that can hold rows or be read back, while an assignment is only a value being
@@ -573,6 +599,15 @@
     // this is where its one value lives: seeded from the link's own URL as the page opens, and
     // replaced by whatever an action binds into it.
     let linkUrls = {};
+    // The slices each pie chart is drawing, keyed by the chart's id, once an action has bound some.
+    // Absent means nothing has been bound and the chart draws the slices the designer typed in: a
+    // chart filled from a response and a chart filled by hand are different things, and one that
+    // came back with no rows has to be able to say so rather than falling back on the design.
+    let pieData = {};
+    // What the call behind each chart did, keyed the same way. A chart with no wedges because the
+    // endpoint answered 503 and one with no wedges because there was nothing to chart look identical
+    // until something says which happened — the same reason gridMeta exists beside gridState.
+    let pieMeta = {};
     // The last thing that ran on its own account, so it can be sent again without the operator
     // having to remember which control did it: { controlId } for a button, a link or a select that
     // fires on change, or { load: true } for the page's own opening. Held as an id rather than as
@@ -679,6 +714,13 @@
             if (!a.transformNames.length) a.transformNames = [a.transformName];
             delete a.transformName;
         }
+        // Every action carries an id now, not just the library's. One written on a control never
+        // needed one — nothing named it — but a dependency names exactly that, so pages saved before
+        // dependencies existed have theirs minted here. On load rather than on save, so the id an
+        // action is picked out by is stable from the moment the page opens and a dependency set on a
+        // freshly opened page still resolves after the save that follows it.
+        if (!a.actionId) a.actionId = newActionId();
+        a.dependsOnActionId = a.dependsOnActionId || '';
     }
 
     function renderPageSelect() {
@@ -903,6 +945,12 @@
                        : source.mode === 'ENVIRONMENTS' ? (source.appName || 'no app') + ' environments'
                        : 'empty';
             return '<div class="fake">▾ ' + AC.esc(from) + '</div>';
+        }
+        // A text area is drawn filling its control, the way a grid is: it is the one field whose
+        // height is a design decision rather than a given, so the layout has to show the height that
+        // was decided.
+        if (c.type === 'textarea') {
+            return '<div class="fake area">' + AC.esc(c.defaultValue || c.placeholder || 'text area') + '</div>';
         }
         return '<div class="fake">' + AC.esc(c.defaultValue || c.placeholder || c.type) + '</div>';
     }
@@ -1198,13 +1246,30 @@
             + (drawn.problems.length ? ' · ' + drawn.problems.length + ' not charted' : '') + '</span></div>';
     }
 
-    /** The chart as it runs: sized off the control's own height, with the legend beside it. */
+    /**
+     * The chart as it runs: sized off the control's own height, with the legend beside it.
+     *
+     * <p>Drawn from whatever an action last bound into it, or — until something has — from the
+     * slices typed into the designer. The two are kept apart rather than merged, so a call that came
+     * back with nothing to chart empties the circle instead of falling back on numbers that were
+     * only ever there to lay the page out with.
+     */
     function pieRun(c) {
-        const drawn = pieSlices(c);
+        const bound = pieData[c.controlId];
+        const info  = pieMeta[c.controlId];
+        const drawn = pieSlices(bound ? { slices: bound } : c);
         const style = colorStyle(c);
-        const label = '<label' + style + '>' + AC.esc(c.label || '') + '</label>';
+        const label = '<label' + style + '>' + AC.esc(c.label || '')
+            + ' <span class="grid-status' + (info ? (info.status === 'SUCCESS' ? ' ok' : ' err') : '') + '">'
+            + (info ? (info.status === 'SUCCESS' ? 'success' : 'failure') : '') + '</span></label>';
+        if (info && info.status === 'FAILED') {
+            return label + '<div class="pie-fail">' + AC.esc(info.error || 'The call behind this chart failed.')
+                + techButton(info) + '</div>';
+        }
         if (!drawn.slices.length && !drawn.problems.length) {
-            return label + '<div class="grid-empty">This pie chart has no slices yet.</div>';
+            return label + '<div class="grid-empty">'
+                + (bound ? 'The call returned nothing to chart.' : 'This pie chart has no slices yet.')
+                + '</div>';
         }
         // The label takes a line above the chart, so the circle gets what is left of the box.
         const size = Math.max(controlHeight(c) - 26, 60);
@@ -1237,6 +1302,10 @@
         }).join('');
         return html
             + '<button class="tool-btn" onclick="addSlice()">+ Add Slice</button>'
+            + '<span class="hint">Typed in here, these are what the chart draws until an action fills it: aim '
+            + 'one at this chart and the rows it binds become the wedges instead, a row per wedge. These stay '
+            + 'where they are and come back the moment the action is taken off or the page is reset, so a chart '
+            + 'can be laid out with sample numbers and wired up afterwards.</span>'
             + '<span class="hint">The name labels the wedge; the value is its size and has to be a number — '
             + '<code>42</code>, <code>3.5</code>, <code>0</code>. Each wedge is its value\'s share of them all, so any '
             + 'unit works as long as the whole list is in it. A slice that is not a number is left off the chart, '
@@ -1346,7 +1415,7 @@
         function onMove(move) {
             const moved = (move.clientY - startY) / ROW_PITCH;
             const span = Math.round((startSpan + moved) * 2) / 2;
-            const clamped = Math.min(Math.max(span, MIN_ROW_SPAN), 12);
+            const clamped = Math.min(Math.max(span, MIN_ROW_SPAN), MAX_ROW_SPAN);
             if (clamped !== rowSpanOf(control)) { control.rowSpan = clamped; renderCanvas(); }
         }
         function onUp() {
@@ -1496,9 +1565,11 @@
                  + field('Row', '<input type="number" min="0" value="' + c.row + '" oninput="setProp(\'row\', +this.value)">')
                  + field('Column', '<input type="number" min="0" max="' + (COLUMNS - c.span) + '" value="' + c.col + '" oninput="setProp(\'col\', +this.value)">')
                  + field('Width', '<input type="number" min="1" max="' + (COLUMNS - c.col) + '" value="' + c.span + '" oninput="setProp(\'span\', +this.value)">')
-                 + field('Height', '<input type="number" min="0.5" max="12" step="0.5" value="' + rowSpanOf(c) + '" oninput="setProp(\'rowSpan\', +this.value)">')
+                 + field('Height', '<input type="number" min="0.5" max="' + MAX_ROW_SPAN + '" step="0.5" value="' + rowSpanOf(c) + '" oninput="setProp(\'rowSpan\', +this.value)">')
                  + '</div>'
-                 + '<span class="hint" style="margin-top:-4px">Height goes down to 0.5 — half a row, for something that should sit thinner than a field.</span>';
+                 + '<span class="hint" style="margin-top:-4px">Height is in rows: down to 0.5 — half a row, for something that should sit '
+                 + 'thinner than a field — and up to ' + MAX_ROW_SPAN + '. A text area, a grid or a pie chart fills the height it is '
+                 + 'given when the page runs, so a text area set to 20 opens twenty rows deep rather than needing to be dragged open.</span>';
         }
 
         if (c.type === 'select') html += selectProps(c);
@@ -1739,6 +1810,88 @@
         + '<code>data[id="${auctionId}"]/referenceEntities</code>. A name read off an array maps over it.';
 
     /**
+     * What holding one action back means, said once because the card and the summary both lean on it.
+     */
+    const DEPENDS_HINT = 'Holds this action back until the one named here has come back and bound what it '
+        + 'returned, instead of going out with the rest. That is what lets its inputs read '
+        + '<code>${fieldName}</code> off a box — or its path read a row — that the earlier action has just '
+        + 'filled in. Left at nothing, which is the default, it goes out together with every other '
+        + 'independent action in the same trigger: faster, and what you want unless one genuinely needs '
+        + 'the other. Whatever it waits for has to be something the same trigger runs, and if that fails, '
+        + 'or is itself skipped, this action is never sent. It still shares a call with anything else '
+        + 'in the trigger that resolves to the same instance, environment and inputs, so tick "Always '
+        + 'make its own call" below when the point of waiting is to send something again rather than '
+        + 'to read something new.';
+
+    /**
+     * The actions this one could wait for. A control's action may wait for anything else that control
+     * runs — a page action it triggers, or another written on it — because they go out together and
+     * the order between them is the only thing a dependency changes. A library action may only wait
+     * for another library action: it runs wherever it happens to be attached, and one particular
+     * control's own action is not there to be waited for from the next control along.
+     *
+     * <p>Read off the editor rather than taken as an argument, because the card is the editor's body
+     * and there is nowhere else it is drawn — see {@link #renderEditor}.
+     */
+    function dependencyPeers(a) {
+        if (!editor || editor.kind !== 'action') return [];
+        const mine = a.actionId;
+        if (editor.scope === 'page') return (page.actions || []).filter(x => x.actionId !== mine);
+        const control = findControl(editor.controlId) || {};
+        return actionsByIds(control.actionIds).concat(control.actions || [])
+            .filter(x => x.actionId !== mine);
+    }
+
+    /**
+     * The peers as options. A dependency on something no longer there is kept in the list rather than
+     * quietly dropped: the select would otherwise fall back to "nothing", which reads as an action
+     * that never had a dependency — the one thing a stale reference must not be mistaken for.
+     */
+    function dependencyOptions(a) {
+        const peers = dependencyPeers(a);
+        const chosen = a.dependsOnActionId || '';
+        const dangling = chosen && !peers.some(p => p.actionId === chosen);
+        return '<option value="">&mdash; nothing; runs with the rest &mdash;</option>'
+            + peers.map(p => '<option value="' + AC.attr(p.actionId) + '"' + (p.actionId === chosen ? ' selected' : '') + '>'
+                + AC.esc(p.actionLabel || p.actionId)
+                + (isPageAction(p.actionId) ? ' (page action)' : '') + '</option>').join('')
+            + (dangling ? '<option value="' + AC.attr(chosen) + '" selected>'
+                + AC.esc(chosen) + ' &mdash; no longer on this page</option>' : '');
+    }
+
+    function isPageAction(actionId) {
+        return (page.actions || []).some(x => x.actionId === actionId);
+    }
+
+    /** An action anywhere on the page by id, for naming whatever something else waits for. */
+    function actionNamed(actionId) {
+        return actionId ? allActions().find(a => a.actionId === actionId) || null : null;
+    }
+
+    /**
+     * The note a trigger gets when it runs an action that waits for one it does not itself run. The
+     * wait belongs to the action, not to the control, so attaching it somewhere the thing it waits
+     * for is not attached leaves it with nothing to wait for — it simply goes out with the rest.
+     *
+     * <p>Said here, in the designer, rather than at run time: it is a wiring mistake only the person
+     * building the page can fix, and complaining about it on every click would put it in front of the
+     * one person who cannot.
+     */
+    function dependencyNote(list) {
+        const present = new Set(list.map(a => a.actionId));
+        const unmet = list.filter(a => a.dependsOnActionId && !present.has(a.dependsOnActionId));
+        if (!unmet.length) return '';
+        return '<div class="empty-note">' + unmet.map(a => {
+            const waited = actionNamed(a.dependsOnActionId);
+            return '<b>' + AC.esc(a.actionLabel || 'An action') + '</b> waits for '
+                + (waited ? '<b>' + AC.esc(waited.actionLabel || waited.actionId) + '</b>'
+                          : 'an action that is no longer here')
+                + ', which this control does not run';
+        }).join('; ') + ' — so nothing holds it back and it goes out with the others. Attach what it '
+            + 'waits for here as well, or clear the wait on the action itself.</div>';
+    }
+
+    /**
      * One action's editor. Identical whether the action lives on a control, in the page's library, or
      * as the working copy open in the editor over the page — only which mutators the inputs call
      * differs, which `fns` carries — so the three can never drift into offering different fields.
@@ -1755,6 +1908,9 @@
         const isLink = !!target && target.type === 'link';
         const singleValue = !!target && (target.type === 'text' || target.type === 'textarea' || isLink);
         const isGridTarget = a.targetControlId === NEW_GRID || (target && target.type === 'grid');
+        // A chart takes many rows the way a grid does — one wedge each — so it asks for an array
+        // path, and for the two fields that turn a row into a named, sized slice.
+        const isPie = !!target && target.type === 'pie';
         const meta = a.source === 'METADATA';
         const set = (name, expr) => fns.set + '(' + i + ', \'' + name + '\', ' + expr + ')';
 
@@ -1765,6 +1921,8 @@
             + (i < count - 1 ? '<button class="tool-btn" onclick="' + fns.move + '(' + i + ', 1)" title="Later">↓</button>' : '')
             + (fns.remove ? '<button class="icon-btn" onclick="' + fns.remove + '(' + i + ')" title="Remove">×</button>' : '')
             + '</div>'
+            + field('Runs After', '<select onchange="' + set('dependsOnActionId', 'this.value') + '">'
+                + dependencyOptions(a) + '</select>', DEPENDS_HINT)
             + field('Instance', '<select onchange="' + set('appUseCaseInstanceId', 'this.value') + '">' + instanceOptions(a.appUseCaseInstanceId) + '</select>')
             + field('Environment', '<input type="text" value="' + AC.attr(a.environmentOverride || '') + '" placeholder="${envSelect}" oninput="' + set('environmentOverride', 'this.value') + '">',
                 'Overrides which environment this run calls. <code>${fieldName}</code> picks up a control (usually a select sourced from App environments); leave blank to use the instance\'s own environment.')
@@ -1798,6 +1956,10 @@
                         + 'through to whatever the call named. It opens in a new tab, and only '
                         + '<code>http</code>, <code>https</code> or a path on this server is taken — anything '
                         + 'else is reported and the link is left without an address.'
+                    : isPie
+                    ? 'The rows this binds become the chart' + Q + 's wedges — one per row — in place of any '
+                        + 'slices typed into the chart itself. Those are kept and come back if this action is '
+                        + 'ever taken off, so a chart can be laid out with sample numbers and wired up afterwards.'
                     : undefined)
             + (singleValue
                 ? field('Value Path', '<input type="text" value="' + AC.attr(a.valuePath || '') + '" placeholder="'
@@ -1823,6 +1985,18 @@
                     + field('Key Field', '<input type="text" value="' + AC.attr(a.keyField || '') + '" oninput="' + set('keyField', 'this.value') + '">')
                     + field('Label Field', '<input type="text" value="' + AC.attr(a.labelField || '') + '" oninput="' + set('labelField', 'this.value') + '">')
                   + '</div>'
+                : '')
+            + (isPie
+                ? '<div class="form-row" style="margin-bottom:0">'
+                    + field('Slice Name Field', '<input type="text" placeholder="status" value="' + AC.attr(a.keyField || '') + '" oninput="' + set('keyField', 'this.value') + '">')
+                    + field('Slice Value Field', '<input type="text" placeholder="count" value="' + AC.attr(a.valueField || '') + '" oninput="' + set('valueField', 'this.value') + '">')
+                  + '</div>'
+                  + '<span class="hint">Which field of each row names the wedge, and which one sizes it. For '
+                    + '<code>[{"status":"OPEN","count":12}, …]</code> that is <code>status</code> and '
+                    + '<code>count</code>. Leave the name blank and each row is charted under its own position; '
+                    + 'leave the value blank and the row itself has to be the number. A row whose value is not a '
+                    + 'number, or is below zero, is listed beside the chart as uncharted rather than dropped in '
+                    + 'silence — the same rule the slices typed into the chart answer to.</span>'
                 : '')
             + '<label class="inline-check"><input type="checkbox"' + (a.ownCall ? ' checked' : '')
                 + ' onchange="' + set('ownCall', 'this.checked') + '"> Always make its own call</label>'
@@ -1879,10 +2053,11 @@
     const CONTROL_FNS = { set: 'setAction', move: 'moveAction', remove: 'removeAction',
                           inputs: 'setActionInputs', source: 'setActionSource', chain: 'chainAction',
                           open: 'openControlActionEditor', copy: 'copyControlAction',
-                          clone: 'cloneControlAction' };
+                          clone: 'cloneControlAction', toPage: 'copyControlActionToPage' };
     const PAGE_FNS    = { set: 'setPageAction', move: 'movePageAction', remove: 'removePageAction',
                           inputs: 'setPageActionInputs', source: 'setPageActionSource', chain: 'chainPageAction',
-                          open: 'openPageActionEditor', clone: 'clonePageAction' };
+                          open: 'openPageActionEditor', clone: 'clonePageAction',
+                          toPage: 'copyPageActionToPage' };
 
     /**
      * One action as a card: what it runs, what it reshapes on the way, and where it puts the answer.
@@ -1900,6 +2075,7 @@
                     : 'nothing — run for its effect';
         const chain  = a.transformNames || [];
         const inputs = Object.keys(a.inputs || {});
+        const waitsFor = actionNamed(a.dependsOnActionId);
         const move = (delta, title, glyph) =>
             '<button class="tool-btn" onclick="event.stopPropagation();' + fns.move + '(' + i + ', ' + delta + ')" title="'
                 + title + '">' + glyph + '</button>';
@@ -1915,6 +2091,9 @@
                         + ' title="Duplicate this action here">&#10064;</button>' : '')
                     + (fns.copy ? '<button class="tool-btn" onclick="event.stopPropagation();' + fns.copy + '(' + i + ')"'
                         + ' title="Copy this action onto another control">⧉</button>' : '')
+                    + (fns.toPage && otherPages().length
+                        ? '<button class="tool-btn" onclick="event.stopPropagation();' + fns.toPage + '(' + i + ')"'
+                            + ' title="Copy this action onto another page">↗</button>' : '')
                     + '<button class="icon-btn" onclick="event.stopPropagation();' + fns.remove + '(' + i + ')" title="Remove">×</button>'
                 + '</span>'
             + '</div>'
@@ -1925,6 +2104,8 @@
             + '</div>'
             + '<div class="sum-line">'
                 + '<span>&rarr; ' + AC.esc(where) + '</span>'
+                + (waitsFor ? '<span class="badge">after ' + AC.esc(waitsFor.actionLabel || waitsFor.actionId) + '</span>'
+                    : a.dependsOnActionId ? '<span class="badge err">waits for an action that is gone</span>' : '')
                 + (chain.length ? '<span class="badge">' + chain.length + ' transform' + (chain.length > 1 ? 's' : '') + '</span>' : '')
                 + (inputs.length ? '<span>' + inputs.length + ' input' + (inputs.length > 1 ? 's' : '') + '</span>' : '')
             + '</div>'
@@ -2003,12 +2184,16 @@
     function triggerProps(c) {
         const library = page.actions || [];
         const chosen = c.actionIds || [];
+        // Over everything this control runs, page-level and inline together: an action waits for
+        // another action, and which of the two lists either of them lives in has nothing to do with
+        // whether the wait can be honoured.
+        const note = dependencyNote(actionsFor(c));
         let html = '<div class="props-section"><div class="props-title"><span>Page Actions</span>'
                  + (controlsWithActions().length
                      ? '<button class="tool-btn" onclick="openCopyEditor()" title="Copy what another control runs onto '
                          + 'this one, or this one\'s onto others">Copy…</button>'
                      : '')
-                 + '</div>';
+                 + '</div>' + note;
 
         if (!library.length) {
             return html + '<div class="empty-note">The page has no actions yet — '
@@ -2032,9 +2217,10 @@
                      + ' onchange="toggleControlAction(\'' + AC.attr(a.actionId) + '\', this.checked)"> '
                      + (order ? '<b>' + order + '.</b> ' : '') + AC.esc(a.actionLabel || a.actionId) + '</label>';
              }).join('')
-             + '<span class="hint">All sent at once when the control is triggered, then bound in the order '
-             + 'they were attached — so one of them cannot read what another is about to write. The same action '
-             + 'can be attached to as many controls as you like.</span></div>';
+             + '<span class="hint">Sent at once when the control is triggered, then bound in the order they '
+             + 'were attached — so one of them cannot read what another is about to write. An action that has '
+             + 'to read another one\'s answer says so on itself, under Runs After, and is held back until '
+             + 'that one has bound. The same action can be attached to as many controls as you like.</span></div>';
 
         return html + '</div>';
     }
@@ -2048,7 +2234,12 @@
         const actions = page.actions || [];
         let html = '<div class="stack mini">'
             + '<div class="props-section"><div class="props-title"><span>Page Actions</span>'
-            + '<button class="tool-btn" onclick="addPageAction()">+ Add</button></div>'
+            + '<span class="props-jump">'
+            + (actionsWithOrigin().length && otherPages().length
+                ? '<button class="tool-btn" onclick="openPageCopyEditor()" title="Copy an action from this page '
+                    + 'onto another page">To page…</button>'
+                : '')
+            + '<button class="tool-btn" onclick="addPageAction()">+ Add</button></span></div>'
             + '<span class="hint">Actions defined once here and attached to any number of controls — a button, a '
             + 'select that reloads on change, the page opening. Select a control to attach them. Click one to open it.</span>';
 
@@ -2060,7 +2251,8 @@
 
         html += transformProps();
 
-        html += '<div class="props-section"><div class="props-title"><span>On Page Load</span></div>';
+        html += '<div class="props-section"><div class="props-title"><span>On Page Load</span></div>'
+             + dependencyNote(actionsByIds(page.onLoadActionIds));
         if (!actions.length) {
             html += '<div class="empty-note">Add a page action first.</div>';
         } else {
@@ -2094,7 +2286,7 @@
         if (name === 'row')     value = Math.max(value || 0, 0);
         if (name === 'span')    value = Math.min(Math.max(value || 1, 1), COLUMNS - c.col);
         // Half a row is as thin as the grid draws, so the height snaps to that step.
-        if (name === 'rowSpan') value = Math.min(Math.max(Math.round((value || 1) * 2) / 2, MIN_ROW_SPAN), 12);
+        if (name === 'rowSpan') value = Math.min(Math.max(Math.round((value || 1) * 2) / 2, MIN_ROW_SPAN), MAX_ROW_SPAN);
         c[name] = value;
         renderControlList();
         renderCanvas();
@@ -2200,8 +2392,9 @@
     }
 
     function blankAction(label) {
-        return { actionLabel: label, appUseCaseInstanceId: '', environmentOverride: '', inputs: {},
-                 targetControlId: '', arrayPath: '', valuePath: '', keyField: '', labelField: '',
+        return { actionId: newActionId(), actionLabel: label, appUseCaseInstanceId: '',
+                 environmentOverride: '', inputs: {}, targetControlId: '', arrayPath: '', valuePath: '',
+                 keyField: '', labelField: '', valueField: '', dependsOnActionId: '',
                  keyValueGrid: false, source: 'PAYLOAD', transformNames: [], ownCall: false };
     }
 
@@ -2217,7 +2410,16 @@
      * worth this much arithmetic to avoid.
      */
     function copyLabel(label, taken) {
-        const base = (label || 'Untitled action') + ' copy';
+        return uniqueLabel((label || 'Untitled action') + ' copy', taken);
+    }
+
+    /**
+     * A name that is not already in use, numbered from 2 if it is. Kept apart from {@link #copyLabel}
+     * because an action copied onto another page keeps the name it had — there is no original beside
+     * it over there for "copy" to distinguish it from — and only a clash needs the arithmetic.
+     */
+    function uniqueLabel(name, taken) {
+        const base = name || 'Untitled action';
         if (!taken.includes(base)) return base;
         let n = 2;
         while (taken.includes(base + ' ' + n)) n++;
@@ -2276,9 +2478,19 @@
     }
 
     function removeAction(index) {
-        findControl(selectedId).actions.splice(index, 1);
+        const [removed] = findControl(selectedId).actions.splice(index, 1);
+        // A wait on an action that has just gone would leave the one waiting held back by nothing,
+        // which at run time reads as an action that mysteriously never went out. Cleared here, the
+        // same way a target pointing at a deleted control is.
+        clearWaitsOn(removed && removed.actionId);
         renderProps();
         renderCanvas();
+    }
+
+    /** Drops every dependency naming this action, wherever on the page it was written. */
+    function clearWaitsOn(actionId) {
+        if (!actionId) return;
+        allActions().forEach(a => { if (a.dependsOnActionId === actionId) a.dependsOnActionId = ''; });
     }
 
     /**
@@ -2293,6 +2505,11 @@
         const source = (c.actions || [])[index];
         if (!source) return;
         const copy = cloneValue(source);
+        // Its own id, for the same reason a duplicated library entry takes one: an action is waited
+        // for by id, and a second one carrying the first's would be the first as far as any
+        // dependency could tell. What it waits for is kept — the duplicate sits on the same control,
+        // so whatever the original waits for is still in the same trigger.
+        copy.actionId = newActionId();
         copy.actionLabel = copyLabel(source.actionLabel, c.actions.map(a => a.actionLabel || ''));
         c.actions.splice(index + 1, 0, copy);
         renderProps();
@@ -2406,6 +2623,7 @@
             });
         });
         page.onLoadActionIds = (page.onLoadActionIds || []).filter(id => id !== removed.actionId);
+        clearWaitsOn(removed.actionId);
         renderProps();
         renderCanvas();
     }
@@ -2550,15 +2768,19 @@
         if (!editor) { host.innerHTML = ''; return; }
 
         const isCopy = editor.kind === 'copy';
+        const isToPage = editor.kind === 'topage';
         const isAction = editor.kind === 'action';
         const source = isCopy ? findControl(editor.sourceId) : null;
         const title = isCopy ? (source ? controlTitle(source) : 'nothing to copy')
+            : isToPage ? (savedPageName || page.pageName || 'this page')
             : isAction ? (editor.draft.actionLabel || 'Untitled action')
             : (editor.draft.name || 'Untitled transform');
         const kind = isCopy ? 'Copy actions'
+            : isToPage ? 'Copy to another page'
             : isAction ? (editor.scope === 'page' ? 'Page action' : 'Action on this control')
             : 'Transform';
         const body = isCopy ? copyEditorBody()
+            : isToPage ? pageCopyBody()
             : isAction ? actionCard(editor.draft, 0, 1, EDITOR_FNS)
             : transformEditorBody(editor.draft);
 
@@ -2572,6 +2794,8 @@
                 + '<div class="editor-foot">'
                     + (isCopy
                         ? '<button class="primary" onclick="applyCopy()">Copy</button>'
+                        : isToPage
+                        ? '<button class="primary" onclick="applyPageCopy()">Copy</button>'
                         : '<button class="primary" onclick="saveEditor()">Save</button>')
                     + '<button class="secondary" onclick="closeEditor()">Cancel</button>'
                     + '<span id="editorStatus" class="status-bar"></span>'
@@ -2876,7 +3100,7 @@
         targets.forEach(t => {
             if (actions.length) {
                 if (ACTION_TYPES.includes(t.type)) {
-                    t.actions = (t.actions || []).concat(actions.map(cloneValue));
+                    t.actions = (t.actions || []).concat(copiesOf(actions));
                     copied += actions.length;
                     touched.add(t.controlId);
                 } else {
@@ -2908,6 +3132,283 @@
         renderEditor();
         renderAll();
         AC.setStatus('statusBar', message, parts.length ? 'ok' : '');
+    }
+
+    /**
+     * A set of inline actions as copies fit to live on another control. Each takes a fresh id — an
+     * action is waited for by id, and two carrying one id would be one action as far as any
+     * dependency could tell — and every wait among them is moved onto the copy rather than left
+     * pointing back at the original, so the pair that were ordered against each other still are.
+     *
+     * <p>A wait on a page action is left alone: the library entry is the same entry wherever it is
+     * triggered from, so naming it still means what it meant. A wait on something that was not
+     * ticked is cleared instead of carried over — the copy is going to a control that does not run
+     * it, and a wait nothing can honour is worse than none.
+     */
+    function copiesOf(actions) {
+        const copies = actions.map(cloneValue);
+        const remap = new Map();
+        copies.forEach((copy, i) => { remap.set(actions[i].actionId, copy.actionId = newActionId()); });
+        copies.forEach(copy => {
+            const waited = copy.dependsOnActionId;
+            if (!waited || isPageAction(waited)) return;
+            copy.dependsOnActionId = remap.get(waited) || '';
+        });
+        return copies;
+    }
+
+
+    // ── Copying an action onto another page ─────────────────────────────────
+    // The same call written on two pages is as ordinary as the same call written on two buttons, and
+    // until now the only way across was to open the other page and type the whole action out again.
+    //
+    // What crosses is a copy, never a reference: a page is stored whole, so there is no library
+    // spanning two of them for an action to be shared out of. Everything the action names has to
+    // cross with it or be let go of, and which of the two happened is said afterwards rather than
+    // left to be found out later:
+    //
+    //   · the transforms it chains come along, unless the destination already has one by that name,
+    //     in which case the one already there is what the copy will run;
+    //   · the control it fills is looked for on the destination by field name and then by label,
+    //     since a control id is minted per page and names nothing on another one. Found, the copy
+    //     targets it; not found, the copy binds nowhere and says so;
+    //   · a wait on another action crossing at the same time is kept, pointing at that action's copy.
+    //     A wait on anything else is dropped — what it named is not over there to be waited for.
+    //
+    // Copies land in the destination's page-action library rather than on a control, because the
+    // control they came from is not there either. Attaching them is the one thing left to do by hand.
+
+    /** Every action on the page paired with where it lives, for a list that has to name both. */
+    function actionsWithOrigin() {
+        const list = (page.actions || []).map(a => ({ action: a, origin: 'page action', page: true }));
+        page.controls.forEach(c => (c.actions || []).forEach(a =>
+            list.push({ action: a, origin: 'on ' + controlTitle(c), page: false })));
+        return list.filter(e => e.action.actionId);
+    }
+
+    /** The pages this one can copy onto: every other page in the catalog. */
+    function otherPages() {
+        return pages.map(p => p.pageName).filter(name => name && name !== savedPageName);
+    }
+
+    /**
+     * Opens the cross-page copy dialog with the action it was opened from ticked — or, from the
+     * library header, with nothing ticked, since "copy something to another page" has no one action
+     * in mind until one is picked.
+     */
+    function openPageCopyEditor(actionId) {
+        editor = { kind: 'topage', actionIds: actionId ? [actionId] : [], targets: [] };
+        renderEditor();
+    }
+
+    function copyControlActionToPage(index) {
+        const a = ((findControl(selectedId) || {}).actions || [])[index];
+        openPageCopyEditor(a && a.actionId);
+    }
+
+    function copyPageActionToPage(index) {
+        const a = (page.actions || [])[index];
+        openPageCopyEditor(a && a.actionId);
+    }
+
+    function togglePageCopyAction(actionId, on) {
+        if (!editor) return;
+        editor.actionIds = on ? editor.actionIds.concat([actionId])
+                              : editor.actionIds.filter(id => id !== actionId);
+        renderEditor();
+    }
+
+    function togglePageCopyTarget(pageName, on) {
+        if (!editor) return;
+        editor.targets = on ? editor.targets.concat([pageName])
+                            : editor.targets.filter(name => name !== pageName);
+    }
+
+    /** What is being copied, and onto which pages. */
+    function pageCopyBody() {
+        const entries = actionsWithOrigin();
+        const destinations = otherPages();
+
+        let html = '<div class="stack mini">';
+
+        html += '<div class="props-section"><div class="props-title"><span>What To Copy</span></div>';
+        if (!entries.length) {
+            html += '<div class="empty-note">This page has no actions to copy.</div>';
+        } else {
+            html += '<div class="copy-list">' + entries.map(e => {
+                // An action naming no instance is refused by whichever page it is saved on, so it is
+                // said here rather than arriving as a failure after the round trip.
+                const half = !e.action.appUseCaseInstanceId;
+                return '<label class="inline-check"><input type="checkbox"'
+                    + (editor.actionIds.includes(e.action.actionId) ? ' checked' : '')
+                    + ' onchange="togglePageCopyAction(\'' + AC.attr(e.action.actionId) + '\', this.checked)"> '
+                    + '<span class="copy-name">' + AC.esc(e.action.actionLabel || 'Untitled action') + '</span>'
+                    + '<span class="badge' + (e.page ? ' auth' : '') + '">' + AC.esc(e.origin) + '</span>'
+                    + (half ? '<span class="copy-note">names no instance yet — the other page will refuse it</span>' : '')
+                    + '</label>';
+            }).join('')
+                + '</div>'
+                + '<span class="hint">Copied as it stands in this editor, saved or not — what is on screen is what '
+                + 'crosses. The transforms it chains cross with it; one the other page already has by that name is '
+                + 'left alone and used as it is.</span>';
+        }
+        html += '</div>';
+
+        html += '<div class="props-section"><div class="props-title"><span>Onto</span></div>';
+        if (!destinations.length) {
+            html += '<div class="empty-note">There is no other page to copy onto yet.</div>';
+        } else {
+            html += '<div class="copy-list">' + destinations.map(name =>
+                '<label class="inline-check"><input type="checkbox"'
+                + (editor.targets.includes(name) ? ' checked' : '')
+                + ' onchange="togglePageCopyTarget(\'' + AC.attr(name) + '\', this.checked)"> '
+                + '<span class="copy-name">' + AC.esc(name) + '</span></label>').join('')
+                + '</div>'
+                + '<span class="hint">Each one is loaded, added to and saved on the spot; the page you are editing is '
+                + 'not saved by this and is left exactly as it is. Copies land in the destination&#39;s Page Actions '
+                + 'library attached to nothing, so open that page to put them on a control. A control the action fills '
+                + 'is looked for over there by field name, then by label — if it is not there the copy binds nowhere '
+                + 'until you point it somewhere.</span>';
+        }
+
+        return html + '</div></div>';
+    }
+
+    /** Ids already spoken for on a page, so a copy arriving on it can be given one that is not. */
+    function actionIdsOn(target) {
+        const ids = (target.actions || []).map(a => a.actionId);
+        (target.controls || []).forEach(c => (c.actions || []).forEach(a => ids.push(a.actionId)));
+        return ids.filter(Boolean);
+    }
+
+    /**
+     * The control on another page that answers to the same name as this one. A control id is minted
+     * per page, so it says nothing over there; a field name does — it is what that page's own
+     * templates already refer to the control by — and a label is what is left when the target has no
+     * field name of its own, as a grid or a pie chart has not.
+     */
+    function matchingControl(source, target) {
+        if (!source) return null;
+        const controls = (target.controls || []).filter(c => c.type === source.type && TARGET_TYPES.includes(c.type));
+        const key  = c => (c.fieldName || '').trim().toLowerCase();
+        const name = c => (c.label || '').trim().toLowerCase();
+        return (key(source)  && controls.find(c => key(c)  === key(source)))
+            || (name(source) && controls.find(c => name(c) === name(source)))
+            || null;
+    }
+
+    /**
+     * Puts copies of these actions into another page's library, carrying across everything they name
+     * that can be carried and letting go of the rest. Mutates the destination page object; the caller
+     * saves it. Hands back what happened, since a copy that quietly lost its target or a step of its
+     * chain is the kind of thing that is noticed a week later.
+     */
+    function graftActions(actions, target) {
+        target.controls   = target.controls   || [];
+        target.actions    = target.actions    || [];
+        target.transforms = target.transforms || [];
+
+        const taken   = target.actions.map(a => a.actionLabel || '');
+        const usedIds = new Set(actionIdsOn(target));
+        const copies  = actions.map(cloneValue);
+        const remap   = new Map();
+        const report  = { cleared: 0, brought: 0, reused: 0, dropped: 0, unbound: [] };
+        // What the destination held before any of this arrived, so a step carried across for the
+        // first copy is not then reported as one the destination already had for the second.
+        const alreadyThere = new Set(target.transforms.map(t => t.name));
+
+        copies.forEach((copy, i) => {
+            // Its own id, and one the destination is not already using: an action is waited for by
+            // id, and two answering to one id is exactly what that page's save refuses.
+            let id = newActionId();
+            while (usedIds.has(id)) id = newActionId();
+            usedIds.add(id);
+            remap.set(actions[i].actionId, copy.actionId = id);
+            // Its own name kept, unless the destination already has one reading the same — a library
+            // is picked from by name, and two entries reading alike are two guesses.
+            copy.actionLabel = uniqueLabel(actions[i].actionLabel || 'Untitled action', taken);
+            taken.push(copy.actionLabel);
+        });
+
+        copies.forEach(copy => {
+            // Only a wait on something crossing alongside it can be honoured over there.
+            const waited = copy.dependsOnActionId;
+            if (waited) copy.dependsOnActionId = remap.get(waited) || '';
+
+            // The chain has to name steps the destination holds, or that page's save is refused.
+            copy.transformNames = (copy.transformNames || []).map(step => {
+                if (alreadyThere.has(step)) { report.reused++; return step; }
+                if (target.transforms.some(t => t.name === step)) return step;
+                const definition = (page.transforms || []).find(t => t.name === step);
+                if (!definition) { report.dropped++; return null; }
+                target.transforms.push(cloneValue(definition));
+                report.brought++;
+                return step;
+            }).filter(Boolean);
+
+            // A control id means nothing on another page, so the copy either finds the same control
+            // by name over there or arrives pointing at nothing rather than at something arbitrary.
+            const wanted = copy.targetControlId;
+            if (wanted && wanted !== NEW_GRID) {
+                const match = matchingControl(findControl(wanted), target);
+                copy.targetControlId = match ? match.controlId : '';
+                if (!match) { report.cleared++; report.unbound.push(copy.actionLabel); }
+            }
+        });
+
+        target.actions = target.actions.concat(copies);
+        return report;
+    }
+
+    /**
+     * Does the cross-page copy: one page loaded, added to and saved at a time, so a destination that
+     * refuses the save — one with a problem of its own, or one someone else has changed since — stops
+     * at itself rather than taking the rest of the run down with it.
+     */
+    async function applyPageCopy() {
+        if (!editor || editor.kind !== 'topage') return;
+
+        const picked = actionsWithOrigin()
+            .filter(e => editor.actionIds.includes(e.action.actionId))
+            .map(e => e.action);
+        if (!picked.length)         { AC.setStatus('editorStatus', 'Nothing ticked to copy.', 'error'); return; }
+        if (!editor.targets.length) { AC.setStatus('editorStatus', 'Nothing ticked to copy onto.', 'error'); return; }
+
+        const destinations = editor.targets.slice();
+        AC.setStatus('editorStatus', 'Copying onto ' + destinations.length
+            + ' page' + (destinations.length > 1 ? 's' : '') + '…');
+
+        const done = [], failed = [], unbound = [];
+        let brought = 0, reused = 0, dropped = 0;
+        for (const name of destinations) {
+            try {
+                const target = await AC.api('GET', '/appcatalog/pages/' + encodeURIComponent(name));
+                const report = graftActions(picked, target);
+                await AC.api('PUT', '/appcatalog/pages/' + encodeURIComponent(name), target);
+                done.push(name);
+                brought += report.brought;
+                reused  += report.reused;
+                dropped += report.dropped;
+                if (report.unbound.length) unbound.push(name);
+            } catch (e) {
+                failed.push(name + ' — ' + e.message);
+            }
+        }
+
+        const many = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
+        let message = done.length ? many(picked.length, 'action') + ' copied onto ' + done.join(', ') + '.' : '';
+        if (brought)        message += ' ' + many(brought, 'transform') + ' carried across.';
+        if (reused)         message += ' ' + many(reused, 'chained step') + ' already on the destination, left as it is.';
+        if (dropped)        message += ' ' + many(dropped, 'chained step') + ' dropped — not on this page either.';
+        if (unbound.length) message += ' On ' + unbound.join(', ') + ' a copy found no control to fill, so it binds nowhere yet.';
+        if (failed.length)  message += ' Failed: ' + failed.join('; ');
+
+        if (!done.length) { AC.setStatus('editorStatus', message || 'Nothing was copied.', 'error'); return; }
+
+        editor = null;
+        renderEditor();
+        renderProps();
+        AC.setStatus('statusBar', message.trim(), failed.length ? 'error' : 'ok');
     }
 
     /** Attaching appends, so the order actions are ticked in is the order they run in. */
@@ -3067,6 +3568,8 @@
         errors = [];
         gridState = {};
         gridMeta = {};
+        pieData = {};
+        pieMeta = {};
         activeTab = {};
         linkUrls = {};
         lastTrigger = null;
@@ -3449,18 +3952,50 @@
         el.textContent = linkText(control, linkUrls[control.controlId]);
     }
 
-    /** The page's error section: every failure the run produced, in one place, or nothing at all. */
+    /**
+     * The page's error section: every failure the run produced, in one place, or nothing at all.
+     *
+     * <p>A failure that came out of a call carries that call's place in the run and gets a button
+     * beside it, because "the endpoint returned 500" provokes exactly one question and it is always
+     * the same one: what did we send, and what came back. The button opens the technical details on
+     * that call alone rather than on the whole trigger, which on a run of six is five sections the
+     * reader would have had to scroll past to reach the one that just complained.
+     */
     function renderErrors() {
         const host = document.getElementById('pageErrors');
         if (!errors.length) { host.innerHTML = ''; return; }
         host.innerHTML = '<div class="page-errors"><div class="err-title">' + errors.length
             + (errors.length === 1 ? ' problem' : ' problems') + '</div><ul>'
-            + errors.map(e => '<li>' + AC.esc(e) + '</li>').join('') + '</ul></div>';
+            + errors.map(e => '<li>' + AC.esc(e.message)
+                + (e.call === null ? ''
+                    : '<button type="button" class="err-why" onclick="showTechDetails(' + e.call + ')"'
+                        + ' title="The URL, the headers, what was sent and what came back for this call">'
+                        + 'View request &amp; response</button>')
+                + '</li>').join('') + '</ul></div>';
     }
 
-    function addError(message) {
-        errors.push(message);
+    /**
+     * @param call which of the last run's calls this failure came out of, when it came out of one.
+     *             Left off by everything that failed before a call was made — a missing mandatory
+     *             field, a target that is no longer on the page — since there is nothing to show.
+     */
+    function addError(message, call) {
+        errors.push({ message: message, call: (call === undefined || call === null) ? null : call });
         renderErrors();
+    }
+
+    /**
+     * The button that opens the call behind a record, wherever a record is shown. Written out only
+     * when the panel would actually have that call to show: a grid keeps its metadata bar long after
+     * later triggers have replaced what the panel holds, and a button that opened the wrong call
+     * under the right heading would be worse than no button.
+     */
+    function techButton(info) {
+        if (!info || info.call === null || info.call === undefined) return '';
+        if (!lastRun || info.runAt !== lastRun.at) return '';
+        return '<button type="button" class="tool-btn" onclick="showTechDetails(' + info.call + ')"'
+            + ' title="The URL, the headers, what was sent and what came back for this call">'
+            + 'View request &amp; response</button>';
     }
 
     /**
@@ -3812,6 +4347,16 @@
             paintGrid(control.controlId);
             return;
         }
+        if (control.type === 'pie') {
+            // Dropped rather than emptied, so the chart goes back to the slices the designer typed
+            // in — which is what it showed before anything was bound, and the truthful thing to show
+            // again. The last call's record goes with them, for the reason a grid's does: a status
+            // and a URL left behind would describe a call whose wedges are no longer on the page.
+            delete pieData[control.controlId];
+            delete pieMeta[control.controlId];
+            paintPie(control);
+            return;
+        }
         if (control.type === 'select') {
             fillOptions(control, []);
             return;
@@ -3841,15 +4386,18 @@
      * in rather than as whichever call happened to answer first: the same trigger produces the same
      * page every time, however the network staggered the responses.
      *
-     * <p>What running them together costs: every action's inputs and environment are resolved
-     * before any call goes out, so each reads the page as the operator left it and cannot see what
-     * an action beside it is about to bind. Feeding one call's answer into the next one's inputs is
-     * not something a single trigger can do any more — put the second on its own control, after an
-     * assignment, when it genuinely needs the first.
+     * <p>An action that names another under Runs After is held out of that first wave and sent once
+     * the one it waits for has come back and bound. Only then are its inputs and its environment
+     * resolved, which is the whole reason to wait: they read the page as the earlier action left it,
+     * so one call can genuinely feed the next. Actions waiting on the same action form a wave of
+     * their own and still go out together, so a chain costs a round trip per level rather than one
+     * per action, and an action with nothing to wait for never waits for anything.
      *
-     * <p>A failure no longer stops what follows it, because there is nothing left to stop: the rest
-     * are already in flight by the time one comes back bad. Every action is reported on and every
-     * problem is listed, rather than the first error standing in for all of them.
+     * <p>A failure stops what was waiting on it and nothing else. The rest of its own wave are
+     * already in flight by the time it comes back bad; everything downstream of it is not sent at
+     * all and says so, since an action whose input was to come out of a call that failed has nothing
+     * to send. Every action is reported on and every problem is listed, rather than the first error
+     * standing in for all of them.
      *
      * <p>A metadata action binds whatever its call did, so a failed call still fills in the URL and
      * the status code that explain it.
@@ -3882,62 +4430,104 @@
         beginCallBatch(actions);
         try {
             const names = actions.map(a => a.actionLabel || a.appUseCaseInstanceId || 'Action');
+            const plan = runWaves(actions);
 
-            // Every call is started before any of them is waited on — that is the whole of the
-            // parallelism. Two actions resolving to the same instance, environment and inputs still
-            // share one flight: the batch caches the promise, not the answer, so asking at the same
-            // moment is exactly the case it was built for.
-            //
-            // Rejections are turned into values here rather than left to the await below. A promise
-            // that fails while the page is still waiting on its siblings has nobody handling it yet,
-            // and the browser would report it as unhandled before this loop ever reached it.
-            //
-            // Each action's inputs and environment are resolved here, before any of them is sent,
-            // and kept: what the page put on the wire is a different thing from what the instance
-            // was saved with, and the technical details are only worth reading if they report the
-            // former. Each entry is filled in with its result as the loop below settles it.
+            // What the page put on the wire, which is a different thing from what the instance was
+            // saved with — the technical details are only worth reading if they report the former.
+            // The inputs and the environment are filled in as each action is about to be sent rather
+            // than all at once up front: an action in a later wave resolves its own against the page
+            // the wave before it left behind, and one that is never sent has none to report.
             const record = actions.map((action, i) => ({
                 name: names[i],
                 instanceId: action.appUseCaseInstanceId,
-                inputs: resolveInputs(action.inputs),
-                environment: resolveTemplate(action.environmentOverride),
+                inputs: null,
+                environment: '',
                 metadataOnly: isMetadataOnly(action),
                 result: null,
                 error: ''
             }));
             lastRun = { label: label, at: Date.now(), calls: record };
 
-            const calls = record.map((call, i) => Promise.resolve()
-                .then(() => runExecution(call.instanceId, call.inputs, call.name,
-                        call.environment, call.metadataOnly, actions[i].ownCall))
-                .then(result => ({ result: result }), error => ({ error: error })));
-
             let done = 0;
-            for (let i = 0; i < actions.length; i++) {
-                const action = actions[i];
-                const name = names[i];
-                const settled = await calls[i];
-                const result = settled.result === undefined ? null : settled.result;
-                record[i].result = result;
-                try {
-                    if (settled.error) throw settled.error;
+            const succeeded = new Array(actions.length).fill(false);
+            // Not sent, and why. It reads into the same places a failure does — the error list, the
+            // grid or the chart that was to be filled — because from the page's point of view an
+            // action that could not go out and one that went out and failed leave the same hole.
+            const notSent = (i, why) => {
+                record[i].error = why;
+                noteTargetFailure(actions[i], names[i], null, why, i);
+                addError(why);
+            };
 
-                    // A metadata action is bound whatever the call did — the status code of a failure
-                    // is the whole reason someone put a metadata panel on the page.
-                    if (isMetadataAction(action)) bindAction(action, await rootFor(result, action, name), name, result);
-                    requireSuccess(result, name);
-                    done++;
-                    if (!isMetadataAction(action)) bindAction(action, await rootFor(result, action, name), name, result);
-                } catch (e) {
-                    // The grid this action was aimed at says so, rather than staying empty and
-                    // leaving the error list at the top of the page as the only sign anything went
-                    // out at all. Then the next action is reported on as well: it went out too, and
-                    // saying nothing about it would leave the page half explained.
-                    record[i].error = e.message || String(e);
-                    noteGridFailure(action, name, result, e.message || String(e));
-                    addError(e.message || String(e));
+            for (const wave of plan.waves) {
+                // Whoever was waiting on something that did not come back has nothing to send.
+                const live = [];
+                wave.forEach(i => {
+                    const on = plan.waitsFor[i];
+                    if (on < 0 || succeeded[on]) live.push(i);
+                    else notSent(i, names[i] + ' was not sent: it waits for "' + names[on] + '", which did not succeed.');
+                });
+                if (!live.length) continue;
+
+                // Every call in the wave is started before any of them is waited on — that is the
+                // whole of the parallelism. Two actions resolving to the same instance, environment
+                // and inputs still share one flight: the batch caches the promise, not the answer,
+                // so asking at the same moment is exactly the case it was built for.
+                //
+                // Rejections are turned into values here rather than left to the await below. A
+                // promise that fails while the page is still waiting on its siblings has nobody
+                // handling it yet, and the browser would report it as unhandled before the loop
+                // below ever reached it.
+                const calls = live.map(i => {
+                    record[i].inputs = resolveInputs(actions[i].inputs);
+                    record[i].environment = resolveTemplate(actions[i].environmentOverride);
+                    return Promise.resolve()
+                        .then(() => runExecution(record[i].instanceId, record[i].inputs, names[i],
+                                record[i].environment, record[i].metadataOnly, actions[i].ownCall))
+                        .then(result => ({ result: result }), error => ({ error: error }));
+                });
+
+                // Bound in the order the actions were listed, not in the order they answered, so the
+                // same trigger produces the same page however the network staggered the responses.
+                for (let k = 0; k < live.length; k++) {
+                    const i = live[k];
+                    const action = actions[i];
+                    const name = names[i];
+                    const settled = await calls[k];
+                    const result = settled.result === undefined ? null : settled.result;
+                    record[i].result = result;
+                    try {
+                        if (settled.error) throw settled.error;
+
+                        // A metadata action is bound whatever the call did — the status code of a
+                        // failure is the whole reason someone put a metadata panel on the page.
+                        if (isMetadataAction(action)) bindAction(action, await rootFor(result, action, name), name, result, i);
+                        requireSuccess(result, name);
+                        if (!isMetadataAction(action)) bindAction(action, await rootFor(result, action, name), name, result, i);
+                        done++;
+                        // Counted as succeeded only once it has bound, since that is what anything
+                        // waiting on it is waiting for: a call that came back 200 and whose response
+                        // no path could be read out of has put nothing on the page to be read.
+                        succeeded[i] = true;
+                    } catch (e) {
+                        // The grid or chart this action was aimed at says so, rather than staying
+                        // empty and leaving the error list at the top of the page as the only sign
+                        // anything went out at all. Then the next action is reported on as well: it
+                        // went out too, and saying nothing about it would leave the page half
+                        // explained.
+                        record[i].error = e.message || String(e);
+                        noteTargetFailure(action, name, result, e.message || String(e), i);
+                        addError(e.message || String(e), i);
+                    }
                 }
             }
+
+            // Anything left in a cycle, reported by name. Nothing in one can go first, so nothing in
+            // one could ever go at all — and a page that quietly ran four of its six actions would
+            // be far harder to account for than one that says which two it could not run.
+            plan.cyclic.forEach(i => notSent(i, names[i] + ' was not sent: it and "'
+                + names[plan.waitsFor[i]] + '" are waiting on each other, so neither could go first.'));
+
             AC.setStatus('runStatus', errors.length ? '' : done + ' of ' + actions.length + ' action'
                 + (actions.length > 1 ? 's' : '') + ' completed.', 'ok');
         } finally {
@@ -3950,13 +4540,61 @@
     }
 
     /**
+     * The actions grouped into the waves they go out in: everything with nothing to wait for first,
+     * then everything waiting on one of those, and so on down. Each wave is sent together, so a
+     * chain three deep costs three round trips rather than one per action, and a trigger where
+     * nothing waits for anything is a single wave — exactly what it was before waiting existed.
+     *
+     * <p>An action whose dependency is not in this list has nothing to wait for and joins the first
+     * wave. The wait is written on the action, not on the control, so attaching it somewhere the
+     * other one is not attached leaves it unheld; the designer is told so beside the wiring, which is
+     * the only place it can be put right — see {@link #dependencyNote}.
+     *
+     * <p>A cycle has no wave it could belong to: nothing in it can start, so nothing in it ever
+     * would. Rather than leave those actions in a list that is never reached, they are handed back
+     * separately so the run can name each of them and say why it did not send it.
+     *
+     * @return the waves in order, the index each action waits for (-1 for none), and the indexes of
+     *         the actions caught in a cycle
+     */
+    function runWaves(actions) {
+        // First occurrence wins: the same page action attached twice to one control is one action
+        // as far as anything waiting on it is concerned, and the earlier of the two is the one
+        // whose answer a later wave would be reading.
+        const at = new Map();
+        actions.forEach((a, i) => { if (a.actionId && !at.has(a.actionId)) at.set(a.actionId, i); });
+        const waitsFor = actions.map(a => {
+            const found = a.dependsOnActionId ? at.get(a.dependsOnActionId) : undefined;
+            return found === undefined ? -1 : found;
+        });
+
+        const waves = [];
+        const placed = new Array(actions.length).fill(false);
+        for (;;) {
+            // Collected before any of them is marked, or an action would join the same wave as the
+            // one it waits for and the wait would buy nothing.
+            const wave = [];
+            for (let i = 0; i < actions.length; i++) {
+                if (placed[i]) continue;
+                if (waitsFor[i] < 0 || placed[waitsFor[i]]) wave.push(i);
+            }
+            if (!wave.length) break;
+            wave.forEach(i => { placed[i] = true; });
+            waves.push(wave);
+        }
+        const cyclic = [];
+        for (let i = 0; i < actions.length; i++) if (!placed[i]) cyclic.push(i);
+        return { waves: waves, waitsFor: waitsFor, cyclic: cyclic };
+    }
+
+    /**
      * Puts one action's result where it is aimed — a stacked grid, a placed grid, a box, a dropdown.
      *
      * <p>{@code result} is the whole execution record rather than just what was bound out of it: a
      * grid reports the call behind it — the URL, the method, the status, how long it took, how big
      * the answer was — and that is on the record, not in the rows.
      */
-    function bindAction(action, data, name, result) {
+    function bindAction(action, data, name, result, call) {
         if (!action.targetControlId) return;
 
         // Both paths are resolved here rather than where they are read, so a path naming a control
@@ -3967,21 +4605,26 @@
 
         if (action.targetControlId === NEW_GRID) {
             const stacked = rowsForGridAction(data, action, arrayPath, name);
-            pushStackedGrid(name, stacked.rows, stacked.columns, callRecord(result, 'SUCCESS', ''));
+            pushStackedGrid(name, stacked.rows, stacked.columns, callRecord(result, 'SUCCESS', '', call));
             return;
         }
         const target = findControl(action.targetControlId);
-        if (!target) { addError(name + ': its target is no longer on this page.'); return; }
+        if (!target) { addError(name + ': its target is no longer on this page.', call); return; }
         if (target.type === 'grid') {
             const bound = rowsForGridAction(data, action, arrayPath, name);
             // Recorded before the rows go in, so the grid is painted once, already knowing what it
             // has to say about the call that filled it.
-            gridMeta[target.controlId] = callRecord(result, 'SUCCESS', '');
+            gridMeta[target.controlId] = callRecord(result, 'SUCCESS', '', call);
             bindGrid(target, bound.rows, bound.columns);
+        } else if (target.type === 'pie') {
+            // Same shape as the grid above and for the same reason: the record goes in first, so the
+            // chart is drawn once already knowing what it has to say about the call behind it.
+            pieMeta[target.controlId] = callRecord(result, 'SUCCESS', '', call);
+            bindPie(target, pieRowsAt(data, action, arrayPath, name));
         } else if (target.type === 'link') {
-            bindLink(target, pathGet(data, valuePath), valuePath, name);
+            bindLink(target, pathGet(data, valuePath), valuePath, name, call);
         } else if (target.type === 'text' || target.type === 'textarea') {
-            bindValue(target, pathGet(data, valuePath), valuePath, name);
+            bindValue(target, pathGet(data, valuePath), valuePath, name, call);
         } else {
             fillOptions(target, rowsAt(data, arrayPath, name)
                 .map(r => optionOf(r, action.keyField, action.labelField)));
@@ -4153,25 +4796,48 @@
      * grid that came back empty because the endpoint answered 503 and a grid that came back empty
      * because there was nothing to return look identical until something says which happened.
      */
-    function callRecord(result, status, error) {
-        return { status: status, meta: result ? metaOf(result) : null, error: error || '', expanded: false };
+    function callRecord(result, status, error, call) {
+        return {
+            status: status,
+            meta: result ? metaOf(result) : null,
+            error: error || '',
+            expanded: false,
+            // Where in the last run this call sits, so what shows the record can offer the request
+            // and the response behind it. Stamped with the run it belongs to as well: a grid keeps
+            // its metadata bar across later triggers, and by then the same number would open a
+            // different call — see #showTechDetails.
+            call: (call === undefined || call === null) ? null : call,
+            runAt: lastRun ? lastRun.at : null
+        };
     }
 
     /**
-     * Marks the grid an action was aimed at as failed, so the failure is visible where the rows were
-     * meant to be. A "new grid" target still gets its grid — an empty one carrying the status and
-     * the URL, which is the whole of what there is to report.
+     * Marks whatever an action was aimed at as failed, so the failure is visible where the rows or
+     * the wedges were meant to be rather than only in the list at the top of the page. A "new grid"
+     * target still gets its grid — an empty one carrying the status and the URL, which is the whole
+     * of what there is to report.
+     *
+     * <p>Also used for an action that was never sent, where there is no result at all: the record is
+     * then the message alone, which is the truthful thing to put where the rows would have been.
      */
-    function noteGridFailure(action, name, result, message) {
-        const record = callRecord(result, 'FAILED', message);
+    function noteTargetFailure(action, name, result, message, call) {
+        const record = callRecord(result, 'FAILED', message, call);
         if (action.targetControlId === NEW_GRID) {
             pushStackedGrid(name, [], null, record);
             return;
         }
         const target = findControl(action.targetControlId);
-        if (!target || target.type !== 'grid') return;
-        gridMeta[target.controlId] = record;
-        paintGrid(target.controlId);
+        if (!target) return;
+        if (target.type === 'grid') {
+            gridMeta[target.controlId] = record;
+            paintGrid(target.controlId);
+        } else if (target.type === 'pie') {
+            // The slices go as well as the record arriving: a chart still showing the wedges the
+            // designer typed in, under a call that failed, reads as a chart that was filled.
+            delete pieData[target.controlId];
+            pieMeta[target.controlId] = record;
+            paintPie(target);
+        }
     }
 
     /** A byte count as something readable in a one-line summary. */
@@ -4436,10 +5102,63 @@
         });
     }
 
+    /**
+     * The wedges a chart-bound action produces. An array is charted a row per wedge, named and sized
+     * by the two fields the action names. A JSON object is charted as its own properties, because
+     * <code>{"OPEN": 12, "CLOSED": 3}</code> is already a pie and making the page reshape it into a
+     * list of two-key rows first would be ceremony for nothing.
+     *
+     * <p>Nothing is rejected for being unchartable here. A row whose value is not a number is left
+     * to {@link #pieSlices}, which lists it beside the wedges as uncharted — the same treatment a
+     * slice typed into the designer gets, and better than failing the whole action over one row of
+     * forty.
+     */
+    function pieRowsAt(data, action, arrayPath, name) {
+        const found = pathGet(data, arrayPath);
+        if (found === undefined || found === null) {
+            throw new Error(name + ': nothing found at path "' + (arrayPath || '') + '".');
+        }
+        if (Array.isArray(found)) return found.map((row, i) => sliceOf(row, action, i));
+        if (typeof found === 'object') {
+            return Object.entries(found).map(([key, value]) => ({ key: key, value: value }));
+        }
+        throw new Error(name + ': expected an array or an object'
+            + (arrayPath ? ' at "' + arrayPath + '"' : '') + ', got ' + typeof found + '.');
+    }
+
+    /**
+     * One row as a slice. A blank name field falls back to the row's place in the list, and a blank
+     * value field means the row itself is the number — between them, a bare array of numbers charts
+     * as 1, 2, 3 with no fields named at all, which is the shape a JSONata step most easily produces.
+     */
+    function sliceOf(row, action, index) {
+        const object = row !== null && typeof row === 'object';
+        const key = action.keyField ? (object ? row[action.keyField] : undefined) : index + 1;
+        const value = action.valueField ? (object ? row[action.valueField] : undefined) : row;
+        return { key: (key === undefined || key === null) ? '' : String(key), value: value };
+    }
+
+    /**
+     * Puts an action's wedges on a chart. They are held beside the chart rather than written into
+     * it, exactly as a grid's rows are held beside the grid: the slices typed into the designer are
+     * the page, and what a call returned is this run. Overwriting the first with the second would
+     * make previewing a page an edit to it.
+     */
+    function bindPie(control, slices) {
+        pieData[control.controlId] = slices;
+        paintPie(control);
+    }
+
+    /** Redraws one chart where it stands, without disturbing the rest of the page. */
+    function paintPie(control) {
+        const host = document.getElementById('rc-' + control.controlId);
+        if (host) host.innerHTML = pieRun(control);
+    }
+
     /** Fills a text box or text area from one attribute of a response. */
-    function bindValue(control, value, valuePath, name) {
+    function bindValue(control, value, valuePath, name, call) {
         if (value === undefined || value === null) {
-            addError(name + ': nothing found at path "' + (valuePath || '') + '".');
+            addError(name + ': nothing found at path "' + (valuePath || '') + '".', call);
             return;
         }
         const text = typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value);
@@ -4454,9 +5173,9 @@
      * nobody can account for — and the value is worth reading, since a response carrying an object
      * where a URL was expected is usually a value path that named the wrong thing.
      */
-    function bindLink(control, value, valuePath, name) {
+    function bindLink(control, value, valuePath, name, call) {
         if (value === undefined || value === null) {
-            addError(name + ': nothing found at path "' + (valuePath || '') + '".');
+            addError(name + ': nothing found at path "' + (valuePath || '') + '".', call);
             return;
         }
         const url = typeof value === 'object' ? JSON.stringify(value) : String(value).trim();
@@ -4464,7 +5183,7 @@
         paintLink(control);
         if (url && !safeUrl(url)) {
             addError(name + ': "' + url + '" is not an http or https address, so "' + controlTitle(control)
-                + '" was left without one.');
+                + '" was left without one.', call);
         }
     }
 
@@ -4601,7 +5320,9 @@
                 + '<span class="grid-meta-sum">' + AC.esc(summary || 'call details') + '</span>'
                 + '<span class="grid-meta-url">' + AC.esc(m.url || '') + '</span>'
             + '</button>'
-            + (info.expanded ? '<div class="grid-meta-body">' + gridMetaRows(m, info.error) + '</div>' : '')
+            + (info.expanded ? '<div class="grid-meta-body">' + gridMetaRows(m, info.error)
+                + (techButton(info) ? '<div class="wide">' + techButton(info) + '</div>' : '')
+                + '</div>' : '')
             + '</div>';
     }
 
@@ -4986,6 +5707,9 @@
         '              padding: 1px 6px; border-radius: 8px; flex: none; }',
         '.tech-badge.ok  { background: #e3fcef; color: #006644; }',
         '.tech-badge.err { background: #ffebe6; color: #bf2600; }',
+        // Only ever set on the page: an export is the whole report, and one section of a saved file
+        // outlined for a reason the reader was not there for would only puzzle them.
+        '.tech-call.tech-focus { border-color: #0052cc; box-shadow: 0 0 0 2px rgba(0,82,204,.18); }',
         '.tech-note { font-size: 11px; color: #97a0af; margin: 14px 0 0; }',
         // The panel is the report inside the editor dialog, given the width a URL and a JSON body
         // need. Only the dialog is page-only; everything above travels with the export.
@@ -4997,9 +5721,16 @@
 
     // ── The panel ────────────────────────────────────────────────────────────
 
-    function showTechDetails() {
+    /**
+     * @param focus which call to open on, when the panel was opened from a particular failure rather
+     *              than from the toolbar. Out of range is treated as no focus: the report is still
+     *              the right thing to be looking at, and refusing to open it would leave the person
+     *              who asked with nothing.
+     */
+    function showTechDetails(focus) {
         if (!lastRun || !lastRun.calls.length) return;
-        techPanel = { secrets: false };
+        const on = (focus === undefined || focus === null || !lastRun.calls[focus]) ? null : focus;
+        techPanel = { secrets: false, focus: on, scrolled: false };
         renderTechPanel();
     }
 
@@ -5034,7 +5765,7 @@
                     + '<button class="tool-btn" onclick="copyTechHtml()" title="Copy the whole HTML document to the clipboard">Copy</button>'
                     + '<button class="icon-btn" onclick="closeTechDetails()" title="Close">×</button>'
                 + '</div>'
-                + '<div class="editor-body">' + techReport(false) + '</div>'
+                + '<div class="editor-body" id="techBody">' + techReport(false) + '</div>'
                 + '<div class="editor-foot">'
                     + '<label class="tech-secrets" title="Off, an Authorization header or a JWT is shown as its scheme alone. '
                         + 'This report is meant to be sent to someone, and a live token is not a technical detail worth mailing.">'
@@ -5044,6 +5775,18 @@
                 + '</div>'
             + '</div>'
         + '</div>';
+
+        // Opened from one failure: that call is outlined and brought into view, so a trigger with six
+        // sections opens on the one that was asked about rather than at the top of a report the
+        // reader then has to search. Scrolled once only — turning credentials on or fetching a body
+        // redraws this, and dragging the panel back up under someone reading it would be rude.
+        if (techPanel.focus !== null) {
+            const section = host.querySelectorAll('.tech-call')[techPanel.focus];
+            if (section) {
+                section.classList.add('tech-focus');
+                if (!techPanel.scrolled) { section.scrollIntoView({ block: 'start' }); techPanel.scrolled = true; }
+            }
+        }
     }
 
     // ── The report itself ────────────────────────────────────────────────────

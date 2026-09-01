@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mycompany.batch.model.HttpBatchRequest;
 import com.mycompany.batch.model.HttpMethod;
 import com.mycompany.batch.service.AgentHttpDispatchService;
+import com.mycompany.batch.staticdataset.FilterFavorite;
+import com.mycompany.batch.staticdataset.StaticDatasetService;
 import com.mycompany.batch.util.Threads;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -23,6 +25,7 @@ import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletionService;
 import java.util.concurrent.ConcurrentHashMap;
@@ -39,9 +42,10 @@ import java.util.regex.Pattern;
  * Normalizes health checks across the three ways services in this environment expose status:
  * plain HTTP (200 = up), Prometheus text-exposition (Actuator/micrometer), and Jolokia
  * (JMX-over-HTTP, richer JVM detail like heap/pid). The frontend supplies url+type (and,
- * optionally, credentials) per target — nothing about the target list itself is stored
- * server-side — this just makes the call so the browser doesn't have to (avoids CORS when the
- * target port differs from the page's own origin).
+ * optionally, credentials) per target, or names a static dataset and the filter that picks the
+ * targets out of it — see {@link #checkBatch}. Either way this just makes the call so the browser
+ * does not have to (avoids CORS when the target port differs from the page's own origin), and
+ * nothing about a hand-entered target list is stored server-side.
  *
  * <p>Recent results per target (keyed by type+url, independent of whatever id the browser
  * assigns) are kept in a small in-memory ring buffer so the UI can render a trend sparkline —
@@ -65,6 +69,11 @@ public class ServiceMonitorController {
 
     private static final int HISTORY_CAP = 30;
 
+    private static final Set<String> SUPPORTED_TYPES = Set.of("http", "prometheus", "jolokia");
+
+    private static final String NO_TARGETS =
+            "No targets to check — pass a non-empty \"targets\" array, or a \"dataset\" whose filter matches at least one row with a URL";
+
     /** Per-request timeout is caller-supplied, floored here so a near-zero value can't spin
      *  the checker in a tight retry loop. */
     private static final long DEFAULT_TIMEOUT_MS = 3000;
@@ -72,11 +81,14 @@ public class ServiceMonitorController {
 
     private final ObjectMapper objectMapper;
     private final AgentHttpDispatchService agentDispatch;
+    private final StaticDatasetService staticDatasets;
     private final Map<String, Deque<Map<String, Object>>> history = new ConcurrentHashMap<>();
 
-    public ServiceMonitorController(ObjectMapper objectMapper, AgentHttpDispatchService agentDispatch) {
+    public ServiceMonitorController(ObjectMapper objectMapper, AgentHttpDispatchService agentDispatch,
+                                    StaticDatasetService staticDatasets) {
         this.objectMapper = objectMapper;
         this.agentDispatch = agentDispatch;
+        this.staticDatasets = staticDatasets;
     }
 
     @PostMapping("/check")
@@ -98,10 +110,23 @@ public class ServiceMonitorController {
      * completes in roughly the time of the single slowest target instead of the sum of all of them.
      * Returns only once every target has finished — see {@link #checkBatchStream} for the
      * incremental-results variant used by the dashboard's "Check All Now".
+     *
+     * <p>Name the targets either way — an explicit {@code targets} array, or a {@code dataset} plus
+     * a {@code favorite}/{@code conditions} filter and the {@code urlField}/{@code nameField}/
+     * {@code typeField} that read a row. The filtered form is the one to point an App Catalog page
+     * at: it answers "is everything this filter names up" in a single call, and each result carries
+     * the name, URL and source row alongside the status, so a grid has something to show without
+     * the caller ever holding the list.
      */
     @PostMapping("/checkBatch")
     public ResponseEntity<Map<String, Object>> checkBatch(@RequestBody Map<String, Object> req) {
-        List<Target> targets = parseTargets(req.get("targets"));
+        List<Target> targets;
+        try {
+            targets = resolveTargets(req);
+        } catch (IllegalArgumentException e) {
+            return err(e.getMessage());
+        }
+        if (targets.isEmpty()) return err(NO_TARGETS);
         if (targets.isEmpty()) return err("targets is required and must be a non-empty array of valid entries");
         long timeoutMs = timeoutMs(req);
         String target  = str(req, "target");
@@ -132,14 +157,20 @@ public class ServiceMonitorController {
 
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("results", results);
+        body.put("summary", summarize(results));
         return ResponseEntity.ok(body);
     }
-
     /**
      * Streams results as an SSE event per target the moment it completes, instead of waiting
      * for the whole batch — at hundreds of targets, {@link #checkBatch} makes the UI sit idle
-     * for the duration of the slowest single check before showing anything. Fires "result"
-     * events as each target finishes, periodic "progress" events, and a final "done".
+     * for the duration of the slowest single check before showing anything. Opens with one
+     * "targets" event naming what is about to be checked, then fires "result" events as each
+     * target finishes, periodic "progress" events, and a final "done".
+     *
+     * <p>Takes the same two ways of naming targets as {@link #checkBatch} — an explicit array, or
+     * a dataset plus a filter. The opening "targets" event is what makes the filtered form usable
+     * live: a caller that asked for a filter rather than a list learns what matched straight away,
+     * and can show the whole set as pending while the checks are still running.
      *
      * <p>A plain {@code EventSource} can't POST a body, so the dashboard drives this with
      * {@code fetch()} + a manual reader over the {@code text/event-stream} body instead — the
@@ -148,12 +179,20 @@ public class ServiceMonitorController {
     @PostMapping(value = "/checkBatchStream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter checkBatchStream(@RequestBody Map<String, Object> req) {
         SseEmitter emitter = new SseEmitter(0L);
-        List<Target> targets = parseTargets(req.get("targets"));
-        if (targets.isEmpty()) {
-            sendEvent(emitter, "error", Map.of("error", "targets is required and must be a non-empty array of valid entries"));
+        List<Target> targets;
+        try {
+            targets = resolveTargets(req);
+        } catch (IllegalArgumentException e) {
+            sendEvent(emitter, "error", Map.of("error", e.getMessage()));
             emitter.complete();
             return emitter;
         }
+        if (targets.isEmpty()) {
+            sendEvent(emitter, "error", Map.of("error", NO_TARGETS));
+            emitter.complete();
+            return emitter;
+        }
+        sendEvent(emitter, "targets", Map.of("targets", targets.stream().map(this::describeTarget).toList()));
         long timeoutMs = timeoutMs(req);
         String target  = str(req, "target");
         String agentId = str(req, "agentId");
@@ -195,8 +234,30 @@ public class ServiceMonitorController {
         return emitter;
     }
 
-    // ── Target parsing shared by both batch variants ────────────────────────
-    private record Target(String id, String url, String type, String authHeader) {}
+    // ── Target resolution shared by both batch variants ─────────────────────
+    // A batch names what to check one of two ways: an explicit "targets" array, which is what a
+    // caller holding its own list sends, or a "dataset" plus a filter, which asks this side to
+    // work out the list. The second is the point of the filter living here rather than in the
+    // browser — a caller can ask for "the services this favourite names, are they up" in one
+    // call, without first pulling every row down to narrow it itself.
+
+    /** {@code attributes} is the dataset row a target came from, or null when it came as a bare URL. */
+    private record Target(String id, String name, String url, String type, String authHeader,
+                          Map<String, Object> attributes) {}
+
+    /**
+     * @throws IllegalArgumentException if a named dataset or favourite does not exist — reported to
+     *         the caller rather than silently checking nothing, since "no targets" and "your filter
+     *         is misspelt" want very different responses.
+     */
+    private List<Target> resolveTargets(Map<String, Object> req) {
+        Object rawTargets = req.get("targets");
+        if (rawTargets instanceof List<?> list && !list.isEmpty()) return parseTargets(rawTargets);
+
+        String dataset = str(req, "dataset");
+        if (dataset == null || dataset.isBlank()) return List.of();
+        return datasetTargets(req, dataset);
+    }
 
     private List<Target> parseTargets(Object rawTargets) {
         List<Target> targets = new ArrayList<>();
@@ -210,9 +271,75 @@ public class ServiceMonitorController {
             String type = str(tm, "type");
             if (url == null || url.isBlank() || type == null || type.isBlank()) continue;
             String authHeader = buildAuth(str(tm, "authType"), str(tm, "username"), str(tm, "password"), str(tm, "token"));
-            targets.add(new Target(id != null ? id : url, url, type, authHeader));
+            targets.add(new Target(id != null ? id : url, str(tm, "name"), url, type, authHeader, null));
         }
         return targets;
+    }
+
+    /**
+     * Turns the rows a dataset filter matched into targets, reading each row's URL, name and type
+     * out of the columns the caller names — the same field mapping the dataset widget offers, sent
+     * along rather than applied in the browser.
+     *
+     * <p>The id is {@code ds-<dataset>-<url>}, matching what the Service Dashboard has always
+     * assigned rows loaded from a dataset, so a dashboard that filters server-side lands its
+     * results on the very targets it is already showing.
+     *
+     * <p>Credentials, if any, are given once for the whole batch: a dataset row names a service,
+     * not a login, and the alternative — a password column — is not a thing worth inviting.
+     */
+    private List<Target> datasetTargets(Map<String, Object> req, String dataset) {
+        StaticDatasetService.FilterResult filtered =
+                staticDatasets.filter(dataset, str(req, "favorite"), parseConditions(req.get("conditions")));
+
+        String urlField     = str(req, "urlField");
+        String nameField    = str(req, "nameField");
+        String typeField    = str(req, "typeField");
+        String defaultType  = str(req, "defaultType");
+        if (defaultType == null || defaultType.isBlank()) defaultType = "http";
+        String authHeader = buildAuth(str(req, "authType"), str(req, "username"), str(req, "password"), str(req, "token"));
+
+        // Keyed by id, so two rows naming the same URL collapse into one target rather than being
+        // checked twice under an id that could only ever describe one of them — the same de-dupe
+        // the dashboard applied when it built this list itself.
+        Map<String, Target> targets = new LinkedHashMap<>();
+        for (Map<String, Object> row : filtered.rows()) {
+            String url = cell(row, urlField);
+            if (url == null || url.isBlank()) continue;
+            String name = cell(row, nameField);
+            String type = cell(row, typeField);
+            if (type == null || !SUPPORTED_TYPES.contains(type)) type = defaultType;
+            String id = "ds-" + dataset + "-" + url;
+            targets.putIfAbsent(id, new Target(id,
+                    name != null && !name.isBlank() ? name : url, url, type, authHeader, row));
+        }
+        return new ArrayList<>(targets.values());
+    }
+
+    private List<FilterFavorite.FilterCondition> parseConditions(Object raw) {
+        List<FilterFavorite.FilterCondition> out = new ArrayList<>();
+        if (!(raw instanceof List<?> list)) return out;
+        for (Object o : list) {
+            if (!(o instanceof Map<?, ?> m)) continue;
+            FilterFavorite.FilterCondition c = new FilterFavorite.FilterCondition();
+            c.setAttribute(cellOf(m.get("attribute")));
+            c.setOp(cellOf(m.get("op")));
+            c.setValue(cellOf(m.get("value")));
+            out.add(c);
+        }
+        return out;
+    }
+
+    /** A dataset cell as trimmed text, or null when the column was not named or is not there. */
+    private String cell(Map<String, Object> row, String field) {
+        if (field == null || field.isBlank()) return null;
+        return cellOf(row.get(field));
+    }
+
+    private String cellOf(Object value) {
+        if (value == null) return null;
+        String s = String.valueOf(value).trim();
+        return s.isEmpty() ? null : s;
     }
 
     private Map<String, Object> buildResult(Target t, long timeoutMs, String target, String agentId) {
@@ -225,8 +352,38 @@ public class ServiceMonitorController {
         }
         Map<String, Object> withId = new LinkedHashMap<>();
         withId.put("id", t.id());
+        // What was checked travels with how it went, so a caller that never held the list — a page
+        // that named a filter and nothing else — has something to put in a grid besides a status.
+        if (t.name() != null) withId.put("name", t.name());
+        withId.put("url", t.url());
+        withId.put("type", t.type());
         withId.putAll(r);
+        if (t.attributes() != null) withId.put("attributes", t.attributes());
         return withId;
+    }
+
+    /** A target as the caller named it, for the meta event a streaming batch opens with. */
+    private Map<String, Object> describeTarget(Target t) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", t.id());
+        m.put("name", t.name() != null ? t.name() : t.url());
+        m.put("url", t.url());
+        m.put("type", t.type());
+        if (t.attributes() != null) m.put("attributes", t.attributes());
+        return m;
+    }
+
+    /** Up/down/total across a finished batch — the headline a caller would otherwise recount itself. */
+    private Map<String, Object> summarize(List<Map<String, Object>> results) {
+        int up = 0;
+        for (Map<String, Object> r : results) {
+            if ("UP".equals(r.get("status"))) up++;
+        }
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("total", results.size());
+        summary.put("up", up);
+        summary.put("down", results.size() - up);
+        return summary;
     }
 
     /** Floors the caller-supplied timeout at MIN_TIMEOUT_MS — no upper bound. */

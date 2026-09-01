@@ -19,7 +19,8 @@ import java.util.Map;
  * literal is passed through as written. Whatever the map does not name keeps the value the instance
  * was saved with, so a page only has to supply what it actually varies.
  *
- * <p>{@link #targetControlId} names a grid, select, text, text area or link control on the same page,
+ * <p>{@link #targetControlId} names a grid, select, text, text area, link or pie chart control on
+ * the same page,
  * or the {@link #NEW_GRID} sentinel to stack a freshly built grid above the previous ones instead of
  * reusing a placed control. Blank runs the instance for its effect alone and reports only success
  * or failure. A link takes the address it points at rather than text to show, which is what makes a
@@ -122,6 +123,40 @@ public class AppPageAction {
      */
     private boolean ownCall;
 
+    /**
+     * Pie chart targets only: which field of each row sizes its wedge, beside {@link #keyField},
+     * which names it. Every other kind of target ignores it — a grid shows the row whole, and a
+     * select wants a value and a label rather than a number.
+     *
+     * <p>Blank means the row itself is the number, which is what a bare array of numbers wants;
+     * paired with a blank {@link #keyField}, which then falls back to the row's place in the list, a
+     * chart can be filled from {@code [4, 9, 2]} with no field names given at all.
+     */
+    private String valueField;
+
+    /**
+     * The action this one waits for, by {@link #actionId}; blank — the default — waits for nothing.
+     *
+     * <p>A trigger normally sends every action it runs at once and binds them in the order they are
+     * listed, so none of them can read what another is about to write. Naming one here holds this
+     * action back until that one has come back and bound, and only then are this action's inputs and
+     * {@link #environmentOverride} resolved against the page — which is exactly what lets a second
+     * call be sent carrying a value the first one has just put there. Actions waiting on the same
+     * action still go out together, so a chain costs a round trip per level rather than one per
+     * action, and an action waiting for nothing never waits at all.
+     *
+     * <p>An action written on a control may wait for anything else that control runs: another action
+     * on the same control, or a page action it triggers. A page-level action may only wait for
+     * another page-level action, since it runs wherever it happens to be attached and one particular
+     * control's own action is not there to be waited for from the next control along. Neither may
+     * wait for itself, and a circle of actions waiting on each other is refused outright: nothing in
+     * one could go first, so nothing in one would ever go at all.
+     *
+     * <p>If the action waited for fails, or is itself never sent, this one is not sent either and
+     * says so where its rows or wedges would have been.
+     */
+    private String dependsOnActionId;
+
     public String getActionId()                    { return actionId; }
     public void   setActionId(String actionId)     { this.actionId = actionId == null || actionId.isBlank() ? null : actionId.trim(); }
 
@@ -179,6 +214,15 @@ public class AppPageAction {
 
     public boolean isOwnCall()                    { return ownCall; }
     public void    setOwnCall(boolean ownCall)    { this.ownCall = ownCall; }
+
+    public String getValueField()                    { return valueField; }
+    public void   setValueField(String valueField)   { this.valueField = valueField; }
+
+    public String getDependsOnActionId()             { return dependsOnActionId; }
+    public void   setDependsOnActionId(String dependsOnActionId) {
+        this.dependsOnActionId = dependsOnActionId == null || dependsOnActionId.isBlank()
+                ? null : dependsOnActionId.trim();
+    }
 
     /** Whether this action reads the call's metadata rather than its response body. */
     public boolean isMetadata()   { return METADATA.equals(source); }
