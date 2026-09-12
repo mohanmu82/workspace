@@ -17,11 +17,22 @@ import java.util.Map;
  */
 public class AppUseCase {
 
+    /** {@link #urlPrefixType} value for the app's main address — the default. */
+    public static final String PREFIX_TYPE_APPLICATION = "APPLICATION";
+    /** {@link #urlPrefixType} value for the environment's separate monitoring address. */
+    public static final String PREFIX_TYPE_MONITORING  = "MONITORING";
+
     private String appName;
     /** Unique per app. */
     private String useCaseName;
-    /** Appended to the environment urlPrefix, e.g. "/orders/${orderId}". */
+    /** Appended to the environment prefix {@link #urlPrefixType} names, e.g. "/orders/${orderId}". */
     private String urlSuffix;
+    /**
+     * Which of the environment's two prefixes {@link #urlSuffix} hangs off: APPLICATION for the
+     * main one, MONITORING for the admin address. APPLICATION is the default, so a use case
+     * written before the monitoring prefix existed keeps going where it always did.
+     */
+    private String urlPrefixType = PREFIX_TYPE_APPLICATION;
     private String httpMethod = "GET";
     /** Either a JSON object or newline-separated {@code Name: value} lines. */
     private String httpHeaders;
@@ -44,6 +55,12 @@ public class AppUseCase {
 
     public String getUrlSuffix()                  { return urlSuffix; }
     public void   setUrlSuffix(String urlSuffix)  { this.urlSuffix = urlSuffix; }
+
+    public String getUrlPrefixType()                      { return urlPrefixType; }
+    public void   setUrlPrefixType(String urlPrefixType)  {
+        this.urlPrefixType = PREFIX_TYPE_MONITORING.equalsIgnoreCase(urlPrefixType != null ? urlPrefixType.trim() : "")
+                ? PREFIX_TYPE_MONITORING : PREFIX_TYPE_APPLICATION;
+    }
 
     public String getHttpMethod()                     { return httpMethod; }
     public void   setHttpMethod(String httpMethod)    { this.httpMethod = httpMethod != null && !httpMethod.isBlank() ? httpMethod.toUpperCase() : "GET"; }

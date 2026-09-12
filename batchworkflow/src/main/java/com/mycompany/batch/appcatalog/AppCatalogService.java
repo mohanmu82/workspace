@@ -3,6 +3,7 @@ package com.mycompany.batch.appcatalog;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mycompany.batch.config.ServerPropertiesLoader;
+import com.mycompany.batch.staticdataset.StaticDatasetService;
 import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Service;
 
@@ -39,6 +40,12 @@ public class AppCatalogService {
 
     private final ObjectMapper objectMapper;
     private final ServerPropertiesLoader serverPropertiesLoader;
+    /**
+     * Only ever asked whether a dataset a page names is in the library. Held rather than looked up
+     * per save so a page pointing at a dataset that has since been deleted is refused where the
+     * message can name it, instead of running as a grid that is empty for no stated reason.
+     */
+    private final StaticDatasetService staticDatasets;
 
     private final List<AppDefinition>           apps         = new CopyOnWriteArrayList<>();
     private final List<AppEnvironment>          environments = new CopyOnWriteArrayList<>();
@@ -47,9 +54,11 @@ public class AppCatalogService {
     private final List<AppUseCaseInstanceGroup> groups       = new CopyOnWriteArrayList<>();
     private final List<AppPage>                 pages        = new CopyOnWriteArrayList<>();
 
-    public AppCatalogService(ObjectMapper objectMapper, ServerPropertiesLoader serverPropertiesLoader) {
+    public AppCatalogService(ObjectMapper objectMapper, ServerPropertiesLoader serverPropertiesLoader,
+                             StaticDatasetService staticDatasets) {
         this.objectMapper = objectMapper;
         this.serverPropertiesLoader = serverPropertiesLoader;
+        this.staticDatasets = staticDatasets;
     }
 
     @PostConstruct
@@ -335,9 +344,14 @@ public class AppCatalogService {
         write("apppages.json", pages);
     }
 
-    /** Control types that hold a value the operator supplies, and so need a field name. */
+    /**
+     * Control types that hold a value the operator supplies, and so need a field name. A multi-select
+     * is one of them: it holds the operator's picks as one comma-separated value, so everything that
+     * reads a control by field name — an action's {@code ${field}}, a mandatory check, an assignment
+     * — reads it without knowing it came from a list rather than a box.
+     */
     private static final List<String> VALUE_TYPES =
-            List.of("text", "textarea", "number", "date", "hidden", "select", "checkbox");
+            List.of("text", "textarea", "number", "date", "hidden", "select", "checkbox", "multiselect");
 
     /** Control types that run use case instances when clicked. */
     private static final List<String> ACTION_TYPES = List.of("button", "link");
@@ -352,7 +366,8 @@ public class AppCatalogService {
      * and an action can still fill it. The rows it binds become the wedges, named and sized by two
      * fields of each row. Mirrors TARGET_TYPES in apppage.html.
      */
-    private static final List<String> TARGET_TYPES = List.of("grid", "select", "text", "textarea", "link", "pie");
+    private static final List<String> TARGET_TYPES =
+            List.of("grid", "select", "multiselect", "text", "textarea", "link", "pie");
 
     /**
      * Control types another control can write a value into. Wider than {@link #TARGET_TYPES}: a
@@ -360,7 +375,7 @@ public class AppCatalogService {
      * value being put somewhere — every value control takes one, and a label takes one to show.
      */
     private static final List<String> ASSIGN_TYPES =
-            List.of("text", "textarea", "number", "date", "hidden", "select", "checkbox", "label");
+            List.of("text", "textarea", "number", "date", "hidden", "select", "multiselect", "checkbox", "label");
 
     /**
      * Control types nothing sets off, and which therefore have nothing to set or run. A hidden field
@@ -376,6 +391,7 @@ public class AppCatalogService {
         List<String> fieldNames = new ArrayList<>();
         List<String> transformNames = validateTransforms(page);
         List<String> actionIds = validatePageActions(page, transformNames);
+        List<String> variableNames = validateVariables(page);
 
         for (AppPageControl control : page.getControls()) {
             if (control.getControlId() == null || control.getControlId().isBlank()) {
@@ -391,10 +407,14 @@ public class AppCatalogService {
                 if (fieldNames.contains(control.getFieldName()))
                     throw new IllegalArgumentException("Duplicate field name: " + control.getFieldName());
                 fieldNames.add(control.getFieldName());
+                checkFieldNameFree(control, variableNames, where);
             }
             validateSlices(control, where);
             validateLinkUrl(control, where);
-            if ("select".equals(control.getType()) && control.getOptionSource() != null) {
+            validateLinkPage(control, where);
+            validateDatasetName(control, where);
+            validateRowErrorExpression(control, where);
+            if (isSelect(control.getType()) && control.getOptionSource() != null) {
                 AppPageOptionSource source = control.getOptionSource();
                 if ("USECASE".equals(source.getMode())) {
                     requireInstance(source.getAppUseCaseInstanceId(), where + " option source");
@@ -403,6 +423,8 @@ public class AppCatalogService {
                         throw new IllegalArgumentException(where + " option source names no app");
                     if (getApp(source.getAppName()) == null)
                         throw new IllegalArgumentException(where + " option source names an unknown app: " + source.getAppName());
+                } else if ("DATASET".equals(source.getMode())) {
+                    requireDataset(source.getDatasetName(), where + " option source");
                 }
             }
         }
@@ -492,6 +514,55 @@ public class AppCatalogService {
     }
 
     /**
+     * A grid's static dataset, when it was given one. Only a grid has one — a select reaches a
+     * dataset through its option source instead, where it can also say which columns are the key and
+     * the label — so a dataset name left behind on a control that has since become something else is
+     * refused rather than saved as a setting nothing would ever read.
+     */
+    private void validateDatasetName(AppPageControl control, String where) {
+        String name = control.getDatasetName();
+        if (name == null || name.isBlank()) return;
+        if (!"grid".equals(control.getType()))
+            throw new IllegalArgumentException(where + " is a " + control.getType()
+                    + " — only a grid is filled straight from a static dataset");
+        requireDataset(name, where);
+    }
+
+    /**
+     * A grid's row check, when it was given one: {@code STATUS != SUCCESS || RECORDCOUNT = 0}.
+     *
+     * <p>Only a grid has rows to judge, so an expression left behind on a control that has since
+     * become something else is refused rather than saved as a setting nothing would ever read — the
+     * same rule the static dataset above follows, for the same reason.
+     *
+     * <p>And it has to be an expression that can be read. The browser is what evaluates it, over the
+     * rows as they arrive, and an expression it cannot parse there leaves a grid that judges nothing
+     * while looking as though it does — the one outcome this check exists to prevent. Refused here,
+     * the message can say which grid and what about the expression could not be read.
+     */
+    static void validateRowErrorExpression(AppPageControl control, String where) {
+        String expression = control.getRowErrorExpression();
+        if (expression == null || expression.isBlank()) return;
+        if (!"grid".equals(control.getType()))
+            throw new IllegalArgumentException(where + " is a " + control.getType()
+                    + " — only a grid checks its rows");
+        try {
+            AppPageRowCheck.check(expression);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException(where + " has a row check that cannot be read: "
+                    + e.getMessage() + " — in '" + expression + "'");
+        }
+    }
+
+    /** A dataset a page names has to be one the library actually holds. */
+    private void requireDataset(String datasetName, String where) {
+        if (datasetName == null || datasetName.isBlank())
+            throw new IllegalArgumentException(where + " names no static dataset");
+        if (staticDatasets.get(datasetName) == null)
+            throw new IllegalArgumentException(where + " names an unknown static dataset: " + datasetName);
+    }
+
+    /**
      * A link's own address, when the designer gave it one. Only {@code http}, {@code https} and a
      * path rooted on this server are allowed through, and it is the same rule the running page
      * applies to an address an action binds — the value ends up in an href either way, and a
@@ -501,6 +572,11 @@ public class AppCatalogService {
      * the page would store a link that looked wired up and went nowhere, with nothing anywhere to
      * say why. Here the message can name the link and the address it was given.
      */
+    /** Whether this control picks from a list of options — one of them, or several. */
+    static boolean isSelect(String type) {
+        return "select".equals(type) || "multiselect".equals(type);
+    }
+
     static void validateLinkUrl(AppPageControl control, String where) {
         if (!"link".equals(control.getType())) return;
         String url = control.getDefaultValue() == null ? "" : control.getDefaultValue().trim();
@@ -513,6 +589,26 @@ public class AppCatalogService {
         if (!rooted && !absolute)
             throw new IllegalArgumentException(where + " has a URL a link cannot point at: " + url
                     + " — http, https, or a path on this server.");
+    }
+
+    /**
+     * The other page a link opens, when it was pointed at one. Only a link may name a page — a name
+     * left behind on a control that has since become something else is a setting nothing would ever
+     * read — and the page it names has to be one this catalog holds.
+     *
+     * <p>Checked here rather than left to the click, which is the whole reason the page is named
+     * rather than written out as a URL: a link to a page that was renamed or deleted looks exactly
+     * like a working one until somebody follows it and lands on "no such page". Refusing the save
+     * puts the problem in front of whoever can still fix it.
+     */
+    private void validateLinkPage(AppPageControl control, String where) {
+        String name = control.getLinkPageName();
+        if (name == null || name.isBlank()) return;
+        if (!"link".equals(control.getType()))
+            throw new IllegalArgumentException(where + " is a " + control.getType()
+                    + " — only a link opens another page");
+        if (getPage(name) == null)
+            throw new IllegalArgumentException(where + " opens a page that is not in this catalog: " + name);
     }
 
     /**
@@ -681,6 +777,58 @@ public class AppCatalogService {
     }
 
     /**
+     * The page's ad-hoc variables, handed back by name so a control cannot be given a field name one
+     * of them already answers to.
+     *
+     * <p>Three things are refused, and each of them is a page that would half-work. A name a
+     * template cannot spell is a variable nothing could ever read. Two variables of one name make
+     * "which value is this" unanswerable. And a name {@link AppPageVariable#BUILT_IN} already holds
+     * is a value the run computes for itself, so the stored one would be quietly ignored every time
+     * the page ran.
+     *
+     * <p>A blank value is left alone: a variable declared for an operator to see and a page to fill
+     * in later is a reasonable thing to save, and unlike a blank transform expression there is
+     * nothing it could fail at.
+     */
+    /**
+     * A value control may not answer to a name a variable already holds, its own or a built-in.
+     *
+     * <p>Both would otherwise make <code>${name}</code> mean two things at once, and which of them a
+     * template got would depend on a lookup order nobody writing the page can see. Refused at the
+     * control rather than at the variable because the variable may be the older of the two and is
+     * read from more places: a page that has carried <code>${runTag}</code> into forty actions should
+     * not quietly start meaning a text box somebody has just dropped on the canvas.
+     */
+    static void checkFieldNameFree(AppPageControl control, List<String> variableNames, String where) {
+        String fieldName = control.getFieldName();
+        if (fieldName == null || fieldName.isBlank()) return;
+        if (variableNames.contains(fieldName))
+            throw new IllegalArgumentException(where + " has the field name of a page variable: " + fieldName);
+        if (AppPageVariable.BUILT_IN.contains(fieldName.toUpperCase()))
+            throw new IllegalArgumentException(where + " has the field name of a variable every page already has: "
+                    + fieldName);
+    }
+
+    static List<String> validateVariables(AppPage page) {
+        List<String> names = new ArrayList<>();
+        for (AppPageVariable variable : page.getVariables()) {
+            String name = variable.name() == null ? "" : variable.name().trim();
+            if (name.isBlank())
+                throw new IllegalArgumentException("A page variable has no name");
+            if (!AppPageVariable.isLegalName(name))
+                throw new IllegalArgumentException("Page variable '" + name + "' is not a name a template can spell —"
+                        + " letters, digits and underscores only, starting with a letter or an underscore");
+            if (AppPageVariable.BUILT_IN.contains(name.toUpperCase()))
+                throw new IllegalArgumentException("Page variable '" + name + "' redefines one this page already has:"
+                        + " " + String.join(", ", AppPageVariable.BUILT_IN) + " are worked out when a trigger runs");
+            if (names.contains(name))
+                throw new IllegalArgumentException("Duplicate page variable: " + name);
+            names.add(name);
+        }
+        return names;
+    }
+
+    /**
      * Checks the page's transform library and hands back its names for the actions to be checked
      * against. A blank name would be unnameable and a duplicate would make "which step does this
      * action run" unanswerable, so both are refused rather than silently picking one. Only a JSONata
@@ -702,22 +850,172 @@ public class AppCatalogService {
 
     /** The instance an action runs, the transforms it chains and the control it fills all have to be real. */
     private void validateAction(AppPage page, AppPageAction action, List<String> transformNames, String where) {
+        // Asked of every action, before the kinds part company: both describe fanning out, and a
+        // performance action is refused one — so filters or columns written on either kind are
+        // wiring that could never run.
+        validateRowFilters(action, where);
+        validateRowColumns(action, where);
+        if (action.isPerformance()) {
+            validatePerformanceAction(page, action, where);
+            return;
+        }
         requireInstance(action.getAppUseCaseInstanceId(), where);
         for (String name : action.getTransformNames()) {
             if (!transformNames.contains(name))
                 throw new IllegalArgumentException(where + " applies a transform that is not on this page: " + name);
         }
+        validateRowSource(page, action, where);
+        validateActionTarget(page, action, where);
+    }
 
+    /**
+     * Where an action is allowed to put what it bound. Which control types those are is not one list
+     * but three, and which applies is decided by how many answers the action is going to have: run
+     * once it may fill any of the long-standing targets; fanned out over a grid's rows it fills one
+     * grid, a row per call, or a tab set, a grid per call.
+     *
+     * <p>A tab set is deliberately in neither of the first two: there is no single answer a tab set
+     * as such holds, so an ordinary action aimed at one is refused and told to aim at one of the
+     * grids inside it instead.
+     */
+    /**
+     * A performance action: it calls nothing outward, so it answers to none of the checks an ordinary
+     * action does — no instance to be real, no transforms to be on the page, no response for a path
+     * to be read out of. What is left is where its rows go.
+     *
+     * <p>Which has to be a grid, and there is nothing to soften about that: the summary is a table
+     * with six columns and a row per app, environment and use case, and a text box, a link or a chart
+     * has nowhere to put one. A blank target is refused for the same reason — an ordinary action with
+     * no target is still worth running for the call it makes, and this one makes none, so a
+     * targetless performance action is an action that would do nothing whatever.
+     *
+     * <p>Fanning out is refused as well: a fan-out runs its action once per row of a grid, and this
+     * action reads the run history rather than the row, so every one of those calls would summarise
+     * the identical thing.
+     */
+    static void validatePerformanceAction(AppPage page, AppPageAction action, String where) {
+        if (action.isRowFanOut())
+            throw new IllegalArgumentException(where + " summarises performance, which reads the run history "
+                    + "rather than a row — so running it once per row of a grid would produce the same summary "
+                    + "every time. Clear its \"for each row of\".");
+
+        String target = action.getTargetControlId();
+        if (target == null || target.isBlank())
+            throw new IllegalArgumentException(where + " summarises performance but has nowhere to put it — "
+                    + "aim it at a grid, or at a new grid.");
+        if (AppPageAction.NEW_GRID.equals(target)) return;
+
+        AppPageControl targetControl = page.getControls().stream()
+                .filter(c -> target.equals(c.getControlId())).findFirst().orElse(null);
+        if (targetControl == null)
+            throw new IllegalArgumentException(where + " targets a control that is not on this page");
+        if (!"grid".equals(targetControl.getType()))
+            throw new IllegalArgumentException(where + " summarises performance, which is a table of app, "
+                    + "environment, use case, request count and timings — so it must target a grid, not a "
+                    + targetControl.getType());
+    }
+
+    static void validateActionTarget(AppPage page, AppPageAction action, String where) {
         String target = action.getTargetControlId();
         if (target == null || target.isBlank() || AppPageAction.NEW_GRID.equals(target)) return;
         AppPageControl targetControl = page.getControls().stream()
                 .filter(c -> target.equals(c.getControlId())).findFirst().orElse(null);
         if (targetControl == null)
             throw new IllegalArgumentException(where + " targets a control that is not on this page");
+
+        if (action.isTabsPerRow()) {
+            if (!"tabs".equals(targetControl.getType()))
+                throw new IllegalArgumentException(where + " gives each row its own tab, so it must target a tab set, not a "
+                        + targetControl.getType());
+            return;
+        }
+        if ("tabs".equals(targetControl.getType()))
+            throw new IllegalArgumentException(where + " targets a tab set, which only an action giving each row "
+                    + "of a grid its own tab may do — aim it at one of the grids inside instead");
         if (!TARGET_TYPES.contains(targetControl.getType()))
             throw new IllegalArgumentException(where
                     + " must target a grid, select, text, text area, link or pie chart, not a "
                     + targetControl.getType());
+        // Every row's answer becoming a row of one grid only means anything where rows can go.
+        if (action.isRowFanOut() && !"grid".equals(targetControl.getType()))
+            throw new IllegalArgumentException(where + " runs once per row and collects the answers into one grid, "
+                    + "so it must target a grid, not a " + targetControl.getType());
+    }
+
+    /**
+     * A fan-out's row source: a grid on this page, and not one this very action fills, which would
+     * be an action feeding itself its own next set of rows.
+     */
+    static void validateRowSource(AppPage page, AppPageAction action, String where) {
+        if (!action.isRowFanOut()) return;
+        String sourceId = action.getRowSourceControlId();
+        AppPageControl source = page.getControls().stream()
+                .filter(c -> sourceId.equals(c.getControlId())).findFirst().orElse(null);
+        if (source == null)
+            throw new IllegalArgumentException(where + " runs once per row of a grid that is not on this page: " + sourceId);
+        if (!"grid".equals(source.getType()))
+            throw new IllegalArgumentException(where + " runs once per row of a " + source.getType()
+                    + " — only a grid has rows to run over");
+        if (sourceId.equals(action.getTargetControlId()))
+            throw new IllegalArgumentException(where + " reads its rows from the same grid it fills, "
+                    + "so each run would be over whatever the last one left behind");
+    }
+
+    /**
+     * A fan-out's own row filters — see {@link AppPageRowFilter}. Every one of them has to name a
+     * column and a test that exists; a filter written on an action that does not fan out is refused
+     * outright rather than saved as wiring that could never run, which is the same rule an
+     * assignment on a grid answers to.
+     *
+     * <p>The column is not checked against the source grid's columns, and deliberately: a grid whose
+     * rows come from an endpoint has whatever columns that endpoint returned, which is not known
+     * until the page runs. A filter naming a column that never turns up says so on the page, where
+     * the rows are, rather than here.
+     */
+    static void validateRowFilters(AppPageAction action, String where) {
+        if (action.getRowFilters().isEmpty()) return;
+        if (!action.isRowFanOut())
+            throw new IllegalArgumentException(where + " filters the rows it runs over but does not run over rows —"
+                    + " point it at a grid under \"for each row of\", or take the filters off");
+        for (AppPageRowFilter filter : action.getRowFilters()) {
+            if (filter.column() == null || filter.column().isBlank())
+                throw new IllegalArgumentException(where + " has a row filter that names no column");
+            if (!AppPageRowFilter.OPERATORS.contains(filter.operatorOrDefault()))
+                throw new IllegalArgumentException(where + " has a row filter with an unknown test: " + filter.operator());
+        }
+    }
+
+    /**
+     * The columns of the grid a collected fan-out fills — see {@link AppPageResultColumn}.
+     *
+     * <p>Only a fan-out collecting into one grid has a grid these describe. Under a tab per row every
+     * call fills a grid of its own with its whole answer, and an action that runs once has one
+     * answer and the target grid's own columns to show it under, so in both cases these columns would
+     * be saved and never consulted.
+     */
+    static void validateRowColumns(AppPageAction action, String where) {
+        if (action.getRowColumns().isEmpty()) return;
+        if (!action.isRowFanOut())
+            throw new IllegalArgumentException(where + " defines the columns its calls are collected under but makes"
+                    + " one call — point it at a grid under \"for each row of\", or take the columns off");
+        if (action.isTabsPerRow())
+            throw new IllegalArgumentException(where + " gives each row its own tab, so each call fills a grid with its"
+                    + " whole answer and there is no collected grid for these columns to lay out");
+        List<String> names = new ArrayList<>();
+        for (AppPageResultColumn column : action.getRowColumns()) {
+            if (column.name() == null || column.name().isBlank())
+                throw new IllegalArgumentException(where + " has a result column with no name");
+            if (names.contains(column.name()))
+                throw new IllegalArgumentException(where + " has two result columns called " + column.name());
+            names.add(column.name());
+            if (!AppPageResultColumn.KINDS.contains(column.kindOrDefault()))
+                throw new IllegalArgumentException(where + " column '" + column.name()
+                        + "' reads something this page has no idea how to read: " + column.kind());
+            if (AppPageResultColumn.NEEDS_EXPRESSION.contains(column.kindOrDefault())
+                    && (column.expression() == null || column.expression().isBlank()))
+                throw new IllegalArgumentException(where + " column '" + column.name() + "' says where to read from"
+                        + " but not what to read");
+        }
     }
 
     private static String actionName(AppPageAction action, String fallback) {

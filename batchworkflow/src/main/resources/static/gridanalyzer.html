@@ -1,0 +1,1093 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analyze Grid</title>
+    <link rel="stylesheet" href="appcatalog.css">
+    <script src="appcatalog.js"></script>
+    <style>
+        /* A pivot table over whatever a grid on an app page is currently showing. Its own screen
+           rather than a panel on the page: "what does this add up to, broken down by that" needs
+           room, and the operator wants the grid still sitting in the other tab to go back to.
+
+           The rows arrive by postMessage from the page that opened this one — see the handshake at
+           the foot of the script — so nothing here fetches, and every count on screen is of exactly
+           the rows the operator could see, filters and sort included. */
+
+        html, body { height: 100%; }
+        body { padding: 0; display: flex; flex-direction: column; overflow: hidden; }
+
+        .ga-head {
+            background: #fff; border-bottom: 1px solid #dfe1e6;
+            padding: 12px 18px; display: flex; align-items: flex-start; gap: 16px; flex: none;
+        }
+        .ga-head h1 { font-size: 17px; margin: 0 0 2px; }
+        .ga-head .subtitle { margin: 0; }
+        .ga-actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+
+        .ga-body { flex: 1; min-height: 0; display: flex; }
+
+        /* ── The field list ──────────────────────────────────────────────────
+           Every column of the source grid, once, draggable into any of the three zones. The three
+           buttons on each row do the same thing without a drag, which is what keeps the screen
+           usable from a keyboard and on a trackpad. */
+        .ga-side {
+            width: 245px; flex: none; background: #fff; border-right: 1px solid #dfe1e6;
+            display: flex; flex-direction: column; min-height: 0;
+        }
+        .ga-side h2 {
+            font-size: 11px; font-weight: 700; color: #5e6c84; text-transform: uppercase;
+            letter-spacing: .5px; padding: 12px 12px 8px; flex: none;
+        }
+        .ga-search { padding: 0 12px 8px; flex: none; }
+        .ga-search input { width: 100%; padding: 5px 8px; font-size: 12px; }
+        .ga-field-list { overflow: auto; flex: 1; padding: 0 12px 12px; }
+        .ga-field {
+            display: flex; align-items: center; gap: 5px; padding: 4px 6px; margin-bottom: 5px;
+            border: 1px solid #dfe1e6; border-radius: 4px; background: #fafbfc;
+            font-size: 12px; cursor: grab;
+        }
+        .ga-field:hover { border-color: #b3bac5; background: #f4f5f7; }
+        .ga-field .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .ga-field .num { font-size: 9px; color: #0052cc; border: 1px solid #b3d4ff; border-radius: 3px; padding: 0 3px; flex: none; }
+        .ga-mini {
+            font-size: 10px; padding: 2px 5px; border: 1px solid #dfe1e6; background: #fff;
+            border-radius: 3px; cursor: pointer; color: #5e6c84; font-family: inherit; flex: none;
+        }
+        .ga-mini:hover { background: #ebecf0; color: #172b4d; }
+        .ga-side .empty { font-size: 11px; color: #97a0af; font-style: italic; }
+
+        /* ── Zones and result ───────────────────────────────────────────────── */
+        .ga-main { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 12px 14px; gap: 10px; min-height: 0; }
+
+        .ga-zones { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; flex: none; }
+        @media (max-width: 900px) { .ga-zones { grid-template-columns: 1fr; } }
+        .ga-zone { background: #fff; border: 1px dashed #c1c7d0; border-radius: 5px; padding: 8px 9px; min-height: 68px; }
+        .ga-zone.over { border-color: #0052cc; background: #f0f6ff; }
+        .ga-zone h3 {
+            font-size: 10px; font-weight: 700; color: #5e6c84; text-transform: uppercase;
+            letter-spacing: .5px; margin-bottom: 6px;
+        }
+        .ga-zone h3 .what { font-weight: 500; text-transform: none; letter-spacing: 0; color: #97a0af; }
+        .ga-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+        .ga-chip {
+            display: inline-flex; align-items: center; gap: 4px; border-radius: 3px;
+            padding: 3px 5px; font-size: 12px; cursor: grab;
+            background: #e9f2ff; border: 1px solid #b3d4ff; color: #0747a6;
+        }
+        .ga-chip.val { background: #e3fcef; border-color: #abf5d1; color: #006644; }
+        .ga-chip.drop-before { box-shadow: -3px 0 0 #0052cc; }
+        .ga-chip select {
+            font-size: 11px; padding: 1px 3px; border: 1px solid rgba(0, 0, 0, .18);
+            border-radius: 3px; background: #fff; color: inherit; font-family: inherit; width: auto;
+        }
+        .ga-chip button {
+            border: none; background: none; cursor: pointer; color: inherit;
+            font-size: 13px; line-height: 1; padding: 0 1px;
+        }
+        .ga-zone .empty { font-size: 11px; color: #97a0af; font-style: italic; }
+
+        .ga-opts { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: #5e6c84; flex: none; align-items: center; }
+        .ga-opts label { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
+        .ga-opts input[type=checkbox] { width: auto; padding: 0; margin: 0; }
+        .ga-opts .shape { margin-left: auto; }
+
+        .ga-out { flex: 1; min-height: 0; overflow: auto; background: #fff; border: 1px solid #dfe1e6; border-radius: 5px; }
+        .ga-hint { padding: 16px; font-size: 12px; color: #5e6c84; line-height: 1.7; }
+        .ga-hint b { color: #172b4d; }
+
+        table.ga-table { border-collapse: separate; border-spacing: 0; font-size: 12px; width: max-content; }
+        .ga-table th, .ga-table td {
+            border-right: 1px solid #ebecf0; border-bottom: 1px solid #ebecf0;
+            padding: 4px 9px; text-align: left; vertical-align: top; white-space: nowrap;
+        }
+        .ga-table thead th { background: #f4f5f7; font-weight: 600; position: sticky; z-index: 2; }
+        .ga-table thead th.ga-corner { background: #fff; }
+        .ga-table thead th.ga-rowfield { color: #5e6c84; }
+        .ga-table tbody th { background: #fafbfc; font-weight: 600; }
+        .ga-table td { font-variant-numeric: tabular-nums; }
+        .ga-table td.num { text-align: right; }
+        .ga-table td.blank { color: #c1c7d0; }
+        .ga-table th.ga-total, .ga-table td.ga-total { background: #f4f5f7; font-weight: 600; }
+        .ga-table tfoot th, .ga-table tfoot td { background: #ebecf0; font-weight: 600; }
+
+        /* ── Save as a dataset ───────────────────────────────────────────────
+           A pivot worth keeping is usually one someone else has to see, or one you want to sit
+           beside next week's. Saving it as a static dataset puts it where every other page in the
+           tool already looks for rows, rather than inventing a store only this screen can read. */
+        .ga-modal-back {
+            position: fixed; inset: 0; background: rgba(9, 30, 66, .48);
+            display: flex; align-items: center; justify-content: center; z-index: 50; padding: 20px;
+        }
+        .ga-modal {
+            background: #fff; border-radius: 6px; width: 440px; max-width: 100%;
+            max-height: 100%; overflow: auto; padding: 18px 20px;
+            box-shadow: 0 8px 24px rgba(9, 30, 66, .28);
+        }
+        .ga-modal h2 { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+        .ga-modal p.note { font-size: 12px; color: #5e6c84; margin-bottom: 14px; line-height: 1.5; }
+        .ga-modal label.fld { display: block; font-size: 11px; font-weight: 600; color: #5e6c84;
+                              text-transform: uppercase; letter-spacing: .4px; margin-bottom: 4px; }
+        .ga-modal input[type=text] { width: 100%; font-size: 13px; padding: 6px 9px; }
+        .ga-modal .choice { display: flex; flex-direction: column; gap: 6px; margin: 12px 0 4px; }
+        .ga-modal .choice label { display: flex; gap: 7px; align-items: flex-start; font-size: 13px; cursor: pointer; }
+        .ga-modal .choice input { width: auto; margin: 3px 0 0; padding: 0; flex: none; }
+        .ga-modal .choice .sub { display: block; font-size: 11px; color: #5e6c84; }
+        .ga-modal .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+        .ga-msg { font-size: 12px; margin-top: 10px; min-height: 16px; }
+        .ga-msg.ok  { color: #006644; }
+        .ga-msg.err { color: #bf2600; }
+    </style>
+</head>
+<body>
+
+<header class="ga-head">
+    <div>
+        <h1 id="gaTitle">Analyze</h1>
+        <p class="subtitle" id="gaSub">Waiting for the grid&hellip;</p>
+    </div>
+    <div class="ga-actions">
+        <button type="button" class="tool-btn" id="gaSwap">Swap rows / columns</button>
+        <button type="button" class="tool-btn" id="gaClear">Start over</button>
+        <button type="button" class="tool-btn" id="gaHtml">View as HTML</button>
+        <button type="button" class="tool-btn" id="gaCsv">Download CSV</button>
+        <button type="button" class="tool-btn" id="gaSave">Save as dataset</button>
+    </div>
+</header>
+
+<div class="ga-body">
+    <aside class="ga-side">
+        <h2>Columns of the grid</h2>
+        <div class="ga-search"><input type="text" id="gaSearch" placeholder="Find a column"></div>
+        <div class="ga-field-list" id="gaFields"></div>
+    </aside>
+
+    <main class="ga-main">
+        <div class="ga-zones">
+            <div class="ga-zone" data-zone="rows">
+                <h3>Rows <span class="what">&mdash; one line per value</span></h3>
+                <div class="ga-chips" id="gaRowZone"></div>
+            </div>
+            <div class="ga-zone" data-zone="cols">
+                <h3>Columns <span class="what">&mdash; the pivot</span></h3>
+                <div class="ga-chips" id="gaColZone"></div>
+            </div>
+            <div class="ga-zone" data-zone="values">
+                <h3>Values <span class="what">&mdash; what each cell works out</span></h3>
+                <div class="ga-chips" id="gaValZone"></div>
+            </div>
+        </div>
+
+        <div class="ga-opts">
+            <label><input type="checkbox" id="gaGrandRow" checked> Total row</label>
+            <label><input type="checkbox" id="gaGrandCol" checked> Total column</label>
+            <label><input type="checkbox" id="gaBlanks" checked> Keep blank values</label>
+            <label><input type="checkbox" id="gaHeat"> Heat map</label>
+            <span class="shape" id="gaShape"></span>
+        </div>
+
+        <div class="ga-out" id="gaOut"><div class="ga-hint">Waiting for the grid&hellip;</div></div>
+    </main>
+</div>
+
+<script>
+'use strict';
+
+// ── What arrived from the grid ───────────────────────────────────────────────
+// Set once, by the handshake at the bottom, and never written to again: every reshape on this
+// screen is a fresh read of these same rows, so nothing the operator does here can lose data.
+let SOURCE = { title: 'Grid', columns: [], rows: [] };
+
+/**
+ * The one entry in the field list that is not a column of the grid: it counts rows rather than
+ * values of anything, which is the measure most pivots start from. Prefixed with a control
+ * character so that no column of any response can collide with it, and never written into the
+ * document — the field list addresses its entries by position for exactly that reason.
+ */
+const ROW_COUNT = '\u0001rows';
+const ROW_COUNT_LABEL = '(row count)';
+
+/**
+ * What a cell can work out. Numeric ones right-align and take part in the heat map; min and max
+ * fall back to comparing text when the column is not numbers, which is what makes "latest status"
+ * or "last id" answerable on a column of strings.
+ */
+const AGGS = {
+    sum:    { label: 'Sum',    numeric: true },
+    count:  { label: 'Count',  numeric: true },
+    unique: { label: 'Unique', numeric: true },
+    avg:    { label: 'Average', numeric: true },
+    min:    { label: 'Min' },
+    max:    { label: 'Max' }
+};
+
+/** Rows, columns and values as chosen, plus the four switches under the zones. */
+const cfg = {
+    rows: [],
+    cols: [],
+    values: [{ field: ROW_COUNT, agg: 'count' }],
+    grandRow: true,
+    grandCol: true,
+    blanks: true,
+    heat: false
+};
+
+/** Which columns look like numbers, worked out once — decides the default aggregation and alignment. */
+let numericFields = new Set();
+
+/** The last pivot computed, kept so the three exports do not have to recompute it. */
+let model = null;
+
+const esc = value => AC.esc(value);
+const $ = id => document.getElementById(id);
+
+// ── Reading a cell ───────────────────────────────────────────────────────────
+// Deliberately the same rule the grid itself uses: a cell is the text it was shown as, so what you
+// group by here is what you were looking at there, objects and nulls included.
+
+function cellText(row, column) {
+    const cell = (row && typeof row === 'object') ? row[column] : row;
+    if (cell === undefined || cell === null) return '';
+    return typeof cell === 'object' ? JSON.stringify(cell) : String(cell);
+}
+
+function toNumber(text) {
+    if (text === '' || text === null || text === undefined) return null;
+    // Thousands separators and a trailing % or currency are ordinary in a response someone is
+    // summing, and Number() alone rejects every one of them.
+    const cleaned = String(text).replace(/[\s,]/g, '').replace(/^[$£€]/, '').replace(/%$/, '');
+    if (cleaned === '' || isNaN(Number(cleaned))) return null;
+    return Number(cleaned);
+}
+
+/** Numbers compare as numbers so a column of ids does not order 1, 10, 2. */
+function compareText(a, b) {
+    const na = toNumber(a), nb = toNumber(b);
+    if (na !== null && nb !== null) return na === nb ? 0 : (na < nb ? -1 : 1);
+    return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
+}
+
+function fieldLabel(field) {
+    return field === ROW_COUNT ? ROW_COUNT_LABEL : field;
+}
+
+function measureLabel(measure) {
+    return measure.field === ROW_COUNT ? 'Row count'
+        : AGGS[measure.agg].label + ' of ' + measure.field;
+}
+
+/** A key part as it is shown — an empty cell is a group of its own and says so. */
+function keyLabel(part) {
+    return part === '' ? '(blank)' : part;
+}
+
+// ── Aggregation ──────────────────────────────────────────────────────────────
+// One accumulator per measure per cell, fed a single pass over the rows. Only what the chosen
+// aggregation needs is kept: a Set is built for "unique" and for nothing else, which matters when a
+// 27,000-row grid is pivoted twelve ways across.
+
+function newAcc(agg) {
+    if (agg === 'unique') return { set: new Set() };
+    if (agg === 'sum' || agg === 'avg') return { sum: 0, n: 0 };
+    if (agg === 'count') return { n: 0 };
+    return { best: undefined };
+}
+
+function accept(acc, measure, row) {
+    const agg = measure.agg;
+    if (measure.field === ROW_COUNT) { acc.n++; return; }
+
+    const text = cellText(row, measure.field);
+    if (agg === 'count') { if (text !== '') acc.n++; return; }
+    if (agg === 'unique') { if (text !== '') acc.set.add(text); return; }
+    if (agg === 'sum' || agg === 'avg') {
+        const n = toNumber(text);
+        if (n !== null) { acc.sum += n; acc.n++; }
+        return;
+    }
+    if (text === '') return;
+    if (acc.best === undefined || compareText(text, acc.best) * (agg === 'max' ? 1 : -1) > 0) acc.best = text;
+}
+
+/** The accumulator's answer, or null for "nothing here" — which draws as a dash, not a zero. */
+function accValue(acc, measure) {
+    const agg = measure.field === ROW_COUNT ? 'count' : measure.agg;
+    if (agg === 'count')  return acc.n;
+    if (agg === 'unique') return acc.set.size;
+    if (agg === 'sum')    return acc.n ? acc.sum : null;
+    if (agg === 'avg')    return acc.n ? acc.sum / acc.n : null;
+    return acc.best === undefined ? null : acc.best;
+}
+
+function isNumericMeasure(measure) {
+    return measure.field === ROW_COUNT || !!AGGS[measure.agg].numeric || numericFields.has(measure.field);
+}
+
+/**
+ * What the parts of a multi-level key are joined with to index it. A control character rather than
+ * anything readable: two levels of grouping that read "A" + "B/C" and "A/B" + "C" must not land in
+ * the same bucket, and a separator that cannot occur in a response is the only way to be sure.
+ */
+const SEP = '\u0001';
+
+/**
+ * The whole pivot, in one pass over the rows.
+ *
+ * <p>Row keys, column keys and every cell are collected together rather than in a pass each: the
+ * rows are the expensive part, and reading them once is what keeps a large grid instant here.
+ * Totals are accumulated alongside rather than summed from the cells afterwards, because a total of
+ * averages or of distinct counts is not the average or the distinct count of the whole.
+ */
+function computePivot() {
+    const rowFields = cfg.rows;
+    const colFields = cfg.cols;
+    const measures  = cfg.values.length ? cfg.values : [{ field: ROW_COUNT, agg: 'count' }];
+
+    const rowKeys = new Map();   // joined key -> parts
+    const colKeys = new Map();
+    const cells   = new Map();   // row key -> Map(col key -> accumulators)
+    const rowTot  = new Map();
+    const colTot  = new Map();
+    const grand   = measures.map(m => newAcc(m.agg));
+
+    const accsFor = (map, key) => {
+        let accs = map.get(key);
+        if (!accs) { accs = measures.map(m => newAcc(m.agg)); map.set(key, accs); }
+        return accs;
+    };
+
+    for (const row of SOURCE.rows) {
+        const rowParts = rowFields.map(f => cellText(row, f));
+        const colParts = colFields.map(f => cellText(row, f));
+
+        // "Keep blank values" off drops the row from the pivot entirely rather than bucketing it
+        // under (blank) — the usual reason to turn it off is that the blanks are noise.
+        if (!cfg.blanks && (rowParts.some(p => p === '') || colParts.some(p => p === ''))) continue;
+
+        const rowKey = rowParts.join(SEP);
+        const colKey = colParts.join(SEP);
+        if (!rowKeys.has(rowKey)) rowKeys.set(rowKey, rowParts);
+        if (!colKeys.has(colKey)) colKeys.set(colKey, colParts);
+
+        let byCol = cells.get(rowKey);
+        if (!byCol) { byCol = new Map(); cells.set(rowKey, byCol); }
+
+        const cell = accsFor(byCol, colKey);
+        const rt   = accsFor(rowTot, rowKey);
+        const ct   = accsFor(colTot, colKey);
+        for (let i = 0; i < measures.length; i++) {
+            accept(cell[i], measures[i], row);
+            accept(rt[i],   measures[i], row);
+            accept(ct[i],   measures[i], row);
+            accept(grand[i], measures[i], row);
+        }
+    }
+
+    const sortKeys = keys => [...keys.values()].sort((a, b) => {
+        for (let i = 0; i < a.length; i++) {
+            const cmp = compareText(a[i], b[i]);
+            if (cmp) return cmp;
+        }
+        return 0;
+    });
+
+    return {
+        rowFields, colFields, measures,
+        rowKeys: rowFields.length ? sortKeys(rowKeys) : [[]],
+        colKeys: colFields.length ? sortKeys(colKeys) : [[]],
+        cells, rowTot, colTot, grand,
+        // A total column repeats the only column when nothing is pivoted across, and a total row
+        // repeats the only row when nothing is grouped down — so each is offered only when it says
+        // something the table does not already.
+        showGrandCol: cfg.grandCol && colFields.length > 0,
+        showGrandRow: cfg.grandRow && rowFields.length > 0
+    };
+}
+
+// ── Drawing the pivot ────────────────────────────────────────────────────────
+
+/**
+ * How far each group header reaches at one level: the number of following leaves that share its
+ * path down to that level, and 0 for leaves already covered by a header above or to the left.
+ */
+function groupSpans(keys, level) {
+    const spans = new Array(keys.length).fill(0);
+    let start = 0;
+    const prefix = key => key.slice(0, level + 1).join(SEP);
+    for (let i = 1; i <= keys.length; i++) {
+        if (i === keys.length || prefix(keys[i]) !== prefix(keys[start])) {
+            spans[start] = i - start;
+            start = i;
+        }
+    }
+    return spans;
+}
+
+function formatValue(value, measure) {
+    if (value === null || value === undefined || value === '') return null;
+    if (typeof value !== 'number') return String(value);
+    if (!isFinite(value)) return String(value);
+    // Averages want decimals; counts and most sums do not, and a column of 1,234.00 reads worse.
+    const decimals = Number.isInteger(value) ? 0 : (measure.agg === 'avg' ? 2 : 3);
+    return value.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+
+function render() {
+    const out = $('gaOut');
+    if (!SOURCE.rows.length) {
+        out.innerHTML = '<div class="ga-hint">The grid handed over no rows, so there is nothing to analyze.</div>';
+        $('gaShape').textContent = '';
+        return;
+    }
+
+    model = computePivot();
+    const { rowFields, colFields, measures, rowKeys, colKeys } = model;
+
+    if (!rowFields.length && !colFields.length && cfg.values.length <= 1 && cfg.values[0] && cfg.values[0].field === ROW_COUNT) {
+        // Nothing has been chosen yet. Say what to do rather than showing a one-cell table whose
+        // only number is the row count already printed in the header.
+        out.innerHTML = '<div class="ga-hint">'
+            + 'Drag a column into <b>Rows</b> to break the ' + SOURCE.rows.length.toLocaleString()
+            + ' rows down by it, and another into <b>Columns</b> to pivot them across.<br>'
+            + 'Then put the column you want measured into <b>Values</b> and pick '
+            + '<b>Sum</b>, <b>Count</b>, <b>Unique</b>, <b>Average</b>, <b>Min</b> or <b>Max</b> on it.<br>'
+            + 'Each column also has <b>R</b>, <b>C</b> and <b>&Sigma;</b> buttons if you would rather not drag.'
+            + '</div>';
+        $('gaShape').textContent = SOURCE.rows.length.toLocaleString() + ' rows';
+        return;
+    }
+
+    const nRowCols = Math.max(1, rowFields.length);
+    // A measure row is needed whenever the column headers above it cannot carry the measure name
+    // themselves: more than one measure, or no pivot columns at all to name.
+    const showMeasureRow = measures.length > 1 || colFields.length === 0;
+    const headerRows = Math.max(1, colFields.length + (showMeasureRow ? 1 : 0));
+
+    const rowFieldThs = () => rowFields.length
+        ? rowFields.map(f => '<th class="ga-rowfield">' + esc(f) + '</th>').join('')
+        : '<th class="ga-rowfield"></th>';
+
+    // ── Header ──
+    let head = '';
+    for (let level = 0; level < colFields.length; level++) {
+        let tr = '';
+        if (level === 0 && headerRows > 1) {
+            tr += '<th class="ga-corner" colspan="' + nRowCols + '" rowspan="' + (headerRows - 1) + '"></th>';
+        }
+        if (level === headerRows - 1) tr += rowFieldThs();
+
+        const spans = groupSpans(colKeys, level);
+        colKeys.forEach((key, i) => {
+            if (spans[i]) tr += '<th colspan="' + (spans[i] * measures.length) + '" title="' + esc(colFields[level]) + '">'
+                + esc(keyLabel(key[level])) + '</th>';
+        });
+        if (level === 0 && model.showGrandCol) {
+            tr += '<th class="ga-total" rowspan="' + colFields.length + '" colspan="' + measures.length + '">Total</th>';
+        }
+        head += '<tr>' + tr + '</tr>';
+    }
+    if (showMeasureRow) {
+        let tr = rowFieldThs();
+        colKeys.forEach(() => { tr += measures.map(m => '<th>' + esc(measureLabel(m)) + '</th>').join(''); });
+        if (model.showGrandCol) tr += measures.map(m => '<th class="ga-total">' + esc(measureLabel(m)) + '</th>').join('');
+        head += '<tr>' + tr + '</tr>';
+    }
+
+    // ── Body ──
+    const rowSpans = rowFields.map((f, level) => groupSpans(rowKeys, level));
+    const heat = cfg.heat ? heatScale(model) : null;
+
+    const body = rowKeys.map((key, r) => {
+        let tr = '';
+        if (rowFields.length) {
+            rowFields.forEach((f, level) => {
+                if (rowSpans[level][r]) {
+                    tr += '<th' + (rowSpans[level][r] > 1 ? ' rowspan="' + rowSpans[level][r] + '"' : '')
+                        + '>' + esc(keyLabel(key[level])) + '</th>';
+                }
+            });
+        } else {
+            tr += '<th>Total</th>';
+        }
+
+        const byCol = model.cells.get(key.join(SEP));
+        colKeys.forEach(colKey => {
+            const accs = byCol && byCol.get(colKey.join(SEP));
+            tr += measures.map((m, i) => dataCell(accs && accs[i], m, i, heat)).join('');
+        });
+        if (model.showGrandCol) {
+            const accs = model.rowTot.get(key.join(SEP));
+            tr += measures.map((m, i) => dataCell(accs && accs[i], m, i, null, 'ga-total')).join('');
+        }
+        return '<tr>' + tr + '</tr>';
+    }).join('');
+
+    // ── Total row ──
+    let foot = '';
+    if (model.showGrandRow) {
+        let tr = '<th colspan="' + nRowCols + '">Total</th>';
+        colKeys.forEach(colKey => {
+            const accs = model.colTot.get(colKey.join(SEP));
+            tr += measures.map((m, i) => dataCell(accs && accs[i], m, i)).join('');
+        });
+        if (model.showGrandCol) tr += measures.map((m, i) => dataCell(model.grand[i], m, i)).join('');
+        foot = '<tfoot><tr>' + tr + '</tr></tfoot>';
+    }
+
+    out.innerHTML = '<table class="ga-table"><thead>' + head + '</thead><tbody>' + body + '</tbody>' + foot + '</table>';
+    stickHeader(out);
+
+    $('gaShape').textContent = rowKeys.length.toLocaleString() + ' row group'
+        + (rowKeys.length === 1 ? '' : 's') + ' × ' + colKeys.length.toLocaleString()
+        + ' column group' + (colKeys.length === 1 ? '' : 's')
+        + ' · ' + SOURCE.rows.length.toLocaleString() + ' rows in';
+}
+
+function dataCell(acc, measure, index, heat, extraClass) {
+    const raw  = acc ? accValue(acc, measure) : null;
+    const text = formatValue(raw, measure);
+    const classes = [];
+    if (isNumericMeasure(measure)) classes.push('num');
+    if (text === null) classes.push('blank');
+    if (extraClass) classes.push(extraClass);
+    const shade = (heat && typeof raw === 'number') ? heat(raw, index) : '';
+    return '<td' + (classes.length ? ' class="' + classes.join(' ') + '"' : '') + shade + '>'
+        + (text === null ? '–' : esc(text)) + '</td>';
+}
+
+/**
+ * A background per measure, scaled across that measure's own cells — one shared scale would wash
+ * out a count of tens sitting beside a sum of millions.
+ */
+function heatScale(m) {
+    const bounds = m.measures.map(() => ({ min: Infinity, max: -Infinity }));
+    m.rowKeys.forEach(rowKey => {
+        const byCol = m.cells.get(rowKey.join(SEP));
+        if (!byCol) return;
+        m.colKeys.forEach(colKey => {
+            const accs = byCol.get(colKey.join(SEP));
+            if (!accs) return;
+            accs.forEach((acc, i) => {
+                const value = accValue(acc, m.measures[i]);
+                if (typeof value !== 'number' || !isFinite(value)) return;
+                if (value < bounds[i].min) bounds[i].min = value;
+                if (value > bounds[i].max) bounds[i].max = value;
+            });
+        });
+    });
+    return (value, index) => {
+        const b = bounds[index];
+        if (!b || b.max === -Infinity || b.max === b.min) return '';
+        const ratio = (value - b.min) / (b.max - b.min);
+        return ' style="background:rgba(0,82,204,' + (0.04 + ratio * 0.26).toFixed(3) + ')"';
+    };
+}
+
+/** Each header row sticks at the height of the ones above it, so a deep pivot still has a header. */
+function stickHeader(out) {
+    let top = 0;
+    out.querySelectorAll('thead tr').forEach(tr => {
+        tr.querySelectorAll('th').forEach(th => { th.style.top = top + 'px'; });
+        top += tr.getBoundingClientRect().height;
+    });
+}
+
+// ── The zones ────────────────────────────────────────────────────────────────
+
+/** The entries the field list is currently drawing, which is what its data-index values point into. */
+let listedFields = [];
+
+function renderFields() {
+    const search = $('gaSearch').value.trim().toLowerCase();
+    const fields = [ROW_COUNT].concat(SOURCE.columns)
+        .filter(f => !search || fieldLabel(f).toLowerCase().includes(search));
+    listedFields = fields;
+
+    $('gaFields').innerHTML = fields.length
+        ? fields.map((field, i) =>
+            '<div class="ga-field" draggable="true" data-index="' + i + '">'
+                + '<span class="nm" title="' + esc(fieldLabel(field)) + '">' + esc(fieldLabel(field)) + '</span>'
+                + (numericFields.has(field) ? '<span class="num" title="looks numeric">#</span>' : '')
+                + '<button type="button" class="ga-mini" data-add="rows"   title="Add to Rows">R</button>'
+                + '<button type="button" class="ga-mini" data-add="cols"   title="Add to Columns">C</button>'
+                + '<button type="button" class="ga-mini" data-add="values" title="Add to Values">&Sigma;</button>'
+            + '</div>').join('')
+        : '<div class="empty">No column matches.</div>';
+
+    $('gaFields').querySelectorAll('.ga-field').forEach(el => {
+        const field = () => listedFields[+el.dataset.index];
+        el.addEventListener('dragstart', e => {
+            e.dataTransfer.setData('text/plain', JSON.stringify({ from: 'fields', field: field() }));
+            e.dataTransfer.effectAllowed = 'copy';
+        });
+        el.querySelectorAll('[data-add]').forEach(btn => btn.addEventListener('click', () => {
+            addField(btn.dataset.add, field());
+        }));
+    });
+}
+
+function renderZones() {
+    renderKeyZone('gaRowZone', 'rows');
+    renderKeyZone('gaColZone', 'cols');
+    renderValueZone();
+}
+
+function renderKeyZone(hostId, zone) {
+    const host = $(hostId);
+    const fields = cfg[zone];
+    host.innerHTML = fields.length
+        ? fields.map((field, i) =>
+            '<span class="ga-chip" draggable="true" data-index="' + i + '">'
+                + esc(fieldLabel(field))
+                + '<button type="button" title="Remove">&times;</button>'
+            + '</span>').join('')
+        : '<span class="empty">Drop a column here</span>';
+    wireChips(host, zone);
+}
+
+function renderValueZone() {
+    const host = $('gaValZone');
+    host.innerHTML = cfg.values.length
+        ? cfg.values.map((measure, i) => {
+            const options = Object.keys(AGGS).map(key =>
+                '<option value="' + key + '"' + (measure.agg === key ? ' selected' : '') + '>'
+                + AGGS[key].label + '</option>').join('');
+            return '<span class="ga-chip val" draggable="true" data-index="' + i + '">'
+                + (measure.field === ROW_COUNT
+                    ? '<span>' + ROW_COUNT_LABEL + '</span>'
+                    : '<select data-agg="' + i + '">' + options + '</select><span>' + esc(measure.field) + '</span>')
+                + '<button type="button" title="Remove">&times;</button>'
+            + '</span>';
+        }).join('')
+        : '<span class="empty">Drop a column here</span>';
+
+    host.querySelectorAll('[data-agg]').forEach(select => select.addEventListener('change', () => {
+        cfg.values[+select.dataset.agg].agg = select.value;
+        render();
+    }));
+    wireChips(host, 'values');
+}
+
+/** Remove, and drag to reorder or to move into another zone. */
+function wireChips(host, zone) {
+    host.querySelectorAll('.ga-chip').forEach(chip => {
+        chip.querySelector('button').addEventListener('click', () => {
+            cfg[zone].splice(+chip.dataset.index, 1);
+            refresh();
+        });
+        chip.addEventListener('dragstart', e => {
+            e.stopPropagation();
+            e.dataTransfer.setData('text/plain', JSON.stringify({ from: zone, index: +chip.dataset.index }));
+            e.dataTransfer.effectAllowed = 'move';
+        });
+        chip.addEventListener('dragover', e => {
+            e.preventDefault();
+            e.stopPropagation();
+            chip.classList.add('drop-before');
+        });
+        chip.addEventListener('dragleave', () => chip.classList.remove('drop-before'));
+        chip.addEventListener('drop', e => {
+            e.preventDefault();
+            e.stopPropagation();
+            chip.classList.remove('drop-before');
+            drop(e, zone, +chip.dataset.index);
+        });
+    });
+}
+
+/** What a field becomes in a zone: a grouping key, or a measure with the aggregation that suits it. */
+function addField(zone, field, at) {
+    if (zone === 'values') {
+        const agg = field === ROW_COUNT ? 'count' : (numericFields.has(field) ? 'sum' : 'count');
+        insert(cfg.values, { field: field, agg: agg }, at);
+    } else {
+        // The row count is a measure and nothing else — it has no values to group by.
+        if (field === ROW_COUNT) return;
+        // A field grouped twice down the same axis produces one empty level, so a repeat moves it
+        // rather than adding it.
+        const existing = cfg[zone].indexOf(field);
+        if (existing >= 0) cfg[zone].splice(existing, 1);
+        insert(cfg[zone], field, at);
+        // The two key zones are exclusive: the same column cannot be both a row and a pivot.
+        const other = zone === 'rows' ? 'cols' : 'rows';
+        const clash = cfg[other].indexOf(field);
+        if (clash >= 0) cfg[other].splice(clash, 1);
+    }
+    refresh();
+}
+
+function insert(list, item, at) {
+    if (at === undefined || at === null || at < 0 || at > list.length) list.push(item);
+    else list.splice(at, 0, item);
+}
+
+function drop(e, zone, at) {
+    let payload;
+    try { payload = JSON.parse(e.dataTransfer.getData('text/plain')); } catch (err) { return; }
+    if (!payload) return;
+
+    if (payload.from === 'fields') { addField(zone, payload.field, at); return; }
+
+    const source = cfg[payload.from];
+    const moved = source[payload.index];
+    if (moved === undefined) return;
+
+    if (payload.from === zone) {
+        source.splice(payload.index, 1);
+        insert(source, moved, at !== undefined && at > payload.index ? at - 1 : at);
+        refresh();
+        return;
+    }
+    // Across zones a measure keeps only its field — an aggregation means nothing on a row header,
+    // and a row header arriving in Values needs one picked for it.
+    source.splice(payload.index, 1);
+    addField(zone, typeof moved === 'string' ? moved : moved.field, at);
+}
+
+function refresh() {
+    renderZones();
+    render();
+}
+
+// ── Taking the pivot elsewhere ───────────────────────────────────────────────
+// All three exports work off one flattening of the table on screen, so the CSV, the HTML page and
+// the saved dataset are the same numbers laid out the same way — and a column header carries its
+// whole path, since "EMEA / Q3 · Sum of amount" only means something in full.
+
+/** The pivot as a header row plus body rows of plain strings. */
+function pivotMatrix() {
+    if (!model) return null;
+    const { rowFields, colFields, measures, rowKeys, colKeys } = model;
+
+    const header = (rowFields.length ? rowFields.slice() : ['Group']);
+    colKeys.forEach(colKey => measures.forEach(m => {
+        const path = colFields.length ? colKey.map(keyLabel).join(' / ') : '';
+        header.push(path ? path + ' · ' + measureLabel(m) : measureLabel(m));
+    }));
+    if (model.showGrandCol) measures.forEach(m => header.push('Total · ' + measureLabel(m)));
+
+    const plain = (acc, m) => {
+        const value = acc ? accValue(acc, m) : null;
+        return value === null || value === undefined ? '' : String(value);
+    };
+
+    const body = rowKeys.map(key => {
+        const line = rowFields.length ? key.map(keyLabel) : ['Total'];
+        const byCol = model.cells.get(key.join(SEP));
+        colKeys.forEach(colKey => {
+            const accs = byCol && byCol.get(colKey.join(SEP));
+            measures.forEach((m, i) => line.push(plain(accs && accs[i], m)));
+        });
+        if (model.showGrandCol) {
+            const accs = model.rowTot.get(key.join(SEP));
+            measures.forEach((m, i) => line.push(plain(accs && accs[i], m)));
+        }
+        return line;
+    });
+
+    if (model.showGrandRow) {
+        const line = ['Total'];
+        while (line.length < Math.max(1, rowFields.length)) line.push('');
+        colKeys.forEach(colKey => {
+            const accs = model.colTot.get(colKey.join(SEP));
+            measures.forEach((m, i) => line.push(plain(accs && accs[i], m)));
+        });
+        if (model.showGrandCol) measures.forEach((m, i) => line.push(plain(model.grand[i], m)));
+        body.push(line);
+    }
+
+    return { header: header, body: body };
+}
+
+function pivotTitle() {
+    const what = cfg.values.map(measureLabel).join(', ') || 'Row count';
+    const by = [cfg.rows.length ? 'by ' + cfg.rows.join(', ') : '', cfg.cols.length ? 'across ' + cfg.cols.join(', ') : '']
+        .filter(Boolean).join(' ');
+    return SOURCE.title + ' — ' + what + (by ? ' ' + by : '');
+}
+
+function requireMatrix() {
+    const matrix = pivotMatrix();
+    if (!matrix) { alert('Choose a row, a column or a value first — there is no analysis to take away yet.'); return null; }
+    return matrix;
+}
+
+function csvCell(text) {
+    const value = String(text === undefined || text === null ? '' : text);
+    return /[",\r\n]/.test(value) ? '"' + value.replace(/"/g, '""') + '"' : value;
+}
+
+function downloadCsv() {
+    const matrix = requireMatrix();
+    if (!matrix) return;
+    const lines = [matrix.header].concat(matrix.body).map(line => line.map(csvCell).join(','));
+    // The BOM is what makes Excel read the file as UTF-8 rather than the local code page.
+    download(fileName('csv'), 'text/csv;charset=utf-8', String.fromCharCode(0xFEFF) + lines.join('\r\n'));
+}
+
+function download(name, type, content) {
+    const url = URL.createObjectURL(new Blob([content], { type: type }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = name;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+function fileName(extension) {
+    const base = (pivotTitle() || 'analysis').replace(/[^\w.\- ]+/g, '_').trim().slice(0, 80) || 'analysis';
+    return base + '-' + new Date().toISOString().slice(0, 10) + '.' + extension;
+}
+
+/** The pivot as a plain table in its own tab — printable, and easy to paste into a mail. */
+function viewAsHtml() {
+    const matrix = requireMatrix();
+    if (!matrix) return;
+    const title = pivotTitle();
+    const html = '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'
+        + '<title>' + esc(title) + '</title><style>'
+        + 'body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#172b4d;margin:24px}'
+        + 'h1{font-size:18px;margin:0 0 4px}p{font-size:12px;color:#5e6c84;margin:0 0 16px}'
+        + 'table{border-collapse:collapse;font-size:13px}'
+        + 'th,td{border:1px solid #dfe1e6;padding:6px 10px;text-align:left;vertical-align:top}'
+        + 'th{background:#f4f5f7;font-weight:600}tr:nth-child(even) td{background:#fafbfc}'
+        + 'tr:last-child td{font-weight:600;background:#f4f5f7}'
+        + '</style></head><body><h1>' + esc(title) + '</h1>'
+        + '<p>' + matrix.body.length + ' row' + (matrix.body.length === 1 ? '' : 's')
+        + ' over ' + SOURCE.rows.length.toLocaleString() + ' source rows · '
+        + esc(new Date().toLocaleString()) + '</p>'
+        + '<table><thead><tr>' + matrix.header.map(cell => '<th>' + esc(cell) + '</th>').join('') + '</tr></thead>'
+        + '<tbody>' + matrix.body.map(line => '<tr>' + line.map(cell => '<td>' + esc(cell) + '</td>').join('') + '</tr>').join('')
+        + '</tbody></table></body></html>';
+
+    const win = window.open('', '_blank');
+    if (!win) { alert('The browser blocked the new tab — allow pop-ups to view the analysis as HTML.'); return; }
+    win.document.write(html);
+    win.document.close();
+}
+
+// ── Keeping it ───────────────────────────────────────────────────────────────
+// Saved as a static dataset, which is the store every other page in the tool already reads: once
+// it is there the analysis can be dropped into a dashboard, joined against another dataset, or
+// simply opened again next week and pivoted a different way.
+
+function openSaveDialog() {
+    if (!SOURCE.rows.length) { alert('There are no rows to save.'); return; }
+    const back = document.createElement('div');
+    back.className = 'ga-modal-back';
+    back.innerHTML = '<div class="ga-modal">'
+        + '<h2>Save as a static dataset</h2>'
+        + '<p class="note">Kept under Batch Workflow &rarr; Static Datasets, where any page can read it. '
+            + 'Saving under a name that already exists replaces it.</p>'
+        + '<label class="fld" for="gaDsName">Name</label>'
+        + '<input type="text" id="gaDsName" placeholder="e.g. emea-settlement-breaks" autocomplete="off">'
+        + '<div class="choice">'
+            + '<label><input type="radio" name="gaWhat" value="source" checked>'
+                + '<span>The grid&rsquo;s rows<span class="sub">'
+                + SOURCE.rows.length.toLocaleString() + ' rows × ' + SOURCE.columns.length
+                + ' columns — pivot them again later, any way you like.</span></span></label>'
+            + '<label><input type="radio" name="gaWhat" value="pivot">'
+                + '<span>This analysis<span class="sub">'
+                + 'The pivot exactly as it is on screen, totals and all.</span></span></label>'
+        + '</div>'
+        + '<div class="ga-msg" id="gaDsMsg"></div>'
+        + '<div class="row">'
+            + '<button type="button" class="tool-btn" id="gaDsCancel">Cancel</button>'
+            + '<button type="button" class="primary" id="gaDsSave">Save</button>'
+        + '</div>'
+    + '</div>';
+    document.body.appendChild(back);
+
+    const close = () => back.remove();
+    back.addEventListener('mousedown', e => { if (e.target === back) close(); });
+    back.querySelector('#gaDsCancel').addEventListener('click', close);
+    back.querySelector('#gaDsSave').addEventListener('click', () => saveDataset(back, close));
+    const name = back.querySelector('#gaDsName');
+    name.addEventListener('keydown', e => { if (e.key === 'Enter') saveDataset(back, close); });
+    name.focus();
+}
+
+/**
+ * A cell on its way into a tab-separated dataset. The store splits on tabs and newlines and does
+ * not unquote anything, so a value carrying either has to give them up rather than break the row
+ * that holds it.
+ */
+function tsvCell(text) {
+    return String(text === undefined || text === null ? '' : text).replace(/[\t\r\n]+/g, ' ').trim();
+}
+
+async function saveDataset(back, close) {
+    const msg = back.querySelector('#gaDsMsg');
+    const button = back.querySelector('#gaDsSave');
+    const name = back.querySelector('#gaDsName').value.trim();
+    const what = back.querySelector('input[name=gaWhat]:checked').value;
+
+    const say = (text, cls) => { msg.textContent = text; msg.className = 'ga-msg' + (cls ? ' ' + cls : ''); };
+
+    if (!name) { say('Give it a name first.', 'err'); return; }
+    if (!/^[\w-]+$/.test(name)) { say('The name may hold only letters, digits, _ or -.', 'err'); return; }
+
+    let header, body;
+    if (what === 'pivot') {
+        const matrix = requireMatrix();
+        if (!matrix) return;
+        header = matrix.header;
+        body = matrix.body;
+    } else {
+        header = SOURCE.columns;
+        body = SOURCE.rows.map(row => SOURCE.columns.map(column => cellText(row, column)));
+    }
+    if (!header.length) { say('There are no columns to save.', 'err'); return; }
+
+    // Stored as pasted rows: a header line and one tab-separated line each, which is the form the
+    // static dataset store keeps verbatim and reparses on every reload.
+    const text = [header.map(tsvCell).join('\t')]
+        .concat(body.map(line => line.map(tsvCell).join('\t'))).join('\n');
+
+    button.disabled = true;
+    try {
+        const payload = { name: name, source: 'paste', location: text, arrayElement: null };
+
+        // Whether this name is already taken decides both the verb and whether to ask. The store
+        // rejects a POST onto an existing name, and replacing someone else's dataset because the
+        // name happened to match is not something to do quietly.
+        say('Checking the name…');
+        const existing = await fetch('/staticdataset/' + encodeURIComponent(name));
+        const replacing = existing.ok;
+        if (replacing && !confirm('A dataset called "' + name + '" already exists.\n\n'
+                + 'Replace its rows with this ' + body.length.toLocaleString() + '-row '
+                + (what === 'pivot' ? 'analysis' : 'copy of the grid') + '?')) {
+            say('');
+            button.disabled = false;
+            return;
+        }
+
+        say((replacing ? 'Replacing with ' : 'Saving ') + body.length.toLocaleString() + ' rows…');
+        const res = replacing
+            ? await fetch('/staticdataset/' + encodeURIComponent(name), {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+            : await fetch('/staticdataset', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { say(data.error || ('Save failed (HTTP ' + res.status + ').'), 'err'); button.disabled = false; return; }
+
+        say((replacing ? 'Replaced "' : 'Saved "') + name + '"'
+            + (data.count !== undefined ? ' — ' + data.count + ' rows loaded' : '') + '.', 'ok');
+        setTimeout(close, 1200);
+    } catch (e) {
+        say('Save failed: ' + e.message, 'err');
+        button.disabled = false;
+    }
+}
+
+// ── Wiring ───────────────────────────────────────────────────────────────────
+
+document.querySelectorAll('.ga-zone').forEach(zone => {
+    zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('over'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('over'));
+    zone.addEventListener('drop', e => {
+        e.preventDefault();
+        zone.classList.remove('over');
+        drop(e, zone.dataset.zone);
+    });
+});
+
+$('gaSearch').addEventListener('input', renderFields);
+$('gaSwap').addEventListener('click', () => {
+    const rows = cfg.rows;
+    cfg.rows = cfg.cols;
+    cfg.cols = rows;
+    refresh();
+});
+$('gaClear').addEventListener('click', () => {
+    cfg.rows = [];
+    cfg.cols = [];
+    cfg.values = [{ field: ROW_COUNT, agg: 'count' }];
+    refresh();
+});
+$('gaHtml').addEventListener('click', viewAsHtml);
+$('gaCsv').addEventListener('click', downloadCsv);
+$('gaSave').addEventListener('click', openSaveDialog);
+
+['gaGrandRow', 'gaGrandCol', 'gaBlanks', 'gaHeat'].forEach(id => {
+    const key = { gaGrandRow: 'grandRow', gaGrandCol: 'grandCol', gaBlanks: 'blanks', gaHeat: 'heat' }[id];
+    $(id).addEventListener('change', () => { cfg[key] = $(id).checked; render(); });
+});
+
+// ── Where the rows come from ─────────────────────────────────────────────────
+// The opener cannot hand anything over until this document exists, so this end asks: it announces
+// itself with the token it was opened under and the page answers with that grid's rows. Structured
+// clone rather than a URL or storage — a 27,000-row grid does not fit in either, and this way the
+// rows are never serialised to text at all.
+
+/** Columns whose values read as numbers often enough to default to Sum and right-align. */
+function detectNumeric(rows, columns) {
+    const found = new Set();
+    const sample = Math.min(rows.length, 200);
+    columns.forEach(column => {
+        let seen = 0, numeric = 0;
+        for (let i = 0; i < sample; i++) {
+            const text = cellText(rows[i], column);
+            if (text === '') continue;
+            seen++;
+            if (toNumber(text) !== null) numeric++;
+        }
+        if (seen && numeric / seen >= 0.8) found.add(column);
+    });
+    return found;
+}
+
+function receive(payload) {
+    SOURCE = {
+        title: payload.title || 'Grid',
+        columns: (payload.columns || []).slice(),
+        rows: payload.rows || []
+    };
+    numericFields = detectNumeric(SOURCE.rows, SOURCE.columns);
+
+    document.title = 'Analyze — ' + SOURCE.title;
+    $('gaTitle').textContent = 'Analyze — ' + SOURCE.title;
+    $('gaSub').textContent = SOURCE.rows.length.toLocaleString() + ' row'
+        + (SOURCE.rows.length === 1 ? '' : 's') + ' × ' + SOURCE.columns.length + ' column'
+        + (SOURCE.columns.length === 1 ? '' : 's')
+        + ' — exactly what the grid was showing, filters and sort included.';
+
+    renderFields();
+    refresh();
+}
+
+function giveUp(why) {
+    $('gaSub').textContent = why;
+    $('gaOut').innerHTML = '<div class="ga-hint">' + esc(why)
+        + '<br>Open this screen with the <b>Analyze</b> button on a grid.</div>';
+}
+
+const token = new URLSearchParams(location.search).get('t') || '';
+let handedOver = false;
+
+window.addEventListener('message', e => {
+    if (e.origin !== location.origin) return;
+    const data = e.data;
+    if (!data || data.type !== 'grid-analyzer-data' || data.token !== token) return;
+    handedOver = true;
+    receive(data.payload || {});
+});
+
+if (!window.opener || !token) {
+    giveUp('This screen is handed its rows by the page that opens it, and nothing handed it any.');
+} else {
+    window.opener.postMessage({ type: 'grid-analyzer-ready', token: token }, location.origin);
+    // The opener may have been closed, reloaded or navigated away between the click and now, in
+    // which case nothing is ever coming and saying so beats a spinner that never stops.
+    setTimeout(() => {
+        if (!handedOver) giveUp('The page that opened this screen never sent its rows — it may have been closed or reloaded.');
+    }, 8000);
+}
+</script>
+
+</body>
+</html>

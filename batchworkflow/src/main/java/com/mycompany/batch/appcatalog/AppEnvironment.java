@@ -1,11 +1,23 @@
 package com.mycompany.batch.appcatalog;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 /**
  * One deployment of an {@link AppDefinition} — the {@link #urlPrefix} a use case's
  * {@code urlSuffix} is appended to, plus whatever credentials that particular environment
  * needs for the app's auth method.
  *
+ * <p>An app that exposes its admin or health endpoints on a second address states that address as
+ * {@link #monitoringUrlPrefix}; a use case then picks which of the two it hangs off through its own
+ * {@link AppUseCase#getUrlPrefixType() urlPrefixType}, defaulting to the main one.
+ *
  * <p>Unique by ({@link #appName}, {@link #environment}).
+ *
+ * <p>{@link #envVariables} is the second layer of the execution-time variable merge, sitting on top
+ * of the app's own defaults. A value that differs per deployment — a region code, the id of the desk
+ * this particular environment serves — is stated where it actually varies, instead of being pushed
+ * down into every use case and instance that happens to run there.
  */
 public class AppEnvironment {
 
@@ -16,6 +28,14 @@ public class AppEnvironment {
     private String envClass = "DEV";
     /** Everything before the use case's urlSuffix, e.g. "https://host:8443/api". */
     private String urlPrefix;
+    /**
+     * Optional second prefix for the admin side of the same deployment, e.g.
+     * "https://host:9443/admin". Only the use cases that ask for it by setting their
+     * {@code urlPrefixType} to MONITORING are built against it. Leaving it blank means this
+     * environment simply has no such address, and a monitoring use case run against it fails
+     * saying so rather than quietly going out on the main prefix.
+     */
+    private String monitoringUrlPrefix;
     /** JWT auth only — the endpoint returning JSON containing the token; the token lands in $jwtToken. */
     private String jwtUrl;
     /**
@@ -28,6 +48,13 @@ public class AppEnvironment {
     private String password;
     /** ACTIVE or INACTIVE — INACTIVE environments are blocked from executing. */
     private String envStatus = "ACTIVE";
+    /**
+     * Variables every use case run against this environment sees. Overrides the app's
+     * {@link AppDefinition#getAppVariables() appVariables} of the same name, and is in turn
+     * overridden by a use case's own variables and an instance's inputs — see
+     * {@code AppExecutionService#mergeVariables}.
+     */
+    private Map<String, Object> envVariables = new LinkedHashMap<>();
 
     public String getAppName()                { return appName; }
     public void   setAppName(String appName)  { this.appName = appName; }
@@ -40,6 +67,22 @@ public class AppEnvironment {
 
     public String getUrlPrefix()                    { return urlPrefix; }
     public void   setUrlPrefix(String urlPrefix)    { this.urlPrefix = urlPrefix; }
+
+    public String getMonitoringUrlPrefix()                              { return monitoringUrlPrefix; }
+    public void   setMonitoringUrlPrefix(String monitoringUrlPrefix)    { this.monitoringUrlPrefix = monitoringUrlPrefix; }
+
+    /**
+     * The prefix a use case of the given kind hangs off, or null when this environment has not been
+     * given one. Anything other than MONITORING — including a use case saved before the field
+     * existed, which reads as null -- means the main application prefix.
+     */
+    public String prefixFor(String urlPrefixType) {
+        String prefix = AppUseCase.PREFIX_TYPE_MONITORING.equalsIgnoreCase(nullToEmpty(urlPrefixType))
+                ? monitoringUrlPrefix : urlPrefix;
+        return prefix != null && !prefix.isBlank() ? prefix : null;
+    }
+
+    private static String nullToEmpty(String s) { return s == null ? "" : s; }
 
     public String getJwtUrl()                 { return jwtUrl; }
     public void   setJwtUrl(String jwtUrl)    { this.jwtUrl = jwtUrl; }
@@ -55,4 +98,7 @@ public class AppEnvironment {
 
     public String getEnvStatus()                    { return envStatus; }
     public void   setEnvStatus(String envStatus)    { this.envStatus = envStatus != null ? envStatus : "ACTIVE"; }
+
+    public Map<String, Object> getEnvVariables()                    { return envVariables; }
+    public void setEnvVariables(Map<String, Object> envVariables)   { this.envVariables = envVariables != null ? envVariables : new LinkedHashMap<>(); }
 }

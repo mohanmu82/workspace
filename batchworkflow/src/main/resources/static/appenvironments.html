@@ -38,7 +38,7 @@
 
 <div class="page-nav"><a href="app.html">&larr; App Catalog</a></div>
 <h1>App Environments</h1>
-<div class="subtitle">Where an app runs — the URL prefix a use case is appended to, plus the credentials that environment needs.</div>
+<div class="subtitle">Where an app runs — the URL prefix a use case is appended to, the credentials that environment needs, and the variables that differ because it is this deployment rather than another.</div>
 
 <!-- App picker -->
 <div class="panel">
@@ -97,6 +97,14 @@
                 <span class="hint">Each use case's URL suffix is appended to this verbatim.</span>
             </div>
 
+            <div class="form-group wide">
+                <label for="monitoringUrlPrefix">Monitoring URL Prefix <span class="hint">optional</span></label>
+                <input id="monitoringUrlPrefix" type="text" placeholder="https://orders-uat.example.com:9443/admin">
+                <span class="hint">A second address for this same deployment's admin endpoints. Only the use cases
+                    that set their URL Base to <strong>Monitoring</strong> are built against it — leave it empty if this
+                    environment has no separate admin address.</span>
+            </div>
+
             <div class="form-group wide" id="jwtUrlGroup">
                 <label for="jwtUrl" id="jwtUrlLabel">JWT URL</label>
                 <div style="display:flex; gap:6px">
@@ -122,11 +130,20 @@
             </div>
 
             <div class="form-group wide" id="authNote"></div>
+
+            <div class="form-group wide">
+                <label for="envVariables">Environment Variables (JSON)</label>
+                <textarea id="envVariables" class="tall" spellcheck="false" placeholder='{"region": "emea", "deskId": "LDN-1"}'></textarea>
+                <span class="hint">Layered over the app's own variables: a name set here wins over the same name on the
+                    App Definitions tab, and is itself still overridden by a use case variable or an instance input.
+                    Reference them as <code>$region</code> or <code>${region}</code> in a URL, header or body.</span>
+            </div>
         </div>
 
         <div class="toolbar">
             <button class="primary" onclick="saveEnvironment()">Save</button>
             <button class="secondary" onclick="newEnvironment()">New</button>
+            <button class="tool-btn" onclick="formatVariables()">Format JSON</button>
             <button class="danger" id="deleteBtn" onclick="deleteEnvironment()" style="display:none">Delete</button>
         </div>
         <div id="statusBar" class="status-bar"></div>
@@ -241,7 +258,13 @@
                         '<span class="badge ' + (env.envClass || 'dev').toLowerCase() + '">' + AC.esc(env.envClass) + '</span>' +
                         '<span class="badge ' + (env.envStatus || 'active').toLowerCase() + '">' + AC.esc(env.envStatus) + '</span>' +
                     '</div>' +
-                    '<div class="record-meta">' + AC.esc(env.urlPrefix || '') + '</div>' +
+                    '<div class="record-meta">' + AC.esc(env.urlPrefix || '') +
+                        (env.monitoringUrlPrefix ? ' <span class="badge">mon</span>' : '') +
+                        (Object.keys(env.envVariables || {}).length
+                            ? ' <span class="badge">' + Object.keys(env.envVariables).length + ' var' +
+                              (Object.keys(env.envVariables).length === 1 ? '' : 's') + '</span>'
+                            : '') +
+                    '</div>' +
                 '</div>'
             ).join('');
     }
@@ -255,11 +278,13 @@
         document.getElementById('envClass').value = 'DEV';
         document.getElementById('envStatus').value = 'ACTIVE';
         document.getElementById('urlPrefix').value = '';
+        document.getElementById('monitoringUrlPrefix').value = '';
         document.getElementById('jwtUrl').value = '';
         document.getElementById('jwtMethod').value = 'POST';
         applyJwtMethodHint();
         document.getElementById('username').value = '';
         document.getElementById('password').value = '';
+        document.getElementById('envVariables').value = '';
         hideJwtResult();
         document.getElementById('deleteBtn').style.display = 'none';
         renderEnvList();
@@ -278,12 +303,14 @@
         document.getElementById('envClass').value = env.envClass || 'DEV';
         document.getElementById('envStatus').value = env.envStatus || 'ACTIVE';
         document.getElementById('urlPrefix').value = env.urlPrefix || '';
+        document.getElementById('monitoringUrlPrefix').value = env.monitoringUrlPrefix || '';
         document.getElementById('jwtUrl').value = env.jwtUrl || '';
         // Environments saved before this field existed have no method — they were all POST.
         document.getElementById('jwtMethod').value = env.jwtMethod || 'POST';
         applyJwtMethodHint();
         document.getElementById('username').value = env.username || '';
         document.getElementById('password').value = env.password || '';
+        document.getElementById('envVariables').value = AC.prettyJson(env.envVariables);
         hideJwtResult();
         document.getElementById('deleteBtn').style.display = '';
         renderEnvList();
@@ -303,11 +330,24 @@
             envClass:    document.getElementById('envClass').value,
             envStatus:   document.getElementById('envStatus').value,
             urlPrefix,
+            monitoringUrlPrefix: document.getElementById('monitoringUrlPrefix').value.trim(),
             jwtUrl:      document.getElementById('jwtUrl').value.trim(),
             jwtMethod:   document.getElementById('jwtMethod').value,
             username:    document.getElementById('username').value,
-            password:    document.getElementById('password').value
+            password:    document.getElementById('password').value,
+            envVariables: AC.parseJsonObject(document.getElementById('envVariables').value, 'Environment Variables')
         };
+    }
+
+    /** Tidies the variables box in place, and says so if what is in it is not an object yet. */
+    function formatVariables() {
+        const field = document.getElementById('envVariables');
+        try {
+            field.value = AC.prettyJson(AC.parseJsonObject(field.value, 'Environment Variables'));
+            AC.setStatus('statusBar', 'Formatted.', 'ok');
+        } catch (e) {
+            AC.setStatus('statusBar', e.message, 'error');
+        }
     }
 
     async function saveEnvironment() {

@@ -86,10 +86,18 @@
                 </select>
             </div>
 
+            <div class="form-group">
+                <label for="urlPrefixType">URL Base</label>
+                <select id="urlPrefixType" onchange="applyUrlBaseHint()">
+                    <option value="APPLICATION">Application</option>
+                    <option value="MONITORING">Monitoring</option>
+                </select>
+            </div>
+
             <div class="form-group wide">
                 <label for="urlSuffix">URL Suffix</label>
                 <input id="urlSuffix" type="text" placeholder="/orders/${orderId}" oninput="renderVariableScan()">
-                <span class="hint">Appended to the environment's URL prefix.</span>
+                <span class="hint" id="urlSuffixHint">Appended to the environment's URL prefix.</span>
             </div>
 
             <div class="form-group wide">
@@ -220,6 +228,7 @@
                     '<div class="record-name">' + AC.esc(uc.useCaseName) + '</div>' +
                     '<div class="record-meta">' +
                         '<span class="pill ' + AC.methodClass(uc.httpMethod) + '">' + AC.esc(uc.httpMethod) + '</span>' +
+                        (uc.urlPrefixType === 'MONITORING' ? '<span class="badge">mon</span>' : '') +
                         '<span>' + AC.esc(uc.urlSuffix || '') + '</span>' +
                     '</div>' +
                 '</div>'
@@ -316,6 +325,8 @@
         document.getElementById('useCaseName').disabled = false;
         document.getElementById('useCaseNameHint').textContent = 'Unique within this app.';
         document.getElementById('urlSuffix').value = '';
+        document.getElementById('urlPrefixType').value = 'APPLICATION';
+        applyUrlBaseHint();
         document.getElementById('httpMethod').value = 'GET';
         document.getElementById('timeout').value = 5000;
         document.getElementById('outputFormat').value = 'json';
@@ -341,6 +352,9 @@
         document.getElementById('useCaseName').disabled = true;
         document.getElementById('useCaseNameHint').textContent = 'Fixed once saved — use Clone to make a variant.';
         document.getElementById('urlSuffix').value = uc.urlSuffix || '';
+        // Use cases saved before the monitoring prefix existed carry no type — they are all application.
+        document.getElementById('urlPrefixType').value = uc.urlPrefixType === 'MONITORING' ? 'MONITORING' : 'APPLICATION';
+        applyUrlBaseHint();
         document.getElementById('httpMethod').value = uc.httpMethod || 'GET';
         document.getElementById('timeout').value = uc.timeout || 5000;
         document.getElementById('outputFormat').value = uc.outputFormat || 'json';
@@ -354,6 +368,15 @@
         renderInputRows();
         renderUseCaseList();
         AC.setStatus('statusBar', '');
+    }
+
+    /** Says which of the environment's prefixes this suffix will be appended to. */
+    function applyUrlBaseHint() {
+        const monitoring = document.getElementById('urlPrefixType').value === 'MONITORING';
+        document.getElementById('urlSuffixHint').innerHTML = monitoring
+            ? "Appended to each environment's <strong>monitoring</strong> URL prefix. An environment without one "
+              + 'cannot run this use case.'
+            : "Appended to each environment's URL prefix.";
     }
 
     function readForm() {
@@ -374,6 +397,7 @@
             appName:     currentApp.appName,
             useCaseName,
             urlSuffix:   document.getElementById('urlSuffix').value.trim(),
+            urlPrefixType: document.getElementById('urlPrefixType').value,
             httpMethod:  document.getElementById('httpMethod').value,
             httpHeaders: document.getElementById('httpHeaders').value,
             httpBody:    document.getElementById('httpBody').value,

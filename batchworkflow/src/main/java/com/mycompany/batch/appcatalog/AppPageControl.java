@@ -27,7 +27,10 @@ public class AppPageControl {
     private String controlId;
     private String fieldName;
     private String label;
-    /** text, textarea, number, date, hidden, select, checkbox, button, link, grid, tabs, pie or label. */
+    /**
+     * text, textarea, number, date, hidden, select, multiselect, checkbox, button, link, grid, tabs,
+     * pie or label.
+     */
     private String type = "text";
     /**
      * What the control starts the run holding: the value in a box, the text on a label — and, on a
@@ -53,6 +56,33 @@ public class AppPageControl {
 
     /** Select controls only. */
     private AppPageOptionSource optionSource;
+    /**
+     * Grid controls only: a static dataset whose rows fill this grid as the page opens, instead of
+     * the grid waiting for an action to put something in it.
+     *
+     * <p>Kept apart from {@link #optionSource}, which is a select's affair, because the two answer
+     * different questions: a dropdown needs a key and a label off each row, while a grid shows the
+     * rows whole under whatever {@link #columns} says. An action may still target a grid filled this
+     * way — the dataset is what it starts the run holding, the way a text box starts it holding its
+     * default value.
+     */
+    private String datasetName;
+    /**
+     * Link controls only: another page in this catalog, by {@link AppPage#getPageName() name}, that
+     * this link opens — the other half of what a link may point at, beside the {@link #defaultValue}
+     * address that reaches anywhere on the web.
+     *
+     * <p>Held as the page's name rather than as the URL it resolves to, and that is the point of the
+     * field existing at all: a name can be checked against the catalog when the page is saved, so a
+     * link aimed at a page that is not there is refused where it can be fixed rather than discovered
+     * by an operator clicking it. The running page turns it into the standalone link — the same
+     * address the designer's "Open standalone" offers — so the reader lands on the other page in its
+     * running form rather than in the builder.
+     *
+     * <p>Set, it wins over {@link #defaultValue} and over any address an action binds: it is the more
+     * specific of the two, and a link that names a page is one somebody meant to go to that page.
+     */
+    private String linkPageName;
     /**
      * Actions written directly onto this control — run in order, stopping at the first failure.
      * Predates the page-level library and is still honoured, so every page saved before it keeps
@@ -91,6 +121,18 @@ public class AppPageControl {
      * is also why a grid keeps its place in the service's TRIGGERLESS_TYPES while carrying these.
      */
     private List<AppPageColumnLink> columnLinks = new ArrayList<>();
+    /**
+     * Grid controls only: a test every row is put through as the grid fills, written in the small
+     * expression language {@link AppPageRowCheck} reads — {@code STATUS != SUCCESS || RECORDCOUNT = 0}.
+     * A row the expression calls true is an error and is drawn in red; the grid's name carries the
+     * tally of how many of each there were. Blank — which is every grid saved before this existed —
+     * is a grid that judges nothing and shows its rows exactly as it always did.
+     *
+     * <p>A different question from whether the call worked, and that is the whole point of it: an
+     * endpoint that answers 200 with fifteen rows, three of which reconciled to nothing, is a
+     * successful call and a failed run, and until now the only way to see that was to read the rows.
+     */
+    private String rowErrorExpression;
     /**
      * Pie controls only: the slices, in the order they are drawn, each an {@link AppPageOption}
      * whose {@link AppPageOption#key() key} names the slice and whose
@@ -159,6 +201,12 @@ public class AppPageControl {
     public AppPageOptionSource getOptionSource()                             { return optionSource; }
     public void setOptionSource(AppPageOptionSource optionSource)            { this.optionSource = optionSource; }
 
+    public String getDatasetName()                     { return datasetName; }
+    public void   setDatasetName(String datasetName)   { this.datasetName = datasetName == null || datasetName.isBlank() ? null : datasetName.trim(); }
+
+    public String getLinkPageName()                       { return linkPageName; }
+    public void   setLinkPageName(String linkPageName)    { this.linkPageName = linkPageName == null || linkPageName.isBlank() ? null : linkPageName.trim(); }
+
     public List<AppPageAction> getActions()                        { return actions; }
     public void setActions(List<AppPageAction> actions)            { this.actions = actions != null ? actions : new ArrayList<>(); }
 
@@ -176,6 +224,12 @@ public class AppPageControl {
 
     public List<AppPageColumnLink> getColumnLinks()                        { return columnLinks; }
     public void setColumnLinks(List<AppPageColumnLink> columnLinks)        { this.columnLinks = columnLinks != null ? columnLinks : new ArrayList<>(); }
+
+    public String getRowErrorExpression()   { return rowErrorExpression; }
+    public void   setRowErrorExpression(String rowErrorExpression) {
+        this.rowErrorExpression = rowErrorExpression == null || rowErrorExpression.isBlank()
+                ? null : rowErrorExpression.trim();
+    }
 
     public List<AppPageOption> getSlices()                   { return slices; }
     public void setSlices(List<AppPageOption> slices)        { this.slices = slices != null ? slices : new ArrayList<>(); }

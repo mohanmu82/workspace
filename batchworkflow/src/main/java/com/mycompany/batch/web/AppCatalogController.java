@@ -6,6 +6,7 @@ import com.mycompany.batch.appcatalog.AppDefinition;
 import com.mycompany.batch.appcatalog.AppEnvironment;
 import com.mycompany.batch.appcatalog.AppExecutionService;
 import com.mycompany.batch.appcatalog.AppPage;
+import com.mycompany.batch.appcatalog.AppPerformanceRow;
 import com.mycompany.batch.appcatalog.AppUseCase;
 import com.mycompany.batch.appcatalog.AppUseCaseInstance;
 import com.mycompany.batch.appcatalog.AppUseCaseInstanceGroup;
@@ -317,6 +318,11 @@ public class AppCatalogController {
      * would only double the round trips. An action that binds metadata rather than the body says so
      * with {@code includePayload: false} and gets the bodies dropped — which is what keeps
      * "show me the URL and the status code" cheap even when the response is tens of megabytes.
+     *
+     * <p>{@code debug} is the other half of that, and answers a different question: not what this
+     * call needs, but what this server should go on holding once it has answered. A page with its
+     * {@code DEBUG} switch off sends false and its runs are not filed away for later retrieval. See
+     * {@link AppPage#isDebug()}.
      */
     @PostMapping(value = "/pages/run", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<?> runForPage(@RequestBody PageRunRequest request) {
@@ -324,7 +330,8 @@ public class AppCatalogController {
         if (instanceId == null || instanceId.isBlank()) return badRequest("appUseCaseInstanceId is required");
         if (service.getInstance(instanceId) == null) return notFound("Instance", instanceId);
         AppUseCaseInstanceOutput output = execution.executeWithInputs(instanceId, request.environment(),
-                request.inputs(), ExecutionTarget.from(request.target()), request.agentId());
+                request.inputs(), ExecutionTarget.from(request.target()), request.agentId(),
+                !Boolean.FALSE.equals(request.debug()));
         return ResponseEntity.ok(Boolean.FALSE.equals(request.includePayload()) ? output.withoutPayload() : output);
     }
 
@@ -337,9 +344,62 @@ public class AppCatalogController {
      * @param includePayload false to get the result without its request and response bodies, keeping
      *                       only their sizes. Null (the default) keeps them, since that is what a
      *                       page binding a response into a grid needs.
+     * @param debug          false to have the run answered and then let go rather than kept
+     *                       addressable for its bodies to be fetched again. What the page's
+     *                       {@code DEBUG} variable comes to; null (the default) keeps it, so a
+     *                       caller that has never heard of the switch behaves as it always did.
      */
     public record PageRunRequest(String appUseCaseInstanceId, String environment, Map<String, Object> inputs,
-                                 String target, String agentId, Boolean includePayload) {}
+                                 String target, String agentId, Boolean includePayload, Boolean debug) {}
+
+    /**
+     * The values a running page's built-in variables take that only this server can answer for.
+     *
+     * <p>Which today is one: the machine. The date, the time and a fresh UUID the browser works out
+     * for itself, and should — they are what the operator's clock says, which is what an operator
+     * reading a timestamped request back means by "today". The host name is the other way round:
+     * the browser cannot know its own, and the box that matters is the one the calls actually leave
+     * from, which is this one.
+     *
+     * <p>Answered rather than refused when the name cannot be resolved at all: a page whose
+     * {@code $MACHINE} comes back empty is a page with one blank field, and failing the whole
+     * opening over it would be a worse trade.
+     */
+    // Deliberately outside the /pages/{pageName} space rather than under it: a page really named
+    // "globals" would otherwise be unreachable, and a page name is whatever somebody typed.
+    @GetMapping("/page-globals")
+    public ResponseEntity<?> pageGlobals() {
+        return ResponseEntity.ok(Map.of("machine", localMachineName()));
+    }
+
+    /**
+     * This host's short name — without the domain, since {@code $MACHINE} is written into request
+     * bodies and log lines where "which box" is the question and the domain is noise.
+     *
+     * <p>The environment is asked before the resolver because it is the answer that cannot be
+     * wrong: {@code COMPUTERNAME} and {@code HOSTNAME} are what the operating system calls this
+     * machine, while a reverse lookup on the local address can hand back whatever the network
+     * happens to say about it — a load balancer's name, or {@code localhost}.
+     */
+    static String localMachineName() {
+        for (String key : new String[] { "COMPUTERNAME", "HOSTNAME" }) {
+            String value = System.getenv(key);
+            if (value != null && !value.isBlank()) return shortHostName(value);
+        }
+        try {
+            return shortHostName(java.net.InetAddress.getLocalHost().getHostName());
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /** A host name with its domain taken off; an IP address is left exactly as it is. */
+    static String shortHostName(String name) {
+        String trimmed = name == null ? "" : name.trim();
+        if (trimmed.isEmpty() || trimmed.matches("[0-9.]+") || trimmed.contains(":")) return trimmed;
+        int dot = trimmed.indexOf('.');
+        return dot > 0 ? trimmed.substring(0, dot) : trimmed;
+    }
 
     // -------------------------------------------------------------------------
     // Execution
@@ -403,6 +463,22 @@ public class AppCatalogController {
             @RequestParam(required = false, defaultValue = "1000") int limit) {
         List<AppUseCaseInstanceOutput> all = execution.history();
         return ResponseEntity.ok(limit > 0 && all.size() > limit ? all.subList(0, limit) : all);
+    }
+
+    /**
+     * How the catalog's endpoints have been performing, one row per app / environment / use case,
+     * busiest first — what a page's performance action binds straight into a grid.
+     *
+     * <p>Summarised over the same run history {@link #listExecutions} lists, so it costs nothing to
+     * ask for and says nothing about runs older than that window. Every parameter is an optional
+     * filter; leaving them all off summarises every app.
+     */
+    @GetMapping("/performance")
+    public ResponseEntity<List<AppPerformanceRow>> performanceSummary(
+            @RequestParam(required = false) String appName,
+            @RequestParam(required = false) String environment,
+            @RequestParam(required = false) String useCase) {
+        return ResponseEntity.ok(execution.performanceSummary(appName, environment, useCase));
     }
 
     /** Drops the whole run history, payloads included. */

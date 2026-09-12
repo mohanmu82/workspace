@@ -16,10 +16,15 @@ import java.util.List;
  * <p>The {@code ENVIRONMENTS} mode instead lists {@link #appName}'s environments straight out of
  * the catalog — no instance involved — so a page can offer "which environment" as a dropdown
  * without wiring up a use case just to enumerate them.
+ *
+ * <p>The {@code DATASET} mode reads {@link #datasetName}'s rows out of the static dataset library
+ * and takes {@link #keyField}/{@link #labelField} off each, exactly as {@code USECASE} does — the
+ * difference is only where the rows come from. A list of desks, books or regions that is already
+ * maintained as a dataset is then a dropdown without an endpoint standing in front of it.
  */
 public class AppPageOptionSource {
 
-    /** NONE, STATIC, USECASE or ENVIRONMENTS. */
+    /** NONE, STATIC, USECASE, ENVIRONMENTS or DATASET. */
     private String mode = "NONE";
     private List<AppPageOption> staticOptions = new ArrayList<>();
     private String appUseCaseInstanceId;
@@ -29,6 +34,8 @@ public class AppPageOptionSource {
     private String labelField;
     /** ENVIRONMENTS mode only — which app's environments to list. */
     private String appName;
+    /** DATASET mode only — which static dataset's rows back this dropdown. */
+    private String datasetName;
 
     public String getMode()             { return mode; }
     public void   setMode(String mode)  { this.mode = mode != null && !mode.isBlank() ? mode : "NONE"; }
@@ -50,4 +57,7 @@ public class AppPageOptionSource {
 
     public String getAppName()                { return appName; }
     public void   setAppName(String appName)  { this.appName = appName; }
+
+    public String getDatasetName()                     { return datasetName; }
+    public void   setDatasetName(String datasetName)   { this.datasetName = datasetName; }
 }

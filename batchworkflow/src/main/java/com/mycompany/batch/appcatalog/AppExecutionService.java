@@ -30,6 +30,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.ArrayDeque;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -44,11 +45,12 @@ import java.util.regex.Pattern;
 /**
  * Executes {@link AppUseCaseInstance}s.
  *
- * <p>The heart of this class is the three-layer variable merge: an app's {@code appVariables} are
- * the base, a use case's {@code appUseCaseVariables} override them, and an instance's inputs
- * override both. The merged map is then substituted into the URL, headers, body and the use case's
- * JSONata transform, so the same use case definition can be pointed at different data — and have
- * its response read differently — purely by changing an instance.
+ * <p>The heart of this class is the four-layer variable merge: an app's {@code appVariables} are
+ * the base, the environment's {@code envVariables} override them, a use case's
+ * {@code appUseCaseVariables} override those, and an instance's inputs override the lot. The merged
+ * map is then substituted into the URL, headers, body and the use case's JSONata transform, so the
+ * same use case definition can be pointed at different data — and have its response read
+ * differently — purely by changing an instance, or by running it somewhere else.
  *
  * <p>Each instance first expands into the cartesian product of the environments it names and the
  * run count the caller asked for, so one instance can be a hundred calls against each of three
@@ -162,6 +164,93 @@ public class AppExecutionService {
         }
     }
 
+    /**
+     * How the endpoints behind this catalog have been performing, one line per app / environment /
+     * use case, busiest first.
+     *
+     * <p>Read out of the same global run history the Global Runs page lists, which is what makes it
+     * free: every execution already records what it called and how long it took, so a summary is an
+     * arithmetic pass over records this server is holding anyway rather than a store of its own.
+     * What follows from that is the one thing worth knowing before reading the numbers — the window
+     * is the last {@link #RETAINED_HISTORY} runs and nothing older, so this says how the endpoints
+     * have been behaving lately, not how they have behaved historically.
+     *
+     * <p>Failed and errored runs are counted with the successful ones. A call that took nine seconds
+     * to time out is precisely the call somebody opening a performance grid is looking for, and
+     * dropping it would make the slowest endpoint on the page look like the fastest.
+     *
+     * @param appName     keeps only this app's runs; blank or null keeps every app
+     * @param environment keeps only runs against this environment; blank or null keeps every one
+     * @param useCase     keeps only runs of this use case; blank or null keeps every one
+     */
+    public List<AppPerformanceRow> performanceSummary(String appName, String environment, String useCase) {
+        return summarise(history(), appName, environment, useCase);
+    }
+
+    /**
+     * The arithmetic behind {@link #performanceSummary}, over whatever runs it is handed.
+     *
+     * <p>Held apart from the history it normally reads so that it is a function of its input and
+     * nothing else — which is what makes "does a failed call still count" and "how is an average
+     * rounded" answerable by handing it three runs, rather than by getting three calls to have
+     * happened first.
+     */
+    static List<AppPerformanceRow> summarise(List<AppUseCaseInstanceOutput> runs,
+                                             String appName, String environment, String useCase) {
+        // Insertion-ordered while it is being filled, then sorted: the history is newest-first, so
+        // without the sort the busiest endpoint would land wherever it happened to have last run.
+        Map<String, long[]> totals = new LinkedHashMap<>();
+        Map<String, String[]> names = new LinkedHashMap<>();
+
+        for (AppUseCaseInstanceOutput run : runs) {
+            if (!matches(appName, run.appName())) continue;
+            if (!matches(environment, run.environment())) continue;
+            if (!matches(useCase, run.useCase())) continue;
+
+            String app = text(run.appName());
+            String env = text(run.environment());
+            String useCaseName = text(run.useCase());
+            // Tab-joined rather than run together: an app named "a" in environment "b" and one named
+            // "a\\tb" would otherwise land on the same line, and a tab is the one character none of
+            // these three names can hold.
+            String key = app + '\t' + env + '\t' + useCaseName;
+            names.putIfAbsent(key, new String[] { app, env, useCaseName });
+            long taken = Math.max(run.timeTaken(), 0);
+            long[] running = totals.computeIfAbsent(key, k -> new long[3]);
+            running[0]++;
+            running[1] += taken;
+            running[2] = Math.max(running[2], taken);
+        }
+
+        List<AppPerformanceRow> rows = new ArrayList<>();
+        for (Map.Entry<String, long[]> entry : totals.entrySet()) {
+            String[] name = names.get(entry.getKey());
+            long[] running = entry.getValue();
+            // Rounded rather than truncated: every number beside it is a whole millisecond, and a
+            // column of averages that all read one low is worse than one that reads honestly to the
+            // precision it is shown at.
+            long average = running[0] == 0 ? 0 : Math.round((double) running[1] / running[0]);
+            rows.add(new AppPerformanceRow(name[0], name[1], name[2], running[0], average, running[2]));
+        }
+        // Busiest first, and alphabetically within a tie, so two endpoints called the same number of
+        // times do not swap places between one reading of the grid and the next.
+        rows.sort(Comparator.comparingLong(AppPerformanceRow::requestCount).reversed()
+                .thenComparing(AppPerformanceRow::app)
+                .thenComparing(AppPerformanceRow::environment)
+                .thenComparing(AppPerformanceRow::useCase));
+        return rows;
+    }
+
+    /** A filter matches when it was not given at all, or when it names this run's value. */
+    private static boolean matches(String filter, String value) {
+        return filter == null || filter.isBlank() || filter.trim().equalsIgnoreCase(text(value));
+    }
+
+    /** A run that recorded no app, environment or use case still groups — under the empty name. */
+    private static String text(String value) {
+        return value == null ? "" : value;
+    }
+
     /** Empties the global run history. The retained payloads go with it — they are its detail rows. */
     public void clearHistory() {
         synchronized (history) {
@@ -250,10 +339,33 @@ public class AppExecutionService {
     public AppUseCaseInstanceOutput executeWithInputs(String instanceId, String environment,
                                                       Map<String, Object> inputs,
                                                       ExecutionTarget target, String agentId) {
+        return executeWithInputs(instanceId, environment, inputs, target, agentId, true);
+    }
+
+    /**
+     * The same run, with a say in whether its bodies are filed away afterwards.
+     *
+     * <p>{@code keepBodies} is false for a page whose {@code DEBUG} is off — see
+     * {@link AppPage#isDebug()}. It changes nothing about the call or about what comes back: the
+     * caller is still handed the whole result, because it is about to bind the response into a grid.
+     * What it changes is what this server goes on holding once the answer has been handed over.
+     * {@link #recentExecutions} exists so a body can be pulled back a second time without re-running,
+     * and on a page that is not being debugged nobody ever will — so a page hammering production all
+     * afternoon stops paying two hundred executions' worth of bodies for a door it never opens.
+     *
+     * <p>The run is still written to the global history either way. That copy is payload-free and a
+     * few hundred bytes, and it is what the Global Runs page and the performance summary read: a
+     * page turning its detail off should get cheaper, not go missing from the record of what ran.
+     */
+    public AppUseCaseInstanceOutput executeWithInputs(String instanceId, String environment,
+                                                      Map<String, Object> inputs,
+                                                      ExecutionTarget target, String agentId,
+                                                      boolean keepBodies) {
         AppUseCaseInstance instance = catalog.getInstance(instanceId);
         String chosen = environment != null && !environment.isBlank() ? environment
                 : instance != null ? firstEnvironment(instance) : null;
-        return execute(new RunPlan(instanceId, chosen, 1, 1, inputs != null ? inputs : Map.of()), target, agentId);
+        return execute(new RunPlan(instanceId, chosen, 1, 1, inputs != null ? inputs : Map.of()),
+                target, agentId, keepBodies);
     }
 
     // -------------------------------------------------------------------------
@@ -339,6 +451,16 @@ public class AppExecutionService {
      * output, including "no agents connected" and anything the agent itself reports.
      */
     private AppUseCaseInstanceOutput execute(RunPlan runPlan, ExecutionTarget target, String agentId) {
+        return execute(runPlan, target, agentId, true);
+    }
+
+    /**
+     * @param keepBodies false to hand the result back whole but not file it under its execution id
+     *                   afterwards — see {@link #executeWithInputs(String, String, Map,
+     *                   ExecutionTarget, String, boolean)}
+     */
+    private AppUseCaseInstanceOutput execute(RunPlan runPlan, ExecutionTarget target, String agentId,
+                                             boolean keepBodies) {
         String instanceId = runPlan.instanceId();
         AppUseCaseInstance instance = catalog.getInstance(instanceId);
         if (instance == null) return errorOutput(runPlan, null, "Unknown instance id: " + instanceId);
@@ -359,6 +481,11 @@ public class AppExecutionService {
             return errorOutput(runPlan, instance, "Environment '" + env.getEnvironment() + "' is " + env.getEnvStatus(), env, useCase);
         if (!"HTTP".equalsIgnoreCase(app.getAppMode()))
             return errorOutput(runPlan, instance, "App mode '" + app.getAppMode() + "' cannot be executed — only HTTP is supported", env, useCase);
+        // A monitoring use case against an environment that never got a monitoring address would
+        // otherwise fall back to the application prefix and quietly call the wrong endpoint.
+        if (isMonitoring(useCase) && env.prefixFor(useCase.getUrlPrefixType()) == null)
+            return errorOutput(runPlan, instance, "Use case '" + useCase.getUseCaseName() + "' runs on the monitoring URL prefix, "
+                    + "which environment '" + env.getEnvironment() + "' does not define", env, useCase);
 
         long started = System.currentTimeMillis();
         String url = null;
@@ -367,15 +494,15 @@ public class AppExecutionService {
         Map<String, String> requestHeaders = new LinkedHashMap<>();
 
         try {
-            Map<String, Object> variables = mergeVariables(app, useCase, instance);
+            Map<String, Object> variables = mergeVariables(app, env, useCase, instance);
             variables.putAll(runPlan.inputOverrides());
 
             // Auth runs before substitution so a JWT token is available to the request as $jwtToken.
-            String authorization = applyAuth(app, env, variables);
+            String authorization = applyAuth(app, env, useCase, variables);
             // The same token the templates saw, reported on the output so it can be replayed by hand.
             jwtToken = variables.get("jwtToken") instanceof String token ? token : null;
 
-            url = substitute(nullToEmpty(env.getUrlPrefix()) + nullToEmpty(useCase.getUrlSuffix()), variables);
+            url = substitute(nullToEmpty(env.prefixFor(useCase.getUrlPrefixType())) + nullToEmpty(useCase.getUrlSuffix()), variables);
             requestBody = useCase.getHttpBody() != null ? substitute(useCase.getHttpBody(), variables) : null;
             requestHeaders = parseHeaders(useCase.getHttpHeaders(), variables);
             if (authorization != null && !containsHeaderIgnoreCase(requestHeaders, "Authorization")) {
@@ -396,7 +523,7 @@ public class AppExecutionService {
                 transformError = "Transform failed: " + rootMessage(e);
             }
 
-            return retain(new AppUseCaseInstanceOutput(
+            return retain(keepBodies, new AppUseCaseInstanceOutput(
                     newExecutionId(),
                     started,
                     instanceId,
@@ -428,7 +555,7 @@ public class AppExecutionService {
             // Substitution may not have run at all — an auth failure happens before the URL is
             // built. Then the URL reported is the configured template, and saying which of its
             // placeholders are "unresolved" would be a lie: nothing was ever resolved.
-            return retain(new AppUseCaseInstanceOutput(
+            return retain(keepBodies, new AppUseCaseInstanceOutput(
                     newExecutionId(),
                     started,
                     instanceId,
@@ -535,9 +662,24 @@ public class AppExecutionService {
      * gets everything it asked for. Only what is <em>kept</em> is trimmed: a body over
      * {@link #maxRetainedBodyBytes} is dropped from the retained copy rather than held for two
      * hundred executions' worth of heap. See that field for why a count is not a bound.
+     *
+     * <p>The history entry is added whatever {@code keepBodies} says. It is payload-free and a few
+     * hundred bytes, and it is what the Global Runs page and the performance summary are read out
+     * of: a run nobody wants the bodies of is still a run that happened.
+     *
+     * @param keepBodies false to skip the addressable copy entirely — the result is handed back and
+     *                   then let go, so {@link #getExecution} will not find it again. Written first
+     *                   because what follows it is twenty-seven arguments long, and a flag on the
+     *                   far side of those is a flag nobody reads. Set by a page whose {@code DEBUG}
+     *                   is off; see {@link AppPage#isDebug()}.
      */
-    private AppUseCaseInstanceOutput retain(AppUseCaseInstanceOutput output) {
-        recentExecutions.put(output.executionId(), tooBigToKeep(output) ? output.withoutPayload() : output);
+    // Package-private rather than private for the same reason summarise() is: what this keeps and
+    // what it lets go is worth pinning down by handing it a result, rather than by getting a call to
+    // have happened first.
+    AppUseCaseInstanceOutput retain(boolean keepBodies, AppUseCaseInstanceOutput output) {
+        if (keepBodies) {
+            recentExecutions.put(output.executionId(), tooBigToKeep(output) ? output.withoutPayload() : output);
+        }
         synchronized (history) {
             history.addFirst(output.withoutPayload());
             while (history.size() > RETAINED_HISTORY) history.removeLast();
@@ -556,13 +698,20 @@ public class AppExecutionService {
     // -------------------------------------------------------------------------
 
     /**
-     * Builds the effective variable map for one execution, lowest precedence first:
-     * app variables, then use case variables, then the use case's declared input defaults,
-     * then the instance's own input values.
+     * Builds the effective variable map for one execution, lowest precedence first: app variables,
+     * then the environment's own variables, then use case variables, then the use case's declared
+     * input defaults, then the instance's own input values.
+     *
+     * <p>The environment sits directly above the app because that is what it is for: the app states
+     * what is true of the application everywhere, and the environment states where this particular
+     * deployment differs. Everything below it — a use case, an instance — is more specific still and
+     * so keeps its say, exactly as it always had over the app's defaults.
      */
-    public Map<String, Object> mergeVariables(AppDefinition app, AppUseCase useCase, AppUseCaseInstance instance) {
+    public Map<String, Object> mergeVariables(AppDefinition app, AppEnvironment env,
+                                              AppUseCase useCase, AppUseCaseInstance instance) {
         Map<String, Object> merged = new LinkedHashMap<>();
         if (app != null)     merged.putAll(app.getAppVariables());
+        if (env != null)     merged.putAll(env.getEnvVariables());
         if (useCase != null) {
             merged.putAll(useCase.getAppUseCaseVariables());
             for (AppUseCaseInput input : useCase.getAppUseCaseInputs()) {
@@ -687,7 +836,7 @@ public class AppExecutionService {
      * that needs it somewhere other than the Authorization header — a query parameter, a custom
      * header, a field in the body — can reference {@code $jwtToken} directly.
      */
-    private String applyAuth(AppDefinition app, AppEnvironment env, Map<String, Object> variables) throws Exception {
+    private String applyAuth(AppDefinition app, AppEnvironment env, AppUseCase useCase, Map<String, Object> variables) throws Exception {
         String method = app.getAuthMethod() == null ? "NONE" : app.getAuthMethod().trim().toUpperCase();
 
         switch (method) {
@@ -712,8 +861,9 @@ public class AppExecutionService {
             }
             case "KERBEROS" -> {
                 // Reuses the shared provider: username is the principal, password the keytab path,
-                // and the target service principal is derived from the environment's host.
-                String servicePrincipal = "HTTP@" + URI.create(nullToEmpty(env.getUrlPrefix())).getHost();
+                // and the target service principal is derived from the host actually being called —
+                // which, for a monitoring use case, is the monitoring prefix's host, not the app's.
+                String servicePrincipal = "HTTP@" + URI.create(nullToEmpty(env.prefixFor(useCase == null ? null : useCase.getUrlPrefixType()))).getHost();
                 return new KerberosAuthProvider(env.getUsername(), env.getPassword(), servicePrincipal)
                         .getAuthorizationHeader();
             }
@@ -899,7 +1049,9 @@ public class AppExecutionService {
     private AppUseCaseInstanceOutput errorOutput(RunPlan runPlan, AppUseCaseInstance instance, String message,
                                                  AppEnvironment env, AppUseCase useCase) {
         String instanceId = runPlan.instanceId();
-        return retain(new AppUseCaseInstanceOutput(
+        // Kept whatever the caller asked, DEBUG included: this one never had bodies to hold — the
+        // request was never built — so there is nothing here for turning the detail off to save.
+        return retain(true, new AppUseCaseInstanceOutput(
                 newExecutionId(),
                 System.currentTimeMillis(),
                 instanceId,
@@ -927,7 +1079,7 @@ public class AppExecutionService {
      * keeps showing an empty cell instead of a misleading blank string.
      */
     private static String rawUrl(AppEnvironment env, AppUseCase useCase) {
-        String raw = nullToEmpty(env == null ? null : env.getUrlPrefix())
+        String raw = nullToEmpty(env == null ? null : env.prefixFor(useCase == null ? null : useCase.getUrlPrefixType()))
                    + nullToEmpty(useCase == null ? null : useCase.getUrlSuffix());
         return raw.isBlank() ? null : raw;
     }
@@ -942,6 +1094,10 @@ public class AppExecutionService {
             return instance.getInstanceLabel();
         return instance.getAppUseCaseName() + " @ "
                 + (environment != null && !environment.isBlank() ? environment : instance.getAppEnvironment());
+    }
+
+    private static boolean isMonitoring(AppUseCase useCase) {
+        return useCase != null && AppUseCase.PREFIX_TYPE_MONITORING.equalsIgnoreCase(nullToEmpty(useCase.getUrlPrefixType()));
     }
 
     private static String nullToEmpty(String s) { return s == null ? "" : s; }

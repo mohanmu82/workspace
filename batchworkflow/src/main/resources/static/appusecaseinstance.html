@@ -1027,10 +1027,17 @@
         const missing = new Set();
         const lines = picked.map(name => {
             const env = environments.find(e => e.environment === name);
-            const resolved = substitute((env && env.urlPrefix ? env.urlPrefix : '') + (currentUseCase.urlSuffix || ''), variables);
+            const label = picked.length > 1 ? '<span class="badge auth">' + AC.esc(name) + '</span> ' : '';
+            const prefix = prefixFor(env, currentUseCase);
+            // A monitoring use case on an environment with no monitoring address cannot run at all,
+            // so say that here rather than previewing a URL the execution would refuse to build.
+            if (prefix === null) {
+                return label + '<span class="input-flag">Environment ' + AC.esc(name) +
+                       ' has no monitoring URL prefix — this use case cannot run against it.</span>';
+            }
+            const resolved = substitute(prefix + (currentUseCase.urlSuffix || ''), variables);
             referencedVariables(resolved).forEach(n => missing.add(n));
-            return (picked.length > 1 ? '<span class="badge auth">' + AC.esc(name) + '</span> ' : '') +
-                   markUnresolved(resolved);
+            return label + markUnresolved(resolved);
         });
 
         const names = [...missing];
@@ -1038,6 +1045,20 @@
             (names.length ? '<div class="input-flag" style="margin-top:4px">' + names.length +
                 ' placeholder' + (names.length !== 1 ? 's' : '') + ' with no value — the call goes out with ' +
                 AC.esc(names.map(n => '${' + n + '}').join(', ')) + ' as written.</div>' : '');
+    }
+
+    /**
+     * The environment prefix a use case hangs off — the monitoring one when it asks for it, the
+     * application one otherwise. Null when the use case wants the monitoring prefix and this
+     * environment has none, which is what the server rejects the run on. Mirrors
+     * {@code AppEnvironment.prefixFor}.
+     */
+    function prefixFor(env, useCase) {
+        if (!env) return '';
+        if (useCase && useCase.urlPrefixType === 'MONITORING') {
+            return env.monitoringUrlPrefix ? env.monitoringUrlPrefix : null;
+        }
+        return env.urlPrefix || '';
     }
 
     /** Coerces each entered value to the type its use case input declares. */

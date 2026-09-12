@@ -48,6 +48,36 @@ public class AppPage {
      * body into JSON, say) is the same step the next chain starts with.
      */
     private List<AppPageTransform> transforms = new ArrayList<>();
+    /**
+     * Named values the page's templates may read beside its controls — see {@link AppPageVariable}.
+     * Held on the page for the same reason {@link #actions} is: a value every action on the screen
+     * carries is one fact about the page, and writing it into a hidden control per page and a
+     * placeholder per action is the same fact written many times over.
+     *
+     * <p>These are the ad-hoc ones alone. The built-ins — the machine, the date, the time, a fresh
+     * UUID, the row number inside a fan-out — are worked out when a trigger runs and are never
+     * stored, so they are not here and may not be redefined here either.
+     */
+    private List<AppPageVariable> variables = new ArrayList<>();
+    /**
+     * Whether this page keeps the detail behind the calls it makes — the request and response bodies
+     * and what the server made of them. Read in a template as <code>${DEBUG}</code>, and the one
+     * built-in that is stored rather than computed, because it is a decision about the page rather
+     * than a fact about the run: see {@link AppPageVariable#BUILT_IN}.
+     *
+     * <p>On, which is what a page gets until somebody says otherwise, every call a trigger makes is
+     * kept whole — that is what fills Technical Details and what lets a body be pulled back out of
+     * the server afterwards. Off, the call still goes out and its answer is still bound into the
+     * grid exactly as before; what stops is the <em>keeping</em>. The browser holds the metadata of
+     * each call and drops the bodies, and the server is told not to file the run away for later
+     * retrieval. Nothing about the page's behaviour changes, only what it costs to have run it —
+     * which is the trade worth making where a page runs all day against production and nobody is
+     * going to read the sixth-last response.
+     *
+     * <p>Defaults to true rather than false so a page saved before this switch existed opens
+     * behaving as it always did: the detail is there until it is turned off deliberately.
+     */
+    private boolean debug = true;
 
     public String getPageName()                  { return pageName; }
     public void   setPageName(String pageName)   { this.pageName = pageName; }
@@ -72,4 +102,10 @@ public class AppPage {
 
     public List<AppPageTransform> getTransforms()                    { return transforms; }
     public void setTransforms(List<AppPageTransform> transforms)     { this.transforms = transforms != null ? transforms : new ArrayList<>(); }
+
+    public List<AppPageVariable> getVariables()                      { return variables; }
+    public void setVariables(List<AppPageVariable> variables)        { this.variables = variables != null ? variables : new ArrayList<>(); }
+
+    public boolean isDebug()                                         { return debug; }
+    public void setDebug(boolean debug)                              { this.debug = debug; }
 }
