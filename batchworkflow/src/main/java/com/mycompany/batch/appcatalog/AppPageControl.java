@@ -29,7 +29,7 @@ public class AppPageControl {
     private String label;
     /**
      * text, textarea, number, date, hidden, select, multiselect, checkbox, button, link, grid, tabs,
-     * pie or label.
+     * pie, piegrid, bar, label or page.
      */
     private String type = "text";
     /**
@@ -43,6 +43,12 @@ public class AppPageControl {
     private String helpText;
     /** CSS color applied to the control's label and value when the page runs — "blue", "#d63384". */
     private String color;
+    /**
+     * Text area controls only: how a value is laid out before it is put into the box — {@code JSON}
+     * or {@code XML} pretty-prints it, {@code NONE} puts it in exactly as it came. A value that does
+     * not parse as the format asked for goes in unchanged rather than not at all.
+     */
+    private String textFormat = "NONE";
 
     private int row;
     private int col;
@@ -83,6 +89,16 @@ public class AppPageControl {
      * specific of the two, and a link that names a page is one somebody meant to go to that page.
      */
     private String linkPageName;
+    /**
+     * Page controls only: another page in this catalog, by {@link AppPage#getPageName() name}, that
+     * runs inside this one. The running page draws it in its own frame, and keeps a tally of every
+     * action the child page executes — how many succeeded, how many failed and why — so a parent
+     * made of several child pages answers "did it all work" without opening each one.
+     *
+     * <p>Checked on save like {@link #linkPageName}: the page has to exist, cannot be this page, and
+     * cannot lead back here through its own child pages, which would nest frames without end.
+     */
+    private String childPageName;
     /**
      * Actions written directly onto this control — run in order, stopping at the first failure.
      * Predates the page-level library and is still honoured, so every page saved before it keeps
@@ -134,6 +150,38 @@ public class AppPageControl {
      */
     private String rowErrorExpression;
     /**
+     * Grid controls only: what counts as success for the grid as a whole, judged on how many rows it
+     * holds once filtered — one of {@link #STATUS_CONDITIONS}. Blank is a grid with no status.
+     *
+     * <p>{@code ROWCOUNT=0} is the one that reads backwards and is the reason this is a choice rather
+     * than a fixed rule: a grid of errors pulled out of some output is a success when it is empty.
+     */
+    private String statusCondition;
+    /**
+     * Grid controls only: the name the grid's status answers to in templates — {@code ${ordersOk}}
+     * reads {@code SUCCESS} or {@code FAILED}. Blank still shows the verdict on the grid, but nothing
+     * else on the page can read it.
+     */
+    private String statusVariable;
+
+    /** The conditions {@link #statusCondition} may hold, spelled the way they are stored. */
+    public static final List<String> STATUS_CONDITIONS = List.of("ROWCOUNT>0", "ROWCOUNT>=0", "ROWCOUNT=0");
+    /**
+     * Grid controls only: the column its rows are ordered by the moment they arrive, and whether
+     * that order runs up or down — {@link #sortDirection} being {@code ASC} or {@code DESC}.
+     *
+     * <p>Blank, which is every grid saved before this existed, leaves the rows in the order the call
+     * returned them and waits for the operator to click a heading. Named rather than positional
+     * because the columns a grid shows are a list of field names, and a grid that names none of them
+     * shows whatever the rows carry — a column number would mean something different on every run.
+     *
+     * <p>Only a starting order: clicking any heading still re-sorts the grid, including this column,
+     * where the first click turns the order round rather than setting it again.
+     */
+    private String sortColumn;
+    /** Grid controls only: ASC or DESC, and only read when {@link #sortColumn} names a column. */
+    private String sortDirection = "ASC";
+    /**
      * Pie controls only: the slices, in the order they are drawn, each an {@link AppPageOption}
      * whose {@link AppPageOption#key() key} names the slice and whose
      * {@link AppPageOption#value() value} is how big it is.
@@ -157,8 +205,40 @@ public class AppPageControl {
      * since "which tab is this grid in" would otherwise have two answers.
      */
     private List<String> tabControlIds = new ArrayList<>();
+    /**
+     * Tabs controls only: which of {@link #tabControlIds} is the tab showing when the page opens,
+     * and the one the strip marks as the default. Blank — every tab set saved before this existed —
+     * opens on the first tab, as it always did. Only meaningful once a set holds more than one grid.
+     */
+    private String defaultTabControlId;
+    /**
+     * Pie-with-grids controls only: the tab set the chart puts a grid per pie into, holding the rows
+     * the chart was drawn from. Clicking a slice opens that pie's tab, filtered to the slice.
+     */
+    private String tabsControlId;
+    /**
+     * Bar chart controls only: {@code VERTICAL} — columns rising from a baseline, the default — or
+     * {@code HORIZONTAL}, bars running across from a left-hand baseline.
+     */
+    private String orientation = "VERTICAL";
 
-    public String getControlId()                    { return controlId; }
+    public String getDefaultTabControlId()                         { return defaultTabControlId; }
+    public void   setDefaultTabControlId(String defaultTabControlId) {
+        this.defaultTabControlId = defaultTabControlId == null || defaultTabControlId.isBlank() ? null : defaultTabControlId.trim();
+    }
+
+    public String getTabsControlId()                     { return tabsControlId; }
+    public void   setTabsControlId(String tabsControlId) {
+        this.tabsControlId = tabsControlId == null || tabsControlId.isBlank() ? null : tabsControlId.trim();
+    }
+
+    public String getOrientation()                   { return orientation; }
+    /** Anything but an explicit HORIZONTAL is vertical. */
+    public void   setOrientation(String orientation) {
+        this.orientation = orientation != null && "HORIZONTAL".equalsIgnoreCase(orientation.trim()) ? "HORIZONTAL" : "VERTICAL";
+    }
+
+    public String getControlId()                   { return controlId; }
     public void   setControlId(String controlId)    { this.controlId = controlId; }
 
     public String getFieldName()                    { return fieldName; }
@@ -185,6 +265,13 @@ public class AppPageControl {
     public String getColor()               { return color; }
     public void   setColor(String color)   { this.color = color; }
 
+    public String getTextFormat()          { return textFormat; }
+    /** Anything but JSON or XML is NONE, so an unset or unreadable value leaves the text alone. */
+    public void   setTextFormat(String textFormat) {
+        String f = textFormat == null ? "" : textFormat.trim().toUpperCase();
+        this.textFormat = f.equals("JSON") || f.equals("XML") ? f : "NONE";
+    }
+
     public int  getRow()          { return row; }
     public void setRow(int row)   { this.row = Math.max(row, 0); }
 
@@ -206,6 +293,9 @@ public class AppPageControl {
 
     public String getLinkPageName()                       { return linkPageName; }
     public void   setLinkPageName(String linkPageName)    { this.linkPageName = linkPageName == null || linkPageName.isBlank() ? null : linkPageName.trim(); }
+
+    public String getChildPageName()                       { return childPageName; }
+    public void   setChildPageName(String childPageName)   { this.childPageName = childPageName == null || childPageName.isBlank() ? null : childPageName.trim(); }
 
     public List<AppPageAction> getActions()                        { return actions; }
     public void setActions(List<AppPageAction> actions)            { this.actions = actions != null ? actions : new ArrayList<>(); }
@@ -229,6 +319,27 @@ public class AppPageControl {
     public void   setRowErrorExpression(String rowErrorExpression) {
         this.rowErrorExpression = rowErrorExpression == null || rowErrorExpression.isBlank()
                 ? null : rowErrorExpression.trim();
+    }
+
+    public String getStatusCondition()   { return statusCondition; }
+    /** Spaces are dropped and case ignored, so "rowcount > 0" is stored as ROWCOUNT>0. */
+    public void   setStatusCondition(String statusCondition) {
+        String c = statusCondition == null ? "" : statusCondition.replaceAll("\\s+", "").toUpperCase();
+        this.statusCondition = c.isEmpty() ? null : c;
+    }
+
+    public String getStatusVariable()    { return statusVariable; }
+    public void   setStatusVariable(String statusVariable) {
+        this.statusVariable = statusVariable == null || statusVariable.isBlank() ? null : statusVariable.trim();
+    }
+
+    public String getSortColumn()                     { return sortColumn; }
+    public void   setSortColumn(String sortColumn)    { this.sortColumn = sortColumn == null || sortColumn.isBlank() ? null : sortColumn.trim(); }
+
+    public String getSortDirection()                  { return sortDirection; }
+    /** Anything but an explicit DESC is ascending, so an unset or unreadable value still sorts. */
+    public void   setSortDirection(String sortDirection) {
+        this.sortDirection = sortDirection != null && "DESC".equalsIgnoreCase(sortDirection.trim()) ? "DESC" : "ASC";
     }
 
     public List<AppPageOption> getSlices()                   { return slices; }

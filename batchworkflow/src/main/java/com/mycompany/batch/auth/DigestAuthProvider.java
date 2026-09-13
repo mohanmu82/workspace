@@ -19,9 +19,16 @@ public class DigestAuthProvider implements HttpAuthProvider {
     private final String password;
     private final String url;
     private final ObjectMapper objectMapper;
+    private final HttpClient httpClient;
     private final AtomicReference<String> cachedToken = new AtomicReference<>();
 
     public DigestAuthProvider(String username, String password, String url, ObjectMapper objectMapper) {
+        this(username, password, url, objectMapper, null);
+    }
+
+    /** @param httpClient the client to fetch the token with, or null for a default client */
+    public DigestAuthProvider(String username, String password, String url, ObjectMapper objectMapper, HttpClient httpClient) {
+        this.httpClient = httpClient;
         this.username = username;
         this.password = password;
         this.url = url;
@@ -49,7 +56,7 @@ public class DigestAuthProvider implements HttpAuthProvider {
                 "password", password
         ));
 
-        HttpClient client = HttpClient.newHttpClient();
+        HttpClient client = httpClient != null ? httpClient : HttpClient.newHttpClient();
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(url))
                 .header("Content-Type", "application/json")

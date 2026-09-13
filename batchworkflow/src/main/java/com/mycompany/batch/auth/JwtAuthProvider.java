@@ -22,6 +22,7 @@ public class JwtAuthProvider implements HttpAuthProvider {
     private final String jwtUrl;
     private final String jwtMethod;
     private final ObjectMapper objectMapper;
+    private final HttpClient httpClient;
     private final AtomicReference<String> cachedToken = new AtomicReference<>();
 
     /** Calls the token endpoint with POST — the long-standing behaviour, kept for existing callers. */
@@ -38,6 +39,16 @@ public class JwtAuthProvider implements HttpAuthProvider {
      */
     public JwtAuthProvider(String applicationName, String username, String password,
                            String jwtUrl, String jwtMethod, ObjectMapper objectMapper) {
+        this(applicationName, username, password, jwtUrl, jwtMethod, objectMapper, null);
+    }
+
+    /**
+     * @param httpClient the client to call the token endpoint with — e.g. one that trusts a
+     *                   particular server certificate — or null for a default client
+     */
+    public JwtAuthProvider(String applicationName, String username, String password,
+                           String jwtUrl, String jwtMethod, ObjectMapper objectMapper, HttpClient httpClient) {
+        this.httpClient = httpClient;
         this.applicationName = applicationName;
         this.username = username;
         this.password = password;
@@ -90,7 +101,7 @@ public class JwtAuthProvider implements HttpAuthProvider {
                    .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(payload)));
         }
 
-        HttpClient client = HttpClient.newHttpClient();
+        HttpClient client = httpClient != null ? httpClient : HttpClient.newHttpClient();
         HttpResponse<String> response = client.send(builder.build(), HttpResponse.BodyHandlers.ofString());
         String contentType = response.headers().firstValue("content-type").orElse("(none)");
 

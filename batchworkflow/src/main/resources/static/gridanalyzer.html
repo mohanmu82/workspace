@@ -6,6 +6,8 @@
     <title>Analyze Grid</title>
     <link rel="stylesheet" href="appcatalog.css">
     <script src="appcatalog.js"></script>
+    <script src="gridpivot.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
     <style>
         /* A pivot table over whatever a grid on an app page is currently showing. Its own screen
            rather than a panel on the page: "what does this add up to, broken down by that" needs
@@ -91,7 +93,23 @@
         .ga-opts { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: #5e6c84; flex: none; align-items: center; }
         .ga-opts label { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
         .ga-opts input[type=checkbox] { width: auto; padding: 0; margin: 0; }
+        .ga-opts select { width: auto; font-size: 12px; padding: 3px 6px; }
+        .ga-opts label.off { opacity: .45; cursor: default; }
         .ga-opts .shape { margin-left: auto; }
+
+        /* ── Charts ──────────────────────────────────────────────────────────
+           Categories are the row groups and each column group is a series, the way PivotTable.js
+           lays its chart renderers out; Swap turns that round. Pies are one per series, since a pie
+           can only ever show one. */
+        .ga-chart-wrap { display: flex; flex-direction: column; height: 100%; }
+        .ga-chart { position: relative; flex: 1 0 auto; min-height: 360px; margin: 12px; }
+        .ga-chart-note { font-size: 11px; color: #5e6c84; padding: 8px 12px 0; }
+        .ga-pies { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; padding: 12px; }
+        .ga-pies.single { grid-template-columns: minmax(0, 680px); justify-content: center; }
+        .ga-pie { border: 1px solid #ebecf0; border-radius: 5px; padding: 8px 10px; }
+        .ga-pie h4 { font-size: 12px; font-weight: 600; margin: 0 0 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .ga-pie .cv { position: relative; height: 340px; }
+        .ga-pies.single .ga-pie .cv { height: 480px; }
 
         .ga-out { flex: 1; min-height: 0; overflow: auto; background: #fff; border: 1px solid #dfe1e6; border-radius: 5px; }
         .ga-hint { padding: 16px; font-size: 12px; color: #5e6c84; line-height: 1.7; }
@@ -129,7 +147,8 @@
         .ga-modal p.note { font-size: 12px; color: #5e6c84; margin-bottom: 14px; line-height: 1.5; }
         .ga-modal label.fld { display: block; font-size: 11px; font-weight: 600; color: #5e6c84;
                               text-transform: uppercase; letter-spacing: .4px; margin-bottom: 4px; }
-        .ga-modal input[type=text] { width: 100%; font-size: 13px; padding: 6px 9px; }
+        .ga-modal input[type=text], .ga-modal select { width: 100%; font-size: 13px; padding: 6px 9px; margin-bottom: 10px; }
+        .ga-modal .what-it-does { font-size: 12px; background: #f4f5f7; border-radius: 4px; padding: 7px 9px; margin-bottom: 12px; }
         .ga-modal .choice { display: flex; flex-direction: column; gap: 6px; margin: 12px 0 4px; }
         .ga-modal .choice label { display: flex; gap: 7px; align-items: flex-start; font-size: 13px; cursor: pointer; }
         .ga-modal .choice input { width: auto; margin: 3px 0 0; padding: 0; flex: none; }
@@ -150,9 +169,12 @@
     <div class="ga-actions">
         <button type="button" class="tool-btn" id="gaSwap">Swap rows / columns</button>
         <button type="button" class="tool-btn" id="gaClear">Start over</button>
+        <button type="button" class="tool-btn" id="gaPng" style="display:none">Download image</button>
         <button type="button" class="tool-btn" id="gaHtml">View as HTML</button>
         <button type="button" class="tool-btn" id="gaCsv">Download CSV</button>
         <button type="button" class="tool-btn" id="gaSave">Save as dataset</button>
+        <button type="button" class="tool-btn" id="gaAddAction" style="display:none"
+                data-ready-title="Add this analysis to the page as an action that fills a grid with it">Add to page as action</button>
     </div>
 </header>
 
@@ -180,10 +202,22 @@
         </div>
 
         <div class="ga-opts">
+            <label>View <select id="gaRenderer"></select></label>
+            <label title="Largest / smallest order by the total of the first value">Row order
+                <select id="gaRowOrder">
+                    <option value="key">A &rarr; Z</option>
+                    <option value="valueDesc">Largest first</option>
+                    <option value="valueAsc">Smallest first</option>
+                </select></label>
+            <label title="Largest / smallest order by the total of the first value">Column order
+                <select id="gaColOrder">
+                    <option value="key">A &rarr; Z</option>
+                    <option value="valueDesc">Largest first</option>
+                    <option value="valueAsc">Smallest first</option>
+                </select></label>
             <label><input type="checkbox" id="gaGrandRow" checked> Total row</label>
             <label><input type="checkbox" id="gaGrandCol" checked> Total column</label>
             <label><input type="checkbox" id="gaBlanks" checked> Keep blank values</label>
-            <label><input type="checkbox" id="gaHeat"> Heat map</label>
             <span class="shape" id="gaShape"></span>
         </div>
 
@@ -199,39 +233,34 @@
 // screen is a fresh read of these same rows, so nothing the operator does here can lose data.
 let SOURCE = { title: 'Grid', columns: [], rows: [] };
 
-/**
- * The one entry in the field list that is not a column of the grid: it counts rows rather than
- * values of anything, which is the measure most pivots start from. Prefixed with a control
- * character so that no column of any response can collide with it, and never written into the
- * document — the field list addresses its entries by position for exactly that reason.
- */
-const ROW_COUNT = '\u0001rows';
-const ROW_COUNT_LABEL = '(row count)';
+// The arithmetic lives in gridpivot.js, shared with the page runner that applies a pivot saved onto
+// an action — so what is built here comes out the same wherever it is added.
+const { ROW_COUNT, ROW_COUNT_LABEL, AGGS, SEP, cellText, toNumber, compareText,
+        fieldLabel, measureLabel, keyLabel, accValue } = GridPivot;
 
 /**
- * What a cell can work out. Numeric ones right-align and take part in the heat map; min and max
- * fall back to comparing text when the column is not numbers, which is what makes "latest status"
- * or "last id" answerable on a column of strings.
+ * How the pivot is drawn, after PivotTable.js's renderers. The table ones shade the same table in
+ * different ways; the chart ones hand the same numbers to Chart.js. `shade` says what each table
+ * shading is scaled across; `type` is the Chart.js chart type.
  */
-const AGGS = {
-    sum:    { label: 'Sum',    numeric: true },
-    count:  { label: 'Count',  numeric: true },
-    unique: { label: 'Unique', numeric: true },
-    avg:    { label: 'Average', numeric: true },
-    min:    { label: 'Min' },
-    max:    { label: 'Max' }
+const RENDERERS = {
+    table:       { label: 'Table',                        group: 'Table' },
+    tableBars:   { label: 'Table with bars',              group: 'Table', shade: 'all', bars: true },
+    heat:        { label: 'Heat map',                     group: 'Table', shade: 'all' },
+    rowHeat:     { label: 'Row heat map',                 group: 'Table', shade: 'row' },
+    colHeat:     { label: 'Column heat map',              group: 'Table', shade: 'col' },
+    bar:         { label: 'Bar chart',                    group: 'Chart', type: 'bar' },
+    stackedBar:  { label: 'Stacked bar chart',            group: 'Chart', type: 'bar', stacked: true },
+    hbar:        { label: 'Horizontal bar chart',         group: 'Chart', type: 'bar', horizontal: true },
+    hstackedBar: { label: 'Horizontal stacked bar chart', group: 'Chart', type: 'bar', horizontal: true, stacked: true },
+    line:        { label: 'Line chart',                   group: 'Chart', type: 'line' },
+    area:        { label: 'Stacked area chart',           group: 'Chart', type: 'line', stacked: true, fill: true },
+    pie:         { label: 'Pie charts',                   group: 'Chart', type: 'pie' },
+    doughnut:    { label: 'Doughnut charts',              group: 'Chart', type: 'doughnut' }
 };
 
-/** Rows, columns and values as chosen, plus the four switches under the zones. */
-const cfg = {
-    rows: [],
-    cols: [],
-    values: [{ field: ROW_COUNT, agg: 'count' }],
-    grandRow: true,
-    grandCol: true,
-    blanks: true,
-    heat: false
-};
+/** Rows, columns and values as chosen, plus the switches under the zones. */
+const cfg = Object.assign(GridPivot.defaults(), { renderer: 'table' });
 
 /** Which columns look like numbers, worked out once — decides the default aggregation and alignment. */
 let numericFields = new Set();
@@ -242,167 +271,32 @@ let model = null;
 const esc = value => AC.esc(value);
 const $ = id => document.getElementById(id);
 
-// ── Reading a cell ───────────────────────────────────────────────────────────
-// Deliberately the same rule the grid itself uses: a cell is the text it was shown as, so what you
-// group by here is what you were looking at there, objects and nulls included.
-
-function cellText(row, column) {
-    const cell = (row && typeof row === 'object') ? row[column] : row;
-    if (cell === undefined || cell === null) return '';
-    return typeof cell === 'object' ? JSON.stringify(cell) : String(cell);
-}
-
-function toNumber(text) {
-    if (text === '' || text === null || text === undefined) return null;
-    // Thousands separators and a trailing % or currency are ordinary in a response someone is
-    // summing, and Number() alone rejects every one of them.
-    const cleaned = String(text).replace(/[\s,]/g, '').replace(/^[$£€]/, '').replace(/%$/, '');
-    if (cleaned === '' || isNaN(Number(cleaned))) return null;
-    return Number(cleaned);
-}
-
-/** Numbers compare as numbers so a column of ids does not order 1, 10, 2. */
-function compareText(a, b) {
-    const na = toNumber(a), nb = toNumber(b);
-    if (na !== null && nb !== null) return na === nb ? 0 : (na < nb ? -1 : 1);
-    return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
-}
-
-function fieldLabel(field) {
-    return field === ROW_COUNT ? ROW_COUNT_LABEL : field;
-}
-
-function measureLabel(measure) {
-    return measure.field === ROW_COUNT ? 'Row count'
-        : AGGS[measure.agg].label + ' of ' + measure.field;
-}
-
-/** A key part as it is shown — an empty cell is a group of its own and says so. */
-function keyLabel(part) {
-    return part === '' ? '(blank)' : part;
-}
-
-// ── Aggregation ──────────────────────────────────────────────────────────────
-// One accumulator per measure per cell, fed a single pass over the rows. Only what the chosen
-// aggregation needs is kept: a Set is built for "unique" and for nothing else, which matters when a
-// 27,000-row grid is pivoted twelve ways across.
-
-function newAcc(agg) {
-    if (agg === 'unique') return { set: new Set() };
-    if (agg === 'sum' || agg === 'avg') return { sum: 0, n: 0 };
-    if (agg === 'count') return { n: 0 };
-    return { best: undefined };
-}
-
-function accept(acc, measure, row) {
-    const agg = measure.agg;
-    if (measure.field === ROW_COUNT) { acc.n++; return; }
-
-    const text = cellText(row, measure.field);
-    if (agg === 'count') { if (text !== '') acc.n++; return; }
-    if (agg === 'unique') { if (text !== '') acc.set.add(text); return; }
-    if (agg === 'sum' || agg === 'avg') {
-        const n = toNumber(text);
-        if (n !== null) { acc.sum += n; acc.n++; }
-        return;
-    }
-    if (text === '') return;
-    if (acc.best === undefined || compareText(text, acc.best) * (agg === 'max' ? 1 : -1) > 0) acc.best = text;
-}
-
-/** The accumulator's answer, or null for "nothing here" — which draws as a dash, not a zero. */
-function accValue(acc, measure) {
-    const agg = measure.field === ROW_COUNT ? 'count' : measure.agg;
-    if (agg === 'count')  return acc.n;
-    if (agg === 'unique') return acc.set.size;
-    if (agg === 'sum')    return acc.n ? acc.sum : null;
-    if (agg === 'avg')    return acc.n ? acc.sum / acc.n : null;
-    return acc.best === undefined ? null : acc.best;
-}
-
 function isNumericMeasure(measure) {
     return measure.field === ROW_COUNT || !!AGGS[measure.agg].numeric || numericFields.has(measure.field);
 }
 
 /**
- * What the parts of a multi-level key are joined with to index it. A control character rather than
- * anything readable: two levels of grouping that read "A" + "B/C" and "A/B" + "C" must not land in
- * the same bucket, and a separator that cannot occur in a response is the only way to be sure.
+ * Whether the operator has chosen anything to analyze by: a row, a column, or a value other than the
+ * row count every pivot starts from. Until then the exports would only hand over one cell holding the
+ * row count already printed in the header.
  */
-const SEP = '\u0001';
+function hasChoice() {
+    return cfg.rows.length > 0 || cfg.cols.length > 0
+        || cfg.values.length > 1 || (cfg.values.length === 1 && cfg.values[0].field !== ROW_COUNT);
+}
 
-/**
- * The whole pivot, in one pass over the rows.
- *
- * <p>Row keys, column keys and every cell are collected together rather than in a pass each: the
- * rows are the expensive part, and reading them once is what keeps a large grid instant here.
- * Totals are accumulated alongside rather than summed from the cells afterwards, because a total of
- * averages or of distinct counts is not the average or the distinct count of the whole.
- */
-function computePivot() {
-    const rowFields = cfg.rows;
-    const colFields = cfg.cols;
-    const measures  = cfg.values.length ? cfg.values : [{ field: ROW_COUNT, agg: 'count' }];
-
-    const rowKeys = new Map();   // joined key -> parts
-    const colKeys = new Map();
-    const cells   = new Map();   // row key -> Map(col key -> accumulators)
-    const rowTot  = new Map();
-    const colTot  = new Map();
-    const grand   = measures.map(m => newAcc(m.agg));
-
-    const accsFor = (map, key) => {
-        let accs = map.get(key);
-        if (!accs) { accs = measures.map(m => newAcc(m.agg)); map.set(key, accs); }
-        return accs;
-    };
-
-    for (const row of SOURCE.rows) {
-        const rowParts = rowFields.map(f => cellText(row, f));
-        const colParts = colFields.map(f => cellText(row, f));
-
-        // "Keep blank values" off drops the row from the pivot entirely rather than bucketing it
-        // under (blank) — the usual reason to turn it off is that the blanks are noise.
-        if (!cfg.blanks && (rowParts.some(p => p === '') || colParts.some(p => p === ''))) continue;
-
-        const rowKey = rowParts.join(SEP);
-        const colKey = colParts.join(SEP);
-        if (!rowKeys.has(rowKey)) rowKeys.set(rowKey, rowParts);
-        if (!colKeys.has(colKey)) colKeys.set(colKey, colParts);
-
-        let byCol = cells.get(rowKey);
-        if (!byCol) { byCol = new Map(); cells.set(rowKey, byCol); }
-
-        const cell = accsFor(byCol, colKey);
-        const rt   = accsFor(rowTot, rowKey);
-        const ct   = accsFor(colTot, colKey);
-        for (let i = 0; i < measures.length; i++) {
-            accept(cell[i], measures[i], row);
-            accept(rt[i],   measures[i], row);
-            accept(ct[i],   measures[i], row);
-            accept(grand[i], measures[i], row);
-        }
-    }
-
-    const sortKeys = keys => [...keys.values()].sort((a, b) => {
-        for (let i = 0; i < a.length; i++) {
-            const cmp = compareText(a[i], b[i]);
-            if (cmp) return cmp;
-        }
-        return 0;
+/** The exports of the analysis itself are offered once there is an analysis to take away. */
+function syncPivotButtons() {
+    const ready = SOURCE.rows.length > 0 && hasChoice();
+    ['gaHtml', 'gaCsv', 'gaAddAction'].forEach(id => {
+        $(id).disabled = !ready;
+        $(id).title = ready ? ($(id).dataset.readyTitle || '') : 'Choose rows, columns or values first';
     });
+}
 
-    return {
-        rowFields, colFields, measures,
-        rowKeys: rowFields.length ? sortKeys(rowKeys) : [[]],
-        colKeys: colFields.length ? sortKeys(colKeys) : [[]],
-        cells, rowTot, colTot, grand,
-        // A total column repeats the only column when nothing is pivoted across, and a total row
-        // repeats the only row when nothing is grouped down — so each is offered only when it says
-        // something the table does not already.
-        showGrandCol: cfg.grandCol && colFields.length > 0,
-        showGrandRow: cfg.grandRow && rowFields.length > 0
-    };
+/** The whole pivot over the rows that arrived — see GridPivot.compute. */
+function computePivot() {
+    return GridPivot.compute(SOURCE.rows, cfg);
 }
 
 // ── Drawing the pivot ────────────────────────────────────────────────────────
@@ -435,6 +329,9 @@ function formatValue(value, measure) {
 
 function render() {
     const out = $('gaOut');
+    destroyCharts();
+    syncRendererControls();
+    syncPivotButtons();
     if (!SOURCE.rows.length) {
         out.innerHTML = '<div class="ga-hint">The grid handed over no rows, so there is nothing to analyze.</div>';
         $('gaShape').textContent = '';
@@ -444,7 +341,7 @@ function render() {
     model = computePivot();
     const { rowFields, colFields, measures, rowKeys, colKeys } = model;
 
-    if (!rowFields.length && !colFields.length && cfg.values.length <= 1 && cfg.values[0] && cfg.values[0].field === ROW_COUNT) {
+    if (!hasChoice()) {
         // Nothing has been chosen yet. Say what to do rather than showing a one-cell table whose
         // only number is the row count already printed in the header.
         out.innerHTML = '<div class="ga-hint">'
@@ -457,6 +354,14 @@ function render() {
         $('gaShape').textContent = SOURCE.rows.length.toLocaleString() + ' rows';
         return;
     }
+
+    $('gaShape').textContent = rowKeys.length.toLocaleString() + ' row group'
+        + (rowKeys.length === 1 ? '' : 's') + ' × ' + colKeys.length.toLocaleString()
+        + ' column group' + (colKeys.length === 1 ? '' : 's')
+        + ' · ' + SOURCE.rows.length.toLocaleString() + ' rows in';
+
+    const renderer = RENDERERS[cfg.renderer] || RENDERERS.table;
+    if (renderer.type) { renderChart(out, renderer); return; }
 
     const nRowCols = Math.max(1, rowFields.length);
     // A measure row is needed whenever the column headers above it cannot carry the measure name
@@ -496,7 +401,7 @@ function render() {
 
     // ── Body ──
     const rowSpans = rowFields.map((f, level) => groupSpans(rowKeys, level));
-    const heat = cfg.heat ? heatScale(model) : null;
+    const shade = renderer.shade ? shader(model, renderer) : null;
 
     const body = rowKeys.map((key, r) => {
         let tr = '';
@@ -512,13 +417,13 @@ function render() {
         }
 
         const byCol = model.cells.get(key.join(SEP));
-        colKeys.forEach(colKey => {
+        colKeys.forEach((colKey, c) => {
             const accs = byCol && byCol.get(colKey.join(SEP));
-            tr += measures.map((m, i) => dataCell(accs && accs[i], m, i, heat)).join('');
+            tr += measures.map((m, i) => dataCell(accs && accs[i], m, shade && (v => shade(v, i, r, c)))).join('');
         });
         if (model.showGrandCol) {
             const accs = model.rowTot.get(key.join(SEP));
-            tr += measures.map((m, i) => dataCell(accs && accs[i], m, i, null, 'ga-total')).join('');
+            tr += measures.map((m, i) => dataCell(accs && accs[i], m, null, 'ga-total')).join('');
         }
         return '<tr>' + tr + '</tr>';
     }).join('');
@@ -529,59 +434,363 @@ function render() {
         let tr = '<th colspan="' + nRowCols + '">Total</th>';
         colKeys.forEach(colKey => {
             const accs = model.colTot.get(colKey.join(SEP));
-            tr += measures.map((m, i) => dataCell(accs && accs[i], m, i)).join('');
+            tr += measures.map((m, i) => dataCell(accs && accs[i], m)).join('');
         });
-        if (model.showGrandCol) tr += measures.map((m, i) => dataCell(model.grand[i], m, i)).join('');
+        if (model.showGrandCol) tr += measures.map((m, i) => dataCell(model.grand[i], m)).join('');
         foot = '<tfoot><tr>' + tr + '</tr></tfoot>';
     }
 
     out.innerHTML = '<table class="ga-table"><thead>' + head + '</thead><tbody>' + body + '</tbody>' + foot + '</table>';
     stickHeader(out);
-
-    $('gaShape').textContent = rowKeys.length.toLocaleString() + ' row group'
-        + (rowKeys.length === 1 ? '' : 's') + ' × ' + colKeys.length.toLocaleString()
-        + ' column group' + (colKeys.length === 1 ? '' : 's')
-        + ' · ' + SOURCE.rows.length.toLocaleString() + ' rows in';
 }
 
-function dataCell(acc, measure, index, heat, extraClass) {
+/** One cell of the table; `shade`, when given, turns its numeric value into an inline style. */
+function dataCell(acc, measure, shade, extraClass) {
     const raw  = acc ? accValue(acc, measure) : null;
     const text = formatValue(raw, measure);
     const classes = [];
     if (isNumericMeasure(measure)) classes.push('num');
     if (text === null) classes.push('blank');
     if (extraClass) classes.push(extraClass);
-    const shade = (heat && typeof raw === 'number') ? heat(raw, index) : '';
-    return '<td' + (classes.length ? ' class="' + classes.join(' ') + '"' : '') + shade + '>'
+    const style = (shade && typeof raw === 'number' && isFinite(raw)) ? shade(raw) : '';
+    return '<td' + (classes.length ? ' class="' + classes.join(' ') + '"' : '') + style + '>'
         + (text === null ? '–' : esc(text)) + '</td>';
 }
 
 /**
- * A background per measure, scaled across that measure's own cells — one shared scale would wash
- * out a count of tens sitting beside a sum of millions.
+ * Shading for the table renderers, always per measure — one shared scale would wash out a count of
+ * tens sitting beside a sum of millions — and within that across the whole table, along each row,
+ * or down each column. Bars run from zero so their lengths compare; heat runs min to max.
+ * Returns (value, measureIndex, rowIndex, colIndex) => ' style="…"' or ''.
  */
-function heatScale(m) {
-    const bounds = m.measures.map(() => ({ min: Infinity, max: -Infinity }));
-    m.rowKeys.forEach(rowKey => {
+function shader(m, renderer) {
+    const scope = renderer.shade;
+    const boundKey = (i, r, c) => i + SEP + (scope === 'row' ? r : scope === 'col' ? c : '');
+    const bounds = new Map();
+    m.rowKeys.forEach((rowKey, r) => {
         const byCol = m.cells.get(rowKey.join(SEP));
         if (!byCol) return;
-        m.colKeys.forEach(colKey => {
+        m.colKeys.forEach((colKey, c) => {
             const accs = byCol.get(colKey.join(SEP));
             if (!accs) return;
             accs.forEach((acc, i) => {
                 const value = accValue(acc, m.measures[i]);
                 if (typeof value !== 'number' || !isFinite(value)) return;
-                if (value < bounds[i].min) bounds[i].min = value;
-                if (value > bounds[i].max) bounds[i].max = value;
+                const key = boundKey(i, r, c);
+                const b = bounds.get(key) || { min: Infinity, max: -Infinity };
+                if (value < b.min) b.min = value;
+                if (value > b.max) b.max = value;
+                bounds.set(key, b);
             });
         });
     });
-    return (value, index) => {
-        const b = bounds[index];
-        if (!b || b.max === -Infinity || b.max === b.min) return '';
+
+    if (renderer.bars) {
+        return (value, i, r, c) => {
+            const b = bounds.get(boundKey(i, r, c));
+            const top = b ? Math.max(Math.abs(b.min), Math.abs(b.max)) : 0;
+            if (!top) return '';
+            const pct = (Math.abs(value) / top * 100).toFixed(1);
+            const rgb = value < 0 ? '222,53,11' : '0,82,204';
+            return ' style="background:linear-gradient(to right,rgba(' + rgb + ',.2) ' + pct + '%,transparent ' + pct + '%)"';
+        };
+    }
+    return (value, i, r, c) => {
+        const b = bounds.get(boundKey(i, r, c));
+        if (!b || b.max === b.min) return '';
         const ratio = (value - b.min) / (b.max - b.min);
         return ' style="background:rgba(0,82,204,' + (0.04 + ratio * 0.26).toFixed(3) + ')"';
     };
+}
+
+// ── Drawing the pivot as charts ──────────────────────────────────────────────
+// Same model as the table, so a chart always agrees with it. Categories are the row groups and
+// each column group × measure is a series; with nothing grouped down the side the column groups
+// become the categories instead, so a single "Columns" field still charts sensibly. Totals are
+// left out — a total bar dwarfs everything it totals.
+
+const PALETTE = ['#0052cc', '#00a3bf', '#36b37e', '#ffab00', '#ff5630', '#6554c0',
+                 '#00875a', '#ff8b00', '#4c9aff', '#de350b', '#998dd9', '#79e2f2'];
+const OTHER_COLOUR = '#c1c7d0';
+
+/** Past these a chart stops being readable; the note under it says what was left out. */
+const MAX_CATEGORIES = 100;
+const MAX_SERIES = 24;
+const MAX_SLICES = 12;
+const MAX_PIES = 36;
+
+let charts = [];
+
+function destroyCharts() {
+    charts.forEach(chart => chart.destroy());
+    charts = [];
+}
+
+function colour(index, alpha) {
+    const hex = PALETTE[index % PALETTE.length];
+    if (alpha === undefined) return hex;
+    const n = parseInt(hex.slice(1), 16);
+    return 'rgba(' + (n >> 16) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + alpha + ')';
+}
+
+/** A measure's value as a number to plot — min/max on a numeric column arrive as text. */
+function plotValue(acc, measure) {
+    const value = acc ? accValue(acc, measure) : null;
+    if (typeof value === 'number') return isFinite(value) ? value : null;
+    return value === null || value === undefined ? null : toNumber(value);
+}
+
+/** Whether a slice for "everything else" means anything: only when the measure adds up. */
+function isAdditive(measure) {
+    return measure.field === ROW_COUNT || measure.agg === 'sum' || measure.agg === 'count';
+}
+
+const pathLabel = key => key.map(keyLabel).join(' / ');
+
+function renderChart(out, renderer) {
+    if (typeof Chart === 'undefined') {
+        out.innerHTML = '<div class="ga-hint">Charts are drawn with Chart.js, which did not load '
+            + '&mdash; the browser may be offline or blocking cdn.jsdelivr.net. The table views still work.</div>';
+        return;
+    }
+
+    const { rowFields, colFields, colKeys } = model;
+    const measures = model.measures.filter(isNumericMeasure);
+    if (!measures.length) {
+        out.innerHTML = '<div class="ga-hint">None of the values is a number, so there is nothing to chart. '
+            + 'Use <b>Count</b>, <b>Unique</b>, <b>Sum</b> or <b>Average</b>, or <b>Min</b>/<b>Max</b> on a numeric column.</div>';
+        return;
+    }
+    const measureIndex = m => model.measures.indexOf(m);
+
+    const transpose = !rowFields.length && colFields.length > 0;
+    const allCats   = transpose ? colKeys : model.rowKeys;
+    const allSeries = transpose ? [[]] : colKeys;
+    const cats   = allCats.slice(0, MAX_CATEGORIES);
+    const series = allSeries.slice(0, MAX_SERIES);
+    const accsAt = (cat, ser) => {
+        const byCol = model.cells.get(transpose ? '' : cat.join(SEP));
+        return byCol && byCol.get((transpose ? cat : ser).join(SEP));
+    };
+    const catLabel = cat => cat.length ? pathLabel(cat) : 'Total';
+    const seriesLabel = (ser, m) => [ser.length ? pathLabel(ser) : '',
+        (measures.length > 1 || !ser.length) ? measureLabel(m) : ''].filter(Boolean).join(' · ');
+
+    const notes = [];
+    if (allCats.length > cats.length) notes.push('Showing the first ' + cats.length + ' of ' + allCats.length.toLocaleString()
+        + ' ' + (transpose ? 'column' : 'row') + ' groups — order by value to keep the largest.');
+
+    if (renderer.type === 'pie' || renderer.type === 'doughnut') {
+        renderPies(out, renderer, { cats, series, allSeries, measures, measureIndex, accsAt, catLabel, seriesLabel, notes });
+        return;
+    }
+    if (allSeries.length > series.length) notes.push('Showing the first ' + series.length + ' of '
+        + allSeries.length.toLocaleString() + ' column groups as series.');
+
+    const datasets = [];
+    series.forEach(ser => measures.forEach(m => {
+        const i = measureIndex(m);
+        const c = datasets.length;
+        // A line through a group with no rows should dip to zero when the measure adds up — an empty
+        // group has a count of 0 — and otherwise simply have no point there.
+        const missing = renderer.type === 'line' && isAdditive(m) ? 0 : null;
+        datasets.push({
+            label: seriesLabel(ser, m),
+            data: cats.map(cat => {
+                const value = plotValue((accsAt(cat, ser) || [])[i], m);
+                return value === null ? missing : value;
+            }),
+            spanGaps: true,
+            measure: m,
+            // Stacking a count on top of a sum means nothing, so each measure stacks on its own.
+            stack: 'm' + i,
+            backgroundColor: renderer.fill ? colour(c, 0.35) : (renderer.type === 'line' ? colour(c) : colour(c, 0.85)),
+            borderColor: colour(c),
+            borderWidth: renderer.type === 'line' ? 2 : 0,
+            pointRadius: cats.length > 40 ? 0 : 3,
+            fill: renderer.fill ? 'stack' : false,
+            // Curves overshoot between stacked layers and leave slivers, so areas stay straight.
+            tension: renderer.fill ? 0 : 0.2
+        });
+    }));
+
+    const horizontal = !!renderer.horizontal;
+    const valueAxis = {
+        stacked: !!renderer.stacked, beginAtZero: true,
+        title: { display: measures.length === 1, text: measureLabel(measures[0]) },
+        ticks: { callback: v => Number(v).toLocaleString() }
+    };
+    const catAxis = {
+        stacked: !!renderer.stacked,
+        title: { display: true, text: transpose ? colFields.join(' / ') : (rowFields.join(' / ') || '') },
+        ticks: { autoSkip: true, maxRotation: 60 }
+    };
+
+    // A horizontal chart grows downward with its categories rather than squeezing them together.
+    const height = horizontal ? Math.max(360, cats.length * (renderer.stacked ? 22 : 14 + 8 * datasets.length) + 90) : null;
+    out.innerHTML = '<div class="ga-chart-wrap">'
+        + (notes.length ? '<div class="ga-chart-note">' + notes.map(esc).join(' ') + '</div>' : '')
+        + '<div class="ga-chart"' + (height ? ' style="flex:none;height:' + height + 'px"' : '') + '><canvas></canvas></div>'
+        + '</div>';
+
+    charts.push(new Chart(out.querySelector('canvas'), {
+        type: renderer.type,
+        data: { labels: cats.map(catLabel), datasets: datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: { duration: 250 },
+            indexAxis: horizontal ? 'y' : 'x',
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { display: datasets.length > 1, position: 'bottom' },
+                tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': '
+                    + (formatValue(ctx.raw, ctx.dataset.measure) || '–') } }
+            },
+            scales: horizontal ? { x: valueAxis, y: catAxis } : { x: catAxis, y: valueAxis }
+        }
+    }));
+}
+
+/**
+ * One pie per series × measure, slices being the categories — PivotTable.js's "multiple pie
+ * charts". Slices past MAX_SLICES fold into "Other" when the measure adds up (a sum or a count)
+ * and are dropped otherwise; nothing negative or zero can be a slice.
+ */
+function renderPies(out, renderer, ctx) {
+    const { cats, series, allSeries, measures, measureIndex, accsAt, catLabel, seriesLabel, notes } = ctx;
+
+    const pies = [];
+    series.forEach(ser => measures.forEach(m => pies.push({ ser, m })));
+    const shown = pies.slice(0, MAX_PIES);
+    if (allSeries.length * measures.length > shown.length) notes.push('Showing the first ' + shown.length
+        + ' of ' + (allSeries.length * measures.length).toLocaleString() + ' pies.');
+
+    let dropped = 0, folded = false, truncated = false;
+    const specs = shown.map(({ ser, m }) => {
+        const i = measureIndex(m);
+        let slices = cats.map((cat, c) => {
+            const accs = accsAt(cat, ser);
+            return { label: catLabel(cat), value: plotValue(accs && accs[i], m), c };
+        }).filter(s => {
+            if (s.value === null) return false;
+            if (s.value <= 0) { dropped++; return false; }
+            return true;
+        });
+        if (slices.length > MAX_SLICES) {
+            const byValue = slices.slice().sort((a, b) => b.value - a.value);
+            const kept = new Set(byValue.slice(0, MAX_SLICES - 1));
+            const rest = byValue.slice(MAX_SLICES - 1);
+            slices = slices.filter(s => kept.has(s));
+            if (isAdditive(m)) {
+                slices.push({ label: 'Other (' + rest.length + ')', value: rest.reduce((t, s) => t + s.value, 0), other: true });
+                folded = true;
+            } else {
+                truncated = true;
+            }
+        }
+        return { title: seriesLabel(ser, m), m, slices };
+    });
+    if (folded) notes.push('Beyond the ' + (MAX_SLICES - 1) + ' largest slices the rest are grouped as Other.');
+    if (truncated) notes.push('Averages, unique counts and min/max do not add up, so only the ' + (MAX_SLICES - 1) + ' largest slices are shown.');
+    if (dropped) notes.push(dropped.toLocaleString() + ' zero or negative value' + (dropped === 1 ? '' : 's') + ' cannot be drawn as slices.');
+
+    out.innerHTML = (notes.length ? '<div class="ga-chart-note">' + notes.map(esc).join(' ') + '</div>' : '')
+        + '<div class="ga-pies' + (specs.length === 1 ? ' single' : '') + '">'
+        + specs.map(spec => '<div class="ga-pie"><h4 title="' + esc(spec.title) + '">' + esc(spec.title) + '</h4>'
+            + '<div class="cv"><canvas></canvas></div></div>').join('')
+        + '</div>';
+
+    // Colour follows the category, not the slice position, so the same group is the same colour in
+    // every pie — handed out in order of first appearance among the slices actually drawn, so the
+    // palette only wraps when more categories than colours are on screen.
+    const catColour = new Map();
+    specs.forEach(spec => spec.slices.forEach(s => {
+        if (!s.other && !catColour.has(s.c)) catColour.set(s.c, colour(catColour.size));
+    }));
+
+    const canvases = out.querySelectorAll('.ga-pie canvas');
+    specs.forEach((spec, p) => {
+        const total = spec.slices.reduce((t, s) => t + s.value, 0);
+        charts.push(new Chart(canvases[p], {
+            type: renderer.type,
+            data: {
+                labels: spec.slices.map(s => s.label),
+                datasets: [{
+                    data: spec.slices.map(s => s.value),
+                    backgroundColor: spec.slices.map(s => s.other ? OTHER_COLOUR : catColour.get(s.c)),
+                    borderColor: '#fff',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 250 },
+                plugins: {
+                    legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+                    tooltip: { callbacks: { label: c => c.label + ': ' + (formatValue(c.raw, spec.m) || '–')
+                        + (total && isAdditive(spec.m) ? ' (' + (c.raw / total * 100).toFixed(1) + '%)' : '') } }
+                }
+            }
+        }));
+    });
+}
+
+/** The chart(s) on screen as one PNG; several pies are laid out in a grid under the title. */
+function downloadImage() {
+    if (!charts.length) { alert('Pick a chart view first.'); return; }
+    const canvases = charts.map(chart => chart.canvas);
+    const titles = [...$('gaOut').querySelectorAll('.ga-pie h4')].map(h => h.textContent);
+    const ratio = window.devicePixelRatio || 1;
+    const perRow = Math.min(3, canvases.length);
+    const cellW = Math.max(...canvases.map(c => c.width));
+    const titleH = Math.round((titles.length ? 22 : 0) * ratio);
+    const cellH = Math.max(...canvases.map(c => c.height)) + titleH;
+    const headH = Math.round(34 * ratio);
+    const pad = Math.round(12 * ratio);
+
+    const image = document.createElement('canvas');
+    image.width = perRow * cellW + (perRow + 1) * pad;
+    image.height = headH + Math.ceil(canvases.length / perRow) * (cellH + pad) + pad;
+    const g = image.getContext('2d');
+    g.fillStyle = '#fff';
+    g.fillRect(0, 0, image.width, image.height);
+    g.fillStyle = '#172b4d';
+    g.textBaseline = 'middle';
+    g.font = '600 ' + Math.round(15 * ratio) + 'px "Segoe UI", sans-serif';
+    g.fillText(pivotTitle(), pad, headH / 2 + pad / 2);
+
+    canvases.forEach((canvas, i) => {
+        const x = pad + (i % perRow) * (cellW + pad);
+        const y = headH + pad + Math.floor(i / perRow) * (cellH + pad);
+        if (titles[i]) {
+            g.font = '600 ' + Math.round(12 * ratio) + 'px "Segoe UI", sans-serif';
+            g.fillText(titles[i], x, y + titleH / 2);
+        }
+        g.drawImage(canvas, x, y + titleH);
+    });
+
+    image.toBlob(blob => {
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fileName('png');
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+    }, 'image/png');
+}
+
+/** Totals mean nothing on a chart, and only a chart can be saved as an image. */
+function syncRendererControls() {
+    const isChart = !!(RENDERERS[cfg.renderer] || {}).type;
+    ['gaGrandRow', 'gaGrandCol'].forEach(id => {
+        $(id).disabled = isChart;
+        $(id).parentElement.classList.toggle('off', isChart);
+    });
+    $('gaPng').style.display = isChart ? '' : 'none';
 }
 
 /** Each header row sticks at the height of the ones above it, so a deep pivot still has a header. */
@@ -757,47 +966,7 @@ function refresh() {
 
 /** The pivot as a header row plus body rows of plain strings. */
 function pivotMatrix() {
-    if (!model) return null;
-    const { rowFields, colFields, measures, rowKeys, colKeys } = model;
-
-    const header = (rowFields.length ? rowFields.slice() : ['Group']);
-    colKeys.forEach(colKey => measures.forEach(m => {
-        const path = colFields.length ? colKey.map(keyLabel).join(' / ') : '';
-        header.push(path ? path + ' · ' + measureLabel(m) : measureLabel(m));
-    }));
-    if (model.showGrandCol) measures.forEach(m => header.push('Total · ' + measureLabel(m)));
-
-    const plain = (acc, m) => {
-        const value = acc ? accValue(acc, m) : null;
-        return value === null || value === undefined ? '' : String(value);
-    };
-
-    const body = rowKeys.map(key => {
-        const line = rowFields.length ? key.map(keyLabel) : ['Total'];
-        const byCol = model.cells.get(key.join(SEP));
-        colKeys.forEach(colKey => {
-            const accs = byCol && byCol.get(colKey.join(SEP));
-            measures.forEach((m, i) => line.push(plain(accs && accs[i], m)));
-        });
-        if (model.showGrandCol) {
-            const accs = model.rowTot.get(key.join(SEP));
-            measures.forEach((m, i) => line.push(plain(accs && accs[i], m)));
-        }
-        return line;
-    });
-
-    if (model.showGrandRow) {
-        const line = ['Total'];
-        while (line.length < Math.max(1, rowFields.length)) line.push('');
-        colKeys.forEach(colKey => {
-            const accs = model.colTot.get(colKey.join(SEP));
-            measures.forEach((m, i) => line.push(plain(accs && accs[i], m)));
-        });
-        if (model.showGrandCol) measures.forEach((m, i) => line.push(plain(model.grand[i], m)));
-        body.push(line);
-    }
-
-    return { header: header, body: body };
+    return model ? GridPivot.matrix(model) : null;
 }
 
 function pivotTitle() {
@@ -984,6 +1153,111 @@ async function saveDataset(back, close) {
     }
 }
 
+// ── Adding it to the page ────────────────────────────────────────────────────
+// An analysis worth building once is usually one worth seeing every time the page runs. This hands
+// the pivot back to the page that opened the screen, which adds it as a page action: the same call
+// that filled the grid analyzed here, its rows collected out of sight, grouped exactly as on this
+// screen, and the grouped table put into a grid of the operator's choosing. The page does the adding
+// — it owns the page being edited — and answers with what it did, or why it could not.
+
+/**
+ * What the page said it can add to, when it can: the grid analyzed, the action that filled it, and
+ * the grids an analysis could be put in. Null when the rows came from somewhere with no action behind
+ * them — a static dataset, or a grid an assignment filled — and the button stays hidden.
+ */
+let PAGE = null;
+
+/** Replies waiting for the dialog that asked, by request id. */
+const pendingAdds = new Map();
+let addCount = 0;
+
+/** Sentinel the page reads as "stack a new grid each run" — mirrors AppPageAction#NEW_GRID. */
+const NEW_GRID = '__new_grid__';
+
+function openAddActionDialog() {
+    if (!PAGE || !window.opener || window.opener.closed) {
+        alert('The page that opened this screen is no longer there to add an action to.');
+        return;
+    }
+    if (!hasChoice()) { alert('Choose rows, columns or values first.'); return; }
+
+    const spec = GridPivot.toSpec(cfg);
+    const grids = (PAGE.grids || []).filter(g => g.controlId !== PAGE.gridId);
+    const back = document.createElement('div');
+    back.className = 'ga-modal-back';
+    back.innerHTML = '<div class="ga-modal">'
+        + '<h2>Add to the page as an action</h2>'
+        + '<p class="note">A page action that makes the same call <b>' + esc(PAGE.actionLabel || 'the action')
+            + '</b> makes, collects its rows without showing them, groups them as below, and puts the result '
+            + 'in the grid you choose. It is attached to every control that runs <b>' + esc(PAGE.actionLabel || 'that action')
+            + '</b>, so the two share one call.</p>'
+        + '<div class="what-it-does">' + esc(GridPivot.describe(spec)) + '</div>'
+        + '<label class="fld" for="gaActName">Action name</label>'
+        + '<input type="text" id="gaActName" autocomplete="off" value="'
+            + esc((PAGE.actionLabel || SOURCE.title) + ' — analysis') + '">'
+        + '<label class="fld" for="gaActTarget">Show the result in</label>'
+        + '<select id="gaActTarget">'
+            + grids.map(g => '<option value="' + esc(g.controlId) + '">' + esc(g.title) + '</option>').join('')
+            + '<option value="' + NEW_GRID + '"' + (grids.length ? '' : ' selected') + '>+ A new grid each run</option>'
+        + '</select>'
+        + '<div class="choice">'
+            + '<label><input type="checkbox" id="gaActRun" checked><span>Run it now'
+                + '<span class="sub">Fill the chosen grid straight away, from a fresh call.</span></span></label>'
+            + '<label><input type="checkbox" id="gaActSave"' + (PAGE.saved ? ' checked' : '') + (PAGE.saved ? '' : ' disabled') + '>'
+                + '<span>Save the page' + '<span class="sub">'
+                + (PAGE.saved ? 'Keep the action on "' + esc(PAGE.pageName) + '". Leave it off to review it in the designer first.'
+                              : 'This page has never been saved — save it from the designer to keep the action.')
+                + '</span></span></label>'
+        + '</div>'
+        + '<div class="ga-msg" id="gaActMsg"></div>'
+        + '<div class="row">'
+            + '<button type="button" class="tool-btn" id="gaActCancel">Cancel</button>'
+            + '<button type="button" class="primary" id="gaActAdd">Add action</button>'
+        + '</div>'
+    + '</div>';
+    document.body.appendChild(back);
+
+    const close = () => back.remove();
+    const msg = back.querySelector('#gaActMsg');
+    const button = back.querySelector('#gaActAdd');
+    const say = (text, cls) => { msg.textContent = text; msg.className = 'ga-msg' + (cls ? ' ' + cls : ''); };
+
+    back.addEventListener('mousedown', e => { if (e.target === back) close(); });
+    back.querySelector('#gaActCancel').addEventListener('click', close);
+    button.addEventListener('click', () => {
+        const label = back.querySelector('#gaActName').value.trim();
+        if (!label) { say('Give the action a name first.', 'err'); return; }
+        if (!window.opener || window.opener.closed) { say('The page that opened this screen has been closed.', 'err'); return; }
+
+        const requestId = 'add-' + (++addCount);
+        button.disabled = true;
+        say('Adding…');
+        const timer = setTimeout(() => {
+            pendingAdds.delete(requestId);
+            say('The page did not answer — it may have been reloaded or navigated away.', 'err');
+            button.disabled = false;
+        }, 15000);
+        pendingAdds.set(requestId, reply => {
+            clearTimeout(timer);
+            say(reply.message || (reply.ok ? 'Added.' : 'Could not add the action.'), reply.ok ? 'ok' : 'err');
+            if (reply.ok) setTimeout(close, 2200);
+            else button.disabled = false;
+        });
+        window.opener.postMessage({
+            type: 'grid-analyzer-add-action',
+            token: token,
+            requestId: requestId,
+            gridId: PAGE.gridId,
+            label: label,
+            targetControlId: back.querySelector('#gaActTarget').value,
+            pivot: spec,
+            runNow: back.querySelector('#gaActRun').checked,
+            save: back.querySelector('#gaActSave').checked
+        }, location.origin);
+    });
+    back.querySelector('#gaActName').focus();
+}
+
 // ── Wiring ───────────────────────────────────────────────────────────────────
 
 document.querySelectorAll('.ga-zone').forEach(zone => {
@@ -1011,11 +1285,24 @@ $('gaClear').addEventListener('click', () => {
 });
 $('gaHtml').addEventListener('click', viewAsHtml);
 $('gaCsv').addEventListener('click', downloadCsv);
+$('gaPng').addEventListener('click', downloadImage);
 $('gaSave').addEventListener('click', openSaveDialog);
+$('gaAddAction').addEventListener('click', openAddActionDialog);
 
-['gaGrandRow', 'gaGrandCol', 'gaBlanks', 'gaHeat'].forEach(id => {
-    const key = { gaGrandRow: 'grandRow', gaGrandCol: 'grandCol', gaBlanks: 'blanks', gaHeat: 'heat' }[id];
+['gaGrandRow', 'gaGrandCol', 'gaBlanks'].forEach(id => {
+    const key = { gaGrandRow: 'grandRow', gaGrandCol: 'grandCol', gaBlanks: 'blanks' }[id];
     $(id).addEventListener('change', () => { cfg[key] = $(id).checked; render(); });
+});
+
+$('gaRenderer').innerHTML = ['Table', 'Chart'].map(group =>
+    '<optgroup label="' + group + '">'
+    + Object.keys(RENDERERS).filter(key => RENDERERS[key].group === group)
+        .map(key => '<option value="' + key + '">' + RENDERERS[key].label + '</option>').join('')
+    + '</optgroup>').join('');
+$('gaRenderer').value = cfg.renderer;
+
+[['gaRenderer', 'renderer'], ['gaRowOrder', 'rowOrder'], ['gaColOrder', 'colOrder']].forEach(([id, key]) => {
+    $(id).addEventListener('change', () => { cfg[key] = $(id).value; render(); });
 });
 
 // ── Where the rows come from ─────────────────────────────────────────────────
@@ -1026,19 +1313,7 @@ $('gaSave').addEventListener('click', openSaveDialog);
 
 /** Columns whose values read as numbers often enough to default to Sum and right-align. */
 function detectNumeric(rows, columns) {
-    const found = new Set();
-    const sample = Math.min(rows.length, 200);
-    columns.forEach(column => {
-        let seen = 0, numeric = 0;
-        for (let i = 0; i < sample; i++) {
-            const text = cellText(rows[i], column);
-            if (text === '') continue;
-            seen++;
-            if (toNumber(text) !== null) numeric++;
-        }
-        if (seen && numeric / seen >= 0.8) found.add(column);
-    });
-    return found;
+    return GridPivot.detectNumeric(rows, columns);
 }
 
 function receive(payload) {
@@ -1048,6 +1323,8 @@ function receive(payload) {
         rows: payload.rows || []
     };
     numericFields = detectNumeric(SOURCE.rows, SOURCE.columns);
+    PAGE = payload.page || null;
+    $('gaAddAction').style.display = PAGE ? '' : 'none';
 
     document.title = 'Analyze — ' + SOURCE.title;
     $('gaTitle').textContent = 'Analyze — ' + SOURCE.title;
@@ -1072,6 +1349,11 @@ let handedOver = false;
 window.addEventListener('message', e => {
     if (e.origin !== location.origin) return;
     const data = e.data;
+    if (data && data.type === 'grid-analyzer-add-action-result' && data.token === token) {
+        const reply = pendingAdds.get(data.requestId);
+        if (reply) { pendingAdds.delete(data.requestId); reply(data); }
+        return;
+    }
     if (!data || data.type !== 'grid-analyzer-data' || data.token !== token) return;
     handedOver = true;
     receive(data.payload || {});

@@ -81,7 +81,28 @@ class AppPageFanOutTest {
     void aRowSourceThatIsNotAGrid_hasNoRowsToRunOver() {
         assertThatThrownBy(() -> AppCatalogService.validateRowSource(page(), action("box", AppPageAction.ROWS, "out"), WHERE))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("only a grid has rows");
+                .hasMessageContaining("only a grid, a select or a multi-select has rows");
+    }
+
+    @Test
+    void aFanOutOverTheElementsOfASelectOrMultiSelect_isFine() {
+        AppPage page = new AppPage();
+        page.setControls(List.of(control("pick", "select"), control("picks", "multiselect"), control("out", "grid")));
+        assertThatCode(() -> AppCatalogService.validateRowSource(page, action("pick", AppPageAction.ROWS, "out"), WHERE))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> AppCatalogService.validateRowSource(page, action("picks", AppPageAction.ROWS, "out"), WHERE))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void whichElementsOfASelectToRunOver_isOneOfTwoOrTheControlsOwnDefault() {
+        AppPageAction action = new AppPageAction();
+        action.setRowElements("all");
+        assertThat(action.getRowElements()).isEqualTo(AppPageAction.ELEMENTS_ALL);
+        action.setRowElements("selected");
+        assertThat(action.getRowElements()).isEqualTo(AppPageAction.ELEMENTS_SELECTED);
+        action.setRowElements("whatever");
+        assertThat(action.getRowElements()).isNull();
     }
 
     @Test

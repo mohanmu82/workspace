@@ -13,7 +13,7 @@
 
     <groupId>com.mycompany</groupId>
     <artifactId>batchworkflow</artifactId>
-    <version>1.0.67</version>
+    <version>1.0.68</version>
     <name>batchworkflow</name>
     <description>Batch HTTP fetch and XPath extraction service</description>
 
@@ -97,6 +97,13 @@
             <groupId>org.bouncycastle</groupId>
             <artifactId>bcpkix-jdk18on</artifactId>
             <version>1.78.1</version>
+        </dependency>
+
+        <!-- Apache POI - parses Excel workbooks (.xlsx/.xls) read from OneDrive static datasets -->
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>5.4.1</version>
         </dependency>
     </dependencies>
 

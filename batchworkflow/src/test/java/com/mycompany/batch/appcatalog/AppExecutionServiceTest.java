@@ -15,7 +15,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class AppExecutionServiceTest {
 
-    private final AppExecutionService service = new AppExecutionService(null, new ObjectMapper(), null);
+    private final AppExecutionService service = new AppExecutionService(null, new ObjectMapper(), null, null);
 
     @Test
     void bracedPlaceholder_isFilledInFromTheVariables() {

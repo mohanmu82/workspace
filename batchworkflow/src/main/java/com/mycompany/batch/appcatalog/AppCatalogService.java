@@ -10,7 +10,10 @@ import org.springframework.stereotype.Service;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -18,6 +21,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -367,7 +372,7 @@ public class AppCatalogService {
      * fields of each row. Mirrors TARGET_TYPES in apppage.html.
      */
     private static final List<String> TARGET_TYPES =
-            List.of("grid", "select", "multiselect", "text", "textarea", "link", "pie");
+            List.of("grid", "select", "multiselect", "text", "textarea", "link", "pie", "piegrid", "bar");
 
     /**
      * Control types another control can write a value into. Wider than {@link #TARGET_TYPES}: a
@@ -384,7 +389,7 @@ public class AppCatalogService {
      * it deliberately does not fire its own trigger either. An assignment written on one would sit in
      * the saved page looking wired up and never once run.
      */
-    private static final List<String> TRIGGERLESS_TYPES = List.of("grid", "label", "tabs", "hidden", "pie");
+    private static final List<String> TRIGGERLESS_TYPES = List.of("grid", "label", "tabs", "hidden", "pie", "piegrid", "bar", "page");
 
     private void validateControls(AppPage page) {
         List<String> controlIds = new ArrayList<>();
@@ -412,8 +417,10 @@ public class AppCatalogService {
             validateSlices(control, where);
             validateLinkUrl(control, where);
             validateLinkPage(control, where);
+            validateChildPage(page, control, where, this::getPage);
             validateDatasetName(control, where);
             validateRowErrorExpression(control, where);
+            validateGridStatus(control, variableNames, where);
             if (isSelect(control.getType()) && control.getOptionSource() != null) {
                 AppPageOptionSource source = control.getOptionSource();
                 if ("USECASE".equals(source.getMode())) {
@@ -428,6 +435,7 @@ public class AppCatalogService {
                 }
             }
         }
+        validateGridStatusNames(page);
 
         // Ids for the inline actions too, unique across the whole page and not only within the
         // library: an action is waited for by id, and two answering to one would make "which of them
@@ -471,6 +479,7 @@ public class AppCatalogService {
         }
 
         validateTabs(page);
+        validateChartControls(page);
     }
 
     /**
@@ -554,6 +563,51 @@ public class AppCatalogService {
         }
     }
 
+    /**
+     * A grid's status: the row-count condition it is judged by, and the variable that verdict is
+     * published under. Only a grid has rows to count; the condition has to be one the browser knows;
+     * and the variable has to be spellable in a template and not already mean something else there —
+     * a page variable or a built-in. Clashes with field names and other grids need every control
+     * seen first — see {@link #validateGridStatusNames}.
+     */
+    static void validateGridStatus(AppPageControl control, List<String> variableNames, String where) {
+        String condition = control.getStatusCondition();
+        String variable  = control.getStatusVariable();
+        if (condition == null && variable == null) return;
+        if (!"grid".equals(control.getType()))
+            throw new IllegalArgumentException(where + " is a " + control.getType() + " — only a grid has a status");
+        if (condition != null && !AppPageControl.STATUS_CONDITIONS.contains(condition))
+            throw new IllegalArgumentException(where + " has a status condition that is not one of "
+                    + String.join(", ", AppPageControl.STATUS_CONDITIONS) + ": " + condition);
+        if (variable == null) return;
+        if (condition == null)
+            throw new IllegalArgumentException(where + " names a status variable but has no status condition to set it by");
+        if (!AppPageVariable.isLegalName(variable))
+            throw new IllegalArgumentException(where + " status variable '" + variable + "' is not a name a template can spell —"
+                    + " letters, digits and underscores only, starting with a letter or an underscore");
+        if (variableNames.contains(variable) || AppPageVariable.BUILT_IN.contains(variable.toUpperCase()))
+            throw new IllegalArgumentException(where + " status variable '" + variable + "' is already a page variable");
+    }
+
+    /** Every grid's status variable against every field name and every other grid's, once all are known. */
+    static void validateGridStatusNames(AppPage page) {
+        List<String> fieldNames = new ArrayList<>();
+        for (AppPageControl control : page.getControls()) {
+            if (VALUE_TYPES.contains(control.getType()) && control.getFieldName() != null) fieldNames.add(control.getFieldName());
+        }
+        List<String> seen = new ArrayList<>();
+        for (AppPageControl control : page.getControls()) {
+            String variable = control.getStatusVariable();
+            if (variable == null) continue;
+            if (fieldNames.contains(variable))
+                throw new IllegalArgumentException("Control '" + describe(control) + "' status variable '" + variable
+                        + "' is already a control's field name");
+            if (seen.contains(variable))
+                throw new IllegalArgumentException("Two grids publish their status as the same variable: " + variable);
+            seen.add(variable);
+        }
+    }
+
     /** A dataset a page names has to be one the library actually holds. */
     private void requireDataset(String datasetName, String where) {
         if (datasetName == null || datasetName.isBlank())
@@ -609,6 +663,54 @@ public class AppCatalogService {
                     + " — only a link opens another page");
         if (getPage(name) == null)
             throw new IllegalArgumentException(where + " opens a page that is not in this catalog: " + name);
+    }
+
+    /**
+     * The page a page control runs inside this one. Only a page control may name one, and a page
+     * control has to: without a page it is an empty frame. The page has to be in this catalog, and
+     * may not be the page being saved or lead back to it through its own child pages — each running
+     * page opens its children, so a loop would open frames inside frames until the browser gave up.
+     *
+     * <p>The page being saved is taken as given rather than looked up, since what is on disk is the
+     * version this save is replacing; every other page in the walk is read through {@code pages}.
+     */
+    static void validateChildPage(AppPage page, AppPageControl control, String where,
+                                  Function<String, AppPage> pages) {
+        String name = control.getChildPageName();
+        if (!"page".equals(control.getType())) {
+            if (name != null)
+                throw new IllegalArgumentException(where + " is a " + control.getType()
+                        + " — only a page control runs another page inside it");
+            return;
+        }
+        if (name == null)
+            throw new IllegalArgumentException(where + " is a page control but names no page to run");
+        if (name.equals(page.getPageName()))
+            throw new IllegalArgumentException(where + " runs this same page inside itself");
+        if (pages.apply(name) == null)
+            throw new IllegalArgumentException(where + " runs a page that is not in this catalog: " + name);
+
+        // Walk everything reachable from the child; reaching this page again is a loop.
+        Deque<List<String>> todo = new ArrayDeque<>();
+        todo.push(List.of(page.getPageName(), name));
+        Set<String> seen = new HashSet<>();
+        while (!todo.isEmpty()) {
+            List<String> path = todo.pop();
+            String current = path.get(path.size() - 1);
+            if (!seen.add(current)) continue;
+            AppPage child = pages.apply(current);
+            if (child == null) continue;
+            for (AppPageControl c : child.getControls()) {
+                String next = "page".equals(c.getType()) ? c.getChildPageName() : null;
+                if (next == null) continue;
+                List<String> longer = new ArrayList<>(path);
+                longer.add(next);
+                if (next.equals(page.getPageName()))
+                    throw new IllegalArgumentException(where + " runs page '" + name
+                            + "', which leads back to this page: " + String.join(" → ", longer));
+                todo.push(longer);
+            }
+        }
     }
 
     /**
@@ -708,6 +810,37 @@ public class AppCatalogService {
                     throw new IllegalArgumentException("Grid '" + describe(child) + "' is in more than one tab set");
                 claimed.add(id);
             }
+            String preferred = control.getDefaultTabControlId();
+            if (preferred != null && !control.getTabControlIds().contains(preferred))
+                throw new IllegalArgumentException(where + " opens on a tab it does not hold: " + preferred);
+        }
+    }
+
+    /**
+     * The settings only one kind of chart reads: the tab set a pie-with-grids puts its grids into —
+     * which it has to name, and which has to be a tab set on this page — and a bar chart's orientation.
+     * A tab set named on anything else is refused rather than saved as wiring nothing reads.
+     */
+    static void validateChartControls(AppPage page) {
+        for (AppPageControl control : page.getControls()) {
+            String where = "Control '" + describe(control) + "'";
+            if (!"tabs".equals(control.getType()) && control.getDefaultTabControlId() != null)
+                throw new IllegalArgumentException(where + " is a " + control.getType() + " — only a tab set has a default tab");
+            String tabsId = control.getTabsControlId();
+            if (!"piegrid".equals(control.getType())) {
+                if (tabsId != null)
+                    throw new IllegalArgumentException(where + " is a " + control.getType()
+                            + " — only a pie chart with grids puts grids into a tab set");
+                continue;
+            }
+            if (tabsId == null)
+                throw new IllegalArgumentException(where + " is a pie chart with grids but names no tab set to put its grids in");
+            AppPageControl tabs = page.getControls().stream()
+                    .filter(c -> tabsId.equals(c.getControlId())).findFirst().orElse(null);
+            if (tabs == null)
+                throw new IllegalArgumentException(where + " puts its grids into a tab set that is not on this page: " + tabsId);
+            if (!"tabs".equals(tabs.getType()))
+                throw new IllegalArgumentException(where + " puts its grids into a " + tabs.getType() + " — it needs a tab set");
         }
     }
 
@@ -855,6 +988,9 @@ public class AppCatalogService {
         // wiring that could never run.
         validateRowFilters(action, where);
         validateRowColumns(action, where);
+        validateExtraBindings(page, action, transformNames, where);
+        validateEnrichColumns(page, action, name -> staticDatasets.get(name) != null, where);
+        validatePivots(page, action, where);
         if (action.isPerformance()) {
             validatePerformanceAction(page, action, where);
             return;
@@ -866,6 +1002,38 @@ public class AppCatalogService {
         }
         validateRowSource(page, action, where);
         validateActionTarget(page, action, where);
+    }
+
+    /**
+     * An action's further bindings, each held to what the action's own target is held to: transforms
+     * the page has, and a target that is on the page and can take what is bound into it.
+     *
+     * <p>A binding with no target is refused rather than skipped. The action's own target may be
+     * blank — the call is still worth making for its effect — but a binding is nothing except a
+     * target, so a blank one is a row in the designer that would do nothing.
+     */
+    static void validateExtraBindings(AppPage page, AppPageAction action, List<String> transformNames, String where) {
+        if (action.getExtraBindings().isEmpty()) return;
+        if (action.isPerformance())
+            throw new IllegalArgumentException(where + " summarises performance, which fills one grid — "
+                    + "remove its other targets");
+        if (action.isRowFanOut())
+            throw new IllegalArgumentException(where + " runs once per row, which has an answer per row rather "
+                    + "than one response to bind several ways — remove its other targets, or clear its \"for each row of\"");
+        int n = 1;
+        for (AppPageBinding binding : action.getExtraBindings()) {
+            n++;
+            String on = where + " target " + n;
+            if (binding == null || binding.getTargetControlId() == null || binding.getTargetControlId().isBlank())
+                throw new IllegalArgumentException(on + " has no control chosen, so it would bind nothing");
+            for (String name : binding.getTransformNames()) {
+                if (!transformNames.contains(name))
+                    throw new IllegalArgumentException(on + " applies a transform that is not on this page: " + name);
+            }
+            AppPageAction shadow = new AppPageAction();
+            shadow.setTargetControlId(binding.getTargetControlId());
+            validateActionTarget(page, shadow, on);
+        }
     }
 
     /**
@@ -934,7 +1102,7 @@ public class AppCatalogService {
                     + "of a grid its own tab may do — aim it at one of the grids inside instead");
         if (!TARGET_TYPES.contains(targetControl.getType()))
             throw new IllegalArgumentException(where
-                    + " must target a grid, select, text, text area, link or pie chart, not a "
+                    + " must target a grid, select, text, text area, link, pie chart or bar chart, not a "
                     + targetControl.getType());
         // Every row's answer becoming a row of one grid only means anything where rows can go.
         if (action.isRowFanOut() && !"grid".equals(targetControl.getType()))
@@ -953,9 +1121,9 @@ public class AppCatalogService {
                 .filter(c -> sourceId.equals(c.getControlId())).findFirst().orElse(null);
         if (source == null)
             throw new IllegalArgumentException(where + " runs once per row of a grid that is not on this page: " + sourceId);
-        if (!"grid".equals(source.getType()))
+        if (!"grid".equals(source.getType()) && !isSelect(source.getType()))
             throw new IllegalArgumentException(where + " runs once per row of a " + source.getType()
-                    + " — only a grid has rows to run over");
+                    + " — only a grid, a select or a multi-select has rows to run over");
         if (sourceId.equals(action.getTargetControlId()))
             throw new IllegalArgumentException(where + " reads its rows from the same grid it fills, "
                     + "so each run would be over whatever the last one left behind");
@@ -1016,6 +1184,138 @@ public class AppCatalogService {
                 throw new IllegalArgumentException(where + " column '" + column.name() + "' says where to read from"
                         + " but not what to read");
         }
+    }
+
+    /**
+     * The enriched columns on an action and on each of its further targets — see
+     * {@link AppPageEnrichColumn}. Columns are added to rows, so whatever carries them has to be
+     * filling a grid: a grid, a new grid, or the tab set a tab-per-row fan-out fills with grids.
+     *
+     * <p>A performance summary is refused them: it makes no call, so there is no record or header to
+     * read, and its table's columns are fixed.
+     *
+     * @param datasetKnown whether the static dataset library holds a dataset of that name
+     */
+    static void validateEnrichColumns(AppPage page, AppPageAction action, Predicate<String> datasetKnown, String where) {
+        if (!action.getEnrichColumns().isEmpty()) {
+            if (action.isPerformance())
+                throw new IllegalArgumentException(where + " summarises performance, which makes no call to enrich "
+                        + "its rows from — take its enriched columns off");
+            requireGridTarget(page, action.getTargetControlId(), action.isTabsPerRow(), where);
+            checkEnrichColumns(action.getEnrichColumns(), datasetKnown, where);
+        }
+        int n = 1;
+        for (AppPageBinding binding : action.getExtraBindings()) {
+            n++;
+            if (binding == null || binding.getEnrichColumns().isEmpty()) continue;
+            String on = where + " target " + n;
+            requireGridTarget(page, binding.getTargetControlId(), false, on);
+            checkEnrichColumns(binding.getEnrichColumns(), datasetKnown, on);
+        }
+    }
+
+    private static void requireGridTarget(AppPage page, String target, boolean tabsPerRow, String where) {
+        if (target == null || target.isBlank())
+            throw new IllegalArgumentException(where + " has enriched columns but no grid to add them to — "
+                    + "aim it at a grid, or take the columns off");
+        if (AppPageAction.NEW_GRID.equals(target)) return;
+        AppPageControl control = page.getControls().stream()
+                .filter(c -> target.equals(c.getControlId())).findFirst().orElse(null);
+        if (control == null)
+            throw new IllegalArgumentException(where + " targets a control that is not on this page");
+        String wanted = tabsPerRow ? "tabs" : "grid";
+        if (!wanted.equals(control.getType()))
+            throw new IllegalArgumentException(where + " has enriched columns, which only a grid has rows for — "
+                    + "its target is a " + control.getType());
+    }
+
+    private static void checkEnrichColumns(List<AppPageEnrichColumn> columns, Predicate<String> datasetKnown, String where) {
+        List<String> names = new ArrayList<>();
+        for (AppPageEnrichColumn column : columns) {
+            if (column == null || column.name() == null || column.name().isBlank())
+                throw new IllegalArgumentException(where + " has an enriched column with no name");
+            String label = where + " enriched column '" + column.name() + "'";
+            if (names.contains(column.name()))
+                throw new IllegalArgumentException(where + " has two enriched columns called " + column.name());
+            names.add(column.name());
+            String kind = column.kindOrDefault();
+            if (!AppPageEnrichColumn.KINDS.contains(kind))
+                throw new IllegalArgumentException(label + " reads something this page has no idea how to read: "
+                        + column.kind());
+            if (!AppPageEnrichColumn.VLOOKUP.equals(kind)) {
+                if (isBlank(column.expression()))
+                    throw new IllegalArgumentException(label + " does not say which "
+                            + (AppPageEnrichColumn.HEADER.equals(kind) ? "header" : "call record field") + " to read");
+                continue;
+            }
+            if (isBlank(column.datasetName()))
+                throw new IllegalArgumentException(label + " names no static dataset to look up into");
+            if (!datasetKnown.test(column.datasetName()))
+                throw new IllegalArgumentException(label + " names an unknown static dataset: " + column.datasetName());
+            if (isBlank(column.lookupColumn()))
+                throw new IllegalArgumentException(label + " does not say which grid column to look up");
+            if (isBlank(column.keyColumn()))
+                throw new IllegalArgumentException(label + " does not say which dataset column is the row key");
+            if (isBlank(column.returnColumn()))
+                throw new IllegalArgumentException(label + " does not say which dataset column to bring back");
+        }
+    }
+
+    /**
+     * The group-by on an action and on each of its further targets — see {@link AppPagePivot}. It
+     * reshapes rows into a table, so whatever carries one has to be filling a grid: a grid, a new
+     * grid, or a fan-out collecting its answers into one. A tab per row is refused it — every call
+     * there has a grid of its own, and grouping each one separately is not the table anyone asked for.
+     */
+    static void validatePivots(AppPage page, AppPageAction action, String where) {
+        if (action.hasPivot()) {
+            if (action.isTabsPerRow())
+                throw new IllegalArgumentException(where + " gives each row its own tab, so there is no one grid for "
+                        + "its group-by to fill — collect the answers into one grid, or take the group-by off");
+            requirePivotGrid(page, action.getTargetControlId(), where);
+            checkPivot(action.getPivot(), where);
+        }
+        int n = 1;
+        for (AppPageBinding binding : action.getExtraBindings()) {
+            n++;
+            if (binding == null || binding.getPivot() == null || !binding.getPivot().groupsAnything()) continue;
+            String on = where + " target " + n;
+            requirePivotGrid(page, binding.getTargetControlId(), on);
+            checkPivot(binding.getPivot(), on);
+        }
+    }
+
+    private static void requirePivotGrid(AppPage page, String target, String where) {
+        if (target == null || target.isBlank())
+            throw new IllegalArgumentException(where + " groups its rows but has no grid to show them in — "
+                    + "aim it at a grid, or take the group-by off");
+        if (AppPageAction.NEW_GRID.equals(target)) return;
+        AppPageControl control = page.getControls().stream()
+                .filter(c -> target.equals(c.getControlId())).findFirst().orElse(null);
+        if (control == null)
+            throw new IllegalArgumentException(where + " targets a control that is not on this page");
+        if (!"grid".equals(control.getType()))
+            throw new IllegalArgumentException(where + " groups its rows into a table, which only a grid can show — "
+                    + "its target is a " + control.getType());
+    }
+
+    private static void checkPivot(AppPagePivot pivot, String where) {
+        for (String field : pivot.getRows()) {
+            if (pivot.getCols().contains(field))
+                throw new IllegalArgumentException(where + " groups by " + field + " both down and across — pick one");
+        }
+        for (AppPagePivot.Value value : pivot.getValues()) {
+            if (value == null || value.agg() == null || !AppPagePivot.AGGS.contains(value.agg()))
+                throw new IllegalArgumentException(where + " has a group-by value that works out something unknown: "
+                        + (value == null ? null : value.agg()));
+            if (!value.countsRows() && isBlank(value.field()))
+                throw new IllegalArgumentException(where + " has a group-by value (" + value.agg()
+                        + ") that names no column to work it out over");
+        }
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 
     private static String actionName(AppPageAction action, String fallback) {

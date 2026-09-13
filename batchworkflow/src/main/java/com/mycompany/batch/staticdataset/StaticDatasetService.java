@@ -6,6 +6,7 @@ import com.jayway.jsonpath.Configuration;
 import com.jayway.jsonpath.JsonPath;
 import com.jayway.jsonpath.Option;
 import com.mycompany.batch.config.ServerPropertiesLoader;
+import com.mycompany.batch.onedrive.OneDriveClient;
 import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Service;
 
@@ -14,6 +15,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -30,7 +32,7 @@ import java.util.regex.Pattern;
  * live together as a single JSON array at {@code ${DATADIR}/staticdatasets.json}, (re)loaded
  * at startup. Edits made through the UI are written back to the same file.
  *
- * <p>Row data fetched from each dataset's configured source (file or HTTP) is cached in
+ * <p>Row data fetched from each dataset's configured source (file, HTTP or OneDrive) is cached in
  * memory keyed by dataset name; consumers such as the Service Dashboard read the cached
  * rows rather than re-fetching on every page load.
  */
@@ -57,13 +59,16 @@ public class StaticDatasetService {
 
     private final ObjectMapper objectMapper;
     private final ServerPropertiesLoader serverPropertiesLoader;
+    private final OneDriveClient oneDriveClient;
 
     private final Map<String, StaticDatasetDef> defs  = new ConcurrentHashMap<>();
     private final Map<String, DatasetState>     state = new ConcurrentHashMap<>();
 
-    public StaticDatasetService(ObjectMapper objectMapper, ServerPropertiesLoader serverPropertiesLoader) {
+    public StaticDatasetService(ObjectMapper objectMapper, ServerPropertiesLoader serverPropertiesLoader,
+                                OneDriveClient oneDriveClient) {
         this.objectMapper = objectMapper;
         this.serverPropertiesLoader = serverPropertiesLoader;
+        this.oneDriveClient = oneDriveClient;
     }
 
     @PostConstruct
@@ -182,8 +187,8 @@ public class StaticDatasetService {
     public synchronized StaticDatasetDef save(StaticDatasetDef def) throws Exception {
         if (def.getName() == null || !def.getName().matches("[\\w\\-]+"))
             throw new IllegalArgumentException("name is required and must contain only word characters or dashes");
-        if (def.getSource() == null || !List.of("file", "http", "paste").contains(def.getSource()))
-            throw new IllegalArgumentException("source must be 'file', 'http' or 'paste'");
+        if (def.getSource() == null || !List.of("file", "http", "paste", "onedrive").contains(def.getSource()))
+            throw new IllegalArgumentException("source must be 'file', 'http', 'paste' or 'onedrive'");
         if (def.getLocation() == null || def.getLocation().isBlank())
             throw new IllegalArgumentException("location is required");
 
@@ -227,6 +232,7 @@ public class StaticDatasetService {
             List<Map<String, Object>> rows = switch (def.getSource()) {
                 case "file"  -> loadFromFile(def.getLocation());
                 case "paste" -> loadFromPaste(def.getLocation());
+                case "onedrive" -> loadFromOneDrive(def.getLocation(), def.getArrayElement());
                 default      -> loadFromHttp(def.getLocation(), def.getArrayElement());
             };
 
@@ -277,7 +283,9 @@ public class StaticDatasetService {
 
         List<Map<String, Object>> rows = new ArrayList<>();
         for (int i = 1; i < lines.size(); i++) {
-            String line = lines.get(i).trim();
+            // Don't trim the whole line: trim() strips tabs too, which would drop a leading empty
+            // cell and shift every value one column left. Each value is trimmed below instead.
+            String line = lines.get(i);
             if (line.isBlank()) continue;
             String[] vals = line.split(delimPat, -1);
             Map<String, Object> row = new LinkedHashMap<>();
@@ -287,6 +295,19 @@ public class StaticDatasetService {
             rows.add(row);
         }
         return rows;
+    }
+
+    /**
+     * An Excel workbook (or a delimited .csv/.txt) in work OneDrive; {@code sheet} is the dataset's
+     * arrayElement, naming the worksheet to read (blank = first sheet).
+     */
+    private List<Map<String, Object>> loadFromOneDrive(String location, String sheet) throws Exception {
+        String lower = location.trim().toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".csv") || lower.endsWith(".txt")) {
+            String text = new String(oneDriveClient.download(location), StandardCharsets.UTF_8);
+            return loadFromPaste(text.startsWith("﻿") ? text.substring(1) : text);
+        }
+        return oneDriveClient.readExcelRows(location, sheet);
     }
 
     @SuppressWarnings("unchecked")

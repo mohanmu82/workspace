@@ -93,16 +93,26 @@
             </div>
             <div class="form-group wide">
                 <label for="urlPrefix">URL Prefix</label>
-                <input id="urlPrefix" type="text" placeholder="https://orders-uat.example.com/api">
-                <span class="hint">Each use case's URL suffix is appended to this verbatim.</span>
+                <div style="display:flex; gap:6px">
+                    <input id="urlPrefix" type="text" placeholder="https://orders-uat.example.com/api   or   /api">
+                    <button class="secondary" type="button" onclick="useThisServer('urlPrefix')"
+                            style="flex:none; white-space:nowrap">This Server</button>
+                </div>
+                <span class="hint">Each use case's URL suffix is appended to this verbatim. Start with <code>/</code>
+                    (e.g. <code>/api</code>) to call this server — its scheme, host and port are filled in at run time.</span>
             </div>
 
             <div class="form-group wide">
                 <label for="monitoringUrlPrefix">Monitoring URL Prefix <span class="hint">optional</span></label>
-                <input id="monitoringUrlPrefix" type="text" placeholder="https://orders-uat.example.com:9443/admin">
+                <div style="display:flex; gap:6px">
+                    <input id="monitoringUrlPrefix" type="text" placeholder="https://orders-uat.example.com:9443/admin   or   /actuator">
+                    <button class="secondary" type="button" onclick="useThisServer('monitoringUrlPrefix')"
+                            style="flex:none; white-space:nowrap">This Server</button>
+                </div>
                 <span class="hint">A second address for this same deployment's admin endpoints. Only the use cases
                     that set their URL Base to <strong>Monitoring</strong> are built against it — leave it empty if this
-                    environment has no separate admin address.</span>
+                    environment has no separate admin address. A value starting with <code>/</code> resolves against
+                    this server's management port.</span>
             </div>
 
             <div class="form-group wide" id="jwtUrlGroup">
@@ -337,6 +347,26 @@
             password:    document.getElementById('password').value,
             envVariables: AC.parseJsonObject(document.getElementById('envVariables').value, 'Environment Variables')
         };
+    }
+
+    /**
+     * Points a prefix at this server by making it relative: keeps whatever path an absolute URL
+     * already had and drops its scheme, host and port, which the server supplies at run time.
+     */
+    function useThisServer(fieldId) {
+        const field = document.getElementById(fieldId);
+        const value = field.value.trim();
+        let path = '/';
+        if (value.startsWith('/') && !value.startsWith('//')) {
+            path = value;
+        } else if (value) {
+            try {
+                const url = new URL(value);
+                path = url.pathname + url.search;
+            } catch (e) { /* not a URL yet — start from the root */ }
+        }
+        field.value = path.length > 1 ? path.replace(/\/$/, '') : '/';
+        field.focus();
     }
 
     /** Tidies the variables box in place, and says so if what is in it is not an object yet. */

@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class AppVariableMergeTest {
 
-    private final AppExecutionService service = new AppExecutionService(null, new ObjectMapper(), null);
+    private final AppExecutionService service = new AppExecutionService(null, new ObjectMapper(), null, null);
 
     private static AppDefinition app(Map<String, Object> variables) {
         AppDefinition app = new AppDefinition();

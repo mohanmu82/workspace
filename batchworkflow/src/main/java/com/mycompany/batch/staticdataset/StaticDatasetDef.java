@@ -16,15 +16,18 @@ import java.util.List;
  * the attributes.
  * <p>{@code source=paste} — {@code location} holds tab-separated rows pasted directly
  * from Excel (header row first), stored and reparsed verbatim on reload.
+ * <p>{@code source=onedrive} — {@code location} is a work OneDrive path to an .xlsx/.xls (or
+ * .csv), optionally prefixed with the owner's UPN ({@code jane@mycompany.com:/Reports/x.xlsx});
+ * {@code arrayElement} names the worksheet (default: first sheet). The first row is the header.
  */
 public class StaticDatasetDef {
 
     private String       name;
-    /** {@code file}, {@code http} or {@code paste}. */
+    /** {@code file}, {@code http}, {@code paste} or {@code onedrive}. */
     private String       source;
-    /** File path (source=file), URL (source=http), or raw pasted TSV text (source=paste). */
+    /** File path (source=file), URL (source=http), raw pasted TSV text (source=paste), or OneDrive path (source=onedrive). */
     private String       location;
-    /** JSONPath into the HTTP response selecting the row array. Ignored for source=file. */
+    /** JSONPath selecting the row array (source=http), or worksheet name (source=onedrive). Ignored otherwise. */
     private String       arrayElement;
     /** Attribute (column) names — discovered from the data on load, persisted for display. */
     private List<String> attributes = new ArrayList<>();

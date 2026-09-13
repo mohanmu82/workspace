@@ -124,6 +124,7 @@ public class AppExecutionService {
     private final AppCatalogService catalog;
     private final ObjectMapper objectMapper;
     private final AgentHttpDispatchService agentDispatch;
+    private final LocalServerAddress localServer;
 
     /** Access-ordered so a result that is still being expanded in the grid stays resident. */
     private final Map<String, AppUseCaseInstanceOutput> recentExecutions = Collections.synchronizedMap(
@@ -142,10 +143,11 @@ public class AppExecutionService {
     private final Deque<AppUseCaseInstanceOutput> history = new ArrayDeque<>();
 
     public AppExecutionService(AppCatalogService catalog, ObjectMapper objectMapper,
-                               AgentHttpDispatchService agentDispatch) {
+                               AgentHttpDispatchService agentDispatch, LocalServerAddress localServer) {
         this.catalog = catalog;
         this.objectMapper = objectMapper;
         this.agentDispatch = agentDispatch;
+        this.localServer = localServer;
     }
 
     /** The full result of a past execution, bodies and all, or null once it has aged out. */
@@ -502,7 +504,8 @@ public class AppExecutionService {
             // The same token the templates saw, reported on the output so it can be replayed by hand.
             jwtToken = variables.get("jwtToken") instanceof String token ? token : null;
 
-            url = substitute(nullToEmpty(env.prefixFor(useCase.getUrlPrefixType())) + nullToEmpty(useCase.getUrlSuffix()), variables);
+            url = substitute(nullToEmpty(localServer.resolve(env.prefixFor(useCase.getUrlPrefixType()),
+                    isMonitoring(useCase), target == ExecutionTarget.AGENT)) + nullToEmpty(useCase.getUrlSuffix()), variables);
             requestBody = useCase.getHttpBody() != null ? substitute(useCase.getHttpBody(), variables) : null;
             requestHeaders = parseHeaders(useCase.getHttpHeaders(), variables);
             if (authorization != null && !containsHeaderIgnoreCase(requestHeaders, "Authorization")) {
@@ -605,7 +608,7 @@ public class AppExecutionService {
                 ? HttpRequest.BodyPublishers.ofString(body)
                 : HttpRequest.BodyPublishers.noBody());
 
-        HttpResponse<String> response = HTTP.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = localServer.clientFor(url, HTTP).send(builder.build(), HttpResponse.BodyHandlers.ofString());
         return new HttpOutcome(response.statusCode(), response.body(),
                 new LinkedHashMap<>(response.headers().map()), ExecutionTarget.LOCAL.name());
     }
@@ -843,9 +846,10 @@ public class AppExecutionService {
             case "JWT" -> {
                 if (env.getJwtUrl() == null || env.getJwtUrl().isBlank())
                     throw new IllegalArgumentException("JWT auth requires a jwtUrl on environment " + env.getEnvironment());
+                String jwtUrl = localServer.resolve(env.getJwtUrl(), false, false);
                 HttpAuthProvider provider = new JwtAuthProvider(
                         app.getAppName(), env.getUsername(), env.getPassword(),
-                        env.getJwtUrl(), env.getJwtMethod(), objectMapper);
+                        jwtUrl, env.getJwtMethod(), objectMapper, localServer.clientFor(jwtUrl, null));
                 String header = provider.getAuthorizationHeader();
                 variables.put("jwtToken", header.startsWith("Bearer ") ? header.substring(7) : header);
                 return header;
@@ -856,14 +860,17 @@ public class AppExecutionService {
                 return new BasicAuthProvider(env.getUsername(), nullToEmpty(env.getPassword())).getAuthorizationHeader();
             }
             case "DIGEST" -> {
-                return new DigestAuthProvider(env.getUsername(), env.getPassword(), env.getJwtUrl(), objectMapper)
+                String tokenUrl = localServer.resolve(env.getJwtUrl(), false, false);
+                return new DigestAuthProvider(env.getUsername(), env.getPassword(),
+                        tokenUrl, objectMapper, localServer.clientFor(tokenUrl, null))
                         .getAuthorizationHeader();
             }
             case "KERBEROS" -> {
                 // Reuses the shared provider: username is the principal, password the keytab path,
                 // and the target service principal is derived from the host actually being called —
                 // which, for a monitoring use case, is the monitoring prefix's host, not the app's.
-                String servicePrincipal = "HTTP@" + URI.create(nullToEmpty(env.prefixFor(useCase == null ? null : useCase.getUrlPrefixType()))).getHost();
+                String servicePrincipal = "HTTP@" + URI.create(nullToEmpty(localServer.resolve(
+                        env.prefixFor(useCase == null ? null : useCase.getUrlPrefixType()), isMonitoring(useCase), true))).getHost();
                 return new KerberosAuthProvider(env.getUsername(), env.getPassword(), servicePrincipal)
                         .getAuthorizationHeader();
             }
@@ -890,13 +897,14 @@ public class AppExecutionService {
             if (env == null || env.getJwtUrl() == null || env.getJwtUrl().isBlank())
                 throw new IllegalArgumentException("A JWT URL is required to fetch a token.");
 
+            String jwtUrl = localServer.resolve(env.getJwtUrl(), false, false);
             String header = new JwtAuthProvider(env.getAppName(), env.getUsername(), env.getPassword(),
-                    env.getJwtUrl(), env.getJwtMethod(), objectMapper).getAuthorizationHeader();
+                    jwtUrl, env.getJwtMethod(), objectMapper, localServer.clientFor(jwtUrl, null)).getAuthorizationHeader();
 
             result.put("ok", true);
             result.put("token", header.startsWith("Bearer ") ? header.substring(7) : header);
             result.put("authorizationHeader", header);
-            result.put("jwtUrl", env.getJwtUrl());
+            result.put("jwtUrl", jwtUrl);
             result.put("jwtMethod", env.getJwtMethod());
             result.put("sentCredentials", env.getUsername() != null && !env.getUsername().isBlank());
         } catch (Exception e) {

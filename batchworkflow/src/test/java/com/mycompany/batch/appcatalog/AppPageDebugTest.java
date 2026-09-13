@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class AppPageDebugTest {
 
-    private final AppExecutionService service = new AppExecutionService(null, new ObjectMapper(), null);
+    private final AppExecutionService service = new AppExecutionService(null, new ObjectMapper(), null, null);
 
     private static AppUseCaseInstanceOutput run(String executionId, String requestBody, String responseBody) {
         return new AppUseCaseInstanceOutput(

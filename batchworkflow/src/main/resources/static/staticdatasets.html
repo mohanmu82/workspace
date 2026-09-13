@@ -63,6 +63,7 @@
   .badge-file { background: #d3f3e6; color: #0a6b47; }
   .badge-http { background: #cfe2ff; color: #084298; }
   .badge-paste { background: #fde8cf; color: #8a4b0a; }
+  .badge-onedrive { background: #dbe7f7; color: #0f4c9c; }
 
   .ds-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
   .empty-msg { font-size: 0.82rem; color: #888; padding: 18px; text-align: center; }
@@ -107,6 +108,10 @@
     padding: 14px 18px; border-bottom: 1px solid #dde1e7;
   }
   .grid-modal-title { font-size: 1rem; font-weight: 700; }
+  .grid-modal-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .grid-modal-status { font-size: 0.78rem; margin-right: 6px; }
+  .grid-modal-status.status-ok  { color: #0a5c36; }
+  .grid-modal-status.status-err { color: #842029; }
   .grid-modal-body { flex: 1; overflow: hidden; padding: 14px 18px; display: flex; flex-direction: column; }
 </style>
 </head>
@@ -131,6 +136,7 @@
         <option value="file">File</option>
         <option value="http">HTTP</option>
         <option value="paste">Paste from Excel</option>
+        <option value="onedrive">OneDrive Excel</option>
       </select>
     </div>
     <div class="field" id="fLocationField" style="flex:2;min-width:280px">
@@ -138,7 +144,7 @@
       <input type="text" id="fLocation" placeholder="C:/data/services.csv" style="width:100%">
     </div>
     <div class="field" id="fArrayElementField" style="flex:1;min-width:180px;display:none">
-      <label>Array Element <span class="hint">(JSONPath)</span></label>
+      <label id="fArrayElementLabel">Array Element <span class="hint">(JSONPath)</span></label>
       <input type="text" id="fArrayElement" placeholder="$ or $.data" style="width:100%">
     </div>
     <div class="field">
@@ -171,7 +177,17 @@
   <div class="grid-modal" role="dialog" aria-modal="true" aria-labelledby="gridModalTitle" tabindex="-1">
     <div class="grid-modal-head">
       <div class="grid-modal-title" id="gridModalTitle"></div>
-      <button class="secondary small" id="gridModalCloseBtn" onclick="closeGridModal()">Close</button>
+      <div class="grid-modal-actions">
+        <span class="grid-modal-status" id="gridModalStatus"></span>
+        <button class="small" id="gridAnalyzeBtn" onclick="analyzeGrid()" style="display:none"
+                title="Pivot and chart the rows currently shown (after search/filters/sort) in a new tab">Analyze</button>
+        <button class="small" id="gridSaveAsBtn" onclick="saveGridAsDataset()" style="display:none"
+                title="Save the rows currently shown (after search/filters/sort) as a pasted dataset">Save as Dataset…</button>
+        <button class="small" id="gridEditBtn" onclick="startGridEdit()" style="display:none">Edit Data</button>
+        <button class="small" id="gridSaveEditsBtn" onclick="saveGridEdits()" style="display:none">Save Changes</button>
+        <button class="secondary small" id="gridDiscardBtn" onclick="discardGridEdits()" style="display:none">Discard</button>
+        <button class="secondary small" id="gridModalCloseBtn" onclick="closeGridModal()">Close</button>
+      </div>
     </div>
     <div class="grid-modal-body" id="gridModalBody"></div>
   </div>
@@ -186,10 +202,17 @@
     const source = document.getElementById('fSource').value;
     const isHttp = source === 'http';
     const isPaste = source === 'paste';
-    document.getElementById('fLocationLabel').textContent = isHttp ? 'HTTP URL' : 'File Path';
+    const isOneDrive = source === 'onedrive';
+    document.getElementById('fLocationLabel').textContent =
+        isHttp ? 'HTTP URL' : isOneDrive ? 'OneDrive Path (optionally user@company.com:/path)' : 'File Path';
     document.getElementById('fLocation').placeholder = isHttp
-        ? 'http://host:port/services.json' : 'C:/data/services.csv';
-    document.getElementById('fArrayElementField').style.display = isHttp ? 'flex' : 'none';
+        ? 'http://host:port/services.json'
+        : isOneDrive ? '/Reports/services.xlsx' : 'C:/data/services.csv';
+    document.getElementById('fArrayElementLabel').innerHTML = isOneDrive
+        ? 'Sheet <span class="hint">(blank = first sheet)</span>'
+        : 'Array Element <span class="hint">(JSONPath)</span>';
+    document.getElementById('fArrayElement').placeholder = isOneDrive ? 'Sheet1' : '$ or $.data';
+    document.getElementById('fArrayElementField').style.display = isHttp || isOneDrive ? 'flex' : 'none';
     document.getElementById('fLocationField').style.display = isPaste ? 'none' : 'flex';
     document.getElementById('fPasteField').style.display = isPaste ? 'flex' : 'none';
   }
@@ -327,28 +350,216 @@
 
   let lastFocusedEl = null;
 
+  // State of the dataset open in the grid modal.
+  let gridName = null;      // dataset name
+  let gridSource = null;    // its source ('paste', 'file', ...)
+  let gridData = null;      // last /data response ({ attributes, rows })
+  let gridApi = null;       // ExcelGrid instance
+  let gridEditing = false;  // true while a pasted dataset is in edit mode
+
+  function setGridStatus(msg, cls) {
+    const el = document.getElementById('gridModalStatus');
+    el.textContent = msg || '';
+    el.className = 'grid-modal-status' + (cls ? ' ' + cls : '');
+  }
+
+  function updateGridButtons() {
+    const loaded = gridData !== null;
+    const isPaste = gridSource === 'paste';
+    document.getElementById('gridAnalyzeBtn').style.display = loaded ? '' : 'none';
+    document.getElementById('gridSaveAsBtn').style.display = loaded && !isPaste ? '' : 'none';
+    document.getElementById('gridEditBtn').style.display = loaded && isPaste && !gridEditing ? '' : 'none';
+    document.getElementById('gridSaveEditsBtn').style.display = gridEditing ? '' : 'none';
+    document.getElementById('gridDiscardBtn').style.display = gridEditing ? '' : 'none';
+  }
+
+  function mountGrid(editable) {
+    gridEditing = editable;
+    document.getElementById('gridModalBody').innerHTML = '<div id="gridMount" style="height:100%"></div>';
+    gridApi = ExcelGrid.mount({
+      containerId: 'gridMount',
+      attributes: gridData.attributes || [],
+      rows: gridData.rows || [],
+      editable,
+      onChange: updateGridButtons
+    });
+    updateGridButtons();
+  }
+
   async function viewGrid(name) {
     lastFocusedEl = document.activeElement;
+    const ds = datasets.find(d => d.name === name);
+    gridName = name;
+    gridSource = ds ? ds.source : null;
+    gridData = null;
+    gridApi = null;
+    gridEditing = false;
     document.getElementById('gridModalTitle').textContent = name;
     document.getElementById('gridModal').style.display = 'flex';
     document.getElementById('gridModalCloseBtn').focus();
+    setGridStatus('');
+    updateGridButtons();
+    await loadGridData();
+  }
+
+  async function loadGridData() {
     const body = document.getElementById('gridModalBody');
     body.innerHTML = '<div class="empty-msg">Loading…</div>';
+    gridData = null;
+    gridApi = null;
+    gridEditing = false;
+    updateGridButtons();
     try {
-      const res = await fetch('/staticdataset/' + encodeURIComponent(name) + '/data');
+      const res = await fetch('/staticdataset/' + encodeURIComponent(gridName) + '/data');
       const data = await res.json();
       if (!res.ok) { body.innerHTML = '<div class="ds-error">' + escapeHtml(data.error || res.statusText) + '</div>'; return; }
-      body.innerHTML = '<div id="gridMount" style="height:100%"></div>';
-      ExcelGrid.mount({ containerId: 'gridMount', attributes: data.attributes || [], rows: data.rows || [] });
+      gridData = data;
+      mountGrid(false);
     } catch (e) {
       body.innerHTML = '<div class="ds-error">Failed to load: ' + escapeHtml(e.message) + '</div>';
     }
   }
 
+  // Analyze opens gridanalyzer.html on the rows currently shown, handed over by postMessage once
+  // the new tab asks for them — the same handshake apppage.html uses for its grids.
+  const analyzerHandoffs = new Map();
+  let analyzerCount = 0;
+
+  function analyzeGrid() {
+    if (!gridApi) return;
+    const token = 'ga-' + (++analyzerCount) + '-' + Date.now();
+    const win = window.open('gridanalyzer.html?t=' + encodeURIComponent(token), '_blank');
+    if (!win) { setGridStatus('The browser blocked the new tab — allow pop-ups to analyze.', 'status-err'); return; }
+    analyzerHandoffs.set(token, {
+      title: gridName || 'Dataset',
+      columns: gridApi.getData().attributes,
+      rows: gridApi.getVisibleRows()
+    });
+    setTimeout(() => analyzerHandoffs.delete(token), 60000);
+  }
+
+  window.addEventListener('message', event => {
+    if (event.origin !== location.origin) return;
+    const message = event.data;
+    if (!message || message.type !== 'grid-analyzer-ready') return;
+    const payload = analyzerHandoffs.get(message.token);
+    if (!payload) return;
+    analyzerHandoffs.delete(message.token);
+    event.source.postMessage({ type: 'grid-analyzer-data', token: message.token, payload: payload }, location.origin);
+  });
+
   function closeGridModal() {
+    if (gridEditing && gridApi && gridApi.isDirty()
+        && !confirm('Discard unsaved changes to "' + gridName + '"?')) return;
     document.getElementById('gridModal').style.display = 'none';
     document.getElementById('gridModalBody').innerHTML = '';
+    gridName = gridSource = gridData = gridApi = null;
+    gridEditing = false;
     if (lastFocusedEl) { lastFocusedEl.focus(); lastFocusedEl = null; }
+  }
+
+  /**
+   * Serialises rows to the tab-separated text a pasted dataset stores (header row first).
+   * Tabs/line breaks inside values are flattened to spaces so they can't split a cell or row;
+   * nested objects (e.g. from HTTP JSON) are written as JSON.
+   */
+  function toPasteText(attributes, rows) {
+    const cell = v => (v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v))
+        .replace(/[\t\r\n]+/g, ' ');
+    const lines = [attributes.map(cell).join('\t')];
+    rows.forEach(r => lines.push(attributes.map(a => cell(r[a])).join('\t')));
+    return lines.join('\n');
+  }
+
+  /** Creates or overwrites {@code name} as a pasted dataset. Returns the save response, or null if it failed. */
+  async function putPasteDataset(name, text, isOverwrite) {
+    const payload = { name, source: 'paste', location: text, arrayElement: null };
+    const res = await fetch(isOverwrite ? '/staticdataset/' + encodeURIComponent(name) : '/staticdataset', {
+      method: isOverwrite ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok) { setGridStatus(data.error || 'Save failed.', 'status-err'); return null; }
+    return data;
+  }
+
+  async function saveGridAsDataset() {
+    if (!gridApi) return;
+    const attributes = gridApi.getData().attributes;
+    const rows = gridApi.getVisibleRows();
+    if (!attributes.length) { setGridStatus('Nothing to save — the dataset has no columns.', 'status-err'); return; }
+
+    const raw = prompt('Save the ' + rows.length + ' row(s) currently shown as a pasted dataset.\n\nNew dataset name:',
+        gridName + '-copy');
+    if (raw == null) return;
+    const name = raw.trim();
+    if (!/^[\w-]+$/.test(name)) { setGridStatus('Name must contain only letters, digits, _ or -.', 'status-err'); return; }
+
+    setGridStatus('Saving…');
+    try {
+      const check = await fetch('/staticdataset/' + encodeURIComponent(name));
+      const exists = check.ok;
+      if (exists) {
+        const existing = await check.json();
+        const msg = 'A dataset named "' + name + '" already exists'
+            + ' (' + String(existing.source || '').toUpperCase() + ', ' + (existing.count || 0) + ' rows).\n\n'
+            + 'Overwrite it? Its current data will be replaced with these ' + rows.length + ' row(s)'
+            + ' and it will become a pasted dataset.';
+        if (!confirm(msg)) { setGridStatus(''); return; }
+      } else if (check.status !== 404) {
+        setGridStatus('Could not check whether "' + name + '" exists (HTTP ' + check.status + ').', 'status-err');
+        return;
+      }
+
+      const data = await putPasteDataset(name, toPasteText(attributes, rows), exists);
+      if (!data) return;
+      setGridStatus((exists ? 'Overwrote "' : 'Saved "') + name + '" — ' + data.count + ' rows'
+          + (data.error ? ' (' + data.error + ')' : ''), data.error ? 'status-err' : 'status-ok');
+      await loadList();
+      if (name === gridName) {
+        // Overwrote the dataset being viewed — it's a pasted dataset now, so show its new data.
+        gridSource = 'paste';
+        await loadGridData();
+      }
+    } catch (e) {
+      setGridStatus('Save failed: ' + e.message, 'status-err');
+    }
+  }
+
+  function startGridEdit() {
+    if (!gridData) return;
+    setGridStatus('Click a cell to edit. Enter/Tab to move, Esc to cancel a cell.');
+    mountGrid(true);
+  }
+
+  function discardGridEdits() {
+    if (gridApi && gridApi.isDirty() && !confirm('Discard unsaved changes to "' + gridName + '"?')) return;
+    setGridStatus('');
+    mountGrid(false);
+  }
+
+  async function saveGridEdits() {
+    if (!gridApi) return;
+    // Let a cell that's still being edited commit before reading the data.
+    if (document.activeElement && document.activeElement.classList.contains('eg-cell-input')) document.activeElement.blur();
+    const { attributes, rows } = gridApi.getData();
+    if (!attributes.length) { setGridStatus('Add at least one column before saving.', 'status-err'); return; }
+
+    const btn = document.getElementById('gridSaveEditsBtn');
+    btn.disabled = true;
+    setGridStatus('Saving…');
+    try {
+      const data = await putPasteDataset(gridName, toPasteText(attributes, rows), true);
+      if (!data) { btn.disabled = false; return; }
+      await loadList();
+      await loadGridData();
+      setGridStatus('Saved "' + gridName + '" — ' + data.count + ' rows' + (data.error ? ' (' + data.error + ')' : ''),
+          data.error ? 'status-err' : 'status-ok');
+    } catch (e) {
+      btn.disabled = false;
+      setGridStatus('Save failed: ' + e.message, 'status-err');
+    }
   }
 
   function trapModalFocus(e) {
@@ -421,7 +632,8 @@
   }
 
   function renderCard(ds, query) {
-    const badgeCls = ds.source === 'http' ? 'badge-http' : ds.source === 'paste' ? 'badge-paste' : 'badge-file';
+    const badgeCls = ds.source === 'http' ? 'badge-http' : ds.source === 'paste' ? 'badge-paste'
+        : ds.source === 'onedrive' ? 'badge-onedrive' : 'badge-file';
     const badgeText = ds.source === 'paste' ? 'PASTED' : ds.source.toUpperCase();
     const chips = (ds.attributes || []).map(a =>
       '<span class="chip">' + highlight(a, query) + '</span>').join('');
@@ -441,6 +653,7 @@
         '</div>' +
         locationHtml +
         (ds.source === 'http' && ds.arrayElement ? '<div class="ds-meta mono">arrayElement: ' + escapeHtml(ds.arrayElement) + '</div>' : '') +
+        (ds.source === 'onedrive' && ds.arrayElement ? '<div class="ds-meta mono">sheet: ' + escapeHtml(ds.arrayElement) + '</div>' : '') +
         '<div class="chip-row">' + chips + '</div>' +
         '<div class="ds-meta">' + metaParts.join(' · ') + '</div>' +
         errorHtml +

@@ -2,6 +2,7 @@ package com.mycompany.batch.web;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mycompany.batch.appcatalog.LocalServerAddress;
 import com.mycompany.batch.model.HttpBatchRequest;
 import com.mycompany.batch.model.HttpMethod;
 import com.mycompany.batch.service.AgentHttpDispatchService;
@@ -82,13 +83,15 @@ public class ServiceMonitorController {
     private final ObjectMapper objectMapper;
     private final AgentHttpDispatchService agentDispatch;
     private final StaticDatasetService staticDatasets;
+    private final LocalServerAddress localServer;
     private final Map<String, Deque<Map<String, Object>>> history = new ConcurrentHashMap<>();
 
     public ServiceMonitorController(ObjectMapper objectMapper, AgentHttpDispatchService agentDispatch,
-                                    StaticDatasetService staticDatasets) {
+                                    StaticDatasetService staticDatasets, LocalServerAddress localServer) {
         this.objectMapper = objectMapper;
         this.agentDispatch = agentDispatch;
         this.staticDatasets = staticDatasets;
+        this.localServer = localServer;
     }
 
     @PostMapping("/check")
@@ -268,7 +271,7 @@ public class ServiceMonitorController {
             Map<String, Object> tm = (Map<String, Object>) raw;
             String id   = str(tm, "id");
             String url  = str(tm, "url");
-            String type = str(tm, "type");
+            String type = normalizeType(str(tm, "type"));
             if (url == null || url.isBlank() || type == null || type.isBlank()) continue;
             String authHeader = buildAuth(str(tm, "authType"), str(tm, "username"), str(tm, "password"), str(tm, "token"));
             targets.add(new Target(id != null ? id : url, str(tm, "name"), url, type, authHeader, null));
@@ -296,6 +299,7 @@ public class ServiceMonitorController {
         String nameField    = str(req, "nameField");
         String typeField    = str(req, "typeField");
         String defaultType  = str(req, "defaultType");
+        defaultType = normalizeType(defaultType);
         if (defaultType == null || defaultType.isBlank()) defaultType = "http";
         String authHeader = buildAuth(str(req, "authType"), str(req, "username"), str(req, "password"), str(req, "token"));
 
@@ -307,7 +311,7 @@ public class ServiceMonitorController {
             String url = cell(row, urlField);
             if (url == null || url.isBlank()) continue;
             String name = cell(row, nameField);
-            String type = cell(row, typeField);
+            String type = normalizeType(cell(row, typeField));
             if (type == null || !SUPPORTED_TYPES.contains(type)) type = defaultType;
             String id = "ds-" + dataset + "-" + url;
             targets.putIfAbsent(id, new Target(id,
@@ -330,10 +334,23 @@ public class ServiceMonitorController {
         return out;
     }
 
-    /** A dataset cell as trimmed text, or null when the column was not named or is not there. */
+    /**
+     * A dataset cell as trimmed text, or null when the column was not named or is not there. The
+     * column name matches exactly first and then ignoring case, so {@code url} finds a pasted
+     * sheet's {@code URL} header.
+     */
     private String cell(Map<String, Object> row, String field) {
         if (field == null || field.isBlank()) return null;
-        return cellOf(row.get(field));
+        if (row.containsKey(field)) return cellOf(row.get(field));
+        for (Map.Entry<String, Object> e : row.entrySet()) {
+            if (e.getKey() != null && e.getKey().trim().equalsIgnoreCase(field.trim())) return cellOf(e.getValue());
+        }
+        return null;
+    }
+
+    /** A check type as the dispatcher spells it — {@code HTTP} and {@code Http} both mean {@code http}. */
+    private static String normalizeType(String type) {
+        return type == null ? null : type.trim().toLowerCase(java.util.Locale.ROOT);
     }
 
     private String cellOf(Object value) {
@@ -396,6 +413,7 @@ public class ServiceMonitorController {
     // ── Dispatch + history recording, shared by /check, /checkBatch, /checkBatchStream ──────
     private Map<String, Object> runCheck(String type, String url, String authHeader, long timeoutMs,
                                           String target, String agentId) {
+        type = normalizeType(type);
         Map<String, Object> m = switch (type) {
             case "http"       -> checkHttp(url, authHeader, timeoutMs, target, agentId);
             case "prometheus" -> checkPrometheus(url, authHeader, timeoutMs, target, agentId);
@@ -518,7 +536,8 @@ public class ServiceMonitorController {
             b = b.method(method, body != null && !body.isBlank()
                     ? HttpRequest.BodyPublishers.ofString(body)
                     : HttpRequest.BodyPublishers.noBody());
-            HttpResponse<String> resp = HTTP.send(b.build(), HttpResponse.BodyHandlers.ofString());
+            // Checks against this server's own ports trust its own (often self-signed) certificate.
+            HttpResponse<String> resp = localServer.clientFor(url, HTTP).send(b.build(), HttpResponse.BodyHandlers.ofString());
             long latency = System.currentTimeMillis() - start;
             return new FetchResult(resp.statusCode(), resp.body(), null, latency, "LOCAL");
         } catch (Exception e) {

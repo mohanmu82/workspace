@@ -17,6 +17,11 @@ import java.util.List;
  * the catalog — no instance involved — so a page can offer "which environment" as a dropdown
  * without wiring up a use case just to enumerate them.
  *
+ * <p>{@link #sortOrder} is asked of every mode alike, because it is a question about the list the
+ * operator reads rather than about where the list came from: a dropdown of two hundred desks is
+ * unusable in whatever order the endpoint happened to return them, and the fix should not depend on
+ * whether they arrived from a use case, a dataset or a typed-in list.
+ *
  * <p>The {@code DATASET} mode reads {@link #datasetName}'s rows out of the static dataset library
  * and takes {@link #keyField}/{@link #labelField} off each, exactly as {@code USECASE} does — the
  * difference is only where the rows come from. A list of desks, books or regions that is already
@@ -36,6 +41,16 @@ public class AppPageOptionSource {
     private String appName;
     /** DATASET mode only — which static dataset's rows back this dropdown. */
     private String datasetName;
+    /**
+     * How the options are ordered once they have been gathered: {@code NONE} — which is every page
+     * saved before this existed — leaves them in the order they arrived, while {@code ASC} and
+     * {@code DESC} sort them by the value the operator reads.
+     *
+     * <p>By the shown value rather than by the key, because the order is for the person scanning the
+     * list and the key is routinely an id they never see. Numbers compare as numbers, so a list of
+     * amounts does not run 1, 10, 2.
+     */
+    private String sortOrder = "NONE";
 
     public String getMode()             { return mode; }
     public void   setMode(String mode)  { this.mode = mode != null && !mode.isBlank() ? mode : "NONE"; }
@@ -60,4 +75,12 @@ public class AppPageOptionSource {
 
     public String getDatasetName()                     { return datasetName; }
     public void   setDatasetName(String datasetName)   { this.datasetName = datasetName; }
+
+    public String getSortOrder()                 { return sortOrder; }
+    /** Anything but an explicit ASC or DESC is "leave them as they came". */
+    public void   setSortOrder(String sortOrder) {
+        String wanted = sortOrder == null ? "" : sortOrder.trim().toUpperCase();
+        this.sortOrder = "ASC".equals(wanted) || "DESC".equals(wanted) ? wanted : "NONE";
+    }
 }
+

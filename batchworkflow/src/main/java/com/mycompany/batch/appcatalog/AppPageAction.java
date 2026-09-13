@@ -203,7 +203,52 @@ public class AppPageAction {
      */
     private String dependsOnActionId;
 
-    public String getActionId()                    { return actionId; }
+    /**
+     * Further places the one call's answer is bound, after the target written on the action itself —
+     * see {@link AppPageBinding}. Each reads the same response its own way, with its own source,
+     * transforms, target and paths, so a single call can fill a grid, a select, a pie chart and a text
+     * area together. Empty — the default, and every action saved before this existed — binds only
+     * the action's own target.
+     *
+     * <p>Only an ordinary action run once has them. A fan-out has one answer per row and a
+     * performance action has a table and no call; neither has a single response to read twice.
+     */
+    private List<AppPageBinding> extraBindings = new ArrayList<>();
+
+    /**
+     * Columns added to every row of the grid this action fills, as it fills it — a field of the call
+     * record, a response header, or a lookup into a static dataset. See {@link AppPageEnrichColumn}.
+     *
+     * <p>Only a grid has rows to add them to, so they are taken only where the target is a grid, a
+     * {@link #NEW_GRID}, or — for a fan-out giving each row a tab — the tab set whose grids those are.
+     * A fan-out collecting into one grid enriches each call's rows with that call's own record and
+     * headers. Empty — the default — leaves the rows exactly as they were bound.
+     */
+    private List<AppPageEnrichColumn> enrichColumns = new ArrayList<>();
+
+    /**
+     * A group-by applied to the rows before they fill the grid — see {@link AppPagePivot}. Null, the
+     * default and every action saved before this existed, fills the grid with the rows as bound.
+     *
+     * <p>Only a grid has rows to group, so it is taken where the target is a grid or a
+     * {@link #NEW_GRID}, and on a fan-out collecting its answers into one grid; a tab per row has a
+     * grid per call and no one table to group.
+     */
+    private AppPagePivot pivot;
+
+    public AppPagePivot getPivot()              { return pivot; }
+    public void setPivot(AppPagePivot pivot)    { this.pivot = pivot; }
+
+    /** Whether the rows this action binds are grouped before they reach the grid. */
+    public boolean hasPivot() { return pivot != null && pivot.groupsAnything(); }
+
+    public List<AppPageBinding> getExtraBindings()                   { return extraBindings; }
+    public void setExtraBindings(List<AppPageBinding> extraBindings) { this.extraBindings = extraBindings != null ? extraBindings : new ArrayList<>(); }
+
+    public List<AppPageEnrichColumn> getEnrichColumns()                        { return enrichColumns; }
+    public void setEnrichColumns(List<AppPageEnrichColumn> enrichColumns)      { this.enrichColumns = enrichColumns != null ? enrichColumns : new ArrayList<>(); }
+
+    public String getActionId()                   { return actionId; }
     public void   setActionId(String actionId)     { this.actionId = actionId == null || actionId.isBlank() ? null : actionId.trim(); }
 
     public String getActionLabel()                     { return actionLabel; }
@@ -353,6 +398,24 @@ public class AppPageAction {
      * the running page says how many rows it left alone.
      */
     private int rowLimit = 25;
+
+    /** {@link #rowElements}: only the options the operator has picked. */
+    public static final String ELEMENTS_SELECTED = "SELECTED";
+    /** {@link #rowElements}: every option in the list, picked or not. */
+    public static final String ELEMENTS_ALL = "ALL";
+
+    /**
+     * Where the fan-out's rows come from a select or a multi-select rather than a grid: which of its
+     * elements it runs over. Blank takes the control's own default — the picks on a multi-select,
+     * every option on a select, since a select only ever has one pick. Ignored for a grid.
+     */
+    private String rowElements;
+
+    public String getRowElements()                   { return rowElements; }
+    public void   setRowElements(String rowElements) {
+        String e = rowElements == null ? "" : rowElements.trim().toUpperCase();
+        this.rowElements = ELEMENTS_SELECTED.equals(e) || ELEMENTS_ALL.equals(e) ? e : null;
+    }
 
     public String getDependsOnActionId()             { return dependsOnActionId; }
     public void   setDependsOnActionId(String dependsOnActionId) {
