@@ -1,12 +1,5 @@
 package com.mycompany.batch.web;
 
-import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
-import org.bouncycastle.cert.X509CertificateHolder;
-import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
-import org.bouncycastle.jce.provider.BouncyCastleProvider;
-import org.bouncycastle.openssl.PEMKeyPair;
-import org.bouncycastle.openssl.PEMParser;
-import org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -16,9 +9,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import javax.net.ssl.*;
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.StringReader;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -31,23 +24,18 @@ import java.security.KeyFactory;
 import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.security.PublicKey;
-import java.security.Security;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.security.spec.X509EncodedKeySpec;
 import java.text.SimpleDateFormat;
 import java.time.Duration;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @RestController
 @RequestMapping("/certmanager")
 public class CertManagerController {
-
-    static {
-        if (Security.getProvider("BC") == null) {
-            Security.addProvider(new BouncyCastleProvider());
-        }
-    }
 
     // -------------------------------------------------------------------------
     // GET /certmanager/trustcerts — list all certs in the JVM default trust store
@@ -167,26 +155,62 @@ public class CertManagerController {
         byte[] bytes = Files.readAllBytes(file.toPath());
         String text = new String(bytes, StandardCharsets.UTF_8);
 
-        if (text.contains("-----BEGIN")) {
-            try (PEMParser parser = new PEMParser(new StringReader(text))) {
-                Object obj = parser.readObject();
-                JcaPEMKeyConverter converter = new JcaPEMKeyConverter().setProvider("BC");
-                if (obj instanceof SubjectPublicKeyInfo spki) return converter.getPublicKey(spki);
-                if (obj instanceof PEMKeyPair kp) return converter.getPublicKey(kp.getPublicKeyInfo());
-                if (obj instanceof X509CertificateHolder holder)
-                    return new JcaX509CertificateConverter().setProvider("BC").getCertificate(holder).getPublicKey();
-                throw new IllegalArgumentException("Unsupported PEM content: " +
-                        (obj != null ? obj.getClass().getSimpleName() : "empty file"));
-            }
+        Matcher pem = PEM_BLOCK.matcher(text);
+        if (pem.find()) {
+            String type = pem.group(1);
+            byte[] der = Base64.getMimeDecoder().decode(pem.group(2));
+            return switch (type) {
+                case "PUBLIC KEY"     -> decodeSpki(der);
+                case "RSA PUBLIC KEY" -> KeyFactory.getInstance("RSA").generatePublic(
+                        new X509EncodedKeySpec(wrapPkcs1RsaPublicKey(der)));
+                case "CERTIFICATE"    -> CertificateFactory.getInstance("X.509")
+                        .generateCertificate(new ByteArrayInputStream(der)).getPublicKey();
+                default -> throw new IllegalArgumentException("Unsupported PEM content: " + type);
+            };
         }
 
-        X509EncodedKeySpec spec = new X509EncodedKeySpec(bytes);
+        return decodeSpki(bytes);
+    }
+
+    private static final Pattern PEM_BLOCK =
+            Pattern.compile("-----BEGIN ([A-Z0-9 ]+)-----([A-Za-z0-9+/=\\s]+)-----END \\1-----");
+
+    private PublicKey decodeSpki(byte[] der) {
+        X509EncodedKeySpec spec = new X509EncodedKeySpec(der);
         for (String alg : new String[]{"RSA", "EC"}) {
             try {
                 return KeyFactory.getInstance(alg).generatePublic(spec);
             } catch (Exception ignored) {}
         }
         throw new IllegalArgumentException("Unsupported public key format or algorithm.");
+    }
+
+    // Wraps a PKCS#1 RSAPublicKey in a SubjectPublicKeyInfo so the JDK KeyFactory accepts it.
+    private byte[] wrapPkcs1RsaPublicKey(byte[] pkcs1) {
+        byte[] algId = {0x30, 0x0D, 0x06, 0x09, 0x2A, (byte) 0x86, 0x48, (byte) 0x86,
+                        (byte) 0xF7, 0x0D, 0x01, 0x01, 0x01, 0x05, 0x00};
+        byte[] bitString = derTlv(0x03, concat(new byte[]{0x00}, pkcs1));
+        return derTlv(0x30, concat(algId, bitString));
+    }
+
+    private byte[] derTlv(int tag, byte[] value) {
+        int len = value.length;
+        byte[] lenBytes;
+        if (len < 0x80) {
+            lenBytes = new byte[]{(byte) len};
+        } else {
+            int n = (32 - Integer.numberOfLeadingZeros(len) + 7) / 8;
+            lenBytes = new byte[n + 1];
+            lenBytes[0] = (byte) (0x80 | n);
+            for (int i = 0; i < n; i++) lenBytes[n - i] = (byte) (len >>> (8 * i));
+        }
+        return concat(new byte[]{(byte) tag}, concat(lenBytes, value));
+    }
+
+    private byte[] concat(byte[] a, byte[] b) {
+        byte[] out = Arrays.copyOf(a, a.length + b.length);
+        System.arraycopy(b, 0, out, a.length, b.length);
+        return out;
     }
 
     private int publicKeyBits(PublicKey pk) {

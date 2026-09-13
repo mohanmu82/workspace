@@ -195,7 +195,7 @@
 
   <div class="card">
     <div class="card-title">Time Series</div>
-    <div class="ts-hint">Check a series in the Metric Families table below to graph it here. New points are added on each Load / auto-refresh, so turn on Auto Refresh above to keep collecting.</div>
+    <div class="ts-hint">JVM memory usage is graphed by default. Check a series in the Metric Families table below to graph it here. New points are added on each Load / auto-refresh, so turn on Auto Refresh above to keep collecting.</div>
     <div id="tsEmpty" class="empty-msg">No series tracked yet.</div>
     <button id="tsClearBtn" class="secondary" type="button" style="display:none;margin-bottom:10px" onclick="clearAllTracked()">Clear all</button>
     <div id="tsWrap"></div>
@@ -469,6 +469,28 @@
 
   let selectedSeries = new Map();   // key -> { metric, labels, points: [{t, v}] }
   let lastLoadedUrl = null;
+
+  // Metrics graphed automatically on the first successful load of a URL. Applied once per URL,
+  // so a chart the user removes stays removed across refreshes.
+  const DEFAULT_TRACKED_METRICS = ['jvm_memory_used_bytes'];
+  let defaultsApplied = false;
+
+  function applyDefaultTrackedSeries() {
+    if (defaultsApplied) return;
+    defaultsApplied = true;
+    const now = Date.now();
+    for (const metric of DEFAULT_TRACKED_METRICS) {
+      const fam = families.get(metric);
+      if (!fam) continue;
+      for (const s of fam.samples) {
+        if (!Number.isFinite(s.value)) continue;
+        const key = seriesKey(metric, s.labels);
+        if (!selectedSeries.has(key)) {
+          selectedSeries.set(key, { metric, labels: s.labels, points: [{ t: now, v: s.value }] });
+        }
+      }
+    }
+  }
 
   function seriesKey(name, labels) {
     const parts = Object.keys(labels).sort().map(k => k + '=' + labels[k]);
@@ -750,12 +772,13 @@
         return;
       }
 
-      if (lastLoadedUrl !== null && lastLoadedUrl !== url) selectedSeries.clear();
+      if (lastLoadedUrl !== null && lastLoadedUrl !== url) { selectedSeries.clear(); defaultsApplied = false; }
       lastLoadedUrl = url;
 
       lastRawText = data.body || '';
       parsePrometheusText(lastRawText);
       updateSeriesHistory();
+      applyDefaultTrackedSeries();
       renderStatTiles();
       renderFamilies();
       renderTimeSeriesCharts();

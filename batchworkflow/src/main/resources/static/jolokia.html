@@ -105,6 +105,33 @@
             transition: opacity 0.15s ease;
         }
         #copyToast.show { opacity: 1; }
+
+        /* Time series charts */
+        .ts-hint  { font-weight: 400; text-transform: none; letter-spacing: 0; font-size: 11px;
+                    color: #a5adba; margin-left: 8px; }
+        .ts-empty { font-size: 12px; color: #5e6c84; font-style: italic; padding: 8px 0; }
+        .ts-card  { border: 1px solid #dfe1e6; border-radius: 6px; margin-bottom: 12px; padding: 10px 12px 12px; }
+        .ts-head  { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+        .ts-title { font-size: 13px; font-weight: 600; color: #172b4d; }
+        .ts-sub   { font-size: 11px; color: #5e6c84; font-family: "Cascadia Code",Consolas,monospace; flex: 1 1 auto; }
+        .ts-error { font-size: 12px; color: #de350b; margin-bottom: 4px; }
+        .ts-chart-wrap { position: relative; }
+        .ts-svg   { width: 100%; height: 190px; display: block; }
+        .ts-grid  { stroke: #ebecf0; stroke-width: 1; }
+        .ts-axis  { stroke: #c1c7d0; stroke-width: 1; }
+        .ts-axis-label { fill: #7a869a; font-size: 9px; font-family: Consolas, monospace; }
+        .ts-crosshair  { stroke: #c1c7d0; stroke-width: 1; pointer-events: none; }
+        .ts-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; }
+        .ts-legend-item { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #42526e; }
+        .ts-key { display: inline-block; width: 12px; height: 3px; border-radius: 2px; flex: none; }
+        .ts-tooltip {
+            position: absolute; min-width: 150px; max-width: 260px; background: #fff; border: 1px solid #dfe1e6;
+            border-radius: 6px; box-shadow: 0 2px 10px rgba(9,30,66,.15); padding: 8px 10px; font-size: 12px;
+            pointer-events: none; z-index: 5; }
+        .ts-tt-time { font-size: 11px; color: #7a869a; margin-bottom: 4px; }
+        .ts-tt-row  { display: flex; align-items: center; gap: 6px; padding: 1px 0; }
+        .ts-tt-val  { font-weight: 700; color: #172b4d; font-variant-numeric: tabular-nums; }
+        .ts-tt-lbl  { color: #42526e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     </style>
 </head>
 <body>
@@ -123,6 +150,16 @@
             <label>Timeout (ms)</label>
             <input type="number" id="timeoutMs" value="10000" step="1000" min="0" />
         </div>
+        <div class="form-group" style="width:110px;margin-bottom:0">
+            <label>Auto Refresh</label>
+            <select class="kind-select" id="refreshInterval">
+                <option value="0" selected>Off</option>
+                <option value="5000">5s</option>
+                <option value="10000">10s</option>
+                <option value="30000">30s</option>
+                <option value="60000">60s</option>
+            </select>
+        </div>
     </div>
     <div style="height:10px"></div>
     <div class="toolbar">
@@ -137,6 +174,17 @@
         <span id="countLabel" style="font-size:12px;color:#5e6c84;margin-left:auto"></span>
     </div>
     <div id="statusBar" class="status-bar"></div>
+</div>
+
+<div class="panel" id="tsPanel" style="display:none">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <div class="panel-title" style="margin-bottom:0">Time Series
+            <span class="ts-hint">JVM memory is graphed by default &middot; click an attribute below and choose "Graph" to add more &middot; turn on Auto Refresh to keep collecting</span>
+        </div>
+        <button class="tool-btn" id="tsClearBtn" style="margin-left:auto;display:none" onclick="clearAllTracked()">Clear all</button>
+    </div>
+    <div id="tsEmpty" class="ts-empty">No attributes tracked yet.</div>
+    <div id="tsWrap"></div>
 </div>
 
 <div class="panel" id="gridPanel" style="display:none">
@@ -241,6 +289,12 @@
             allRows = buildRows(data.value);
             renderGrid(allRows);
             setStatus('Loaded ' + allRows.length.toLocaleString() + ' entries', 'ok');
+
+            if (lastLoadedBase !== null && lastLoadedBase !== base) { tracked.clear(); defaultsApplied = false; }
+            lastLoadedBase = base;
+            applyDefaultTracked();
+            document.getElementById('tsPanel').style.display = 'block';
+            sampleTracked();
         } catch (e) {
             setStatus(e.message, 'error');
         }
@@ -378,6 +432,7 @@
                 <div class="exec-curl-box">${escHtml(readCurl)}</div>
                 <div class="toolbar">
                     <button class="primary"   onclick="readAttribute()">Read</button>
+                    <button class="secondary" onclick="trackCurrentAttribute()" title="Plot this attribute's numeric value(s) over time">Graph</button>
                     <button class="tool-btn"  onclick="copyText(${escAttr(readCurl)})">Copy cURL</button>
                 </div>
             </div>`;
@@ -544,6 +599,335 @@
                      body.replace(/'/g, "'\\''") + "'";
         copyText(curl);
     }
+
+    // -------------------------------------------------------------------------
+    // Time series tracking
+    // -------------------------------------------------------------------------
+
+    const PALETTE    = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
+    const MAX_POINTS = 720;
+    const TS_W = 640, TS_H = 190;
+    const TS_PAD = { l: 60, r: 14, t: 12, b: 24 };
+
+    // Attributes graphed automatically after the first successful fetch of a URL. Applied once per
+    // URL, so a chart the user removes stays removed across refreshes.
+    const DEFAULT_TRACKED = [
+        { mbean: 'java.lang:type=Memory', attribute: 'HeapMemoryUsage',    chart: 'JVM Memory', prefix: 'Heap',     fields: ['used', 'committed'], unit: 'bytes' },
+        { mbean: 'java.lang:type=Memory', attribute: 'NonHeapMemoryUsage', chart: 'JVM Memory', prefix: 'Non-heap', fields: ['used', 'committed'], unit: 'bytes' },
+    ];
+
+    // "mbean|attribute" -> { mbean, attribute, chart, prefix, fields, unit, series: Map(name -> [{t, v}]), error }
+    const tracked = new Map();
+    let defaultsApplied = false;
+    let lastLoadedBase  = null;
+    let sampling        = false;
+    let refreshTimer    = null;
+
+    function trackKey(mbean, attribute) { return mbean + '|' + attribute; }
+
+    function addTracked(def) {
+        const key = trackKey(def.mbean, def.attribute);
+        if (tracked.has(key)) return false;
+        tracked.set(key, { prefix: '', fields: null, unit: undefined, ...def, series: new Map(), error: null });
+        return true;
+    }
+
+    function applyDefaultTracked() {
+        if (defaultsApplied) return;
+        defaultsApplied = true;
+        for (const d of DEFAULT_TRACKED) {
+            if (allRows.some(r => r.kind === 'ATTRIBUTE' && r.mbean === d.mbean && r.name === d.attribute)) addTracked(d);
+        }
+    }
+
+    function trackCurrentAttribute() {
+        if (!currentRow || currentRow.kind !== 'ATTRIBUTE') return;
+        const added = addTracked({ mbean: currentRow.mbean, attribute: currentRow.name,
+                                   chart: currentRow.name + ' — ' + currentRow.mbean });
+        setExecStatus(added ? 'Added to Time Series graph' : 'Already graphed', 'ok');
+        document.getElementById('tsPanel').style.display = 'block';
+        sampleTracked();
+    }
+
+    function clearAllTracked() {
+        tracked.clear();
+        renderTimeSeriesCharts();
+    }
+
+    /** Reads every tracked attribute in one Jolokia bulk request and appends a point per numeric value. */
+    async function sampleTracked() {
+        if (tracked.size === 0 || sampling) { renderTimeSeriesCharts(); return; }
+        sampling = true;
+        const entries = [...tracked.values()];
+        try {
+            const resp = await fetch(lastLoadedBase || getBaseUrl(), {
+                method  : 'POST',
+                headers : { 'Content-Type': 'application/json' },
+                body    : JSON.stringify(entries.map(e => ({ type: 'read', mbean: e.mbean, attribute: e.attribute }))),
+                signal  : AbortSignal.timeout(getTimeout())
+            });
+            if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + resp.statusText);
+            const data    = await resp.json();
+            const results = Array.isArray(data) ? data : [data];
+            const now     = Date.now();
+            entries.forEach((e, i) => {
+                const r = results[i];
+                if (!r || r.status !== 200) { e.error = (r && r.error) || 'Read failed'; return; }
+                e.error = null;
+                recordValue(e, r.value, now);
+            });
+        } catch (err) {
+            entries.forEach(e => { e.error = err.message; });
+        } finally {
+            sampling = false;
+        }
+        renderTimeSeriesCharts();
+    }
+
+    function recordValue(entry, value, t) {
+        const push = (name, v) => {
+            if (typeof v !== 'number' || !Number.isFinite(v)) return;
+            if (!entry.series.has(name)) entry.series.set(name, []);
+            const pts = entry.series.get(name);
+            pts.push({ t, v });
+            if (pts.length > MAX_POINTS) pts.shift();
+        };
+        if (typeof value === 'number') {
+            if (entry.unit === undefined) entry.unit = null;
+            push('value', value);
+        } else if (value && typeof value === 'object') {
+            // MemoryUsage-style composites (init/used/committed/max) are byte counts
+            if (entry.unit === undefined) entry.unit = ('used' in value && 'committed' in value) ? 'bytes' : null;
+            (entry.fields || Object.keys(value)).forEach(k => push(k, value[k]));
+        }
+    }
+
+    function seriesLabel(entry, name) {
+        if (name === 'value') return entry.prefix || entry.attribute;
+        return entry.prefix ? entry.prefix + ' ' + name : name;
+    }
+
+    function niceTicks(min, max, count) {
+        if (min === max) { min -= 1; max += 1; }
+        const rawStep = (max - min) / count;
+        const mag  = Math.pow(10, Math.floor(Math.log10(rawStep)));
+        const norm = rawStep / mag;
+        const step = (norm < 1.5 ? 1 : norm < 3 ? 2 : norm < 7 ? 5 : 10) * mag;
+        const ticks = [];
+        for (let v = Math.floor(min / step) * step; v <= Math.ceil(max / step) * step + step * 0.001; v += step) ticks.push(v);
+        return ticks;
+    }
+
+    function formatTime(t) {
+        return new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
+    function formatBytes(bytes) {
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        let v = Math.abs(bytes), i = 0;
+        while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+        return (bytes < 0 ? '-' : '') + (i === 0 ? v.toFixed(0) : v.toFixed(v < 10 ? 2 : 1)) + ' ' + units[i];
+    }
+
+    function formatNumber(v) {
+        if (Number.isInteger(v)) return v.toLocaleString();
+        return String(Math.round(v * 1e6) / 1e6);
+    }
+
+    // Compact axis ticks (34,000,000 -> "34M") so labels never clip against the left edge.
+    function formatAxisValue(v, unit) {
+        if (unit === 'bytes') return formatBytes(v);
+        if (v === 0) return '0';
+        const sign = v < 0 ? '-' : '', abs = Math.abs(v);
+        const compact = (scaled, suffix) => sign + (scaled >= 100 ? scaled.toFixed(0) : scaled.toFixed(1).replace(/\.0$/, '')) + suffix;
+        if (abs >= 1e9) return compact(abs / 1e9, 'B');
+        if (abs >= 1e6) return compact(abs / 1e6, 'M');
+        if (abs >= 1e4) return compact(abs / 1e3, 'K');
+        return Number.isInteger(v) ? String(v) : String(Math.round(v * 1e4) / 1e4);
+    }
+
+    // chart title -> { el, update }. Cards are created once and updated in place on every refresh
+    // so a card being hovered doesn't lose its tooltip/crosshair mid-hover.
+    const tsCards = new Map();
+
+    function renderTimeSeriesCharts() {
+        const wrap = document.getElementById('tsWrap');
+        document.getElementById('tsEmpty').style.display    = tracked.size === 0 ? 'block' : 'none';
+        document.getElementById('tsClearBtn').style.display = tracked.size === 0 ? 'none' : '';
+
+        const byChart = new Map();
+        for (const [key, e] of tracked) {
+            if (!byChart.has(e.chart)) byChart.set(e.chart, { entries: [], seriesList: [] });
+            const c = byChart.get(e.chart);
+            c.entries.push(e);
+            for (const [name, points] of e.series) {
+                c.seriesList.push({ key: key + '|' + name, label: seriesLabel(e, name), points });
+            }
+        }
+
+        for (const [chart, card] of tsCards) {
+            if (!byChart.has(chart)) { card.el.remove(); tsCards.delete(chart); }
+        }
+        for (const [chart, c] of byChart) {
+            let card = tsCards.get(chart);
+            if (!card) {
+                card = createChartCard(chart);
+                tsCards.set(chart, card);
+                wrap.appendChild(card.el);
+            }
+            card.update(c.entries, c.seriesList);
+        }
+    }
+
+    function createChartCard(chart) {
+        const el = document.createElement('div');
+        el.className = 'ts-card';
+        el.innerHTML =
+            '<div class="ts-head">' +
+                '<span class="ts-title"></span>' +
+                '<span class="ts-sub"></span>' +
+                '<button class="tool-btn" type="button">Remove</button>' +
+            '</div>' +
+            '<div class="ts-error" style="display:none"></div>' +
+            '<div class="ts-chart-wrap">' +
+                '<svg viewBox="0 0 ' + TS_W + ' ' + TS_H + '" preserveAspectRatio="none" class="ts-svg">' +
+                    '<g class="ts-content"></g>' +
+                    '<line class="ts-crosshair" x1="0" y1="' + TS_PAD.t + '" x2="0" y2="' + (TS_H - TS_PAD.b) + '" style="display:none"/>' +
+                '</svg>' +
+                '<div class="ts-tooltip" style="display:none"></div>' +
+            '</div>' +
+            '<div class="ts-legend" style="display:none"></div>';
+
+        el.querySelector('.ts-title').textContent = chart;
+
+        const subEl     = el.querySelector('.ts-sub');
+        const errorEl   = el.querySelector('.ts-error');
+        const contentG  = el.querySelector('.ts-content');
+        const legendEl  = el.querySelector('.ts-legend');
+        const chartWrap = el.querySelector('.ts-chart-wrap');
+        const svgEl     = el.querySelector('.ts-svg');
+        const crosshair = el.querySelector('.ts-crosshair');
+        const tooltip   = el.querySelector('.ts-tooltip');
+
+        let state = null; // { seriesList, xFor, allPoints, unit }
+
+        el.querySelector('button').addEventListener('click', () => {
+            for (const [key, e] of tracked) if (e.chart === chart) tracked.delete(key);
+            renderTimeSeriesCharts();
+        });
+
+        chartWrap.addEventListener('mousemove', ev => {
+            if (!state) return;
+            const rect = svgEl.getBoundingClientRect();
+            if (rect.width === 0) return;
+            const relX = (ev.clientX - rect.left) / rect.width * TS_W;
+            let nearestT = null, minDist = Infinity;
+            state.allPoints.forEach(p => {
+                const d = Math.abs(state.xFor(p.t) - relX);
+                if (d < minDist) { minDist = d; nearestT = p.t; }
+            });
+            if (nearestT == null) return;
+            const cx = state.xFor(nearestT);
+            crosshair.setAttribute('x1', cx.toFixed(1));
+            crosshair.setAttribute('x2', cx.toFixed(1));
+            crosshair.style.display = '';
+
+            let rows = '<div class="ts-tt-time">' + escStr(formatTime(nearestT)) + '</div>';
+            state.seriesList.forEach(s => {
+                let best = null, bd = Infinity;
+                s.points.forEach(p => { const d = Math.abs(p.t - nearestT); if (d < bd) { bd = d; best = p; } });
+                if (!best) return;
+                const val = state.unit === 'bytes' ? formatBytes(best.v) : formatNumber(best.v);
+                rows += '<div class="ts-tt-row"><span class="ts-key" style="background:' + s.color + '"></span>' +
+                    '<span class="ts-tt-val">' + escStr(val) + '</span>' +
+                    '<span class="ts-tt-lbl">' + escStr(s.label) + '</span></div>';
+            });
+            tooltip.innerHTML = rows;
+            tooltip.style.display = 'block';
+            const wrapRect = chartWrap.getBoundingClientRect();
+            let left = (ev.clientX - wrapRect.left) + 12;
+            if (left + 190 > wrapRect.width) left = Math.max(0, (ev.clientX - wrapRect.left) - 192);
+            tooltip.style.left = left + 'px';
+            tooltip.style.top  = '8px';
+        });
+        chartWrap.addEventListener('mouseleave', () => {
+            crosshair.style.display = 'none';
+            tooltip.style.display   = 'none';
+        });
+
+        return {
+            el,
+            update(entries, seriesList) {
+                const mbeans = [...new Set(entries.map(e => e.mbean))];
+                subEl.textContent = entries[0].chart.includes(entries[0].mbean) ? '' : mbeans.join(', ');
+
+                const errors = [...new Set(entries.map(e => e.error).filter(Boolean))];
+                errorEl.textContent   = errors.join('; ');
+                errorEl.style.display = errors.length ? '' : 'none';
+
+                const unit = entries.every(e => e.unit === 'bytes') ? 'bytes' : null;
+                seriesList.forEach((s, i) => { s.color = PALETTE[i % PALETTE.length]; });
+                const allPoints = seriesList.flatMap(s => s.points);
+
+                if (allPoints.length === 0) {
+                    contentG.innerHTML = '<text x="' + (TS_W / 2) + '" y="' + (TS_H / 2) + '" text-anchor="middle" class="ts-axis-label">No numeric data points yet</text>';
+                    legendEl.innerHTML = '';
+                    legendEl.style.display = 'none';
+                    state = null;
+                    return;
+                }
+
+                const tMin = Math.min(...allPoints.map(p => p.t));
+                const tMax = Math.max(...allPoints.map(p => p.t));
+                const yTicks = niceTicks(Math.min(...allPoints.map(p => p.v)), Math.max(...allPoints.map(p => p.v)), 4);
+                const yLo = yTicks[0], yHi = yTicks[yTicks.length - 1];
+
+                const plotW = TS_W - TS_PAD.l - TS_PAD.r, plotH = TS_H - TS_PAD.t - TS_PAD.b;
+                const xFor = t => tMax === tMin ? TS_PAD.l + plotW / 2 : TS_PAD.l + (t - tMin) / (tMax - tMin) * plotW;
+                const yFor = v => TS_PAD.t + (1 - (v - yLo) / (yHi - yLo)) * plotH;
+
+                let inner = '';
+                yTicks.forEach(v => {
+                    const y = yFor(v);
+                    inner += '<line x1="' + TS_PAD.l + '" y1="' + y + '" x2="' + (TS_W - TS_PAD.r) + '" y2="' + y + '" class="ts-grid"/>';
+                    inner += '<text x="' + (TS_PAD.l - 8) + '" y="' + (y + 3) + '" class="ts-axis-label" text-anchor="end">' + escStr(formatAxisValue(v, unit)) + '</text>';
+                });
+                inner += '<line x1="' + TS_PAD.l + '" y1="' + (TS_H - TS_PAD.b) + '" x2="' + (TS_W - TS_PAD.r) + '" y2="' + (TS_H - TS_PAD.b) + '" class="ts-axis"/>';
+                inner += '<text x="' + TS_PAD.l + '" y="' + (TS_H - 6) + '" class="ts-axis-label">' + escStr(formatTime(tMin)) + '</text>';
+                inner += '<text x="' + (TS_W - TS_PAD.r) + '" y="' + (TS_H - 6) + '" class="ts-axis-label" text-anchor="end">' + escStr(formatTime(tMax)) + '</text>';
+
+                seriesList.forEach(s => {
+                    if (s.points.length === 0) return;
+                    const path = s.points.map((p, i) => (i === 0 ? 'M' : 'L') + xFor(p.t).toFixed(1) + ',' + yFor(p.v).toFixed(1)).join(' ');
+                    inner += '<path d="' + path + '" fill="none" stroke="' + s.color + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>';
+                    const last = s.points[s.points.length - 1];
+                    inner += '<circle cx="' + xFor(last.t).toFixed(1) + '" cy="' + yFor(last.v).toFixed(1) + '" r="4" fill="' + s.color + '" stroke="#fff" stroke-width="2"/>';
+                });
+                contentG.innerHTML = inner;
+
+                legendEl.innerHTML = seriesList.length > 1
+                    ? seriesList.map(s => '<span class="ts-legend-item"><span class="ts-key" style="background:' + s.color + '"></span>' + escStr(s.label) + '</span>').join('')
+                    : '';
+                legendEl.style.display = seriesList.length > 1 ? '' : 'none';
+
+                state = { seriesList, xFor, allPoints, unit };
+            }
+        };
+    }
+
+    // Auto refresh re-samples the tracked attributes only (the MBean list is left alone so the grid
+    // and execution panel aren't reset); it does a full fetch if nothing is loaded or the URL changed.
+    function autoRefreshTick() {
+        if (allRows.length === 0 || getBaseUrl() !== lastLoadedBase) fetchMBeans();
+        else sampleTracked();
+    }
+
+    function applyRefreshInterval() {
+        if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+        const ms = parseInt(document.getElementById('refreshInterval').value, 10);
+        if (ms > 0) refreshTimer = setInterval(autoRefreshTick, ms);
+    }
+    document.getElementById('refreshInterval').addEventListener('change', applyRefreshInterval);
 
     // -------------------------------------------------------------------------
     // Helpers
