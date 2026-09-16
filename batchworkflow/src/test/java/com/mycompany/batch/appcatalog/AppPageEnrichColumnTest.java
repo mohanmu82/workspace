@@ -130,6 +130,69 @@ class AppPageEnrichColumnTest {
                 .hasMessageContaining("which dataset column to bring back");
     }
 
+    private static AppPageEnrichColumn gridLookup(String name, String grid, String lookup, String key, String ret) {
+        return new AppPageEnrichColumn(name, "GRID_VLOOKUP", null, null, lookup, key, ret, grid);
+    }
+
+    @Test
+    void aLookupIntoAGrid_needsAGridOnThisPageAndAllThreeColumns() {
+        assertThatCode(() -> validate(action("grid", gridLookup("o", "src", "accountId", "id", "owner"))))
+                .doesNotThrowAnyException();
+        assertThatThrownBy(() -> validate(action("grid", gridLookup("o", "", "accountId", "id", "owner"))))
+                .hasMessageContaining("names no grid to look up into");
+        assertThatThrownBy(() -> validate(action("grid", gridLookup("o", "gone", "accountId", "id", "owner"))))
+                .hasMessageContaining("not on this page: gone");
+        assertThatThrownBy(() -> validate(action("grid", gridLookup("o", "pick", "accountId", "id", "owner"))))
+                .hasMessageContaining("not on this page: pick");
+        assertThatThrownBy(() -> validate(action("grid", gridLookup("o", "src", "accountId", "", "owner"))))
+                .hasMessageContaining("which grid column is the row key");
+        assertThatThrownBy(() -> validate(action("grid", gridLookup("o", "src", "accountId", "id", null))))
+                .hasMessageContaining("which grid column to bring back");
+    }
+
+    @Test
+    void aChart_mayDrawItselfFromAGridOnThePage_andNothingElse() {
+        AppPageControl pie = control("pie", "pie");
+        pie.setSourceGridControlId("src");
+        assertThatCode(() -> AppCatalogService.validateChartGridSource(page(), pie, WHERE)).doesNotThrowAnyException();
+
+        pie.setSourceGridControlId("pick");
+        assertThatThrownBy(() -> AppCatalogService.validateChartGridSource(page(), pie, WHERE))
+                .hasMessageContaining("it needs a grid");
+
+        AppPageControl select = control("pick", "select");
+        select.setSourceGridControlId("src");
+        assertThatThrownBy(() -> AppCatalogService.validateChartGridSource(page(), select, WHERE))
+                .hasMessageContaining("only a chart or a grid draws itself from a grid");
+    }
+
+    @Test
+    void aGrid_mayTakeItsRowsFromAnotherGrid_butNeverInALoop() {
+        AppPageControl a = control("a", "grid");
+        AppPageControl b = control("b", "grid");
+        AppPageControl c = control("c", "grid");
+        AppPage page = new AppPage();
+        page.setControls(List.of(a, b, c, control("pick", "select")));
+
+        b.setSourceGridControlId("a");
+        c.setSourceGridControlId("b");
+        assertThatCode(() -> AppCatalogService.validateChartGridSource(page, b, WHERE)).doesNotThrowAnyException();
+        assertThatCode(() -> AppCatalogService.validateChartGridSource(page, c, WHERE)).doesNotThrowAnyException();
+
+        b.setSourceGridControlId("pick");
+        assertThatThrownBy(() -> AppCatalogService.validateChartGridSource(page, b, WHERE))
+                .hasMessageContaining("it needs a grid");
+
+        b.setSourceGridControlId("b");
+        assertThatThrownBy(() -> AppCatalogService.validateChartGridSource(page, b, WHERE))
+                .hasMessageContaining("takes its rows from a grid that takes its rows from it");
+
+        b.setSourceGridControlId("a");
+        a.setSourceGridControlId("c");
+        assertThatThrownBy(() -> AppCatalogService.validateChartGridSource(page, a, WHERE))
+                .hasMessageContaining("takes its rows from a grid that takes its rows from it");
+    }
+
     @Test
     void aFurtherTarget_isHeldToTheSameRules() {
         AppPageBinding onGrid = new AppPageBinding();

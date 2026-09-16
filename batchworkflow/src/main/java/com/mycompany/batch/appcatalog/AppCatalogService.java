@@ -372,7 +372,7 @@ public class AppCatalogService {
      * fields of each row. Mirrors TARGET_TYPES in apppage.html.
      */
     private static final List<String> TARGET_TYPES =
-            List.of("grid", "select", "multiselect", "text", "textarea", "link", "pie", "piegrid", "bar");
+            List.of("grid", "select", "multiselect", "text", "textarea", "link", "pie", "piegrid", "bar", "timeseries");
 
     /**
      * Control types another control can write a value into. Wider than {@link #TARGET_TYPES}: a
@@ -389,7 +389,7 @@ public class AppCatalogService {
      * it deliberately does not fire its own trigger either. An assignment written on one would sit in
      * the saved page looking wired up and never once run.
      */
-    private static final List<String> TRIGGERLESS_TYPES = List.of("grid", "label", "tabs", "hidden", "pie", "piegrid", "bar", "page");
+    private static final List<String> TRIGGERLESS_TYPES = List.of("grid", "label", "tabs", "hidden", "pie", "piegrid", "bar", "timeseries", "page");
 
     private void validateControls(AppPage page) {
         List<String> controlIds = new ArrayList<>();
@@ -415,11 +415,13 @@ public class AppCatalogService {
                 checkFieldNameFree(control, variableNames, where);
             }
             validateSlices(control, where);
+            validateSliceColors(control, where);
             validateLinkUrl(control, where);
             validateLinkPage(control, where);
             validateChildPage(page, control, where, this::getPage);
             validateDatasetName(control, where);
             validateRowErrorExpression(control, where);
+            validateDisplayFilterExpression(control, where);
             validateGridStatus(control, variableNames, where);
             if (isSelect(control.getType()) && control.getOptionSource() != null) {
                 AppPageOptionSource source = control.getOptionSource();
@@ -453,6 +455,7 @@ public class AppCatalogService {
             }
             validateAssignments(page, control);
             validateColumnLinks(page, control, actionIds);
+            validateRowClick(page, control, actionIds);
             if (!ACTION_TYPES.contains(control.getType())) continue;
             // What an action written here may wait for: the library, plus this control's own list.
             // Not narrowed to the actions the control currently triggers — detaching a page action
@@ -523,6 +526,48 @@ public class AppCatalogService {
     }
 
     /**
+     * What a slice colour may be written as: a name, a #hex, or an rgb()/hsl() function — the same
+     * characters {@code cssColor} in apppage.html keeps, and no others.
+     *
+     * <p>The value goes into a {@code style} attribute on the running page, so anything that could
+     * close that attribute and start something else has no business being stored here. Checked at the
+     * save rather than scrubbed at the draw for the reason every other check on this screen is: the
+     * designer finds out where they can fix it, instead of an operator finding a wedge that came out
+     * the wrong colour for no stated reason.
+     */
+    private static final Pattern CSS_COLOR = Pattern.compile("[#a-zA-Z0-9\\s.,%()-]+");
+
+    /**
+     * A pie's named colours: only a pie has them, each names a slice once, and each says what colour
+     * that slice is drawn in.
+     *
+     * <p>A name that matches no slice is deliberately fine and is not checked — it cannot be. The
+     * whole point of naming a colour is that the slices arrive from a call: a page is saved knowing
+     * it will have an UP wedge and a DOWN wedge long before any run proves it, and refusing the
+     * colour until the wedge exists would make the setting unusable on exactly the charts it is for.
+     */
+    static void validateSliceColors(AppPageControl control, String where) {
+        if (control.getSliceColors().isEmpty()) return;
+        if (!"pie".equals(control.getType()) && !"piegrid".equals(control.getType()))
+            throw new IllegalArgumentException(where + " is a " + control.getType()
+                    + " — only a pie chart colours its slices by name");
+        List<String> named = new ArrayList<>();
+        for (AppPageOption colour : control.getSliceColors()) {
+            requireName(colour.key(), where + " slice colour name");
+            String key = colour.key().trim().toLowerCase();
+            if (named.contains(key))
+                throw new IllegalArgumentException(where + " gives the slice '" + colour.key() + "' two colours");
+            named.add(key);
+            String value = colour.value() == null ? "" : colour.value().trim();
+            if (value.isEmpty())
+                throw new IllegalArgumentException(where + " slice '" + colour.key() + "' is named but given no colour");
+            if (!CSS_COLOR.matcher(value).matches())
+                throw new IllegalArgumentException(where + " slice '" + colour.key()
+                        + "' has a colour that is not a CSS colour: " + value);
+        }
+    }
+
+    /**
      * A grid's static dataset, when it was given one. Only a grid has one — a select reaches a
      * dataset through its option source instead, where it can also say which columns are the key and
      * the label — so a dataset name left behind on a control that has since become something else is
@@ -559,6 +604,41 @@ public class AppCatalogService {
             AppPageRowCheck.check(expression);
         } catch (IllegalArgumentException e) {
             throw new IllegalArgumentException(where + " has a row check that cannot be read: "
+                    + e.getMessage() + " — in '" + expression + "'");
+        }
+    }
+
+    /**
+     * A grid's display filter: the same rules as its row check above — only a grid has rows to keep,
+     * and an expression the browser cannot read would show every row while looking as though it
+     * filtered them.
+     */
+    static void validateDisplayFilterExpression(AppPageControl control, String where) {
+        String expression = control.getDisplayFilterExpression();
+        if (expression == null || expression.isBlank()) return;
+        if (!"grid".equals(control.getType()))
+            throw new IllegalArgumentException(where + " is a " + control.getType()
+                    + " — only a grid filters its rows");
+        checkExpression(expression, where + " has a display filter");
+    }
+
+    /**
+     * The error check and display filter a tab-per-row fan-out puts every one of its tabs' grids
+     * through. Only read under {@link AppPageAction#TABS}, so ones left on an action that has since
+     * been switched to collecting into a grid are harmless and not refused; but whatever is there has
+     * to be readable, for the same reason a grid's own are — see {@link #validateRowErrorExpression}.
+     */
+    static void validateActionRowErrorExpression(AppPageAction action, String where) {
+        checkExpression(action.getRowErrorExpression(), where + " has an error check");
+        checkExpression(action.getDisplayFilterExpression(), where + " has a display filter");
+    }
+
+    private static void checkExpression(String expression, String what) {
+        if (expression == null || expression.isBlank()) return;
+        try {
+            AppPageRowCheck.check(expression);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException(what + " that cannot be read: "
                     + e.getMessage() + " — in '" + expression + "'");
         }
     }
@@ -763,12 +843,18 @@ public class AppCatalogService {
      * and it is not. The column name itself cannot be checked against anything: a grid whose columns
      * follow the response does not know what they are until a call answers.
      */
+    /**
+     * What carries clickable columns and rows: a grid, and a pie with grids — whose settings apply to
+     * every grid it opens. Mirrors GRID_OWNER_TYPES in apppage.html.
+     */
+    private static final List<String> GRID_OWNER_TYPES = List.of("grid", "piegrid");
+
     static void validateColumnLinks(AppPage page, AppPageControl control, List<String> actionIds) {
         if (control.getColumnLinks().isEmpty()) return;
         String where = "Control '" + describe(control) + "'";
-        if (!"grid".equals(control.getType()))
+        if (!GRID_OWNER_TYPES.contains(control.getType()))
             throw new IllegalArgumentException(where + " is a " + control.getType()
-                    + " — only a grid has clickable columns");
+                    + " — only a grid or a pie with grids has clickable columns");
         List<String> named = new ArrayList<>();
         for (AppPageColumnLink link : control.getColumnLinks()) {
             requireName(link.getColumn(), where + " clickable column name");
@@ -789,12 +875,49 @@ public class AppCatalogService {
     }
 
     /**
-     * A tab set holds grids that are on the same page and holds each of them once. Both checks are
-     * about the same thing: a tab is only a place to put a grid, so a name in the list that answers
-     * to no grid — or to a grid another tab set has already claimed — leaves the page with a tab
-     * that shows nothing, or with a grid whose home has two answers. Neither survives a save.
+     * A grid's clickable rows: only a grid has them, and a click has to do something.
+     *
+     * <p>The same check the columns answer to, and it is worth having for the same reason: rows drawn
+     * as clickable tell the operator, by the only means the page has of telling them, that pointing
+     * at one will do something — and a row click that sets nothing and runs nothing answers that
+     * with silence.
      */
-    private void validateTabs(AppPage page) {
+    static void validateRowClick(AppPage page, AppPageControl control, List<String> actionIds) {
+        AppPageRowClick click = control.getRowClick();
+        if (click == null) return;
+        String where = "Control '" + describe(control) + "'";
+        if (!GRID_OWNER_TYPES.contains(control.getType()))
+            throw new IllegalArgumentException(where + " is a " + control.getType()
+                    + " — only a grid or a pie with grids has clickable rows");
+        if (click.getAssignments().isEmpty() && click.getActionIds().isEmpty())
+            throw new IllegalArgumentException(where + " has clickable rows that neither set a value nor run an "
+                    + "action, so a click on one would do nothing");
+        checkAssignments(page, click.getAssignments(), control.getControlId(), where + " row click");
+        for (String id : click.getActionIds()) {
+            if (!actionIds.contains(id))
+                throw new IllegalArgumentException(where + " row click runs an action that is not on this page: " + id);
+        }
+    }
+
+    /**
+     * What a tab set may hold: a grid, or any of the charts. A chart is the same kind of thing as a
+     * grid as far as a tab is concerned — one reading of one call, wanting the full width and a few
+     * rows of height — and a page that answers a question with a grid, a pie of it and a bar chart
+     * beside them reads far better as three tabs than as three controls down a screen.
+     *
+     * <p>A tab set is not on the list, and cannot be: a set holding itself has no depth at which it
+     * stops being drawn.
+     */
+    private static final List<String> TAB_CHILD_TYPES = List.of("grid", "pie", "piegrid", "bar", "timeseries");
+
+    /**
+     * A tab set holds grids and charts that are on the same page and holds each of them once. Both
+     * checks are about the same thing: a tab is only a place to put one of those, so a name in the
+     * list that answers to nothing on the page — or to a control another tab set has already claimed
+     * — leaves the page with a tab that shows nothing, or with a grid whose home has two answers.
+     * Neither survives a save.
+     */
+    static void validateTabs(AppPage page) {
         List<String> claimed = new ArrayList<>();
         for (AppPageControl control : page.getControls()) {
             if (!"tabs".equals(control.getType())) continue;
@@ -804,16 +927,78 @@ public class AppCatalogService {
                         .filter(c -> id.equals(c.getControlId())).findFirst().orElse(null);
                 if (child == null)
                     throw new IllegalArgumentException(where + " holds a control that is not on this page: " + id);
-                if (!"grid".equals(child.getType()))
-                    throw new IllegalArgumentException(where + " holds a " + child.getType() + " — a tab set holds grids");
+                if (!TAB_CHILD_TYPES.contains(child.getType()))
+                    throw new IllegalArgumentException(where + " holds a " + child.getType()
+                            + " — a tab set holds grids and charts");
                 if (claimed.contains(id))
-                    throw new IllegalArgumentException("Grid '" + describe(child) + "' is in more than one tab set");
+                    throw new IllegalArgumentException("Control '" + describe(child) + "' is in more than one tab set");
                 claimed.add(id);
             }
             String preferred = control.getDefaultTabControlId();
             if (preferred != null && !control.getTabControlIds().contains(preferred))
                 throw new IllegalArgumentException(where + " opens on a tab it does not hold: " + preferred);
         }
+    }
+
+    /** The controls drawn out of rows. Mirrors CHART_TYPES in apppage.html. */
+    private static final List<String> CHART_TYPES = List.of("pie", "piegrid", "bar", "timeseries");
+
+    /**
+     * A time series chart's own settings: it has to name the column its time is read from, and its
+     * filters each have to name a column and a test that exists. Neither is saved on any other kind
+     * of control, where nothing would ever read them.
+     */
+    static void validateTimeSeries(AppPageControl control, String where) {
+        boolean series = "timeseries".equals(control.getType());
+        if (!series) {
+            if (control.getTimeField() != null)
+                throw new IllegalArgumentException(where + " is a " + control.getType() + " — only a time series chart has a time column");
+            if (!control.getChartFilters().isEmpty())
+                throw new IllegalArgumentException(where + " is a " + control.getType() + " — only a time series chart filters its rows");
+            return;
+        }
+        if (control.getTimeField() == null)
+            throw new IllegalArgumentException(where + " is a time series chart but names no time column");
+        for (AppPageRowFilter filter : control.getChartFilters()) {
+            if (filter.column() == null || filter.column().isBlank())
+                throw new IllegalArgumentException(where + " has a filter that names no column");
+            if (!AppPageRowFilter.OPERATORS.contains(filter.operatorOrDefault()))
+                throw new IllegalArgumentException(where + " has a filter with an unknown test: " + filter.operator());
+        }
+    }
+
+    /**
+     * A chart or a grid drawn from a grid: only those draw themselves from one, and the grid has to be
+     * a grid on this page — anything else would be waiting on rows that never arrive. A grid may not
+     * take its rows from itself, nor from a chain of grids that leads back to it: each would refill
+     * the next forever.
+     */
+    static void validateChartGridSource(AppPage page, AppPageControl control, String where) {
+        String gridId = control.getSourceGridControlId();
+        if (gridId == null) return;
+        boolean isGrid = "grid".equals(control.getType());
+        if (!CHART_TYPES.contains(control.getType()) && !isGrid)
+            throw new IllegalArgumentException(where + " is a " + control.getType()
+                    + " — only a chart or a grid draws itself from a grid");
+        AppPageControl grid = controlById(page, gridId);
+        if (grid == null)
+            throw new IllegalArgumentException(where + " draws itself from a grid that is not on this page: " + gridId);
+        if (!"grid".equals(grid.getType()))
+            throw new IllegalArgumentException(where + " draws itself from a " + grid.getType() + " — it needs a grid");
+        if (!isGrid) return;
+        List<String> seen = new ArrayList<>();
+        for (AppPageControl at = grid; at != null; at = controlById(page, at.getSourceGridControlId())) {
+            if (control.getControlId().equals(at.getControlId()))
+                throw new IllegalArgumentException(where + " takes its rows from a grid that takes its rows from it");
+            if (seen.contains(at.getControlId()) || at.getSourceGridControlId() == null) break;
+            seen.add(at.getControlId());
+        }
+    }
+
+    private static AppPageControl controlById(AppPage page, String controlId) {
+        if (controlId == null) return null;
+        return page.getControls().stream()
+                .filter(c -> controlId.equals(c.getControlId())).findFirst().orElse(null);
     }
 
     /**
@@ -824,6 +1009,8 @@ public class AppCatalogService {
     static void validateChartControls(AppPage page) {
         for (AppPageControl control : page.getControls()) {
             String where = "Control '" + describe(control) + "'";
+            validateChartGridSource(page, control, where);
+            validateTimeSeries(control, where);
             if (!"tabs".equals(control.getType()) && control.getDefaultTabControlId() != null)
                 throw new IllegalArgumentException(where + " is a " + control.getType() + " — only a tab set has a default tab");
             String tabsId = control.getTabsControlId();
@@ -841,6 +1028,12 @@ public class AppCatalogService {
                 throw new IllegalArgumentException(where + " puts its grids into a tab set that is not on this page: " + tabsId);
             if (!"tabs".equals(tabs.getType()))
                 throw new IllegalArgumentException(where + " puts its grids into a " + tabs.getType() + " — it needs a tab set");
+            // A chart may be a tab now, which is what makes this reachable: the set it fills would be
+            // the set it is drawn in, so every run would add tabs beside the chart that produced them
+            // and the operator would lose sight of that chart to look at them.
+            if (tabs.getTabControlIds().contains(control.getControlId()))
+                throw new IllegalArgumentException(where + " puts its grids into the tab set it is itself a tab of — "
+                        + "pick another tab set, or take the chart out of this one");
         }
     }
 
@@ -991,6 +1184,7 @@ public class AppCatalogService {
         validateExtraBindings(page, action, transformNames, where);
         validateEnrichColumns(page, action, name -> staticDatasets.get(name) != null, where);
         validatePivots(page, action, where);
+        validateActionRowErrorExpression(action, where);
         if (action.isPerformance()) {
             validatePerformanceAction(page, action, where);
             return;
@@ -1102,7 +1296,7 @@ public class AppCatalogService {
                     + "of a grid its own tab may do — aim it at one of the grids inside instead");
         if (!TARGET_TYPES.contains(targetControl.getType()))
             throw new IllegalArgumentException(where
-                    + " must target a grid, select, text, text area, link, pie chart or bar chart, not a "
+                    + " must target a grid, select, text, text area, link, pie chart, bar chart or time series chart, not a "
                     + targetControl.getType());
         // Every row's answer becoming a row of one grid only means anything where rows can go.
         if (action.isRowFanOut() && !"grid".equals(targetControl.getType()))
@@ -1202,7 +1396,7 @@ public class AppCatalogService {
                 throw new IllegalArgumentException(where + " summarises performance, which makes no call to enrich "
                         + "its rows from — take its enriched columns off");
             requireGridTarget(page, action.getTargetControlId(), action.isTabsPerRow(), where);
-            checkEnrichColumns(action.getEnrichColumns(), datasetKnown, where);
+            checkEnrichColumns(page, action.getEnrichColumns(), datasetKnown, where);
         }
         int n = 1;
         for (AppPageBinding binding : action.getExtraBindings()) {
@@ -1210,7 +1404,7 @@ public class AppCatalogService {
             if (binding == null || binding.getEnrichColumns().isEmpty()) continue;
             String on = where + " target " + n;
             requireGridTarget(page, binding.getTargetControlId(), false, on);
-            checkEnrichColumns(binding.getEnrichColumns(), datasetKnown, on);
+            checkEnrichColumns(page, binding.getEnrichColumns(), datasetKnown, on);
         }
     }
 
@@ -1229,7 +1423,7 @@ public class AppCatalogService {
                     + "its target is a " + control.getType());
     }
 
-    private static void checkEnrichColumns(List<AppPageEnrichColumn> columns, Predicate<String> datasetKnown, String where) {
+    private static void checkEnrichColumns(AppPage page, List<AppPageEnrichColumn> columns, Predicate<String> datasetKnown, String where) {
         List<String> names = new ArrayList<>();
         for (AppPageEnrichColumn column : columns) {
             if (column == null || column.name() == null || column.name().isBlank())
@@ -1242,22 +1436,34 @@ public class AppCatalogService {
             if (!AppPageEnrichColumn.KINDS.contains(kind))
                 throw new IllegalArgumentException(label + " reads something this page has no idea how to read: "
                         + column.kind());
-            if (!AppPageEnrichColumn.VLOOKUP.equals(kind)) {
+            boolean intoGrid = AppPageEnrichColumn.GRID_VLOOKUP.equals(kind);
+            if (!AppPageEnrichColumn.VLOOKUP.equals(kind) && !intoGrid) {
                 if (isBlank(column.expression()))
                     throw new IllegalArgumentException(label + " does not say which "
                             + (AppPageEnrichColumn.HEADER.equals(kind) ? "header" : "call record field") + " to read");
                 continue;
             }
-            if (isBlank(column.datasetName()))
-                throw new IllegalArgumentException(label + " names no static dataset to look up into");
-            if (!datasetKnown.test(column.datasetName()))
-                throw new IllegalArgumentException(label + " names an unknown static dataset: " + column.datasetName());
+            String source = intoGrid ? "grid" : "dataset";
+            if (intoGrid) {
+                if (isBlank(column.gridControlId()))
+                    throw new IllegalArgumentException(label + " names no grid to look up into");
+                AppPageControl grid = page == null ? null : page.getControls().stream()
+                        .filter(c -> column.gridControlId().equals(c.getControlId())).findFirst().orElse(null);
+                if (grid == null || !"grid".equals(grid.getType()))
+                    throw new IllegalArgumentException(label + " looks up into a grid that is not on this page: "
+                            + column.gridControlId());
+            } else {
+                if (isBlank(column.datasetName()))
+                    throw new IllegalArgumentException(label + " names no static dataset to look up into");
+                if (!datasetKnown.test(column.datasetName()))
+                    throw new IllegalArgumentException(label + " names an unknown static dataset: " + column.datasetName());
+            }
             if (isBlank(column.lookupColumn()))
                 throw new IllegalArgumentException(label + " does not say which grid column to look up");
             if (isBlank(column.keyColumn()))
-                throw new IllegalArgumentException(label + " does not say which dataset column is the row key");
+                throw new IllegalArgumentException(label + " does not say which " + source + " column is the row key");
             if (isBlank(column.returnColumn()))
-                throw new IllegalArgumentException(label + " does not say which dataset column to bring back");
+                throw new IllegalArgumentException(label + " does not say which " + source + " column to bring back");
         }
     }
 

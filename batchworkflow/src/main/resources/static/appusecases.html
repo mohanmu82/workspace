@@ -22,6 +22,30 @@
         .var-chip.from-usecase { background: #deebff; color: #0747a6; border-color: #b3d4ff; }
         .var-chip.from-app     { background: #eae6ff; color: #403294; border-color: #c0b6f2; }
         .var-chip.unresolved   { background: #ffebe6; color: #bf2600; border-color: #ffbdad; }
+
+        /* One thin line per use case, so a long list fits on screen without scrolling. */
+        #useCaseList { gap: 2px; max-height: 70vh; }
+        #useCaseList .record {
+            flex-direction: row; align-items: center; gap: 6px;
+            padding: 2px 6px; min-height: 24px; border-color: #ebecf0; border-radius: 3px; font-size: 12px;
+        }
+        #useCaseList .record[hidden] { display: none; }
+        #useCaseList .record .pill,
+        #useCaseList .record .badge { flex: none; font-size: 10px; padding: 0 5px; }
+        #useCaseList .record .pill { min-width: 42px; text-align: center; }
+        #useCaseList .record .record-name {
+            font-size: 12px; flex: none; max-width: 55%;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; word-break: normal;
+        }
+        #useCaseList .record .suffix {
+            flex: 1; min-width: 0; color: #5e6c84; font-size: 11px;
+            font-family: "Cascadia Code", Consolas, monospace;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+
+        .list-search { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+        .list-search input { flex: 1; min-width: 0; padding: 4px 8px; font-size: 12px; }
+        .list-search .hint { white-space: nowrap; }
     </style>
 </head>
 <body>
@@ -52,6 +76,11 @@
         <div class="panel-title">
             <span>Use Cases</span>
             <button class="tool-btn" onclick="newUseCase()">+ New</button>
+        </div>
+        <div class="list-search">
+            <input id="useCaseSearch" type="search" placeholder="Search use cases — name, method, URL…"
+                   autocomplete="off" oninput="applyUseCaseFilter()">
+            <span class="hint" id="useCaseCount"></span>
         </div>
         <div class="record-list" id="useCaseList"></div>
     </div>
@@ -122,7 +151,9 @@
                 <label for="useCaseVariables">Use Case Variables (JSON)</label>
                 <textarea id="useCaseVariables" spellcheck="false" oninput="renderVariableScan()"
                           placeholder='{"pageSize": 50}'></textarea>
-                <span class="hint">Overrides app variables; an instance input of the same name still wins.</span>
+                <span class="hint">Overrides app variables; an instance input of the same name still wins. Values may use
+                    <code>${DATESTAMP}</code>, <code>${DATETIME}</code>, <code>${DATETIMEHR}</code>, <code>${UUID}</code>,
+                    <code>${MACHINE}</code> or another variable — <code>{"file": "fx_${DATESTAMP}.csv"}</code>.</span>
             </div>
 
             <div class="form-group wide">
@@ -213,10 +244,12 @@
         const list = document.getElementById('useCaseList');
         if (!currentApp) {
             list.innerHTML = '<div class="empty-note">Select an app first.</div>';
+            document.getElementById('useCaseCount').textContent = '';
             return;
         }
         if (!useCases.length) {
             list.innerHTML = '<div class="empty-note">No use cases for this app yet.</div>';
+            document.getElementById('useCaseCount').textContent = '';
             return;
         }
         list.innerHTML = useCases
@@ -224,15 +257,30 @@
             .sort((a, b) => a.useCaseName.localeCompare(b.useCaseName))
             .map(uc =>
                 '<div class="record' + (uc.useCaseName === editingUseCaseName ? ' selected' : '') + '" ' +
+                     'data-search="' + AC.esc([uc.useCaseName, uc.httpMethod, uc.urlSuffix, uc.urlPrefixType].join(' ').toLowerCase()) + '" ' +
+                     'title="' + AC.esc(uc.useCaseName + ' — ' + (uc.httpMethod || 'GET') + ' ' + (uc.urlSuffix || '')) + '" ' +
                      'onclick="editUseCase(\'' + AC.attr(uc.useCaseName) + '\')">' +
-                    '<div class="record-name">' + AC.esc(uc.useCaseName) + '</div>' +
-                    '<div class="record-meta">' +
-                        '<span class="pill ' + AC.methodClass(uc.httpMethod) + '">' + AC.esc(uc.httpMethod) + '</span>' +
-                        (uc.urlPrefixType === 'MONITORING' ? '<span class="badge">mon</span>' : '') +
-                        '<span>' + AC.esc(uc.urlSuffix || '') + '</span>' +
-                    '</div>' +
+                    '<span class="pill ' + AC.methodClass(uc.httpMethod) + '">' + AC.esc(uc.httpMethod) + '</span>' +
+                    '<span class="record-name">' + AC.esc(uc.useCaseName) + '</span>' +
+                    (uc.urlPrefixType === 'MONITORING' ? '<span class="badge">mon</span>' : '') +
+                    '<span class="suffix">' + AC.esc(uc.urlSuffix || '') + '</span>' +
                 '</div>'
             ).join('');
+        applyUseCaseFilter();
+    }
+
+    /** Hides use cases that do not match every word typed in the search box. */
+    function applyUseCaseFilter() {
+        const terms = document.getElementById('useCaseSearch').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+        const rows = [...document.querySelectorAll('#useCaseList .record')];
+        let shown = 0;
+        rows.forEach(row => {
+            const match = terms.every(t => row.dataset.search.includes(t));
+            row.hidden = !match;
+            if (match) shown++;
+        });
+        document.getElementById('useCaseCount').textContent =
+            !rows.length ? '' : terms.length ? shown + ' of ' + rows.length : rows.length + ' use case' + (rows.length !== 1 ? 's' : '');
     }
 
     // ── Input definition rows ────────────────────────────────────────────────
@@ -281,11 +329,16 @@
      * Lists every placeholder used in the URL / headers / body and colours it by the layer that
      * will resolve it — instance input, use case variable, app variable, or nothing at all.
      */
+    /** What every run has without declaring it — see AppExecutionService#builtInVariables. */
+    const BUILT_IN_VARIABLES = ['MACHINE', 'DATESTAMP', 'DATETIME', 'DATETIMEHR', 'UUID'];
+
     function renderVariableScan() {
         const haystack = [
             document.getElementById('urlSuffix').value,
             document.getElementById('httpHeaders').value,
-            document.getElementById('httpBody').value
+            document.getElementById('httpBody').value,
+            // A variable's value may be written in terms of another — {"file": "fx_${DATESTAMP}.csv"}.
+            document.getElementById('useCaseVariables').value
         ].join('\n');
 
         const referenced = new Set();
@@ -312,6 +365,7 @@
             else if (Object.prototype.hasOwnProperty.call(useCaseVars, name)) { source = 'from-usecase'; label = 'use case'; }
             else if (Object.prototype.hasOwnProperty.call(appVars, name))     { source = 'from-app';     label = 'app'; }
             else if (name === 'jwtToken')                        { source = 'from-app';     label = 'auth'; }
+            else if (BUILT_IN_VARIABLES.includes(name))          { source = 'from-app';     label = 'built-in'; }
             return '<span class="var-chip ' + source + '" title="Resolved from: ' + label + '">$' + AC.esc(name) + ' · ' + label + '</span>';
         }).join('');
     }

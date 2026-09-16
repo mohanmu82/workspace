@@ -31,9 +31,17 @@ import java.util.List;
  * @param lookupColumn {@link #VLOOKUP}: the grid column whose value is looked up
  * @param keyColumn    {@link #VLOOKUP}: the dataset column that value is matched against — the row key
  * @param returnColumn {@link #VLOOKUP}: the dataset column whose value fills the cell
+ * @param gridControlId {@link #GRID_VLOOKUP}: the grid on the same page looked into, in place of a dataset
  */
 public record AppPageEnrichColumn(String name, String kind, String expression, String datasetName,
-                                  String lookupColumn, String keyColumn, String returnColumn) {
+                                  String lookupColumn, String keyColumn, String returnColumn,
+                                  String gridControlId) {
+
+    /** Every kind but {@link #GRID_VLOOKUP}, which alone names a grid. */
+    public AppPageEnrichColumn(String name, String kind, String expression, String datasetName,
+                               String lookupColumn, String keyColumn, String returnColumn) {
+        this(name, kind, expression, datasetName, lookupColumn, keyColumn, returnColumn, null);
+    }
 
     /**
      * A field of the call's own record — {@code statusCode}, {@code timeTaken}, {@code url} and the
@@ -47,7 +55,15 @@ public record AppPageEnrichColumn(String name, String kind, String expression, S
     /** A column of a static dataset, found by matching one of this row's columns against its key. */
     public static final String VLOOKUP = "VLOOKUP";
 
-    public static final List<String> KINDS = List.of(META, HEADER, VLOOKUP);
+    /**
+     * The same lookup as {@link #VLOOKUP}, into another grid on the page instead of a static dataset:
+     * the rows that grid holds at the moment this one fills — after that grid's display filter — are
+     * matched by {@link #keyColumn} and {@link #returnColumn} is brought back. The grid has to have
+     * been filled first, which is what an action's "Runs After" is for.
+     */
+    public static final String GRID_VLOOKUP = "GRID_VLOOKUP";
+
+    public static final List<String> KINDS = List.of(META, HEADER, VLOOKUP, GRID_VLOOKUP);
 
     /** Blank reads as {@link #META}, the first of the kinds offered. */
     public String kindOrDefault() {

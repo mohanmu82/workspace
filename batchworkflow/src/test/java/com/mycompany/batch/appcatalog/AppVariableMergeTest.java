@@ -98,6 +98,35 @@ class AppVariableMergeTest {
     }
 
     @Test
+    void aUseCaseVariableMayUseTheBuiltIns() {
+        Map<String, Object> merged = service.mergeVariables(
+                null, null, useCase(Map.of("file", "fx_${DATESTAMP}.csv", "host", "$MACHINE")), null);
+        assertThat((String) merged.get("file")).matches("fx_\\d{8}\\.csv");
+        assertThat(merged.get("host")).isEqualTo(merged.get("MACHINE"));
+    }
+
+    @Test
+    void aVariableMayBeWrittenInTermsOfAnotherLayer() {
+        Map<String, Object> merged = service.mergeVariables(
+                app(Map.of("region", "emea")),
+                env(Map.of("path", "/${region}/orders")),
+                useCase(Map.of("url", "${path}?d=${DATESTAMP}")), null);
+        assertThat((String) merged.get("url")).matches("/emea/orders\\?d=\\d{8}");
+    }
+
+    @Test
+    void aNamedVariableStillBeatsTheBuiltInOfTheSameName() {
+        Map<String, Object> merged = service.mergeVariables(app(Map.of("DATESTAMP", "19700101")), null, null, null);
+        assertThat(merged).containsEntry("DATESTAMP", "19700101");
+    }
+
+    @Test
+    void anUnknownPlaceholderInAValue_isLeftAsWritten() {
+        Map<String, Object> merged = service.mergeVariables(null, null, useCase(Map.of("x", "${nobody}")), null);
+        assertThat(merged).containsEntry("x", "${nobody}");
+    }
+
+    @Test
     void variablesSurviveTheirTypes_soANumberComparesAsANumber() {
         Map<String, Object> merged = service.mergeVariables(
                 app(Map.of("pageSize", 10)), env(Map.of("pageSize", 250)), null, null);

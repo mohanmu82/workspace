@@ -146,7 +146,9 @@
                 <textarea id="envVariables" class="tall" spellcheck="false" placeholder='{"region": "emea", "deskId": "LDN-1"}'></textarea>
                 <span class="hint">Layered over the app's own variables: a name set here wins over the same name on the
                     App Definitions tab, and is itself still overridden by a use case variable or an instance input.
-                    Reference them as <code>$region</code> or <code>${region}</code> in a URL, header or body.</span>
+                    Reference them as <code>$region</code> or <code>${region}</code> in a URL, header or body. Values may
+                    themselves use <code>${DATESTAMP}</code>, <code>${DATETIME}</code>, <code>${DATETIMEHR}</code>,
+                    <code>${UUID}</code>, <code>${MACHINE}</code> or another variable.</span>
             </div>
         </div>
 

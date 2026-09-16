@@ -142,7 +142,7 @@ class AppPageColumnLinkTest {
         AppPage page = pageWith(box, List.of(link("orderId", List.of(), List.of("a-load-lines"))));
         assertThatThrownBy(() -> AppCatalogService.validateColumnLinks(page, box, LIBRARY))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("only a grid has clickable columns");
+                .hasMessageContaining("only a grid or a pie with grids has clickable columns");
     }
 
     @Test

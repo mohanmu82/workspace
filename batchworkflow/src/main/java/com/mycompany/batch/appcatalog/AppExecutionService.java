@@ -498,6 +498,8 @@ public class AppExecutionService {
         try {
             Map<String, Object> variables = mergeVariables(app, env, useCase, instance);
             variables.putAll(runPlan.inputOverrides());
+            // An override may itself be written against a variable — ${DATESTAMP} typed into a page input.
+            resolveVariableValues(variables);
 
             // Auth runs before substitution so a JWT token is available to the request as $jwtToken.
             String authorization = applyAuth(app, env, useCase, variables);
@@ -712,7 +714,9 @@ public class AppExecutionService {
      */
     public Map<String, Object> mergeVariables(AppDefinition app, AppEnvironment env,
                                               AppUseCase useCase, AppUseCaseInstance instance) {
-        Map<String, Object> merged = new LinkedHashMap<>();
+        // The page built-ins sit under everything, so a variable anyone actually named DATESTAMP
+        // still wins — and then every layer can write ${DATESTAMP} the way a page can.
+        Map<String, Object> merged = new LinkedHashMap<>(builtInVariables());
         if (app != null)     merged.putAll(app.getAppVariables());
         if (env != null)     merged.putAll(env.getEnvVariables());
         if (useCase != null) {
@@ -729,7 +733,61 @@ public class AppExecutionService {
                 if (v != null && !(v instanceof String s && s.isBlank())) merged.put(k, v);
             });
         }
-        return merged;
+        return resolveVariableValues(merged);
+    }
+
+    /**
+     * The variables every run has without anyone declaring them — the same names and formats a page
+     * resolves ({@code AppPageVariable#BUILT_IN}, {@code refreshGlobals} in apppage.html): the machine,
+     * the date and time the run started, and a fresh UUID. {@code ROWNUM} and {@code DEBUG} belong to a
+     * page's trigger rather than to a run, and a page sends those in as inputs already.
+     */
+    static Map<String, Object> builtInVariables() {
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        Map<String, Object> builtIns = new LinkedHashMap<>();
+        builtIns.put("MACHINE",    MachineName.local());
+        builtIns.put("DATESTAMP",  now.format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd")));
+        builtIns.put("DATETIME",   now.format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss")));
+        builtIns.put("DATETIMEHR", now.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+        builtIns.put("UUID",       UUID.randomUUID().toString());
+        return builtIns;
+    }
+
+    /** How deep one variable may be written in terms of another before the chain is left as it stands. */
+    private static final int MAX_VARIABLE_DEPTH = 5;
+
+    /**
+     * Resolves the placeholders written <em>inside</em> variable values — {@code "file": "fx_${DATESTAMP}.csv"}
+     * — against the merged variables themselves, so a value reaches the URL, headers and body already
+     * resolved rather than carrying {@code ${DATESTAMP}} to the endpoint verbatim. Repeated a few times
+     * so one variable may be written in terms of another; a cycle simply stops resolving. Strings nested
+     * inside object and array values are resolved too. Anything nothing answers to is left as written,
+     * the same rule {@link #substitute} follows.
+     */
+    Map<String, Object> resolveVariableValues(Map<String, Object> variables) {
+        for (int pass = 0; pass < MAX_VARIABLE_DEPTH; pass++) {
+            boolean changed = false;
+            for (Map.Entry<String, Object> entry : variables.entrySet()) {
+                Object resolved = resolveValue(entry.getValue(), variables);
+                if (!java.util.Objects.equals(resolved, entry.getValue())) {
+                    entry.setValue(resolved);
+                    changed = true;
+                }
+            }
+            if (!changed) break;
+        }
+        return variables;
+    }
+
+    private Object resolveValue(Object value, Map<String, Object> variables) {
+        if (value instanceof String s) return s.indexOf('$') < 0 ? s : substitute(s, variables);
+        if (value instanceof Map<?, ?> map) {
+            Map<Object, Object> out = new LinkedHashMap<>();
+            map.forEach((k, v) -> out.put(k, resolveValue(v, variables)));
+            return out;
+        }
+        if (value instanceof List<?> list) return list.stream().map(v -> resolveValue(v, variables)).toList();
+        return value;
     }
 
     /** Coerces a declared input's string default into the type the use case says it is. */

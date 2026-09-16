@@ -39,6 +39,8 @@ public class AppPageBinding {
     private String valueField;
     /** Grid targets: show a JSON object as a two-column key/value grid. */
     private boolean keyValueGrid;
+    /** Grid targets: leave the object and array properties out — see {@link AppPageAction#isScalarsOnly()}. */
+    private boolean scalarsOnly;
     /** Grid targets: columns added to every row as it is bound — see {@link AppPageEnrichColumn}. */
     private List<AppPageEnrichColumn> enrichColumns = new ArrayList<>();
 
@@ -83,4 +85,7 @@ public class AppPageBinding {
 
     public boolean isKeyValueGrid()                      { return keyValueGrid; }
     public void    setKeyValueGrid(boolean keyValueGrid) { this.keyValueGrid = keyValueGrid; }
+
+    public boolean isScalarsOnly()                     { return scalarsOnly; }
+    public void    setScalarsOnly(boolean scalarsOnly) { this.scalarsOnly = scalarsOnly; }
 }

@@ -8,28 +8,45 @@
     <style>
         /* ── Instance list / group drag-and-drop ─────────────────────────────── */
 
+        /* One thin line per instance, so a long list fits on screen without scrolling. */
+        #instanceList { gap: 2px; max-height: 70vh; }
         .instance-row {
             display: flex;
-            align-items: flex-start;
-            gap: 8px;
-            padding: 8px 10px;
-            border: 1px solid #dfe1e6;
-            border-radius: 4px;
+            align-items: center;
+            gap: 6px;
+            padding: 2px 6px;
+            min-height: 26px;
+            border: 1px solid #ebecf0;
+            border-radius: 3px;
             background: #fff;
             cursor: grab;
+            font-size: 12px;
         }
         .instance-row:hover { border-color: #4c9aff; background: #f7faff; }
         .instance-row.selected { border-color: #0052cc; background: #e9f0ff; }
         .instance-row.dragging { opacity: 0.4; }
-        .instance-row input[type="checkbox"] { width: auto; margin-top: 3px; flex: none; }
-        .instance-row .body { flex: 1; min-width: 0; cursor: pointer; }
-        .grip { color: #b3bac5; font-size: 13px; line-height: 1.3; user-select: none; flex: none; }
+        .instance-row[hidden] { display: none; }
+        .instance-row input[type="checkbox"] { width: auto; margin: 0; flex: none; }
+        .instance-row .body {
+            flex: 1; min-width: 0; cursor: pointer;
+            display: flex; align-items: center; gap: 6px;
+        }
+        .instance-row .row-name {
+            flex: 1; min-width: 0; font-weight: 600;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .instance-row .badge { flex: none; font-size: 10px; padding: 0 5px; white-space: nowrap; }
+        .grip { color: #b3bac5; font-size: 11px; line-height: 1; user-select: none; flex: none; }
 
-        /* Per-row actions: small enough that a row stays one line, always visible so a run is
+        /* Per-row actions: icon-sized so a row stays one line, always visible so a run is
            never more than one click away however many instances are on screen. */
-        .row-actions { display: flex; gap: 4px; flex: none; }
-        .row-actions button { padding: 3px 8px; font-size: 11px; }
-        .instance-row .row-status { font-size: 10px; font-weight: 700; letter-spacing: .3px; }
+        .row-actions { display: flex; gap: 2px; flex: none; }
+        .row-actions button { padding: 1px 6px; font-size: 11px; line-height: 1.4; }
+        .instance-row .row-status { font-size: 10px; font-weight: 700; letter-spacing: .3px; white-space: nowrap; flex: none; }
+
+        .list-search { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+        .list-search input { flex: 1; min-width: 0; padding: 4px 8px; font-size: 12px; }
+        .list-search .hint { white-space: nowrap; }
         .row-status.SUCCESS { color: #006644; }
         .row-status.FAILED, .row-status.ERROR { color: #bf2600; }
         .row-status.RUNNING { color: #5e6c84; }
@@ -40,8 +57,9 @@
         .split.editor-collapsed #editorPanel { display: none; }
         .record-list.wide {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-            gap: 6px;
+            grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+            gap: 2px 6px;
+            align-content: start;
             max-height: none;
         }
 
@@ -264,6 +282,11 @@
         <div class="toolbar" style="margin-bottom:8px">
             <button class="tool-btn" onclick="toggleSelectAll()">Select All / None</button>
             <button class="primary" onclick="runSelected()">Run Selected</button>
+        </div>
+        <div class="list-search">
+            <input id="instanceSearch" type="search" placeholder="Search instances — label, use case, environment…"
+                   autocomplete="off" oninput="applyInstanceFilter()">
+            <span class="hint" id="instanceCount"></span>
         </div>
         <div class="record-list" id="instanceList"></div>
         <div class="hint" style="margin-top:8px">Drag an instance into a group below to add it.</div>
@@ -836,41 +859,71 @@
         const list = document.getElementById('instanceList');
         if (!currentApp) {
             list.innerHTML = '<div class="empty-note">Select an app first.</div>';
+            document.getElementById('instanceCount').textContent = '';
             return;
         }
         if (!instances.length) {
             list.innerHTML = '<div class="empty-note">No instances yet — pick a use case and environment, then save.</div>';
+            document.getElementById('instanceCount').textContent = '';
             return;
         }
-        // Checked state lives in the DOM, so preserve it across a re-render.
-        const checked = new Set(selectedInstanceIds());
+        // Checked state lives in the DOM, so preserve it across a re-render — hidden rows included.
+        const checked = new Set([...list.querySelectorAll('.pick:checked')].map(cb => cb.value));
 
         list.innerHTML = instances.map(instance => {
             const id = instance.appUseCaseInstanceId;
             const quoted = '\'' + AC.attr(id) + '\'';
+            const envs = instanceEnvironments(instance);
+            // One badge keeps the row to a single line; the rest are counted and listed in the tooltip.
+            const envBadge = envs.length
+                ? '<span class="badge auth" title="' + AC.esc(envs.join(', ')) + '">' + AC.esc(envs[0]) +
+                      (envs.length > 1 ? ' +' + (envs.length - 1) : '') + '</span>'
+                : '';
             return '<div class="instance-row' + (id === editingInstanceId ? ' selected' : '') + '" draggable="true" ' +
                         'data-instance-id="' + AC.esc(id) + '" ' +
+                        'data-search="' + AC.esc(instanceSearchText(instance)) + '" ' +
                         'ondragstart="onInstanceDragStart(event, ' + quoted + ')" ' +
                         'ondragend="onInstanceDragEnd(event)">' +
                     '<input type="checkbox" class="pick" value="' + AC.esc(id) + '"' + (checked.has(id) ? ' checked' : '') + '>' +
                     '<span class="grip" title="Drag into a group">&#8942;&#8942;</span>' +
-                    '<div class="body" onclick="editInstance(' + quoted + ')">' +
-                        '<div class="record-name">' + AC.esc(instanceLabel(instance)) + '</div>' +
-                        '<div class="record-meta">' +
-                            '<span>' + AC.esc(instance.appUseCaseName) + '</span>' +
-                            instanceEnvironments(instance).map(e =>
-                                '<span class="badge auth">' + AC.esc(e) + '</span>').join('') +
-                            rowStatusHtml(id) +
-                        '</div>' +
+                    '<div class="body" onclick="editInstance(' + quoted + ')" ' +
+                         'title="' + AC.esc(instance.appUseCaseName + ' · ' + envs.join(', ') + ' · ' + id) + '">' +
+                        '<span class="row-name">' + AC.esc(instanceLabel(instance)) + '</span>' +
+                        envBadge +
+                        rowStatusHtml(id) +
                     '</div>' +
                     '<span class="row-actions">' +
                         '<button class="primary" title="Run this instance ' + AC.esc(targetPhrase()) + '" ' +
-                                'onclick="event.stopPropagation(); runInstance(' + quoted + ')">&#9654; Run</button>' +
+                                'onclick="event.stopPropagation(); runInstance(' + quoted + ')">&#9654;</button>' +
                         '<button class="secondary" title="Open in the editor" ' +
-                                'onclick="event.stopPropagation(); editInstance(' + quoted + ')">&#9998; Edit</button>' +
+                                'onclick="event.stopPropagation(); editInstance(' + quoted + ')">&#9998;</button>' +
                     '</span>' +
                 '</div>';
         }).join('');
+        applyInstanceFilter();
+    }
+
+    /** Everything the search box matches against, lower-cased. */
+    function instanceSearchText(instance) {
+        return [instanceLabel(instance), instance.appUseCaseName, instance.appUseCaseInstanceId]
+            .concat(instanceEnvironments(instance)).join(' ').toLowerCase();
+    }
+
+    /**
+     * Hides rows that do not match every word typed. Rows are hidden rather than dropped so their
+     * ticks survive a search; Select All and Run Selected only act on what is on screen.
+     */
+    function applyInstanceFilter() {
+        const terms = document.getElementById('instanceSearch').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+        const rows = [...document.querySelectorAll('#instanceList .instance-row')];
+        let shown = 0;
+        rows.forEach(row => {
+            const match = terms.every(t => row.dataset.search.includes(t));
+            row.hidden = !match;
+            if (match) shown++;
+        });
+        document.getElementById('instanceCount').textContent =
+            !rows.length ? '' : terms.length ? shown + ' of ' + rows.length : rows.length + ' instance' + (rows.length !== 1 ? 's' : '');
     }
 
     /**
@@ -923,12 +976,13 @@
         byInstance.forEach((rowsForInstance, id) => lastRunByInstance.set(id, summariseRun(rowsForInstance)));
     }
 
+    /** Ticked instances among the rows the search currently shows. */
     function selectedInstanceIds() {
-        return [...document.querySelectorAll('#instanceList .pick:checked')].map(cb => cb.value);
+        return [...document.querySelectorAll('#instanceList .instance-row:not([hidden]) .pick:checked')].map(cb => cb.value);
     }
 
     function toggleSelectAll() {
-        const boxes = [...document.querySelectorAll('#instanceList .pick')];
+        const boxes = [...document.querySelectorAll('#instanceList .instance-row:not([hidden]) .pick')];
         const turnOn = boxes.some(cb => !cb.checked);
         boxes.forEach(cb => { cb.checked = turnOn; });
     }

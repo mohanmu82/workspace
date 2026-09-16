@@ -138,6 +138,17 @@ public class AppPageControl {
      */
     private List<AppPageColumnLink> columnLinks = new ArrayList<>();
     /**
+     * Grid controls only: what clicking anywhere in a row does — see {@link AppPageRowClick}. Null,
+     * which is every grid saved before this existed, leaves the rows inert and only whatever
+     * {@link #columnLinks} names clickable.
+     *
+     * <p>Beside the column links rather than instead of them: a click on a cell of a clickable
+     * column is that column's drill-down, and a click anywhere else in the row is this. The grid
+     * itself stays untriggerable — what runs belongs to the row, not to the control — which is why
+     * it keeps its place in the service's TRIGGERLESS_TYPES while carrying this.
+     */
+    private AppPageRowClick rowClick;
+    /**
      * Grid controls only: a test every row is put through as the grid fills, written in the small
      * expression language {@link AppPageRowCheck} reads — {@code STATUS != SUCCESS || RECORDCOUNT = 0}.
      * A row the expression calls true is an error and is drawn in red; the grid's name carries the
@@ -182,6 +193,21 @@ public class AppPageControl {
     /** Grid controls only: ASC or DESC, and only read when {@link #sortColumn} names a column. */
     private String sortDirection = "ASC";
     /**
+     * Grid controls only: how many rows the grid shows at most, once its rows are filtered and in
+     * the order {@link #sortColumn} puts them in — the "top 10 slowest" of a result rather than all
+     * of it. Zero, which is every grid saved before this existed, is no cap at all.
+     *
+     * <p>Counted off the end of the order rather than off the response, and that ordering is the
+     * whole of what it means: the same cap over the same rows answers "the ten worst" or "the ten
+     * best" depending only on {@link #sortDirection}. A cap with no {@link #sortColumn} behind it is
+     * allowed — the operator may sort the grid themselves — but keeps whichever rows the call
+     * happened to return first until somebody does.
+     *
+     * <p>A narrowing of the grid rather than of how much of it is drawn: the rows it cuts are not
+     * counted by the grid's {@link #statusCondition}, and go into neither of its exports.
+     */
+    private int topRows;
+    /**
      * Pie controls only: the slices, in the order they are drawn, each an {@link AppPageOption}
      * whose {@link AppPageOption#key() key} names the slice and whose
      * {@link AppPageOption#value() value} is how big it is.
@@ -192,17 +218,36 @@ public class AppPageControl {
      */
     private List<AppPageOption> slices = new ArrayList<>();
     /**
-     * Tabs controls only: the ids of the grid controls this tab set holds, in tab order.
+     * Pie controls only (a plain pie or a pie with grids): the colour to draw a named slice in, each
+     * an {@link AppPageOption} whose {@link AppPageOption#key() key} is the slice name and whose
+     * {@link AppPageOption#value() value} is a CSS colour — {@code UP} → {@code green},
+     * {@code DOWN} → {@code #de350b}.
+     *
+     * <p>The point is that a pie filled from a call has slices whose names are known long before the
+     * numbers are: a status chart is going to have an UP wedge and a DOWN wedge whatever this run
+     * returns, and green and red mean something about them that position in a fixed palette never
+     * will. Names are matched regardless of case, and a slice named here keeps its colour wherever it
+     * lands in the order — which is the other half of it, since a response that comes back with DOWN
+     * first would otherwise recolour the whole chart.
+     *
+     * <p>A slice this does not name falls back to the chart's own palette, so colouring the two that
+     * matter and leaving the rest alone is a complete thing to do.
+     */
+    private List<AppPageOption> sliceColors = new ArrayList<>();
+    /**
+     * Tabs controls only: the ids of the controls this tab set holds, in tab order — grids, and any
+     * of the charts (pie, pie with grids, bar).
      *
      * <p>A page that answers one question out of ten endpoints used to be ten grids stacked down a
-     * screen nobody could see the bottom of. A tabs control takes those grids over: each keeps its
-     * own id, columns and the actions aimed at it — an action still targets the grid, never the tab
-     * set — but they are laid out inside the tab set rather than on the page, and only the selected
-     * one is on screen. A grid named here therefore ignores its own {@link #row}/{@link #col},
-     * which is also what lets dropping it back onto the canvas put it where it always was.
+     * screen nobody could see the bottom of. A tabs control takes those over: each keeps its own id,
+     * columns and the actions aimed at it — an action still targets the grid or the chart, never the
+     * tab set — but they are laid out inside the tab set rather than on the page, and only the
+     * selected one is on screen. A control named here therefore ignores its own
+     * {@link #row}/{@link #col}, which is also what lets dropping it back onto the canvas put it
+     * where it always was.
      *
-     * <p>A grid belongs to at most one tab set; a page where two claim the same grid is refused,
-     * since "which tab is this grid in" would otherwise have two answers.
+     * <p>A control belongs to at most one tab set; a page where two claim the same one is refused,
+     * since "which tab is this in" would otherwise have two answers.
      */
     private List<String> tabControlIds = new ArrayList<>();
     /**
@@ -231,6 +276,89 @@ public class AppPageControl {
     public void   setTabsControlId(String tabsControlId) {
         this.tabsControlId = tabsControlId == null || tabsControlId.isBlank() ? null : tabsControlId.trim();
     }
+
+    /**
+     * Chart controls only (pie, pie with grids, bar): a grid on the same page this chart draws itself
+     * from. Every time that grid has finished filling, its rows — after its display filter — become
+     * the chart's marks, named by {@link #gridKeyField} and sized by {@link #gridValueField} exactly as
+     * an action aimed at the chart names them with its key and value fields. Blank — the default —
+     * leaves the chart to its actions and typed slices.
+     */
+    private String sourceGridControlId;
+    /** With {@link #sourceGridControlId}: the column that names a slice, or a bar chart's category. */
+    private String gridKeyField;
+    /** With {@link #sourceGridControlId}: the value column(s), comma-separated; blank counts rows. */
+    private String gridValueField;
+
+    public String getSourceGridControlId()   { return sourceGridControlId; }
+    public void   setSourceGridControlId(String sourceGridControlId) {
+        this.sourceGridControlId = sourceGridControlId == null || sourceGridControlId.isBlank() ? null : sourceGridControlId.trim();
+    }
+
+    public String getGridKeyField()                   { return gridKeyField; }
+    public void   setGridKeyField(String gridKeyField) { this.gridKeyField = gridKeyField == null || gridKeyField.isBlank() ? null : gridKeyField.trim(); }
+
+    public String getGridValueField()                     { return gridValueField; }
+    public void   setGridValueField(String gridValueField) { this.gridValueField = gridValueField == null || gridValueField.isBlank() ? null : gridValueField.trim(); }
+
+    /**
+     * How a time series chart groups its points along the time axis. {@code AUTO} — the default —
+     * picks a bucket from the span on screen, so zooming in shows finer detail; {@code NONE} groups
+     * only rows with the same instant. The rest are fixed, in local time.
+     */
+    public static final List<String> TIME_BUCKETS = List.of(
+            "AUTO", "NONE", "SECOND", "MINUTE", "FIVE_MINUTES", "FIFTEEN_MINUTES", "HOUR", "DAY", "WEEK", "MONTH");
+
+    /** How a time series chart combines the values that fall in one bucket; ignored when it counts rows. */
+    public static final List<String> TIME_AGGREGATES = List.of("SUM", "AVG", "MIN", "MAX");
+
+    /**
+     * Time series controls only: the column each row's instant is read from. Required on a time
+     * series, whether it is drawn from a grid or filled by an action — it is the chart's x axis, not
+     * something one source knows and the other does not, which is why it lives on the control while
+     * the line and value columns live wherever the rows come from.
+     */
+    private String timeField;
+    /**
+     * Time series controls only: how {@link #timeField} is written — {@code yyyymmdd hh24:mi:ss},
+     * {@code yyyy-MM-dd HH:mm:ss.SSS}, or {@code epoch}. Both Oracle and Java spellings are read, and
+     * a lower-case {@code mm} after an hour is the minute. Blank reads ISO-8601 and epoch numbers.
+     * A row whose time does not match is listed beside the chart rather than dropped in silence.
+     */
+    private String timeFormat;
+    /** Time series controls only: one of {@link #TIME_BUCKETS}. */
+    private String timeBucket = "AUTO";
+    /** Time series controls only: one of {@link #TIME_AGGREGATES}. */
+    private String timeAggregate = "SUM";
+    /**
+     * Time series controls only: the rows the chart starts out drawing — those passing every filter.
+     * Values are templates, and one that resolves to nothing drops its filter, as a fan-out's do.
+     * The operator can take these off and add their own while the page runs; this is where they start.
+     */
+    private List<AppPageRowFilter> chartFilters = new ArrayList<>();
+
+    public String getTimeField()                  { return timeField; }
+    public void   setTimeField(String timeField)  { this.timeField = timeField == null || timeField.isBlank() ? null : timeField.trim(); }
+
+    public String getTimeFormat()                   { return timeFormat; }
+    public void   setTimeFormat(String timeFormat)  { this.timeFormat = timeFormat == null || timeFormat.isBlank() ? null : timeFormat.trim(); }
+
+    public String getTimeBucket()                   { return timeBucket; }
+    /** Anything unrecognised is AUTO. */
+    public void   setTimeBucket(String timeBucket) {
+        String b = timeBucket == null ? "" : timeBucket.trim().toUpperCase();
+        this.timeBucket = TIME_BUCKETS.contains(b) ? b : "AUTO";
+    }
+
+    public String getTimeAggregate()                      { return timeAggregate; }
+    /** Anything unrecognised is SUM, which is what a bar chart does with a value column. */
+    public void   setTimeAggregate(String timeAggregate) {
+        String a = timeAggregate == null ? "" : timeAggregate.trim().toUpperCase();
+        this.timeAggregate = TIME_AGGREGATES.contains(a) ? a : "SUM";
+    }
+
+    public List<AppPageRowFilter> getChartFilters()                      { return chartFilters; }
+    public void setChartFilters(List<AppPageRowFilter> chartFilters)     { this.chartFilters = chartFilters != null ? chartFilters : new ArrayList<>(); }
 
     public String getOrientation()                   { return orientation; }
     /** Anything but an explicit HORIZONTAL is vertical. */
@@ -315,10 +443,27 @@ public class AppPageControl {
     public List<AppPageColumnLink> getColumnLinks()                        { return columnLinks; }
     public void setColumnLinks(List<AppPageColumnLink> columnLinks)        { this.columnLinks = columnLinks != null ? columnLinks : new ArrayList<>(); }
 
+    public AppPageRowClick getRowClick()                     { return rowClick; }
+    public void            setRowClick(AppPageRowClick rowClick) { this.rowClick = rowClick; }
+
     public String getRowErrorExpression()   { return rowErrorExpression; }
     public void   setRowErrorExpression(String rowErrorExpression) {
         this.rowErrorExpression = rowErrorExpression == null || rowErrorExpression.isBlank()
                 ? null : rowErrorExpression.trim();
+    }
+
+    /**
+     * Grid controls only: the rows of a response this grid keeps — those the expression comes out
+     * true for, in the same grammar as {@link #rowErrorExpression} (see {@link AppPageRowCheck}). The
+     * rest never reach the grid, so its counts, status, error check and exports are all about what it
+     * shows. Blank keeps every row.
+     */
+    private String displayFilterExpression;
+
+    public String getDisplayFilterExpression()   { return displayFilterExpression; }
+    public void   setDisplayFilterExpression(String displayFilterExpression) {
+        this.displayFilterExpression = displayFilterExpression == null || displayFilterExpression.isBlank()
+                ? null : displayFilterExpression.trim();
     }
 
     public String getStatusCondition()   { return statusCondition; }
@@ -342,8 +487,15 @@ public class AppPageControl {
         this.sortDirection = sortDirection != null && "DESC".equalsIgnoreCase(sortDirection.trim()) ? "DESC" : "ASC";
     }
 
+    public int  getTopRows()             { return topRows; }
+    /** A negative cap is no cap: it can only have come from a mistyped box, and no rows is not meant. */
+    public void setTopRows(int topRows)  { this.topRows = Math.max(topRows, 0); }
+
     public List<AppPageOption> getSlices()                   { return slices; }
     public void setSlices(List<AppPageOption> slices)        { this.slices = slices != null ? slices : new ArrayList<>(); }
+
+    public List<AppPageOption> getSliceColors()                        { return sliceColors; }
+    public void setSliceColors(List<AppPageOption> sliceColors)        { this.sliceColors = sliceColors != null ? sliceColors : new ArrayList<>(); }
 
     public List<String> getTabControlIds()                      { return tabControlIds; }
     public void setTabControlIds(List<String> tabControlIds)    { this.tabControlIds = tabControlIds != null ? tabControlIds : new ArrayList<>(); }

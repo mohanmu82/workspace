@@ -382,23 +382,12 @@ public class AppCatalogController {
      * happens to say about it — a load balancer's name, or {@code localhost}.
      */
     static String localMachineName() {
-        for (String key : new String[] { "COMPUTERNAME", "HOSTNAME" }) {
-            String value = System.getenv(key);
-            if (value != null && !value.isBlank()) return shortHostName(value);
-        }
-        try {
-            return shortHostName(java.net.InetAddress.getLocalHost().getHostName());
-        } catch (Exception e) {
-            return "";
-        }
+        return com.mycompany.batch.appcatalog.MachineName.local();
     }
 
     /** A host name with its domain taken off; an IP address is left exactly as it is. */
     static String shortHostName(String name) {
-        String trimmed = name == null ? "" : name.trim();
-        if (trimmed.isEmpty() || trimmed.matches("[0-9.]+") || trimmed.contains(":")) return trimmed;
-        int dot = trimmed.indexOf('.');
-        return dot > 0 ? trimmed.substring(0, dot) : trimmed;
+        return com.mycompany.batch.appcatalog.MachineName.shortHostName(name);
     }
 
     // -------------------------------------------------------------------------

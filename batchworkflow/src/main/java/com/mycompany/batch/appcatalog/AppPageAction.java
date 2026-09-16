@@ -149,6 +149,17 @@ public class AppPageAction {
      * failing the action.
      */
     private boolean keyValueGrid;
+    /**
+     * Grid and {@link #NEW_GRID} targets reading an object: leave out the properties that are
+     * themselves objects or arrays, rather than putting each one into a cell as the JSON text it is.
+     *
+     * <p>The cell a nested object makes is unreadable and unsortable — a line of braces in a column
+     * sized for a status — and on the records these grids are usually pointed at it is most of what
+     * is on screen: the twenty scalars worth reading, buried among six sub-documents nobody opened
+     * the grid for. Off, which is every action saved before this existed, every property is a row
+     * exactly as it always was.
+     */
+    private boolean scalarsOnly;
     /** {@link #PAYLOAD} or {@link #METADATA}; anything unrecognised reads as PAYLOAD. */
     private String source = PAYLOAD;
     /**
@@ -285,6 +296,9 @@ public class AppPageAction {
     public boolean isKeyValueGrid()                    { return keyValueGrid; }
     public void    setKeyValueGrid(boolean keyValueGrid) { this.keyValueGrid = keyValueGrid; }
 
+    public boolean isScalarsOnly()                     { return scalarsOnly; }
+    public void    setScalarsOnly(boolean scalarsOnly) { this.scalarsOnly = scalarsOnly; }
+
     public String getSource()                { return source; }
     public void   setSource(String source)   { this.source = METADATA.equalsIgnoreCase(source) ? METADATA : PAYLOAD; }
 
@@ -345,6 +359,32 @@ public class AppPageAction {
 
     public List<AppPageResultColumn> getRowColumns()                     { return rowColumns; }
     public void setRowColumns(List<AppPageResultColumn> rowColumns)      { this.rowColumns = rowColumns != null ? rowColumns : new ArrayList<>(); }
+
+    /**
+     * {@link #TABS} only: the error check every tab's grid puts its rows through as it fills — the
+     * same grammar as {@link AppPageControl#getRowErrorExpression()}, see {@link AppPageRowCheck}. A
+     * fanned-out tab is no control and has nowhere else to carry one. A tab whose call worked but
+     * holds a row the check calls true reads ERROR rather than SUCCESS. Blank checks nothing.
+     */
+    private String rowErrorExpression;
+
+    public String getRowErrorExpression()   { return rowErrorExpression; }
+    public void   setRowErrorExpression(String rowErrorExpression) {
+        this.rowErrorExpression = rowErrorExpression == null || rowErrorExpression.isBlank()
+                ? null : rowErrorExpression.trim();
+    }
+
+    /**
+     * {@link #TABS} only: the rows of each tab's response its grid keeps — those the expression comes
+     * out true for, in the same grammar as {@link #rowErrorExpression}. Blank keeps every row.
+     */
+    private String displayFilterExpression;
+
+    public String getDisplayFilterExpression()   { return displayFilterExpression; }
+    public void   setDisplayFilterExpression(String displayFilterExpression) {
+        this.displayFilterExpression = displayFilterExpression == null || displayFilterExpression.isBlank()
+                ? null : displayFilterExpression.trim();
+    }
 
     public String getRowLabelTemplate()                        { return rowLabelTemplate; }
     public void   setRowLabelTemplate(String rowLabelTemplate)  { this.rowLabelTemplate = rowLabelTemplate; }
