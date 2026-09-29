@@ -137,6 +137,10 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .record-list { display: flex; flex-direction: column; gap: 4px; max-height: 560px; overflow-y: auto; }
 
+/* The box that narrows a record list. Sized down from a form input: it sits at the top of a panel
+   column rather than in a form, and the list under it is what should have the room. */
+.list-search { display: block; padding: 5px 8px; font-size: 12px; margin-bottom: 8px; }
+
 .record {
     display: flex;
     flex-direction: column;
@@ -250,3 +254,17 @@ tbody tr.clickable:hover { background: #f7faff; }
     border-radius: 3px;
 }
 .icon-btn:hover { background: #ffebe6; }
+
+/* ── json / xml input values ──────────────────────────────────────────────── */
+/* A document, not a word: the value gets a textarea and the pretty printer for its format, in the
+   use case editor (the default) and the instance editor (the value for the run) alike. */
+
+.input-doc { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
+.input-doc textarea { min-height: 90px; }
+.input-doc .fmt-tools { display: flex; align-items: center; gap: 6px; }
+.input-doc .fmt-tools .tool-btn { padding: 3px 8px; font-size: 11px; white-space: nowrap; }
+.input-doc .fmt-status { font-size: 11px; color: #5e6c84; min-height: 13px; }
+.input-doc .fmt-status.ok    { color: #006644; }
+.input-doc .fmt-status.error { color: #bf2600; }
+.doc-ok  { border-color: #57d9a3 !important; }
+.doc-err { border-color: #de350b !important; }

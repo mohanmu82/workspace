@@ -202,7 +202,9 @@
             return;
         }
         // Sorted by what the rows actually show, so a name is where the eye expects to find it.
-        pages.sort((a, b) => pageTitle(a).localeCompare(pageTitle(b), undefined, { sensitivity: 'base' }));
+        // Digits read as numbers, so "run-2" comes before "run-10" rather than after it — the same
+        // ordering apppage.html's own lists of pages use.
+        pages.sort((a, b) => pageTitle(a).localeCompare(pageTitle(b), undefined, { numeric: true, sensitivity: 'base' }));
         renderList();
         showFromHash();
     }

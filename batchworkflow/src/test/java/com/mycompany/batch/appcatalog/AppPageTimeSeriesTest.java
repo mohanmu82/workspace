@@ -69,7 +69,25 @@ class AppPageTimeSeriesTest {
         AppPageControl grid = control("g", "grid");
         grid.setChartFilters(List.of(new AppPageRowFilter("status", "EQUALS", "x")));
         assertThatThrownBy(() -> AppCatalogService.validateChartControls(page(grid)))
-                .hasMessageContaining("only a time series chart filters");
+                .hasMessageContaining("only a time series or line chart filters");
+    }
+
+    @Test
+    void aTimeColumnOnALineChart_isRefused() {
+        // A line chart counts along its x axis; a column of instants belongs on the chart that reads
+        // one, and left here it would be a setting nothing ever looked at.
+        AppPageControl chart = control("l", "line");
+        chart.setTimeField("createdAt");
+        assertThatThrownBy(() -> AppCatalogService.validateChartControls(page(chart)))
+                .hasMessageContaining("a time column belongs on a time series chart");
+    }
+
+    @Test
+    void anXColumnOnATimeSeries_isRefused() {
+        AppPageControl chart = series("ts");
+        chart.setXField("seq");
+        assertThatThrownBy(() -> AppCatalogService.validateChartControls(page(chart)))
+                .hasMessageContaining("an x column belongs on a line chart");
     }
 
     @Test
@@ -101,5 +119,57 @@ class AppPageTimeSeriesTest {
         AppPage page = page(chart, control("g", "grid"), tabs);
         assertThatCode(() -> AppCatalogService.validateChartControls(page)).doesNotThrowAnyException();
         assertThatCode(() -> AppCatalogService.validateTabs(page)).doesNotThrowAnyException();
+    }
+
+    // ── The offset column ────────────────────────────────────────────────────
+    // For rows whose instant is in two columns rather than one: a business date, and the seconds or
+    // minutes into it. Neither says when the row happened on its own.
+
+    @Test
+    void aTimeSeriesAddingASecondsColumnToItsDate_isFine() {
+        AppPageControl chart = series("ts");
+        chart.setTimeField("RUN_DATE");
+        chart.setTimeOffsetField("ELAPSED_SECS");
+        chart.setTimeOffsetUnit("SECONDS");
+        assertThatCode(() -> AppCatalogService.validateChartControls(page(chart))).doesNotThrowAnyException();
+    }
+
+    @Test
+    void theOffsetUnitFallsBackToSeconds() {
+        AppPageControl chart = series("ts");
+        assertThat(chart.getTimeOffsetUnit()).isEqualTo("SECONDS");
+        chart.setTimeOffsetUnit("minutes");
+        assertThat(chart.getTimeOffsetUnit()).isEqualTo("MINUTES");
+        chart.setTimeOffsetUnit("fortnights");
+        assertThat(chart.getTimeOffsetUnit()).isEqualTo("SECONDS");
+    }
+
+    @Test
+    void anOffsetReadFromTheTimeColumnItself_isRefused() {
+        // A date plus itself in seconds is not an instant — the offset is a second column, added on
+        // top of the first. Matched however either is capitalised, as every column name here is.
+        AppPageControl chart = series("ts");
+        chart.setTimeField("RUN_DATE");
+        chart.setTimeOffsetField("run_date");
+        assertThatThrownBy(() -> AppCatalogService.validateChartControls(page(chart)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("same column as its time");
+    }
+
+    @Test
+    void anOffsetColumnOnAnythingButATimeSeries_isRefused() {
+        // It is something added to a time column, so a chart with no time column has nothing to add
+        // it to and would carry a setting nothing would ever read.
+        AppPageControl line = control("l", "line");
+        line.setTimeOffsetField("elapsedSecs");
+        assertThatThrownBy(() -> AppCatalogService.validateChartControls(page(line)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("offset column belongs on a time series");
+
+        AppPageControl pie = control("p", "pie");
+        pie.setTimeOffsetField("elapsedSecs");
+        assertThatThrownBy(() -> AppCatalogService.validateChartControls(page(pie)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("only a time series chart adds an offset column");
     }
 }

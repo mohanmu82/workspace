@@ -104,7 +104,7 @@ public class StaticDatasetController {
         StaticDatasetDef existing = service.get(name);
         if (existing == null) return notFound(name);
         def.setName(name);
-        // The edit form only touches name/source/location/arrayElement — favorites are managed
+        // The edit form only touches name/source/location/arrayElement/jsonata — favorites are managed
         // through their own endpoints, so preserve whatever is already on disk.
         if (def.getFavorites() == null || def.getFavorites().isEmpty()) {
             def.setFavorites(existing.getFavorites());
@@ -199,6 +199,7 @@ public class StaticDatasetController {
         m.put("source", def.getSource());
         m.put("location", def.getLocation());
         m.put("arrayElement", def.getArrayElement());
+        m.put("jsonata", def.getJsonata());
         m.put("attributes", s != null ? s.attributes() : def.getAttributes());
         m.put("count", s != null ? s.rows().size() : 0);
         m.put("loadedTime", s != null ? s.loadedTime() : null);

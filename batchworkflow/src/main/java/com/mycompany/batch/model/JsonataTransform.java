@@ -5,7 +5,9 @@ package com.mycompany.batch.model;
  * Exactly one of {@code key} or {@code value} should be set:
  * <ul>
  *   <li>{@code key}    — loads the expression from {@code classpath:transforms/{key}.jsonata}</li>
- *   <li>{@code value}  — uses the string directly as the JSONata expression</li>
+ *   <li>{@code value}  — uses the string directly as the JSONata expression, unless it reads
+ *       {@code catalog:<name>}, which names an entry in the shared JSONata library and is resolved
+ *       when the transform runs, so correcting the entry corrects every caller at once</li>
  *   <li>{@code source} — optional JSONata path evaluated against the full response to extract the
  *       input for the transform (e.g. {@code "data[0].RESPONSEBODY"}). When the extracted value is
  *       a JSON string it is parsed before the transform runs. Defaults to the full response object.</li>

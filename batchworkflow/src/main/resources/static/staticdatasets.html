@@ -64,6 +64,7 @@
   .badge-http { background: #cfe2ff; color: #084298; }
   .badge-paste { background: #fde8cf; color: #8a4b0a; }
   .badge-onedrive { background: #dbe7f7; color: #0f4c9c; }
+  .badge-json { background: #e6dcfb; color: #4b2a8a; }
 
   .ds-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
   .empty-msg { font-size: 0.82rem; color: #888; padding: 18px; text-align: center; }
@@ -82,6 +83,7 @@
   .ds-location { font-size: 0.75rem; color: #888; word-break: break-all; }
   .ds-meta { font-size: 0.75rem; color: #666; }
   .ds-error { font-size: 0.75rem; color: #b02a37; word-break: break-word; }
+  .ds-jsonata { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   .chip-row { display: flex; flex-wrap: wrap; gap: 5px; }
   .chip {
@@ -120,7 +122,7 @@
 <header>
   <a class="back" href="index.html">&#8592; Home</a>
   <h1>Static Datasets</h1>
-  <p>Define named row sets loaded once from a file or HTTP endpoint. Other pages (e.g. the Service Dashboard) can pull their input from a saved dataset instead of manual entry.</p>
+  <p>Define named row sets loaded once from a file, HTTP endpoint or OneDrive workbook, or pasted in directly as Excel cells or JSON. Other pages (e.g. the Service Dashboard) can pull their input from a saved dataset instead of manual entry.</p>
 </header>
 
 <div class="card">
@@ -136,6 +138,7 @@
         <option value="file">File</option>
         <option value="http">HTTP</option>
         <option value="paste">Paste from Excel</option>
+        <option value="json">Paste JSON</option>
         <option value="onedrive">OneDrive Excel</option>
       </select>
     </div>
@@ -155,8 +158,12 @@
     </div>
   </div>
   <div class="field" id="fPasteField" style="display:none;margin-top:10px">
-    <label>Pasted Data <span class="hint">(select cells in Excel, copy, then paste below — first row is the header)</span></label>
+    <label id="fPasteLabel">Pasted Data <span class="hint">(select cells in Excel, copy, then paste below — first row is the header)</span></label>
     <textarea id="fPasteData" rows="8" placeholder="Paste Excel cells here (Ctrl+V)…" style="width:100%;padding:8px 10px;font-size:0.82rem;border:1px solid #ccc;border-radius:4px;font-family:Consolas,monospace;resize:vertical"></textarea>
+  </div>
+  <div class="field" id="fJsonataField" style="display:none;margin-top:10px">
+    <label>JSONata <span class="hint">(optional — reshapes what Array Element selected into the rows the grid shows; or catalog:&lt;name&gt; from the shared JSONata library)</span></label>
+    <textarea id="fJsonata" rows="4" placeholder="$.{ &quot;id&quot;: id, &quot;host&quot;: meta.host, &quot;state&quot;: status.state }" style="width:100%;padding:8px 10px;font-size:0.82rem;border:1px solid #ccc;border-radius:4px;font-family:Consolas,monospace;resize:vertical"></textarea>
   </div>
   <div id="formStatusMsg" class="status-msg"></div>
 </div>
@@ -198,10 +205,13 @@
   let datasets = [];
   let editingName = null;
 
+  /** Sources whose data is typed into the textarea instead of fetched from a location. */
+  function isPasted(source) { return source === 'paste' || source === 'json'; }
+
   function onSourceChange() {
     const source = document.getElementById('fSource').value;
     const isHttp = source === 'http';
-    const isPaste = source === 'paste';
+    const isJson = source === 'json';
     const isOneDrive = source === 'onedrive';
     document.getElementById('fLocationLabel').textContent =
         isHttp ? 'HTTP URL' : isOneDrive ? 'OneDrive Path (optionally user@company.com:/path)' : 'File Path';
@@ -212,10 +222,21 @@
         ? 'Sheet <span class="hint">(blank = first sheet)</span>'
         : 'Array Element <span class="hint">(JSONPath)</span>';
     document.getElementById('fArrayElement').placeholder = isOneDrive ? 'Sheet1' : '$ or $.data';
-    document.getElementById('fArrayElementField').style.display = isHttp || isOneDrive ? 'flex' : 'none';
-    document.getElementById('fLocationField').style.display = isPaste ? 'none' : 'flex';
-    document.getElementById('fPasteField').style.display = isPaste ? 'flex' : 'none';
+    // Pasted JSON is not fetched, but still needs the JSONPath that picks its row array.
+    document.getElementById('fArrayElementField').style.display = isHttp || isJson || isOneDrive ? 'flex' : 'none';
+    document.getElementById('fLocationField').style.display = isPasted(source) ? 'none' : 'flex';
+    document.getElementById('fPasteField').style.display = isPasted(source) ? 'flex' : 'none';
+    document.getElementById('fPasteLabel').innerHTML = isJson
+        ? 'Pasted JSON <span class="hint">(paste the document below — Array Element picks the array of objects to load as rows)</span>'
+        : 'Pasted Data <span class="hint">(select cells in Excel, copy, then paste below — first row is the header)</span>';
+    document.getElementById('fPasteData').placeholder = isJson
+        ? '{ "data": [ { "id": 1, "name": "alpha" } ] }'
+        : 'Paste Excel cells here (Ctrl+V)…';
+    document.getElementById('fJsonataField').style.display = isHttp || isJson ? 'flex' : 'none';
   }
+
+  /** Sources that run a JSONata over their JSON before it becomes rows. */
+  function takesJsonata(source) { return source === 'http' || source === 'json'; }
 
   function setFormStatus(msg, cls) {
     const el = document.getElementById('formStatusMsg');
@@ -241,17 +262,27 @@
   async function saveDataset() {
     const name = document.getElementById('fName').value.trim();
     const source = document.getElementById('fSource').value;
-    const isPaste = source === 'paste';
-    const location = isPaste
+    const pasted = isPasted(source);
+    const location = pasted
         ? document.getElementById('fPasteData').value.replace(/\n+$/, '')
         : document.getElementById('fLocation').value.trim();
     const arrayElement = document.getElementById('fArrayElement').value.trim();
+    const jsonata = takesJsonata(source) ? document.getElementById('fJsonata').value.trim() : '';
 
     if (!name) { setFormStatus('Dataset name is required.', 'status-err'); return; }
     if (!/^[\w-]+$/.test(name)) { setFormStatus('Name must contain only letters, digits, _ or -.', 'status-err'); return; }
-    if (!location) { setFormStatus(isPaste ? 'Paste some rows first.' : 'Location is required.', 'status-err'); return; }
+    if (!location) {
+      setFormStatus(pasted ? (source === 'json' ? 'Paste some JSON first.' : 'Paste some rows first.')
+          : 'Location is required.', 'status-err');
+      return;
+    }
+    if (source === 'json') {
+      // Catch a bad paste here rather than saving a dataset that can only fail to load.
+      try { JSON.parse(location); }
+      catch (e) { setFormStatus('That is not valid JSON: ' + e.message, 'status-err'); return; }
+    }
 
-    const payload = { name, source, location, arrayElement: arrayElement || null };
+    const payload = { name, source, location, arrayElement: arrayElement || null, jsonata: jsonata || null };
     const isEdit = editingName !== null;
     const url = isEdit ? '/staticdataset/' + encodeURIComponent(editingName) : '/staticdataset';
     const method = isEdit ? 'PUT' : 'POST';
@@ -279,9 +310,10 @@
     document.getElementById('fName').value = ds.name;
     document.getElementById('fName').disabled = true;
     document.getElementById('fSource').value = ds.source;
-    document.getElementById('fLocation').value = ds.source === 'paste' ? '' : (ds.location || '');
-    document.getElementById('fPasteData').value = ds.source === 'paste' ? (ds.location || '') : '';
+    document.getElementById('fLocation').value = isPasted(ds.source) ? '' : (ds.location || '');
+    document.getElementById('fPasteData').value = isPasted(ds.source) ? (ds.location || '') : '';
     document.getElementById('fArrayElement').value = ds.arrayElement || '';
+    document.getElementById('fJsonata').value = ds.jsonata || '';
     document.getElementById('cancelBtn').style.display = '';
     onSourceChange();
     setFormStatus('');
@@ -297,6 +329,7 @@
     document.getElementById('fLocation').value = '';
     document.getElementById('fPasteData').value = '';
     document.getElementById('fArrayElement').value = '';
+    document.getElementById('fJsonata').value = '';
     document.getElementById('cancelBtn').style.display = 'none';
     onSourceChange();
   }
@@ -633,7 +666,7 @@
 
   function renderCard(ds, query) {
     const badgeCls = ds.source === 'http' ? 'badge-http' : ds.source === 'paste' ? 'badge-paste'
-        : ds.source === 'onedrive' ? 'badge-onedrive' : 'badge-file';
+        : ds.source === 'json' ? 'badge-json' : ds.source === 'onedrive' ? 'badge-onedrive' : 'badge-file';
     const badgeText = ds.source === 'paste' ? 'PASTED' : ds.source.toUpperCase();
     const chips = (ds.attributes || []).map(a =>
       '<span class="chip">' + highlight(a, query) + '</span>').join('');
@@ -641,8 +674,9 @@
     if (ds.count != null) metaParts.push(ds.count + ' rows');
     if (ds.loadedTime) metaParts.push('loaded ' + ds.loadedTime);
     const errorHtml = ds.error ? '<div class="ds-error">' + escapeHtml(ds.error) + '</div>' : '';
-    const locationHtml = ds.source === 'paste'
-        ? '<div class="ds-location">pasted data (' + (ds.location ? ds.location.split('\n').length : 0) + ' line(s))</div>'
+    const locationHtml = isPasted(ds.source)
+        ? '<div class="ds-location">' + (ds.source === 'json' ? 'pasted JSON' : 'pasted data')
+            + ' (' + (ds.location ? ds.location.split('\n').length : 0) + ' line(s))</div>'
         : '<div class="ds-location" title="' + escapeHtml(ds.location) + '">' + escapeHtml(ds.location) + '</div>';
 
     return (
@@ -652,8 +686,11 @@
           '<span class="badge ' + badgeCls + '">' + badgeText + '</span>' +
         '</div>' +
         locationHtml +
-        (ds.source === 'http' && ds.arrayElement ? '<div class="ds-meta mono">arrayElement: ' + escapeHtml(ds.arrayElement) + '</div>' : '') +
+        ((ds.source === 'http' || ds.source === 'json') && ds.arrayElement ? '<div class="ds-meta mono">arrayElement: ' + escapeHtml(ds.arrayElement) + '</div>' : '') +
         (ds.source === 'onedrive' && ds.arrayElement ? '<div class="ds-meta mono">sheet: ' + escapeHtml(ds.arrayElement) + '</div>' : '') +
+        (takesJsonata(ds.source) && ds.jsonata
+            ? '<div class="ds-meta mono ds-jsonata" title="' + escapeHtml(ds.jsonata) + '">jsonata: ' + escapeHtml(ds.jsonata) + '</div>'
+            : '') +
         '<div class="chip-row">' + chips + '</div>' +
         '<div class="ds-meta">' + metaParts.join(' · ') + '</div>' +
         errorHtml +

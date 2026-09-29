@@ -16,6 +16,11 @@ import java.util.List;
  * the attributes.
  * <p>{@code source=paste} — {@code location} holds tab-separated rows pasted directly
  * from Excel (header row first), stored and reparsed verbatim on reload.
+ * <p>{@code source=json} — {@code location} holds a JSON document pasted directly into the
+ * dataset, stored and reparsed verbatim on reload; {@code arrayElement} selects the row array
+ * exactly as it does for {@code http}.
+ * <p>Both JSON sources may also carry a {@link #jsonata} expression, run over what
+ * {@code arrayElement} selected to reshape it into the rows the grid should show.
  * <p>{@code source=onedrive} — {@code location} is a work OneDrive path to an .xlsx/.xls (or
  * .csv), optionally prefixed with the owner's UPN ({@code jane@mycompany.com:/Reports/x.xlsx});
  * {@code arrayElement} names the worksheet (default: first sheet). The first row is the header.
@@ -23,12 +28,18 @@ import java.util.List;
 public class StaticDatasetDef {
 
     private String       name;
-    /** {@code file}, {@code http}, {@code paste} or {@code onedrive}. */
+    /** {@code file}, {@code http}, {@code paste}, {@code json} or {@code onedrive}. */
     private String       source;
-    /** File path (source=file), URL (source=http), raw pasted TSV text (source=paste), or OneDrive path (source=onedrive). */
+    /** File path (source=file), URL (source=http), raw pasted TSV text (source=paste), raw pasted JSON (source=json), or OneDrive path (source=onedrive). */
     private String       location;
-    /** JSONPath selecting the row array (source=http), or worksheet name (source=onedrive). Ignored otherwise. */
+    /** JSONPath selecting the row array (source=http/json), or worksheet name (source=onedrive). Ignored otherwise. */
     private String       arrayElement;
+    /**
+     * Optional JSONata reshaping the selected JSON into rows — a bare expression, or a
+     * {@code catalog:<name>} reference into the shared library. Only the JSON sources
+     * ({@code http}, {@code json}) run it; the delimited sources ignore it.
+     */
+    private String       jsonata;
     /** Attribute (column) names — discovered from the data on load, persisted for display. */
     private List<String> attributes = new ArrayList<>();
     /** Named, saved filter combinations against this dataset's rows — reusable across pages. */
@@ -45,6 +56,9 @@ public class StaticDatasetDef {
 
     public String getArrayElement()                { return arrayElement; }
     public void   setArrayElement(String arrayElement) { this.arrayElement = arrayElement; }
+
+    public String getJsonata()                  { return jsonata; }
+    public void   setJsonata(String jsonata)    { this.jsonata = jsonata == null || jsonata.isBlank() ? null : jsonata; }
 
     public List<String> getAttributes()                        { return attributes; }
     public void          setAttributes(List<String> attributes) { this.attributes = attributes != null ? attributes : new ArrayList<>(); }

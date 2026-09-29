@@ -32,6 +32,41 @@
             margin-top: 4px; white-space: pre-wrap; word-break: break-word;
             font-family: "Cascadia Code", "Fira Code", Consolas, monospace; font-size: 12px;
         }
+
+        /* One thin line per environment, the same shape the use case list uses: what it is called,
+           how it is classed, and where it points — a whole estate readable without scrolling. */
+        #envList { gap: 2px; max-height: 70vh; }
+        #envList .record {
+            flex-direction: row; align-items: center; gap: 6px;
+            padding: 2px 6px; min-height: 24px; border-color: #ebecf0; border-radius: 3px; font-size: 12px;
+        }
+        #envList .record .badge { flex: none; font-size: 10px; padding: 0 5px; }
+        #envList .record .badge.cls { min-width: 38px; text-align: center; }
+        #envList .record .record-name {
+            font-size: 12px; flex: none; max-width: 45%;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; word-break: normal;
+        }
+        #envList .record.off .record-name { color: #97a0af; }
+        #envList .record .prefix {
+            flex: 1; min-width: 0; color: #5e6c84; font-size: 11px;
+            font-family: "Cascadia Code", Consolas, monospace;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        #envList .record .note { flex: none; color: #97a0af; font-size: 11px; }
+
+        /* Opens above the list, like the use case copy panel: what it summarises is the list, so a
+           dialog over it would hide the thing being described. */
+        .summary-panel {
+            border: 1px solid #b3d4ff; background: #f4f8ff; border-radius: 4px;
+            padding: 8px 10px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 6px;
+        }
+        .summary-panel .summary-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .summary-panel .summary-row label { font-size: 12px; color: #5e6c84; }
+        .summary-panel select { width: auto; flex: none; }
+
+        /* Comments are prose about the deployment, not a payload, so they get the page font rather
+           than the monospace every other box on this tab wants. */
+        #comments { font-family: inherit; font-size: 13px; min-height: 64px; }
     </style>
 </head>
 <body>
@@ -62,6 +97,24 @@
         <div class="panel-title">
             <span>Environments</span>
             <button class="tool-btn" onclick="newEnvironment()">+ New</button>
+            <button class="tool-btn" id="summaryBtn" onclick="toggleSummary()"
+                    title="Write these environments up as one HTML page to send on">Summary&hellip;</button>
+        </div>
+        <div id="summaryPanel" class="summary-panel" style="display:none">
+            <div class="summary-row">
+                <label for="summaryScope">Cover</label>
+                <select id="summaryScope" onchange="AC.setStatus('summaryStatus', '')">
+                    <option value="app">This app</option>
+                    <option value="all">Every app</option>
+                </select>
+                <button class="secondary" onclick="openSummary()">Open</button>
+                <button class="secondary" onclick="downloadSummary()">Download</button>
+                <button class="tool-btn" onclick="copySummary()">Copy HTML</button>
+            </div>
+            <span class="hint">A self-contained page — one row per environment with its URLs, credentials
+                in outline, variables and comments. Passwords and keytab paths are never written into it,
+                only whether one is set, so it is safe to send on.</span>
+            <div id="summaryStatus" class="status-bar" style="margin-top:0"></div>
         </div>
         <div class="record-list" id="envList"></div>
     </div>
@@ -69,6 +122,16 @@
     <!-- Editor -->
     <div class="panel">
         <div class="panel-title"><span id="editorTitle">New Environment</span></div>
+
+        <!-- Only a pending clone shows this: every other time the app is the one picked at the top
+             of the page, and a second picker saying the same thing would be one to get wrong. -->
+        <div class="form-row" id="cloneRow" style="display:none">
+            <div class="form-group wide">
+                <label for="cloneApp">Save To App</label>
+                <select id="cloneApp" onchange="onCloneAppChange()"></select>
+                <span class="hint" id="cloneHint"></span>
+            </div>
+        </div>
 
         <div class="form-row">
             <div class="form-group">
@@ -147,14 +210,25 @@
                 <span class="hint">Layered over the app's own variables: a name set here wins over the same name on the
                     App Definitions tab, and is itself still overridden by a use case variable or an instance input.
                     Reference them as <code>$region</code> or <code>${region}</code> in a URL, header or body. Values may
-                    themselves use <code>${DATESTAMP}</code>, <code>${DATETIME}</code>, <code>${DATETIMEHR}</code>,
-                    <code>${UUID}</code>, <code>${MACHINE}</code> or another variable.</span>
+                    themselves use <code>${DATESTAMP}</code>, <code>${PREVDATESTAMP}</code>,
+                    <code>${NEXTDATESTAMP}</code>, <code>${DATETIME}</code>, <code>${DATETIMEHR}</code>,
+                    <code>${UUID}</code>, <code>${MACHINE}</code>, <code>${PID}</code> or another variable.</span>
+            </div>
+
+            <div class="form-group wide">
+                <label for="comments">Comments <span class="hint">optional</span></label>
+                <textarea id="comments" spellcheck="true" rows="3"
+                          placeholder="Who owns it, what it points at, when it is refreshed, anything the URL does not say."></textarea>
+                <span class="hint">Notes for whoever else has to use this environment. Nothing reads them at
+                    run time — they are carried into the Summary, which is where they earn their keep.</span>
             </div>
         </div>
 
         <div class="toolbar">
             <button class="primary" onclick="saveEnvironment()">Save</button>
             <button class="secondary" onclick="newEnvironment()">New</button>
+            <button class="secondary" id="cloneBtn" onclick="cloneEnvironment()" style="display:none"
+                    title="Start a new environment from a copy of this one — under another name here, or the same name on another app">Clone</button>
             <button class="tool-btn" onclick="formatVariables()">Format JSON</button>
             <button class="danger" id="deleteBtn" onclick="deleteEnvironment()" style="display:none">Delete</button>
         </div>
@@ -185,6 +259,12 @@
     let environments = [];
     let currentApp = null;             // the selected AppDefinition
     let editingEnvironment = null;     // null while creating
+    // Which environment the unsaved one in the editor was cloned from, and which app it is going to
+    // be saved against. Both null except between Clone and the save that follows it — a clone is an
+    // ordinary new environment that happens to arrive with every field already filled in, and once
+    // it is saved there is nothing left to remember about where it came from.
+    let cloneFrom = null;
+    let cloneApp = null;
 
     async function loadApps() {
         try {
@@ -249,6 +329,12 @@
             : '';
     }
 
+    /**
+     * One line per environment: how it is classed, what it is called, and where it points. The rest
+     * of what an environment holds — its credentials, its variables, its comments — is a badge or a
+     * hover here and the editor or the Summary in full, so that a dozen deployments of the same app
+     * can be read down in one glance rather than scrolled through as cards.
+     */
     function renderEnvList() {
         const list = document.getElementById('envList');
         if (!currentApp) {
@@ -262,27 +348,41 @@
         list.innerHTML = environments
             .slice()
             .sort((a, b) => a.environment.localeCompare(b.environment))
-            .map(env =>
-                '<div class="record' + (env.environment === editingEnvironment ? ' selected' : '') + '" ' +
-                     'onclick="editEnvironment(\'' + AC.attr(env.environment) + '\')">' +
-                    '<div class="record-name">' + AC.esc(env.environment) + '</div>' +
-                    '<div class="record-meta">' +
-                        '<span class="badge ' + (env.envClass || 'dev').toLowerCase() + '">' + AC.esc(env.envClass) + '</span>' +
-                        '<span class="badge ' + (env.envStatus || 'active').toLowerCase() + '">' + AC.esc(env.envStatus) + '</span>' +
-                    '</div>' +
-                    '<div class="record-meta">' + AC.esc(env.urlPrefix || '') +
-                        (env.monitoringUrlPrefix ? ' <span class="badge">mon</span>' : '') +
-                        (Object.keys(env.envVariables || {}).length
-                            ? ' <span class="badge">' + Object.keys(env.envVariables).length + ' var' +
-                              (Object.keys(env.envVariables).length === 1 ? '' : 's') + '</span>'
-                            : '') +
-                    '</div>' +
-                '</div>'
-            ).join('');
-    }
+            .map(env => {
+                const envClass = env.envClass || 'DEV';
+                const inactive = (env.envStatus || 'ACTIVE') !== 'ACTIVE';
+                const varCount = Object.keys(env.envVariables || {}).length;
+                // The hover carries what the line had no room for — the monitoring address and the
+                // comments above all, since comments are the one field written to be read by someone
+                // other than whoever typed it.
+                const tip = [
+                    env.environment + ' — ' + envClass + (inactive ? ' · INACTIVE' : ''),
+                    env.urlPrefix || '(no URL prefix)',
+                    env.monitoringUrlPrefix ? 'monitoring: ' + env.monitoringUrlPrefix : '',
+                    varCount ? varCount + ' variable' + (varCount === 1 ? '' : 's') : '',
+                    env.comments ? '\n' + env.comments : ''
+                ].filter(Boolean).join('\n');
 
+                return '<div class="record' + (env.environment === editingEnvironment ? ' selected' : '')
+                         + (inactive ? ' off' : '') + '" '
+                         + 'title="' + AC.esc(tip) + '" '
+                         + 'onclick="editEnvironment(\'' + AC.attr(env.environment) + '\')">'
+                     + '<span class="badge cls ' + envClass.toLowerCase() + '">' + AC.esc(envClass) + '</span>'
+                     + '<span class="record-name">' + AC.esc(env.environment) + '</span>'
+                     + (inactive ? '<span class="badge inactive">off</span>' : '')
+                     + (env.monitoringUrlPrefix ? '<span class="badge">mon</span>' : '')
+                     + (varCount ? '<span class="badge">' + varCount + ' var' + (varCount === 1 ? '' : 's') + '</span>' : '')
+                     + '<span class="prefix">' + AC.esc(env.urlPrefix || '') + '</span>'
+                     + (env.comments ? '<span class="note">&#9998;</span>' : '')
+                     + '</div>';
+            }).join('');
+    }
     function newEnvironment() {
         editingEnvironment = null;
+        cloneFrom = null;
+        cloneApp = null;
+        renderCloneRow();
+        document.getElementById('cloneBtn').style.display = 'none';
         document.getElementById('editorTitle').textContent = 'New Environment';
         document.getElementById('environment').value = '';
         document.getElementById('environment').disabled = false;
@@ -297,6 +397,7 @@
         document.getElementById('username').value = '';
         document.getElementById('password').value = '';
         document.getElementById('envVariables').value = '';
+        document.getElementById('comments').value = '';
         hideJwtResult();
         document.getElementById('deleteBtn').style.display = 'none';
         renderEnvList();
@@ -308,6 +409,10 @@
         if (!env) return;
 
         editingEnvironment = name;
+        cloneFrom = null;
+        cloneApp = null;
+        renderCloneRow();
+        document.getElementById('cloneBtn').style.display = '';
         document.getElementById('editorTitle').textContent = 'Edit ' + name;
         document.getElementById('environment').value = env.environment;
         document.getElementById('environment').disabled = true;
@@ -323,10 +428,83 @@
         document.getElementById('username').value = env.username || '';
         document.getElementById('password').value = env.password || '';
         document.getElementById('envVariables').value = AC.prettyJson(env.envVariables);
+        document.getElementById('comments').value = env.comments || '';
         hideJwtResult();
         document.getElementById('deleteBtn').style.display = '';
         renderEnvList();
         AC.setStatus('statusBar', '');
+    }
+
+    /**
+     * Starts a new environment from the one on screen.
+     *
+     * <p>Two things are routinely wanted and both are this: a second environment of the same app
+     * that differs in a field or two — uat-emea beside uat-apac, same credentials, same variables,
+     * one host apart — and the same environment on another app, which is the common case the moment
+     * two apps are deployed side by side in the same estate. So the copy keeps every field and asks
+     * only the two questions that must differ: what it is called, and which app it belongs to.
+     *
+     * <p>Nothing is saved here. The clone sits in the editor as an ordinary unsaved environment, to
+     * be adjusted and then saved — so a clone that turns out to be a mistake is abandoned by
+     * clicking New, not undone.
+     */
+    function cloneEnvironment() {
+        if (!editingEnvironment || !currentApp) return;
+        const source = editingEnvironment;
+        cloneFrom = source;
+        cloneApp = currentApp.appName;
+        // The form is left exactly as it is — that is the copy — and only what has to differ moves.
+        editingEnvironment = null;
+        document.getElementById('editorTitle').textContent = 'Clone of ' + source;
+        document.getElementById('environment').disabled = false;
+        document.getElementById('environment').value = freeEnvironmentName(source, environments);
+        document.getElementById('environmentHint').textContent = 'Unique within the app it is saved to.';
+        document.getElementById('deleteBtn').style.display = 'none';
+        document.getElementById('cloneBtn').style.display = 'none';
+        hideJwtResult();
+        renderCloneRow();
+        renderEnvList();
+        AC.setStatus('statusBar', 'Copied "' + source + '". Give it a name — or pick another app and keep the name — '
+            + 'then Save.', 'ok');
+        document.getElementById('environment').focus();
+        document.getElementById('environment').select();
+    }
+
+    /** The app picker a pending clone shows, and what picking another one means. */
+    function renderCloneRow() {
+        const row = document.getElementById('cloneRow');
+        row.style.display = cloneFrom ? '' : 'none';
+        if (!cloneFrom) return;
+        const select = document.getElementById('cloneApp');
+        // No placeholder: a clone always goes to some app, and the one it came from is the default.
+        AC.fillSelect(select, apps.map(a => a.appName));
+        select.value = cloneApp || (currentApp ? currentApp.appName : '');
+        const other = apps.find(a => a.appName === cloneApp);
+        const same = !currentApp || cloneApp === currentApp.appName;
+        document.getElementById('cloneHint').innerHTML = same
+            ? 'Saved against this app, so the name has to be one it is not already using.'
+            : 'Saved against <b>' + AC.esc(cloneApp) + '</b> instead, where the name is free to be the original&#39;s — '
+                + 'which is usually the point of copying across. That app authenticates with <b>'
+                + AC.esc(other ? other.authMethod : 'NONE') + '</b>, so check the credentials below are the ones it wants.';
+    }
+
+    function onCloneAppChange() {
+        cloneApp = document.getElementById('cloneApp').value || (currentApp ? currentApp.appName : '');
+        // The name only has to be free of whatever the app it is going to already uses, so going
+        // back to the source app is where the original's own name stops being available again.
+        const name = document.getElementById('environment');
+        if (cloneFrom && cloneApp !== (currentApp || {}).appName) name.value = cloneFrom;
+        else if (cloneFrom && name.value === cloneFrom) name.value = freeEnvironmentName(cloneFrom, environments);
+        renderCloneRow();
+    }
+
+    /** A name this app is not already using: "uat", then "uat-copy", then "uat-copy-2". */
+    function freeEnvironmentName(base, existing) {
+        const taken = new Set((existing || []).map(e => e.environment));
+        if (!taken.has(base)) return base;
+        let name = base + '-copy';
+        for (let n = 2; taken.has(name); n++) name = base + '-copy-' + n;
+        return name;
     }
 
     function readForm() {
@@ -337,7 +515,9 @@
         if (!urlPrefix) throw new Error('URL Prefix is required.');
 
         return {
-            appName:     currentApp.appName,
+            // A pending clone may be going to another app; everything else is the app picked at the
+            // top of the page.
+            appName:     cloneFrom && cloneApp ? cloneApp : currentApp.appName,
             environment,
             envClass:    document.getElementById('envClass').value,
             envStatus:   document.getElementById('envStatus').value,
@@ -347,7 +527,8 @@
             jwtMethod:   document.getElementById('jwtMethod').value,
             username:    document.getElementById('username').value,
             password:    document.getElementById('password').value,
-            envVariables: AC.parseJsonObject(document.getElementById('envVariables').value, 'Environment Variables')
+            envVariables: AC.parseJsonObject(document.getElementById('envVariables').value, 'Environment Variables'),
+            comments:    document.getElementById('comments').value.trim()
         };
     }
 
@@ -391,6 +572,10 @@
             return;
         }
 
+        // Read before the save, since editEnvironment below clears both.
+        const cloned = cloneFrom;
+        const elsewhere = env.appName !== (currentApp || {}).appName ? env.appName : '';
+
         try {
             if (editingEnvironment) {
                 await AC.api('PUT', '/appcatalog/environments/' + encodeURIComponent(env.appName)
@@ -398,9 +583,22 @@
             } else {
                 await AC.api('POST', '/appcatalog/environments', env);
             }
+            // A clone saved onto another app is not on the list being shown, so the list stays this
+            // app's and the editor is left holding the clone rather than jumping to something that
+            // is not there. Saving it again would be a second POST of the same thing, which the
+            // server refuses — the message is what says the work is done.
+            if (elsewhere) {
+                AC.setStatus('statusBar', 'Saved ' + env.environment + ' on ' + elsewhere
+                    + '. Switch the App above to that app to edit it.', 'ok');
+                cloneFrom = null;
+                cloneApp = null;
+                renderCloneRow();
+                return;
+            }
             environments = await AC.listEnvironments(env.appName);
             editEnvironment(env.environment);
-            AC.setStatus('statusBar', 'Saved ' + env.environment + '.', 'ok');
+            AC.setStatus('statusBar', cloned ? 'Saved ' + env.environment + ', copied from ' + cloned + '.'
+                                             : 'Saved ' + env.environment + '.', 'ok');
         } catch (e) {
             AC.setStatus('statusBar', 'Save failed: ' + e.message, 'error');
         }
@@ -538,6 +736,225 @@
             AC.setStatus('statusBar', 'Deleted ' + deleted + '.', 'ok');
         } catch (e) {
             AC.setStatus('statusBar', 'Delete failed: ' + e.message, 'error');
+        }
+    }
+
+    // ── Summary ──────────────────────────────────────────────────────────────
+
+    /**
+     * The environments written up as a single self-contained HTML page, for the person who has to
+     * be told what "uat-emea" is and what they need to reach it without being given the catalog.
+     *
+     * Credentials are described, never disclosed. The username is named, because which identity a
+     * deployment runs as is usually half the question; the password or keytab is reduced to whether
+     * one is set at all — the part actually worth knowing from the outside, and the line that leaves
+     * the page safe to mail on.
+     */
+    let summaryOpen = false;
+
+    const SUMMARY_CSS = [
+        'body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;',
+        '       color: #172b4d; background: #fff; margin: 0; padding: 24px; font-size: 13px; }',
+        'h1 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }',
+        '.when { font-size: 12px; color: #5e6c84; margin: 0 0 18px; }',
+        'h2 { font-size: 15px; font-weight: 600; margin: 22px 0 6px; padding-bottom: 4px;',
+        '     border-bottom: 2px solid #dfe1e6; }',
+        'h2 .auth { font-size: 11px; font-weight: 700; color: #5e6c84; background: #f4f5f7;',
+        '           border-radius: 10px; padding: 1px 8px; margin-left: 6px; vertical-align: middle; }',
+        '.wrap { overflow-x: auto; }',
+        'table { width: 100%; border-collapse: collapse; font-size: 12px; }',
+        'th, td { border: 1px solid #dfe1e6; padding: 6px 8px; text-align: left; vertical-align: top; }',
+        'th { background: #f4f5f7; font-weight: 600; white-space: nowrap; }',
+        'tbody tr:nth-child(even) td { background: #fafbfc; }',
+        'td.name { font-weight: 600; white-space: nowrap; }',
+        '.mono { font-family: "Cascadia Code", Consolas, monospace; word-break: break-all; }',
+        '.muted { color: #97a0af; }',
+        '.line { display: block; }',
+        '.label { color: #5e6c84; }',
+        '.comments { white-space: pre-wrap; min-width: 180px; }',
+        '.badge { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 10px;',
+        '         font-weight: 700; letter-spacing: 0.3px; text-transform: uppercase; }',
+        '.badge.prod { background: #ffebe6; color: #bf2600; }',
+        '.badge.uat  { background: #fff0b3; color: #7a4600; }',
+        '.badge.dev  { background: #e6fcff; color: #00728e; }',
+        '.badge.active   { background: #e3fcef; color: #006644; }',
+        '.badge.inactive { background: #ebecf0; color: #5e6c84; }',
+        '.foot { margin-top: 24px; font-size: 11px; color: #97a0af; border-top: 1px solid #dfe1e6; padding-top: 8px; }',
+        '@media print { body { padding: 0; } h2 { break-after: avoid; } tr { break-inside: avoid; } }'
+    ].join('\n');
+
+    function toggleSummary() {
+        summaryOpen = !summaryOpen;
+        document.getElementById('summaryPanel').style.display = summaryOpen ? '' : 'none';
+        AC.setStatus('summaryStatus', '');
+    }
+
+    /**
+     * What the summary covers. "This app" is the list already on screen; "every app" is fetched,
+     * because the page only ever holds one app's worth and a write-up of the whole estate is exactly
+     * the thing that cannot be assembled by clicking through this tab.
+     */
+    async function summaryData() {
+        const everything = document.getElementById('summaryScope').value === 'all';
+        let rows;
+        if (everything) {
+            rows = await AC.api('GET', '/appcatalog/environments');
+        } else {
+            if (!currentApp) throw new Error('Select an app first.');
+            rows = environments.slice();
+        }
+        if (!rows.length) throw new Error(everything ? 'No environments are defined yet.'
+                                                     : 'This app has no environments yet.');
+        rows.sort((a, b) => (a.appName || '').localeCompare(b.appName || '')
+                         || (a.environment || '').localeCompare(b.environment || ''));
+        return { everything, rows };
+    }
+
+    /** Which credentials this environment carries, said without saying the secret itself. */
+    function summaryCredentials(env, authMethod) {
+        const config = AUTH_FIELDS[authMethod] || AUTH_FIELDS.NONE;
+        const lines = [];
+        if (config.jwtUrl && env.jwtUrl) {
+            lines.push('<span class="line"><span class="label">' + AC.esc(config.jwtUrlLabel || 'JWT URL')
+                + ':</span> <span class="mono">' + AC.esc((env.jwtMethod || 'POST') + ' ' + env.jwtUrl) + '</span></span>');
+        }
+        if (config.credentials) {
+            lines.push('<span class="line"><span class="label">'
+                + AC.esc(config.usernameLabel || 'Username') + ':</span> '
+                + (env.username ? '<span class="mono">' + AC.esc(env.username) + '</span>'
+                                : '<span class="muted">not set</span>') + '</span>');
+            lines.push('<span class="line"><span class="label">'
+                + AC.esc(config.passwordLabel || 'Password') + ':</span> '
+                + (env.password ? 'set' : '<span class="muted">not set</span>') + '</span>');
+        }
+        return lines.length ? lines.join('') : '<span class="muted">none</span>';
+    }
+
+    /** The variables as name/value lines — what they are set to is the whole reason they are per-environment. */
+    function summaryVariables(env) {
+        const names = Object.keys(env.envVariables || {});
+        if (!names.length) return '<span class="muted">none</span>';
+        return names.map(name => {
+            const value = env.envVariables[name];
+            const text = value === null || value === undefined ? ''
+                : typeof value === 'object' ? JSON.stringify(value) : String(value);
+            return '<span class="line mono">' + AC.esc(name) + ' = ' + AC.esc(text) + '</span>';
+        }).join('');
+    }
+
+    function summaryRow(env) {
+        const app = apps.find(a => a.appName === env.appName);
+        const envClass = env.envClass || 'DEV';
+        const status = env.envStatus || 'ACTIVE';
+        return '<tr>'
+            + '<td class="name">' + AC.esc(env.environment) + '</td>'
+            + '<td><span class="badge ' + envClass.toLowerCase() + '">' + AC.esc(envClass) + '</span> '
+                + '<span class="badge ' + status.toLowerCase() + '">' + AC.esc(status) + '</span></td>'
+            + '<td class="mono">' + (env.urlPrefix ? AC.esc(env.urlPrefix) : '<span class="muted">not set</span>')
+                + (env.monitoringUrlPrefix
+                    ? '<span class="line"><span class="label">mon:</span> ' + AC.esc(env.monitoringUrlPrefix) + '</span>'
+                    : '')
+            + '</td>'
+            + '<td>' + summaryCredentials(env, app ? app.authMethod : 'NONE') + '</td>'
+            + '<td>' + summaryVariables(env) + '</td>'
+            + '<td class="comments">' + (env.comments ? AC.esc(env.comments) : '<span class="muted">&mdash;</span>') + '</td>'
+            + '</tr>';
+    }
+
+    function summaryTitle(data) {
+        return data.everything ? 'App Catalog environments'
+                               : 'Environments · ' + (currentApp ? currentApp.appName : '');
+    }
+
+    function summaryBody(data) {
+        const appNames = [...new Set(data.rows.map(env => env.appName))];
+        const head = '<tr><th>Environment</th><th>Class &middot; Status</th><th>URL prefix</th>'
+                   + '<th>Credentials</th><th>Variables</th><th>Comments</th></tr>';
+
+        // A section per app even when there is only one, so the auth method the credentials column
+        // is describing is stated once where it belongs rather than repeated on every row.
+        const sections = appNames.map(appName => {
+            const app = apps.find(a => a.appName === appName);
+            const rows = data.rows.filter(env => env.appName === appName);
+            return '<h2>' + AC.esc(appName || '(no app)')
+                     + '<span class="auth">' + AC.esc(app ? app.authMethod : 'unknown auth') + '</span></h2>'
+                 + '<div class="wrap"><table><thead>' + head + '</thead><tbody>'
+                 + rows.map(summaryRow).join('')
+                 + '</tbody></table></div>';
+        }).join('');
+
+        return '<h1>' + AC.esc(summaryTitle(data)) + '</h1>'
+             + '<p class="when">' + AC.esc(new Date().toLocaleString()) + ' · '
+                 + data.rows.length + ' environment' + (data.rows.length === 1 ? '' : 's')
+                 + (data.everything ? ' across ' + appNames.length + ' app' + (appNames.length === 1 ? '' : 's') : '')
+                 + '</p>'
+             + sections
+             + '<p class="foot">Passwords and keytab paths are deliberately left out — this page says only '
+                 + 'whether one is set. Generated from the App Catalog.</p>';
+    }
+
+    function summaryDocument(data) {
+        return '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'
+             + '<meta name="viewport" content="width=device-width, initial-scale=1.0">'
+             + '<title>' + AC.esc(summaryTitle(data)) + '</title><style>' + SUMMARY_CSS + '</style></head>'
+             + '<body>' + summaryBody(data) + '</body></html>';
+    }
+
+    /** The name a download lands under: environments-<app>-<date>.html. */
+    function summaryFileName(data) {
+        const scope = data.everything ? 'all-apps' : (currentApp ? currentApp.appName : 'app');
+        return ('environments-' + scope + '-' + new Date().toISOString().slice(0, 10))
+            .replace(/[^A-Za-z0-9\-_.]/g, '-') + '.html';
+    }
+
+    async function openSummary() {
+        let data;
+        try {
+            data = await summaryData();
+        } catch (e) {
+            AC.setStatus('summaryStatus', e.message, 'error');
+            return;
+        }
+        // Written into the tab rather than navigated to as a blob URL: the summary is a view of
+        // what is on screen, not a file, and a blob left in the history is a copy of it that
+        // nobody asked to keep.
+        const win = window.open('', '_blank');
+        if (!win) {
+            AC.setStatus('summaryStatus', 'The browser blocked the new tab — allow pop-ups, or use Download.', 'error');
+            return;
+        }
+        win.document.write(summaryDocument(data));
+        win.document.close();
+        AC.setStatus('summaryStatus', 'Opened in a new tab.', 'ok');
+    }
+
+    async function downloadSummary() {
+        let data;
+        try {
+            data = await summaryData();
+        } catch (e) {
+            AC.setStatus('summaryStatus', e.message, 'error');
+            return;
+        }
+        const name = summaryFileName(data);
+        const url = URL.createObjectURL(new Blob([summaryDocument(data)], { type: 'text/html;charset=utf-8' }));
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = name;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+        AC.setStatus('summaryStatus', 'Saved ' + name + '.', 'ok');
+    }
+
+    async function copySummary() {
+        try {
+            const data = await summaryData();
+            await navigator.clipboard.writeText(summaryDocument(data));
+            AC.setStatus('summaryStatus', 'Copied — paste it into a file or a mail.', 'ok');
+        } catch (e) {
+            AC.setStatus('summaryStatus', 'Could not copy: ' + e.message, 'error');
         }
     }
 

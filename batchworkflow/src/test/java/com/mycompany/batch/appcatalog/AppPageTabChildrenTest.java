@@ -8,10 +8,13 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * What a tab set may hold. A chart is the same kind of thing as a grid as far as a tab is concerned —
- * one reading of one call, wanting the full width and a few rows of height — so a page answering a
- * question with a grid, a pie of it and a bar chart beside them can be three tabs rather than three
- * controls down a screen nobody can see the bottom of.
+ * What a tab set may hold: any control but a hidden field. Grids and charts are what tab sets were
+ * built for — a page answering a question with a grid, a pie of it and a bar chart beside them is
+ * three tabs rather than three controls down a screen nobody can see the bottom of — and the form
+ * half of a page belongs in tabs just as often, so everything else is allowed in too.
+ *
+ * <p>Including another tab set, which is how a strip that has grown too long is grouped. The one
+ * arrangement refused is a set that ends up holding itself, at whatever depth.
  */
 class AppPageTabChildrenTest {
 
@@ -74,17 +77,70 @@ class AppPageTabChildrenTest {
     }
 
     @Test
-    void aTabSetInsideATabSet_isRefused() {
-        assertThatThrownBy(() -> AppCatalogService.validateTabs(page(tabs("outer", "inner"), tabs("inner"))))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("a tab set holds grids and charts");
+    void aTabSetInsideATabSet_isHowALongStripIsGrouped() {
+        // Four environments' worth of grids under one "UAT" tab, rather than four names on the
+        // outer strip competing with everything else on it.
+        assertThatCode(() -> AppCatalogService.validateTabs(
+                page(tabs("outer", "uat", "prod"), tabs("uat", "g1", "g2"), tabs("prod", "g3"),
+                     control("g1", "grid"), control("g2", "grid"), control("g3", "grid"))))
+                .doesNotThrowAnyException();
     }
 
     @Test
-    void aTextBoxAsATab_isRefused() {
-        assertThatThrownBy(() -> AppCatalogService.validateTabs(page(tabs("t", "box"), control("box", "text"))))
+    void groupsNestedSeveralDeep_areFine() {
+        // Nothing caps the depth: what is refused is arriving back at the start, not going far.
+        assertThatCode(() -> AppCatalogService.validateTabs(
+                page(tabs("a", "b"), tabs("b", "c"), tabs("c", "d"), tabs("d", "g"), control("g", "grid"))))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void aTabSetHoldingItself_isRefused() {
+        // It has no depth at which it stops being drawn, and there is no outermost tab to be looking at.
+        assertThatThrownBy(() -> AppCatalogService.validateTabs(page(tabs("t", "t"))))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("a tab set holds grids and charts");
+                .hasMessageContaining("ends up holding itself");
+    }
+
+    @Test
+    void twoTabSetsHoldingEachOther_isRefused() {
+        // Each holds the other once, so the "one set claims it" rule does not catch this on its own.
+        assertThatThrownBy(() -> AppCatalogService.validateTabs(page(tabs("a", "b"), tabs("b", "a"))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("ends up holding itself");
+    }
+
+    @Test
+    void aRingOfThreeTabSets_isRefusedToo() {
+        // Followed down far enough, a ring arrives back at its start exactly as a pair does.
+        assertThatThrownBy(() -> AppCatalogService.validateTabs(
+                page(tabs("a", "b"), tabs("b", "c"), tabs("c", "a"))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("ends up holding itself");
+    }
+
+    @Test
+    void aHiddenFieldAsATab_isRefused() {
+        // It is not on screen to be looked at, so the tab would be a name over nothing — and it has
+        // to stay where the page lays it out to go on carrying its value.
+        assertThatThrownBy(() -> AppCatalogService.validateTabs(page(tabs("t", "h"), control("h", "hidden"))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("except a hidden field");
+    }
+
+    @Test
+    void aFormOfFieldsAndAButtonAsTabs_isTheOtherHalfOfThis() {
+        // The first tab is what to fill in, the rest are the readings of what came back.
+        AppPage page = page(tabs("t", "box", "pick", "go", "note", "g"),
+                control("box", "text"), control("pick", "select"), control("go", "button"),
+                control("note", "label"), control("g", "grid"));
+        assertThatCode(() -> AppCatalogService.validateTabs(page)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void aLineChartAsATab_isFine() {
+        assertThatCode(() -> AppCatalogService.validateTabs(page(tabs("t", "l"), control("l", "line"))))
+                .doesNotThrowAnyException();
     }
 
     @Test

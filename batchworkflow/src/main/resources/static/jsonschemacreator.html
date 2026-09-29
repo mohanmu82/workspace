@@ -77,6 +77,30 @@
     .result-box code { background: rgba(0,0,0,.07); border-radius: 3px; padding: 1px 4px;
                        font-family: "Cascadia Code", Consolas, monospace; font-size: 11px; }
 
+    /* Sample JSON tabs (multi-file) */
+    .sample-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+    .sample-tabs { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+    .sample-tab {
+      display: flex; align-items: center; gap: 5px; padding: 4px 6px 4px 10px;
+      font-size: 12px; border: 1px solid #dfe1e6; border-radius: 4px; background: #f4f5f7;
+      color: #172b4d; cursor: pointer; max-width: 200px; }
+    .sample-tab:hover { background: #ebecf0; }
+    .sample-tab.active { background: #fff; border-color: #0052cc; color: #0052cc; font-weight: 600; }
+    .sample-tab .tab-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sample-tab .tab-dot { width: 6px; height: 6px; border-radius: 50%; background: #c1c7d0; flex: none; }
+    .sample-tab .tab-dot.filled { background: #36b37e; }
+    .sample-tab .tab-close {
+      border: none; background: transparent; color: #5e6c84; font-size: 13px; line-height: 1;
+      padding: 0 3px; cursor: pointer; border-radius: 3px; }
+    .sample-tab .tab-close:hover { background: rgba(0,0,0,.08); color: #de350b; }
+    /* a <label> does not pick up the button.tool-btn rules, so restate them */
+    label.file-btn { display: inline-block; background: #f4f5f7; color: #172b4d;
+                     border: 1px solid #dfe1e6; border-radius: 4px; padding: 4px 10px;
+                     font-size: 12px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+    label.file-btn:hover { background: #ebecf0; }
+    .file-btn input { display: none; }
+    .sample-hint { font-size: 11px; color: #5e6c84; margin: 6px 0 0; min-height: 15px; }
+
     /* ── Schema Editor ─────────────────────────────────────────────────────── */
     #editorPanel { display: none; margin-top: 16px; }
 
@@ -185,10 +209,21 @@
   <div class="panel">
     <div class="panel-title">Schema Creator</div>
 
-    <span class="field-label">Sample JSON</span>
-    <div class="form-group" style="margin-bottom:8px;">
-      <textarea id="jsonInput" rows="10" placeholder='Paste a sample JSON object or array here...'></textarea>
+    <span class="field-label">Sample JSON <span style="font-size:10px;text-transform:none;letter-spacing:0;font-weight:400;">(add several &mdash; one schema is generated for all of them)</span></span>
+    <div class="sample-bar">
+      <div class="sample-tabs" id="sampleTabs"></div>
+      <button class="tool-btn add-btn" onclick="addSample()">+ Add JSON</button>
+      <label class="tool-btn add-btn file-btn" title="Load one or more .json files">
+        &#128193; Load Files
+        <input type="file" id="sampleFiles" multiple accept=".json,application/json,text/plain"
+               onchange="loadSampleFiles(this)">
+      </label>
     </div>
+    <div class="form-group" style="margin-bottom:8px;">
+      <textarea id="jsonInput" rows="10" oninput="syncActiveSample()"
+                placeholder='Paste a sample JSON object or array here...'></textarea>
+    </div>
+    <div id="sampleHint" class="sample-hint"></div>
     <div class="toolbar">
       <button class="primary" onclick="generateSchema()">Generate Schema</button>
       <button class="tool-btn" onclick="prettyInput()">Pretty Print</button>
@@ -311,10 +346,7 @@
     if (typeof value === 'string') return { type: 'string' };
     if (Array.isArray(value)) {
       const schema = { type: 'array' };
-      if (value.length > 0) {
-        const subs = value.map(inferSchema);
-        schema.items = subs.length === 1 ? subs[0] : mergeSchemas(subs);
-      }
+      if (value.length > 0) schema.items = mergeSchemas(value.map(inferSchema));
       return schema;
     }
     if (typeof value === 'object') {
@@ -331,46 +363,246 @@
     return {};
   }
 
+  // Merge any number of schemas into a single schema that every input validates
+  // against: properties are unioned, "required" is the intersection (a field
+  // missing from one sample cannot be required), and differing types collapse
+  // into a type list.
   function mergeSchemas(schemas) {
-    const types = [...new Set(schemas.map(s => s.type).filter(Boolean))];
-    if (types.length === 1 && types[0] === 'object') {
-      const merged = { type: 'object', properties: {}, additionalProperties: true };
-      const allKeys = new Set(schemas.flatMap(s => Object.keys(s.properties || {})));
-      const reqAll = [...allKeys].filter(k => schemas.every(s => s.required?.includes(k)));
-      for (const key of allKeys) {
-        const ps = schemas.filter(s => s.properties?.[key]).map(s => s.properties[key]);
-        merged.properties[key] = ps.length === 1 ? ps[0] : mergeSchemas(ps);
-      }
-      if (reqAll.length) merged.required = reqAll;
-      return merged;
+    const flat = [];
+    for (const sc of schemas || []) {
+      if (!sc || !Object.keys(sc).length) continue;
+      if (Array.isArray(sc.oneOf)) flat.push(...sc.oneOf); else flat.push(sc);
     }
-    if (types.length === 1) return schemas[0];
-    return { oneOf: [...new Map(schemas.map(s => [JSON.stringify(s), s])).values()] };
+    if (!flat.length) return {};
+    if (flat.length === 1) return flat[0];
+
+    const objs  = flat.filter(sc => sc.type === 'object');
+    const arrs  = flat.filter(sc => sc.type === 'array');
+    const prims = flat.filter(sc => sc.type !== 'object' && sc.type !== 'array');
+
+    const types  = [];
+    const merged = {};
+
+    if (objs.length) {
+      types.push('object');
+      const allKeys = new Set(objs.flatMap(sc => Object.keys(sc.properties || {})));
+      if (allKeys.size) {
+        merged.properties = {};
+        for (const key of allKeys) {
+          merged.properties[key] = mergeSchemas(
+            objs.filter(sc => sc.properties && sc.properties[key]).map(sc => sc.properties[key]));
+        }
+        const req = [...allKeys].filter(k => objs.every(sc => (sc.required || []).includes(k)));
+        if (req.length) merged.required = req;
+      }
+      merged.additionalProperties = objs.every(sc => sc.additionalProperties !== false);
+    }
+
+    if (arrs.length) {
+      types.push('array');
+      const items = arrs.filter(sc => sc.items).map(sc => sc.items);
+      if (items.length) merged.items = mergeSchemas(items);
+    }
+
+    if (prims.length) {
+      const pt = [...new Set(prims.flatMap(sc => Array.isArray(sc.type) ? sc.type : [sc.type]))]
+                 .filter(Boolean);
+      // an integer sample is also a valid number, so "number" absorbs "integer"
+      if (pt.includes('number')) {
+        const i = pt.indexOf('integer');
+        if (i >= 0) pt.splice(i, 1);
+      }
+      types.push(...pt);
+    }
+
+    const uniq = [...new Set(types)];
+    return Object.assign({ type: uniq.length === 1 ? uniq[0] : uniq }, merged);
   }
 
+  // Merging samples can produce a type list (e.g. ["string","null"]); the form
+  // editor edits one type per field, so keep the first real type editable and
+  // carry the rest through untouched so a round-trip loses nothing.
+  function primaryType(t, fallback) {
+    if (Array.isArray(t)) return t.find(x => x !== 'null') || t[0] || fallback;
+    return t || fallback;
+  }
+
+  function otherTypes(t, primary) {
+    return Array.isArray(t) ? t.filter(x => x !== primary) : [];
+  }
+
+  function withTypes(type, extras) {
+    return (extras && extras.length) ? [type, ...extras] : type;
+  }
+
+  // ── Sample JSON files ──────────────────────────────
+
+  let samples      = [];
+  let activeSample = null;
+  let sampleSeq    = 0;
+
+  function makeSample(name, text) {
+    return { id: 'smp' + (++sampleSeq), name: name || ('Sample ' + (samples.length + 1)), text: text || '' };
+  }
+
+  function initSamples() {
+    samples = [];
+    samples.push(makeSample('Sample 1', ''));
+    activeSample = samples[0].id;
+    renderSamples();
+  }
+
+  function currentSample() {
+    return samples.find(sm => sm.id === activeSample) || null;
+  }
+
+  // Textarea -> model (called on every keystroke)
+  function syncActiveSample() {
+    const cur = currentSample();
+    if (cur) cur.text = document.getElementById('jsonInput').value;
+    updateSampleHint();
+  }
+
+  function renderSamples() {
+    const bar = document.getElementById('sampleTabs');
+    bar.innerHTML = '';
+    samples.forEach(sm => {
+      const tab = document.createElement('div');
+      tab.className = 'sample-tab' + (sm.id === activeSample ? ' active' : '');
+      tab.title = sm.name;
+      tab.onclick = () => selectSample(sm.id);
+
+      const dot = document.createElement('span');
+      dot.className = 'tab-dot' + (sm.text.trim() ? ' filled' : '');
+      tab.appendChild(dot);
+
+      const label = document.createElement('span');
+      label.className = 'tab-name';
+      label.textContent = sm.name;
+      tab.appendChild(label);
+
+      const close = document.createElement('button');
+      close.className = 'tab-close';
+      close.innerHTML = '&#10005;';
+      close.title = 'Remove this sample';
+      close.onclick = ev => { ev.stopPropagation(); removeSample(sm.id); };
+      tab.appendChild(close);
+
+      bar.appendChild(tab);
+    });
+    const cur = currentSample();
+    document.getElementById('jsonInput').value = cur ? cur.text : '';
+    updateSampleHint();
+  }
+
+  function updateSampleHint() {
+    const filled = samples.filter(sm => sm.text.trim()).length;
+    document.getElementById('sampleHint').textContent =
+      samples.length <= 1
+        ? 'Add more JSON samples (or load .json files) to generate one schema that fits all of them.'
+        : filled + ' of ' + samples.length + ' sample(s) filled — the generated schema will accept every one.';
+  }
+
+  function selectSample(id) {
+    syncActiveSample();
+    activeSample = id;
+    renderSamples();
+  }
+
+  function addSample(name, text) {
+    syncActiveSample();
+    const sm = makeSample(typeof name === 'string' ? name : null, text);
+    samples.push(sm);
+    activeSample = sm.id;
+    renderSamples();
+    return sm;
+  }
+
+  function removeSample(id) {
+    syncActiveSample();
+    if (samples.length === 1) {          // keep at least one tab; just empty it
+      samples[0].text = '';
+      samples[0].name = 'Sample 1';
+      renderSamples();
+      return;
+    }
+    const idx = samples.findIndex(sm => sm.id === id);
+    if (idx < 0) return;
+    samples.splice(idx, 1);
+    if (activeSample === id) activeSample = samples[Math.min(idx, samples.length - 1)].id;
+    renderSamples();
+  }
+
+  async function loadSampleFiles(input) {
+    const files = [...(input.files || [])];
+    input.value = '';                    // allow re-picking the same file
+    if (!files.length) return;
+    syncActiveSample();
+    const errors = [];
+    for (const file of files) {
+      let text;
+      try { text = await file.text(); }
+      catch (e) { errors.push(file.name + ': ' + e.message); continue; }
+      try { JSON.parse(text); }
+      catch (e) { errors.push(file.name + ': invalid JSON — ' + e.message); }
+      // reuse the initial empty tab rather than leaving a blank one behind
+      const blank = samples.length === 1 && !samples[0].text.trim() ? samples[0] : null;
+      if (blank) {
+        blank.name = file.name; blank.text = text; activeSample = blank.id;
+      } else {
+        const sm = makeSample(file.name, text);
+        samples.push(sm);
+        activeSample = sm.id;
+      }
+    }
+    renderSamples();
+    setStatus('saveStatus',
+      errors.length ? 'Loaded with problems: ' + errors.join('; ')
+                    : files.length + ' file(s) loaded.',
+      errors.length ? 'error' : 'ok');
+  }
+
+  // ── Schema Generation (all samples) ──────────────────────────────
+
   function generateSchema() {
-    const raw = document.getElementById('jsonInput').value.trim();
-    if (!raw) { alert('Please enter sample JSON first.'); return; }
-    let parsed;
-    try { parsed = JSON.parse(raw); } catch (e) { alert('Invalid JSON: ' + e.message); return; }
-    const schema = { $schema: 'http://json-schema.org/draft-07/schema#', ...inferSchema(parsed) };
+    syncActiveSample();
+    const filled = samples.filter(sm => sm.text.trim());
+    if (!filled.length) { alert('Please enter sample JSON first.'); return; }
+
+    const parsed = [];
+    for (const sm of filled) {
+      try { parsed.push(JSON.parse(sm.text)); }
+      catch (e) { alert('Invalid JSON in "' + sm.name + '": ' + e.message); return; }
+    }
+
+    const merged = parsed.length === 1
+      ? inferSchema(parsed[0])
+      : mergeSchemas(parsed.map(inferSchema));
+    const schema = { $schema: 'http://json-schema.org/draft-07/schema#', ...merged };
     document.getElementById('schemaOutput').value = JSON.stringify(schema, null, 2);
+    setStatus('saveStatus',
+      'Schema generated from ' + parsed.length + ' sample(s): ' + filled.map(sm => sm.name).join(', '),
+      'ok');
   }
 
   function prettyInput() {
-    const ta = document.getElementById('jsonInput');
-    try { ta.value = JSON.stringify(JSON.parse(ta.value), null, 2); } catch (e) { alert('Invalid JSON: ' + e.message); }
+    const cur = currentSample();
+    if (!cur) return;
+    syncActiveSample();
+    try { cur.text = JSON.stringify(JSON.parse(cur.text), null, 2); }
+    catch (e) { alert('Invalid JSON in "' + cur.name + '": ' + e.message); return; }
+    document.getElementById('jsonInput').value = cur.text;
   }
 
   function clearCreator() {
-    document.getElementById('jsonInput').value = '';
+    initSamples();
     document.getElementById('schemaOutput').value = '';
     document.getElementById('schemaName').value = '';
     setStatus('saveStatus', '', '');
     closeEditor();
   }
 
-  // ── Save Schema ──────────────────────────────────────────────────────────────
+  // ── Save Schema ──────────────────────────────
 
   async function saveSchema() {
     const name = document.getElementById('schemaName').value.trim();
@@ -493,6 +725,7 @@
   let rootMeta = {
     $schema: '',
     type: 'object',
+    extraTypes: [],
     additionalProperties: true,
     dependentRequired: []   // [{ id, field, requires }]
   };
@@ -505,9 +738,11 @@
     let schema;
     try { schema = JSON.parse(txt); } catch (e) { alert('Invalid JSON schema: ' + e.message); return; }
 
+    const rootType = primaryType(schema.type, 'object');
     rootMeta = {
       $schema: schema.$schema || '',
-      type:    schema.type || 'object',
+      type:    rootType,
+      extraTypes: otherTypes(schema.type, rootType),
       additionalProperties: schema.additionalProperties !== false,
       dependentRequired: []
     };
@@ -523,10 +758,10 @@
     }
 
     nodes = [];
-    if (schema.type === 'object' && schema.properties) {
+    if (rootType === 'object' && schema.properties) {
       const req = schema.required || [];
       for (const [k, ps] of Object.entries(schema.properties)) addParsedNode(k, ps, null, req.includes(k));
-    } else if (schema.type === 'array' && schema.items?.type === 'object' && schema.items.properties) {
+    } else if (rootType === 'array' && primaryType(schema.items?.type) === 'object' && schema.items.properties) {
       const req = schema.items.required || [];
       for (const [k, ps] of Object.entries(schema.items.properties)) addParsedNode(k, ps, null, req.includes(k));
     }
@@ -541,7 +776,8 @@
 
   function addParsedNode(key, schema, parentId, required) {
     const id       = genId();
-    const itemType = (schema.type === 'array' && schema.items) ? (schema.items.type || 'string') : 'string';
+    const type     = primaryType(schema.type, 'string');
+    const itemType = (type === 'array' && schema.items) ? primaryType(schema.items.type, 'string') : 'string';
     const enumVals = Array.isArray(schema.enum)
       ? schema.enum.map(v => (typeof v === 'string' ? v : JSON.stringify(v))).join(', ')
       : '';
@@ -551,7 +787,8 @@
 
     nodes.push({
       id, parentId, key,
-      type:        schema.type || 'string',
+      type,
+      extraTypes:  otherTypes(schema.type, type),
       description: schema.description || '',
       required:    !!required,
       collapsed:   false,
@@ -570,11 +807,11 @@
       showConstraints: hasConstraints
     });
 
-    if (schema.type === 'object' && schema.properties) {
+    if (type === 'object' && schema.properties) {
       const req = schema.required || [];
       for (const [k, s] of Object.entries(schema.properties)) addParsedNode(k, s, id, req.includes(k));
     }
-    if (schema.type === 'array' && schema.items?.type === 'object' && schema.items.properties) {
+    if (type === 'array' && primaryType(schema.items?.type) === 'object' && schema.items.properties) {
       const req = schema.items.required || [];
       for (const [k, s] of Object.entries(schema.items.properties)) addParsedNode(k, s, id, req.includes(k));
     }
@@ -841,9 +1078,9 @@
       } else {
         items = { type: 'string' };
       }
-      schema = { ...base, type: 'array', items };
+      schema = { ...base, type: withTypes('array', rootMeta.extraTypes), items };
     } else {
-      schema = { ...base, type: 'object', additionalProperties: addlProps };
+      schema = { ...base, type: withTypes('object', rootMeta.extraTypes), additionalProperties: addlProps };
       if (rootChildren.length) {
         schema.properties = {};
         const req = [];
@@ -866,7 +1103,7 @@
   }
 
   function buildNodeSchema(node) {
-    const s = { type: node.type };
+    const s = { type: withTypes(node.type, node.extraTypes) };
     if (node.description) s.description = node.description;
 
     // Enum
@@ -933,6 +1170,7 @@
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
+  initSamples();
   loadSchemas();
 </script>
 </body>

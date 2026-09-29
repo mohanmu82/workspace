@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.function.Predicate;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -148,6 +149,75 @@ class AppPageEnrichColumnTest {
                 .hasMessageContaining("which grid column is the row key");
         assertThatThrownBy(() -> validate(action("grid", gridLookup("o", "src", "accountId", "id", null))))
                 .hasMessageContaining("which grid column to bring back");
+    }
+
+    private static AppPageEnrichColumn wholeRow(String grid, String lookup, String key, String prefix) {
+        return new AppPageEnrichColumn(null, "GRID_VLOOKUP_ROW", null, null, lookup, key, null, grid, prefix, null);
+    }
+
+    private static AppPageEnrichColumn regex(String name, String column, String pattern, String replacement) {
+        return new AppPageEnrichColumn(name, "REGEX", pattern, null, column, null, null, null, null, replacement);
+    }
+
+    @Test
+    void aWholeRowLookup_needsAGridAndAKey_butNoNameAndNoColumnToBringBack() {
+        assertThatCode(() -> validate(action("grid", wholeRow("src", "accountId", "id", "ref_"))))
+                .doesNotThrowAnyException();
+        // The prefix is the option, not the requirement: without one the columns come back under
+        // their own names, overwriting any of this grid's that match.
+        assertThatCode(() -> validate(action("grid", wholeRow("src", "accountId", "id", null))))
+                .doesNotThrowAnyException();
+        assertThatThrownBy(() -> validate(action("grid", wholeRow("", "accountId", "id", "ref_"))))
+                .hasMessageContaining("names no grid to look up into");
+        assertThatThrownBy(() -> validate(action("grid", wholeRow("pick", "accountId", "id", "ref_"))))
+                .hasMessageContaining("not on this page: pick");
+        assertThatThrownBy(() -> validate(action("grid", wholeRow("src", " ", "id", "ref_"))))
+                .hasMessageContaining("which grid column to look up");
+        assertThatThrownBy(() -> validate(action("grid", wholeRow("src", "accountId", "", "ref_"))))
+                .hasMessageContaining("which grid column is the row key");
+    }
+
+    @Test
+    void twoWholeRowLookups_doNotCollideOverTheNameNeitherOfThemHas() {
+        assertThatCode(() -> validate(action("grid", wholeRow("src", "accountId", "id", "acct_"),
+                                                     wholeRow("src", "deskId", "id", "desk_"))))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void aRegexColumn_needsAColumnAndAPatternThatCompiles() {
+        assertThatCode(() -> validate(action("grid", regex("desk", "message", "desk=(\\w+)", null))))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> validate(action("grid", regex("env", "host", "/^(\\w+)-(\\w+)\\./i", "$2 in $1"))))
+                .doesNotThrowAnyException();
+        assertThatThrownBy(() -> validate(action("grid", regex("desk", " ", "desk=(\\w+)", null))))
+                .hasMessageContaining("which grid column to run its pattern over");
+        assertThatThrownBy(() -> validate(action("grid", regex("desk", "message", "", null))))
+                .hasMessageContaining("no pattern to run");
+        assertThatThrownBy(() -> validate(action("grid", regex("desk", "message", "desk=(\\w+", null))))
+                .hasMessageContaining("not a pattern this page can run");
+    }
+
+    @Test
+    void aRegexColumn_isRefusedAGroupItsPatternDoesNotHave() {
+        assertThatThrownBy(() -> validate(action("grid", regex("desk", "message", "desk=(\\w+)", "$1/$2"))))
+                .hasMessageContaining("puts $2 in what the cell gets")
+                .hasMessageContaining("only 1");
+        assertThatThrownBy(() -> validate(action("grid", regex("desk", "message", "desk=\\w+", "$1"))))
+                .hasMessageContaining("no capturing groups");
+        // $$1 is an escaped dollar followed by a 1, not a group reference.
+        assertThatCode(() -> validate(action("grid", regex("desk", "message", "desk=\\w+", "$$1"))))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void aPatternMayCarryItsFlagsBetweenSlashes() {
+        assertThat(AppCatalogService.regexBody("/a.b/is")).isEqualTo("a.b");
+        assertThat(AppCatalogService.regexBody("a.b")).isEqualTo("a.b");
+        // Not flags, so not the /body/flags form: the whole thing is the pattern.
+        assertThat(AppCatalogService.regexBody("/a.b/xyz")).isEqualTo("/a.b/xyz");
+        // A pattern that is only slashes has no body to take, so it stays as it is.
+        assertThat(AppCatalogService.regexBody("//")).isEqualTo("//");
     }
 
     @Test

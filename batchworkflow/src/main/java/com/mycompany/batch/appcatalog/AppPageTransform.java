@@ -43,6 +43,14 @@ public class AppPageTransform {
     private String type = JSONATA;
     /** The JSONata itself, e.g. {@code data.items.{"id": id, "who": owner.name}}. JSONATA only. */
     private String expression;
+    /**
+     * The name of a {@link JsonataLibraryService shared library} expression to run instead of
+     * {@link #expression}. JSONATA only, and the two are alternatives: a step that names one is a
+     * reference, and the library's text is what runs, so the same reshaping corrected once is
+     * corrected on every page that named it. A step that names none carries its own expression,
+     * which is the only thing a step could do before the library existed.
+     */
+    private String jsonataRef;
 
     public String getName()               { return name; }
     public void   setName(String name)    { this.name = name == null || name.isBlank() ? null : name.trim(); }
@@ -56,6 +64,14 @@ public class AppPageTransform {
     public String getExpression()                   { return expression; }
     public void   setExpression(String expression)  { this.expression = expression; }
 
+    public String getJsonataRef()                   { return jsonataRef; }
+    public void   setJsonataRef(String jsonataRef)  {
+        this.jsonataRef = jsonataRef == null || jsonataRef.isBlank() ? null : jsonataRef.trim();
+    }
+
     /** Whether this step converts XML rather than evaluating an expression. */
     public boolean isXml2Json()   { return XML2JSON.equals(type); }
+
+    /** Whether this step's expression comes from the shared library rather than from the page. */
+    public boolean isLibraryRef() { return !isXml2Json() && jsonataRef != null; }
 }

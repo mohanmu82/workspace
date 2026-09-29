@@ -5,11 +5,18 @@ import java.util.List;
 /**
  * One column of the grid a fan-out collects its answers into.
  *
- * <p>Without any of these, a collected fan-out's grid is whatever the responses happen to contain:
- * the leading {@code source} column, then every field of every answer, under the names the endpoint
- * chose. Which is the right default and a poor report. Named columns turn it into one — the id that
- * was asked about beside the status that came back beside how long it took — by saying where each
- * cell comes from rather than hoping the response already reads that way.
+ * <p>A collected fan-out's grid is whatever the responses happen to contain: the leading
+ * {@code source} column, then every field of every answer, under the names the endpoint chose.
+ * Which is the right default and a poor report, because the one thing a response never carries is
+ * anything about the call that fetched it. These are added beside it — the id that was asked
+ * about, the status that came back, how long it took — and nothing the response brought is
+ * dropped to make room.
+ *
+ * <p>Each is a property of the call rather than of a row, so each is worked out once per call and
+ * written onto every row that call produced: a call whose array path found eight rows gets eight
+ * rows carrying the same status code and the same source id. A column named the same as one the
+ * response brought overwrites it, which is how a field is deliberately restated under a name the
+ * reader knows.
  *
  * <p>The four places a cell can come from are the four things a call actually has, and that is why
  * there are four {@link #kinds}: the row that produced it, the response it answered with, the

@@ -137,6 +137,32 @@ class AppPageFanOutTest {
     }
 
     @Test
+    void aRowPerCallAimedAtASelect_becomesTheOptionsOfOneDropdown() {
+        AppPage page = new AppPage();
+        page.setControls(List.of(control("src", "grid"), control("pick", "select"), control("picks", "multiselect")));
+        assertThatCode(() -> AppCatalogService.validateActionTarget(page, action("src", AppPageAction.ROWS, "pick"), WHERE))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> AppCatalogService.validateActionTarget(page, action("src", AppPageAction.ROWS, "picks"), WHERE))
+                .doesNotThrowAnyException();
+    }
+
+    /**
+     * The rows a fan-out collects into a dropdown go through the enrichment first, and the column it
+     * brings in is often the very one the label is read from — so a dropdown takes enriched columns
+     * exactly as the collected grid does.
+     */
+    @Test
+    void enrichedColumnsOnAFanOutFillingADropdown_areTakenAsTheyAreForAGrid() {
+        AppPage page = new AppPage();
+        page.setControls(List.of(control("src", "grid"), control("pick", "select")));
+        AppPageAction action = action("src", AppPageAction.ROWS, "pick");
+        action.setEnrichColumns(List.of(new AppPageEnrichColumn("calledUrl", AppPageEnrichColumn.META, "url",
+                null, null, null, null)));
+        assertThatCode(() -> AppCatalogService.validateEnrichColumns(page, action, name -> true, WHERE))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
     void anOrdinaryActionAimedAtATabSet_isSentToOneOfItsGridsInstead() {
         assertThatThrownBy(() -> AppCatalogService.validateActionTarget(page(), action("", null, "tabs"), WHERE))
                 .isInstanceOf(IllegalArgumentException.class)

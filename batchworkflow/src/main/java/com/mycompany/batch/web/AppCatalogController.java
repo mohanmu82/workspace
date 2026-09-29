@@ -355,11 +355,11 @@ public class AppCatalogController {
     /**
      * The values a running page's built-in variables take that only this server can answer for.
      *
-     * <p>Which today is one: the machine. The date, the time and a fresh UUID the browser works out
-     * for itself, and should — they are what the operator's clock says, which is what an operator
-     * reading a timestamped request back means by "today". The host name is the other way round:
-     * the browser cannot know its own, and the box that matters is the one the calls actually leave
-     * from, which is this one.
+     * <p>Which today is two: the machine and the process. The date, the time and a fresh UUID the
+     * browser works out for itself, and should — they are what the operator's clock says, which is
+     * what an operator reading a timestamped request back means by "today". The host name and the
+     * process id are the other way round: the browser can know neither, and the box and the JVM that
+     * matter are the ones the calls actually leave from, which are these.
      *
      * <p>Answered rather than refused when the name cannot be resolved at all: a page whose
      * {@code $MACHINE} comes back empty is a page with one blank field, and failing the whole
@@ -369,7 +369,11 @@ public class AppCatalogController {
     // "globals" would otherwise be unreachable, and a page name is whatever somebody typed.
     @GetMapping("/page-globals")
     public ResponseEntity<?> pageGlobals() {
-        return ResponseEntity.ok(Map.of("machine", localMachineName()));
+        return ResponseEntity.ok(Map.of(
+                "machine", localMachineName(),
+                // As a string, because a template writes it into a request body as text anyway and a
+                // number here would only be turned back into one at the other end.
+                "pid",     String.valueOf(ProcessHandle.current().pid())));
     }
 
     /**

@@ -1009,6 +1009,7 @@
      */
     function renderInstanceInputs(values) {
         const container = document.getElementById('instanceInputs');
+        pendingDocValues = [];
         if (!currentUseCase) {
             container.innerHTML = '<div class="empty-note">Select a use case to see its inputs.</div>';
             renderUrlPreview();
@@ -1040,17 +1041,67 @@
             inputFieldHtml(name, 'string', values[name], 'no longer declared')));
 
         container.innerHTML = '<div class="form-row" style="margin-bottom:0">' + rows.join('') + '</div>';
+        // A document value goes in through the DOM rather than the markup: written between the tags it
+        // would be read as HTML — entities decoded, a leading newline dropped — and a value is text.
+        pendingDocValues.forEach(pending => { document.getElementById(pending.id).value = pending.value; });
         renderUrlPreview();
     }
 
+    /**
+     * One field per input. A json or xml input gets a full-width textarea and the pretty printer for
+     * its format: its value is a document, and a one-line box both hides it and — since an input
+     * element drops newlines out of its value — would quietly reformat it on the way in.
+     */
     function inputFieldHtml(name, type, value, flag) {
-        const rendered = typeof value === 'object' && value !== null ? JSON.stringify(value) : (value === undefined || value === null ? '' : value);
-        return '<div class="form-group">' +
-                    '<label>' + AC.esc(name) + ' <span class="hint">' + AC.esc(type) +
-                        (flag ? ' <span class="input-flag">· ' + AC.esc(flag) + '</span>' : '') + '</span></label>' +
-                    '<input type="text" class="instance-input" data-name="' + AC.esc(name) + '" data-type="' + AC.esc(type) + '" ' +
-                           'oninput="renderUrlPreview()" value="' + AC.esc(rendered) + '">' +
-                '</div>';
+        const document_ = AC.isDocumentType(type);
+        const rendered = typeof value === 'object' && value !== null
+            ? (document_ ? AC.prettyJson(value) : JSON.stringify(value))
+            : (value === undefined || value === null ? '' : value);
+        const label = '<label>' + AC.esc(name) + ' <span class="hint">' + AC.esc(type) +
+                        (flag ? ' <span class="input-flag">· ' + AC.esc(flag) + '</span>' : '') + '</span></label>';
+        const attributes = 'class="instance-input" data-name="' + AC.esc(name) + '" data-type="' + AC.esc(type) + '" ' +
+                           'oninput="renderUrlPreview()"';
+        if (!document_) {
+            return '<div class="form-group">' + label +
+                        '<input type="text" ' + attributes + ' value="' + AC.esc(rendered) + '">' +
+                   '</div>';
+        }
+        const id = 'instanceDoc' + (docFieldSeq++);
+        pendingDocValues.push({ id, value: rendered });
+        return '<div class="form-group wide input-doc">' + label +
+                    '<textarea id="' + id + '" spellcheck="false" ' + attributes + '></textarea>' +
+                    '<div class="fmt-tools">' +
+                        '<button class="tool-btn" onclick="prettyPrintInstanceInput(\'' + id + '\')">' +
+                            'Pretty print ' + AC.esc(type.toUpperCase()) + '</button>' +
+                        '<span class="fmt-status" id="' + id + 'Status"></span>' +
+                    '</div>' +
+               '</div>';
+    }
+
+    /** Ids for the document textareas, so each one's button and status line can find it. */
+    let docFieldSeq = 0;
+    /** The textarea values to fill in once the fields are on the page. */
+    let pendingDocValues = [];
+
+    /** Formats one json / xml value in place, or says why it will not parse. */
+    function prettyPrintInstanceInput(id) {
+        const box = document.getElementById(id);
+        const status = document.getElementById(id + 'Status');
+        box.classList.remove('doc-ok', 'doc-err');
+        status.className = 'fmt-status';
+        const raw = (box.value || '').trim();
+        if (!raw) { status.textContent = 'Nothing to format yet.'; return; }
+        try {
+            box.value = AC.formatDocument(box.dataset.type, raw);
+            box.classList.add('doc-ok');
+            status.className = 'fmt-status ok';
+            status.textContent = box.dataset.type.toUpperCase() + ' formatted.';
+        } catch (e) {
+            box.classList.add('doc-err');
+            status.className = 'fmt-status error';
+            status.textContent = e.message;
+        }
+        renderUrlPreview();
     }
 
     /**
@@ -1131,6 +1182,12 @@
                     try { out[name] = JSON.parse(raw); }
                     catch (e) { throw new Error('Input "' + name + '" is not valid JSON: ' + e.message); }
                     break;
+                case 'xml':
+                    // Kept as the text it was typed as — that is what goes into the request — but
+                    // checked here, where it can still be corrected.
+                    try { AC.formatXml(raw); }
+                    catch (e) { throw new Error('Input "' + name + '" — ' + e.message); }
+                    out[name] = raw; break;
                 default:
                     out[name] = raw;
             }

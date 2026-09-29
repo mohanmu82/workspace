@@ -57,6 +57,32 @@ class AppCatalogServiceTest {
     }
 
     @Test
+    void addressWrittenOverThePage_isKeptWhateverItsSchemeTurnsOutToBe() {
+        // The host is a control's value, so there is no scheme here to check — the running page
+        // fills it in and holds the finished address to this same rule before it reaches an href.
+        assertThatCode(() -> AppCatalogService.validateLinkUrl(link("${reportHost}/orders/${orderId}"), "Control 'x'"))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> AppCatalogService.validateLinkUrl(link("$reportHost/orders"), "Control 'x'"))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void placeholderInsideAnAddressThatSaysWhatItIs_isStillCheckedLikeAnyOther() {
+        assertThatCode(() -> AppCatalogService.validateLinkUrl(link("https://reports/orders/${orderId}"), "Control 'x'"))
+                .doesNotThrowAnyException();
+        assertThatThrownBy(() -> AppCatalogService.validateLinkUrl(link("ftp://reports/${orderId}"), "Control 'x'"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void aLoneDollar_isNotAPlaceholder_andIsHeldToTheSchemeRule() {
+        assertThatThrownBy(() -> AppCatalogService.validateLinkUrl(link("$"), "Control 'x'"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> AppCatalogService.validateLinkUrl(link("${}/orders"), "Control 'x'"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void aNonLinkKeepsItsDefaultValue_whateverItSays() {
         AppPageControl box = new AppPageControl();
         box.setType("text");

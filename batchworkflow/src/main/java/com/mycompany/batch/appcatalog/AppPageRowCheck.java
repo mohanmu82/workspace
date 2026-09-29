@@ -14,7 +14,7 @@ import java.util.List;
  * the ones the expression calls true are drawn in red, and the grid's name carries the tally.
  *
  * <p>Evaluation happens in the browser, where the rows are — see {@code parseRowCheck} and
- * {@code evalRowCheck} in apppage.html, which this mirrors. What happens here is the reading: an
+ * {@code evalRowCheck} in apppage.js, which this mirrors. What happens here is the reading: an
  * expression that does not parse is refused when the page is saved, where the designer can fix it,
  * rather than discovered by an operator wondering why a grid of failures came out entirely green.
  *

@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSONata Library</title>
+    <link rel="stylesheet" href="appcatalog.css">
+    <style>
+        /* The two halves of the editor: what the expression is, and what it does to a document.
+           Written here rather than in appcatalog.css because no other sub-page has a tester. */
+
+        .editor-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
+        @media (max-width: 1100px) { .editor-cols { grid-template-columns: 1fr; } }
+
+        textarea.expr   { min-height: 190px; }
+        textarea.sample { min-height: 150px; }
+
+        /* The grid mounts into a fixed height: ExcelGrid fills its container, and a container that
+           grows with the rows would push Apply off the screen on the first hundred-row result. */
+        #resultGrid { height: 320px; }
+        #resultRaw  { min-height: 320px; background: #fafbfc; }
+
+        .result-tabs { display: flex; gap: 2px; margin-bottom: 8px; }
+        .result-tab {
+            padding: 5px 12px; font-size: 12px; font-weight: 600; color: #5e6c84;
+            background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer;
+        }
+        .result-tab.active { color: #0052cc; border-bottom-color: #0052cc; }
+
+        .usage-list { display: flex; flex-wrap: wrap; gap: 6px; }
+
+        .ref-line {
+            font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+            font-size: 12px; background: #f4f5f7; border: 1px solid #dfe1e6; border-radius: 4px;
+            padding: 6px 9px; word-break: break-all; user-select: all;
+        }
+
+        .list-search { margin-bottom: 8px; }
+        .record .record-expr {
+            font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+            font-size: 11px; color: #5e6c84; word-break: break-all;
+        }
+    </style>
+</head>
+<body>
+
+<div class="page-nav"><a href="app.html">&larr; App Catalog</a></div>
+<h1>JSONata Library</h1>
+<div class="subtitle">Every JSONata expression in one place. Write it once, try it against a JSON document, and name it
+    from a page transform, a use case or a request — they read it from here, so correcting it here corrects all of them.</div>
+
+<div class="split">
+
+    <!-- The library -->
+    <div class="panel">
+        <div class="panel-title">
+            <span>Expressions</span>
+            <button class="tool-btn" onclick="newEntry()">+ New</button>
+        </div>
+        <input class="list-search" id="listSearch" type="text" placeholder="Filter by name or description…"
+               oninput="renderList()" autocomplete="off">
+        <div class="record-list" id="entryList"></div>
+    </div>
+
+    <!-- The one being edited, and what it does -->
+    <div class="panel">
+        <div class="panel-title"><span id="editorTitle">New JSONata</span></div>
+
+        <div class="editor-cols">
+
+            <div>
+                <div class="form-row">
+                    <div class="form-group wide">
+                        <label for="entryName">Name</label>
+                        <input id="entryName" type="text" placeholder="orderRows" autocomplete="off">
+                        <span class="hint">Unique. This is what a reference names — letters, digits, spaces, dots,
+                            dashes and underscores.</span>
+                    </div>
+                    <div class="form-group wide">
+                        <label for="entryDescription">Description</label>
+                        <input id="entryDescription" type="text" placeholder="Flattens an order response into one row per line">
+                    </div>
+                    <div class="form-group wide">
+                        <label for="entryExpression">Expression</label>
+                        <textarea id="entryExpression" class="expr" spellcheck="false"
+                                  placeholder='data.items.{"id": id, "who": owner.name}'></textarea>
+                        <span class="hint">Plain JSONata. A page transform may also fill in a control's value with
+                            <code>${fieldName}</code> before this runs — that substitution happens on the page, so it
+                            will not resolve here.</span>
+                    </div>
+                </div>
+
+                <div class="toolbar">
+                    <button class="primary" onclick="saveEntry()">Save</button>
+                    <button class="secondary" onclick="newEntry()">New</button>
+                    <button class="danger" id="deleteBtn" onclick="deleteEntry()" style="display:none">Delete</button>
+                </div>
+                <div id="statusBar" class="status-bar"></div>
+
+                <div id="refBlock" style="display:none;margin-top:12px">
+                    <label class="hint" style="display:block;margin-bottom:4px">Reference it as</label>
+                    <div class="ref-line" id="refLine"></div>
+                    <span class="hint">Usable anywhere the server takes a JSONata expression — a use case's response
+                        transform, a request's <code>jsonataTransform</code>. A page transform names it by picking it
+                        from its own dropdown.</span>
+                </div>
+
+                <div id="usageBlock" style="display:none;margin-top:12px">
+                    <label class="hint" style="display:block;margin-bottom:4px">Used by</label>
+                    <div class="usage-list" id="usageList"></div>
+                </div>
+            </div>
+
+            <div>
+                <div class="form-row">
+                    <div class="form-group wide">
+                        <label for="sampleInput">JSON to transform</label>
+                        <textarea id="sampleInput" class="sample" spellcheck="false"
+                                  placeholder='{"data": {"items": [{"id": "A-7", "owner": {"name": "Ada"}}]}}'></textarea>
+                        <span class="hint">Saved with the expression, so the next person can see what it expects and try
+                            it without inventing a document first.</span>
+                    </div>
+                </div>
+
+                <div class="toolbar">
+                    <button class="primary" onclick="applyExpression()">Apply</button>
+                    <button class="tool-btn" onclick="formatSample()">Format JSON</button>
+                    <button class="tool-btn" onclick="clearResult()">Clear result</button>
+                </div>
+                <div id="applyStatus" class="status-bar"></div>
+
+                <div style="margin-top:12px">
+                    <div class="result-tabs">
+                        <button class="result-tab active" id="tabGrid" onclick="showResult('grid')">Grid</button>
+                        <button class="result-tab" id="tabRaw" onclick="showResult('raw')">JSON</button>
+                    </div>
+                    <div id="resultGrid"></div>
+                    <textarea id="resultRaw" readonly spellcheck="false" style="display:none"
+                              placeholder="The result appears here once you press Apply."></textarea>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+</div>
+
+<script src="appcatalog.js"></script>
+<script src="excelgrid.js"></script>
+<script>
+    // The library page. It owns the expressions themselves and the tester beside them — the two are
+    // deliberately one screen, because an expression nobody can run is an expression nobody edits.
+    //
+    // Applying goes to the server rather than to a JSONata in the browser. It is the same evaluator
+    // that will run the expression when a use case or a request uses it, so an expression that works
+    // here works there; a browser copy from a CDN could differ in version, and would not be there at
+    // all on a machine without the network.
+
+    let entries = [];
+    /** The saved name of the entry being edited; null while creating a new one. */
+    let editingName = null;
+    /** The last result, kept so switching between Grid and JSON does not need another round trip. */
+    let lastResult = undefined;
+
+    // ── The library list ─────────────────────────────────────────────────────
+
+    async function loadEntries() {
+        try {
+            entries = await AC.api('GET', '/jsonata');
+            renderList();
+        } catch (e) {
+            AC.setStatus('statusBar', 'Failed to load the library: ' + e.message, 'error');
+        }
+    }
+
+    function renderList() {
+        const filter = (document.getElementById('listSearch').value || '').toLowerCase();
+        const shown = entries.filter(e => !filter
+            || (e.name || '').toLowerCase().includes(filter)
+            || (e.description || '').toLowerCase().includes(filter));
+        const list = document.getElementById('entryList');
+
+        if (!shown.length) {
+            list.innerHTML = '<div class="empty-note">'
+                + (entries.length ? 'Nothing matches that.' : 'Nothing saved yet — write one and save it.')
+                + '</div>';
+            return;
+        }
+        list.innerHTML = shown.map(e =>
+            '<div class="record' + (e.name === editingName ? ' selected' : '') + '"'
+                + ' onclick="editEntry(\'' + AC.attr(e.name) + '\')">'
+                + '<div class="record-name">' + AC.esc(e.name) + '</div>'
+                + (e.description ? '<div class="record-meta">' + AC.esc(e.description) + '</div>' : '')
+                + '<div class="record-expr">' + AC.esc(oneLine(e.expression)) + '</div>'
+            + '</div>').join('');
+    }
+
+    /** A multi-line expression as the single line a list row has room for. */
+    function oneLine(text) {
+        const flat = String(text || '').replace(/\s+/g, ' ').trim();
+        return flat.length > 90 ? flat.slice(0, 89) + '…' : flat;
+    }
+
+    // ── Editing one ──────────────────────────────────────────────────────────
+
+    function newEntry() {
+        editingName = null;
+        document.getElementById('editorTitle').textContent = 'New JSONata';
+        document.getElementById('entryName').value = '';
+        document.getElementById('entryDescription').value = '';
+        document.getElementById('entryExpression').value = '';
+        document.getElementById('sampleInput').value = '';
+        document.getElementById('deleteBtn').style.display = 'none';
+        document.getElementById('refBlock').style.display = 'none';
+        document.getElementById('usageBlock').style.display = 'none';
+        clearResult();
+        AC.setStatus('statusBar', '');
+        renderList();
+    }
+
+    function editEntry(name) {
+        const entry = entries.find(e => e.name === name);
+        if (!entry) return;
+
+        editingName = name;
+        document.getElementById('editorTitle').textContent = 'Edit ' + name;
+        document.getElementById('entryName').value = entry.name || '';
+        document.getElementById('entryDescription').value = entry.description || '';
+        document.getElementById('entryExpression').value = entry.expression || '';
+        document.getElementById('sampleInput').value = entry.sampleInput || '';
+        document.getElementById('deleteBtn').style.display = '';
+        document.getElementById('refBlock').style.display = '';
+        document.getElementById('refLine').textContent = 'catalog:' + name;
+        clearResult();
+        AC.setStatus('statusBar', entry.updatedAt ? 'Last saved ' + entry.updatedAt : '');
+        renderList();
+        loadUsage(name);
+
+        // An entry that came with a document to run it over is worth running straight away: seeing
+        // what it produces is most of what you came to the page to find out.
+        if (entry.sampleInput && entry.expression) applyExpression();
+    }
+
+    /**
+     * Who still names this one. Shown rather than hidden behind the delete button because the
+     * question "may I change this" is asked far more often than "may I delete it", and the answer is
+     * the same list.
+     */
+    async function loadUsage(name) {
+        const block = document.getElementById('usageBlock');
+        const list = document.getElementById('usageList');
+        try {
+            const usage = await AC.api('GET', '/jsonata/' + encodeURIComponent(name) + '/usage');
+            if (!usage.length) {
+                block.style.display = '';
+                list.innerHTML = '<span class="empty-note">Nothing references it yet.</span>';
+                return;
+            }
+            block.style.display = '';
+            list.innerHTML = usage.map(u =>
+                '<span class="badge ' + (u.kind === 'page' ? 'http' : 'auth') + '" title="' + AC.esc(u.what) + '">'
+                    + AC.esc(u.where) + ' · ' + AC.esc(u.what) + '</span>').join('');
+        } catch (e) {
+            block.style.display = 'none';
+        }
+    }
+
+    function readForm() {
+        const name = document.getElementById('entryName').value.trim();
+        if (!name) throw new Error('Name is required.');
+        const expression = document.getElementById('entryExpression').value.trim();
+        if (!expression) throw new Error('Expression is required — an entry with nothing in it is a reference that does nothing.');
+        return {
+            name,
+            description: document.getElementById('entryDescription').value.trim(),
+            expression,
+            sampleInput: document.getElementById('sampleInput').value
+        };
+    }
+
+    async function saveEntry() {
+        let entry;
+        try {
+            entry = readForm();
+        } catch (e) {
+            AC.setStatus('statusBar', e.message, 'error');
+            return;
+        }
+
+        // A rename leaves every page and use case that named the old one pointing at nothing, and
+        // those pages will refuse to save until somebody repoints them. Said out loud before it
+        // happens rather than discovered afterwards.
+        if (editingName && entry.name !== editingName) {
+            const usage = await usageCount(editingName);
+            const warning = 'Rename "' + editingName + '" to "' + entry.name + '"?'
+                + (usage ? '\n\n' + usage + ' place(s) still reference the old name and will have to be repointed.' : '');
+            if (!confirm(warning)) return;
+        }
+
+        try {
+            if (editingName) {
+                await AC.api('PUT', '/jsonata/' + encodeURIComponent(editingName), entry);
+            } else {
+                await AC.api('POST', '/jsonata', entry);
+            }
+            await loadEntries();
+            editingName = entry.name;
+            editEntry(entry.name);
+            AC.setStatus('statusBar', 'Saved ' + entry.name + '.', 'ok');
+        } catch (e) {
+            AC.setStatus('statusBar', 'Save failed: ' + e.message, 'error');
+        }
+    }
+
+    async function usageCount(name) {
+        try {
+            return (await AC.api('GET', '/jsonata/' + encodeURIComponent(name) + '/usage')).length;
+        } catch (e) {
+            return 0;
+        }
+    }
+
+    async function deleteEntry() {
+        if (!editingName) return;
+        if (!AC.confirmDelete('JSONata', editingName)) return;
+        try {
+            await AC.api('DELETE', '/jsonata/' + encodeURIComponent(editingName));
+            const deleted = editingName;
+            await loadEntries();
+            newEntry();
+            AC.setStatus('statusBar', 'Deleted ' + deleted + '.', 'ok');
+        } catch (e) {
+            // The server refuses while anything still names it. Deleting anyway is a real choice —
+            // the references are being removed in the same sitting — so it is offered rather than
+            // leaving the only way out to be editing every page first.
+            if (!confirm(e.message + '\n\nDelete it anyway? Those references will stop resolving.')) {
+                AC.setStatus('statusBar', e.message, 'error');
+                return;
+            }
+            try {
+                await AC.api('DELETE', '/jsonata/' + encodeURIComponent(editingName) + '?force=true');
+                const deleted = editingName;
+                await loadEntries();
+                newEntry();
+                AC.setStatus('statusBar', 'Deleted ' + deleted + '. References to it no longer resolve.', 'ok');
+            } catch (e2) {
+                AC.setStatus('statusBar', 'Delete failed: ' + e2.message, 'error');
+            }
+        }
+    }
+
+    // ── Applying it ──────────────────────────────────────────────────────────
+
+    async function applyExpression() {
+        const expression = document.getElementById('entryExpression').value.trim();
+        const input = document.getElementById('sampleInput').value;
+        if (!expression) { AC.setStatus('applyStatus', 'Nothing to apply — write an expression first.', 'error'); return; }
+        if (!input.trim()) { AC.setStatus('applyStatus', 'No JSON to transform.', 'error'); return; }
+
+        AC.setStatus('applyStatus', 'Applying…');
+        try {
+            // The expression as it is in the box, not as it was last saved: the point of the button
+            // is to try a change before committing to it.
+            const answer = await AC.api('POST', '/jsonata/apply', { expression, input });
+            if (!answer.ok) {
+                lastResult = undefined;
+                renderResult();
+                AC.setStatus('applyStatus', answer.error, 'error');
+                return;
+            }
+            lastResult = answer.empty ? null : answer.result;
+            renderResult();
+            AC.setStatus('applyStatus', answer.empty
+                ? 'Ran, and matched nothing.'
+                : 'Applied — ' + describe(lastResult) + '.', 'ok');
+        } catch (e) {
+            lastResult = undefined;
+            renderResult();
+            AC.setStatus('applyStatus', 'Apply failed: ' + e.message, 'error');
+        }
+    }
+
+    function describe(result) {
+        if (Array.isArray(result)) return result.length + ' row' + (result.length === 1 ? '' : 's');
+        if (result !== null && typeof result === 'object') return 'one object';
+        return 'a single value';
+    }
+
+    /**
+     * The result in both shapes at once: a grid when it is row-like, and the JSON always. Row-like
+     * means an array of objects, or one object — the shape a page binds to a grid — and anything
+     * else says why there is no grid rather than showing an empty one.
+     */
+    function renderResult() {
+        const rawBox = document.getElementById('resultRaw');
+        rawBox.value = lastResult === undefined ? '' : AC.prettyJson(lastResult);
+
+        const mount = document.getElementById('resultGrid');
+        const rows = gridRows(lastResult);
+        if (!rows) {
+            mount.classList.remove('eg-root');
+            mount.innerHTML = '<div class="empty-note">'
+                + (lastResult === undefined ? 'Press Apply to see the result here.'
+                   : lastResult === null ? 'The expression matched nothing.'
+                   : 'The result is not a row or a list of rows, so there is nothing to put in a grid — see the JSON tab.')
+                + '</div>';
+            return;
+        }
+        ExcelGrid.mount({ containerId: 'resultGrid', attributes: columnsOf(rows), rows });
+    }
+
+    /**
+     * The result as grid rows, or null when it is not row-shaped. A nested value becomes its JSON
+     * text rather than "[object Object]": a cell that says what is in it can at least be read and
+     * copied, which is what someone checking a transform is there to do.
+     */
+    function gridRows(result) {
+        const list = Array.isArray(result) ? result
+            : (result !== null && result !== undefined && typeof result === 'object') ? [result]
+            : null;
+        if (!list || !list.length) return null;
+        if (!list.every(r => r !== null && typeof r === 'object' && !Array.isArray(r))) return null;
+        return list.map(row => {
+            const flat = {};
+            Object.keys(row).forEach(key => {
+                const value = row[key];
+                flat[key] = (value !== null && typeof value === 'object') ? JSON.stringify(value) : value;
+            });
+            return flat;
+        });
+    }
+
+    /** Every column any row has, in the order they were first seen — rows need not agree on shape. */
+    function columnsOf(rows) {
+        const columns = [];
+        rows.forEach(row => Object.keys(row).forEach(key => { if (!columns.includes(key)) columns.push(key); }));
+        return columns;
+    }
+
+    function showResult(which) {
+        const grid = which === 'grid';
+        document.getElementById('resultGrid').style.display = grid ? '' : 'none';
+        document.getElementById('resultRaw').style.display = grid ? 'none' : '';
+        document.getElementById('tabGrid').classList.toggle('active', grid);
+        document.getElementById('tabRaw').classList.toggle('active', !grid);
+    }
+
+    function clearResult() {
+        lastResult = undefined;
+        renderResult();
+        AC.setStatus('applyStatus', '');
+    }
+
+    function formatSample() {
+        const field = document.getElementById('sampleInput');
+        if (!field.value.trim()) return;
+        try {
+            field.value = JSON.stringify(JSON.parse(field.value), null, 2);
+            AC.setStatus('applyStatus', 'Formatted.', 'ok');
+        } catch (e) {
+            AC.setStatus('applyStatus', 'Not valid JSON: ' + e.message, 'error');
+        }
+    }
+
+    // ── Opening on something in particular ───────────────────────────────────
+
+    /**
+     * Another page links here with <code>#name</code> when it wants this one opened on a particular
+     * expression — the transform editor's "open the library" link does, so the entry it was talking
+     * about is the one on screen.
+     */
+    function openFromHash() {
+        const name = decodeURIComponent((location.hash || '').replace('#', ''));
+        if (name && entries.some(e => e.name === name)) editEntry(name);
+    }
+
+    AC.applyEmbedding();
+    newEntry();
+    loadEntries().then(openFromHash);
+    window.addEventListener('hashchange', openFromHash);
+</script>
+
+</body>
+</html>

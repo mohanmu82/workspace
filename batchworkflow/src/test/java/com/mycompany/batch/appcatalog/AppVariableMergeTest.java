@@ -40,6 +40,12 @@ class AppVariableMergeTest {
         return useCase;
     }
 
+    private static AppUseCase useCaseDeclaring(AppUseCaseInput... inputs) {
+        AppUseCase useCase = new AppUseCase();
+        useCase.setAppUseCaseInputs(java.util.List.of(inputs));
+        return useCase;
+    }
+
     private static AppUseCaseInstance instance(Map<String, Object> inputs) {
         AppUseCaseInstance instance = new AppUseCaseInstance();
         instance.setAppUseCaseInstanceInputs(new LinkedHashMap<>(inputs));
@@ -124,6 +130,66 @@ class AppVariableMergeTest {
     void anUnknownPlaceholderInAValue_isLeftAsWritten() {
         Map<String, Object> merged = service.mergeVariables(null, null, useCase(Map.of("x", "${nobody}")), null);
         assertThat(merged).containsEntry("x", "${nobody}");
+    }
+
+    @Test
+    void theProcessBuiltIn_isThisJvm() {
+        Map<String, Object> merged = service.mergeVariables(null, null, useCase(Map.of("who", "${PID}")), null);
+        assertThat(merged.get("who")).isEqualTo(String.valueOf(ProcessHandle.current().pid()));
+    }
+
+    /**
+     * The two business-date built-ins, checked as the rule rather than as a pair of fixed strings:
+     * what they come to depends on the day the test runs, and a weekend is exactly the case worth
+     * covering rather than skipping.
+     */
+    @Test
+    void theBusinessDateBuiltIns_skipTheWeekend() {
+        Map<String, Object> merged = service.mergeVariables(null, null, null, null);
+        java.time.format.DateTimeFormatter stamp = java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd");
+        java.time.LocalDate today = java.time.LocalDate.now();
+        assertThat(merged).containsEntry("PREVDATESTAMP",
+                AppExecutionService.businessDay(today, -1).format(stamp));
+        assertThat(merged).containsEntry("NEXTDATESTAMP",
+                AppExecutionService.businessDay(today, 1).format(stamp));
+        assertThat(java.time.LocalDate.parse((String) merged.get("PREVDATESTAMP"), stamp)).isBefore(today);
+        assertThat(java.time.LocalDate.parse((String) merged.get("NEXTDATESTAMP"), stamp)).isAfter(today);
+    }
+
+    @Test
+    void businessDay_looksPastSaturdayAndSunday() {
+        java.time.LocalDate monday = java.time.LocalDate.of(2026, 9, 14);
+        java.time.LocalDate friday = java.time.LocalDate.of(2026, 9, 18);
+        assertThat(AppExecutionService.businessDay(monday, -1)).isEqualTo(java.time.LocalDate.of(2026, 9, 11));
+        assertThat(AppExecutionService.businessDay(friday, 1)).isEqualTo(java.time.LocalDate.of(2026, 9, 21));
+        // And from inside the weekend itself, which is where a run scheduled over one lands.
+        java.time.LocalDate saturday = java.time.LocalDate.of(2026, 9, 19);
+        assertThat(AppExecutionService.businessDay(saturday, -1)).isEqualTo(friday);
+        assertThat(AppExecutionService.businessDay(saturday, 1)).isEqualTo(java.time.LocalDate.of(2026, 9, 21));
+    }
+
+    /** A declared input's default is written as text in the editor and read back as its own type. */
+    @Test
+    void aDeclaredInputsDefault_arrivesAsTheTypeItWasDeclared() {
+        Map<String, Object> merged = service.mergeVariables(null, null,
+                useCaseDeclaring(new AppUseCaseInput("filter", "json", "{\"ids\": [1, 2]}"),
+                                 new AppUseCaseInput("pageSize", "number", "50"),
+                                 new AppUseCaseInput("rate", "number", "2.5"),
+                                 new AppUseCaseInput("dryRun", "boolean", "true")), null);
+        assertThat(merged.get("filter")).isEqualTo(Map.of("ids", java.util.List.of(1, 2)));
+        // A whole number stays whole: it goes into a URL as text, and "50.0" is not what was asked for.
+        assertThat(merged.get("pageSize")).isEqualTo(50L);
+        assertThat(merged.get("rate")).isEqualTo(2.5d);
+        assertThat(merged.get("dryRun")).isEqualTo(true);
+    }
+
+    /** An xml default is the request body as written — there is nothing to parse it into. */
+    @Test
+    void anXmlDefault_staysTheTextItWasWrittenAs() {
+        String xml = "<order>\n  <id>42</id>\n</order>";
+        Map<String, Object> merged = service.mergeVariables(null, null,
+                useCaseDeclaring(new AppUseCaseInput("payload", "xml", xml)), null);
+        assertThat(merged.get("payload")).isEqualTo(xml);
     }
 
     @Test

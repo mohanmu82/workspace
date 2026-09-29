@@ -27,6 +27,7 @@ import com.mycompany.batch.config.ServerPropertiesLoader;
 import com.mycompany.batch.xpath.XPathColumn;
 import com.mycompany.batch.xpath.XPathExtractor;
 import com.dashjoin.jsonata.Jsonata;
+import com.mycompany.batch.appcatalog.JsonataLibraryService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -91,6 +92,13 @@ public class BatchService {
     private final EnricherService enricherService;
     private final BatchProperties batchProperties;
     private final ServerPropertiesLoader serverPropertiesLoader;
+    /**
+     * The shared JSONata library, so an expression anywhere in a request may be written as
+     * {@code catalog:<name>} instead of pasted in. Read at the moment the expression is resolved
+     * rather than when the request was written, which is what makes editing the library entry fix
+     * every request that names it.
+     */
+    private final JsonataLibraryService jsonataLibrary;
     private final Map<String, HttpAuthProvider> authProviders = new LinkedHashMap<>();
     /** Loaded once at startup from responseprocessors.json — name → ordered list of processor steps. */
     private final Map<String, List<BatchProperties.ResponseProcessorProperties>> responseProcessorRegistry = new LinkedHashMap<>();
@@ -103,7 +111,8 @@ public class BatchService {
     public BatchService(ObjectMapper objectMapper, XPathExtractor xpathExtractor,
                         JsonPathExtractor jsonPathExtractor, CacheFactory cacheFactory,
                         EnricherService enricherService, BatchProperties batchProperties,
-                        ServerPropertiesLoader serverPropertiesLoader) {
+                        ServerPropertiesLoader serverPropertiesLoader,
+                        JsonataLibraryService jsonataLibrary) {
         this.objectMapper = objectMapper;
         this.xpathExtractor = xpathExtractor;
         this.jsonPathExtractor = jsonPathExtractor;
@@ -111,6 +120,7 @@ public class BatchService {
         this.enricherService = enricherService;
         this.batchProperties = batchProperties;
         this.serverPropertiesLoader = serverPropertiesLoader;
+        this.jsonataLibrary = jsonataLibrary;
     }
 
     @PostConstruct
@@ -1030,8 +1040,10 @@ public class BatchService {
 
     /**
      * Applies an optional JSONata transform to a response object just before it is returned to the client.
-     * Loads the expression from {@code classpath:transforms/{key}.jsonata} when {@code key} is set,
-     * or uses {@code value} directly as the JSONata expression.
+     * Either field may say {@code catalog:<name>}, which takes the expression from the shared
+     * JSONata library and so follows it whenever it is corrected there; otherwise the expression is
+     * loaded from {@code classpath:transforms/{key}.jsonata} when {@code key} is set, or
+     * {@code value} is used directly as the JSONata expression.
      * When {@code source} is set it is evaluated as JSONata against {@code response} to extract the
      * actual transform input; if the extracted value is a JSON string it is parsed first.
      */
@@ -1065,7 +1077,16 @@ public class BatchService {
         }
 
         String jsonataExpr;
-        if (transform.key() != null && !transform.key().isBlank()) {
+        // The library first, and only where it was asked for by name: a bare key still means the
+        // classpath file it has always meant, so an expression kept in resources does not start
+        // resolving to a library entry that happens to share its name.
+        String libraryName = JsonataLibraryService.refName(transform.value());
+        if (libraryName == null) libraryName = JsonataLibraryService.refName(transform.key());
+        if (libraryName != null) {
+            jsonataExpr = jsonataLibrary.expressionOf(libraryName);
+            if (jsonataExpr == null)
+                throw new IllegalArgumentException("JSONata '" + libraryName + "' is not in the shared library");
+        } else if (transform.key() != null && !transform.key().isBlank()) {
             String resourcePath = "transforms/" + transform.key().trim() + ".jsonata";
             jsonataExpr = jsonataResourceCache.computeIfAbsent(resourcePath, rp -> {
                 try (InputStream is = getClass().getClassLoader().getResourceAsStream(rp)) {
@@ -4494,8 +4515,22 @@ public class BatchService {
     // Resource loaders
     // -------------------------------------------------------------------------
 
+    /**
+     * The JSONata behind whatever an operation was configured with: the expression itself, a
+     * {@code catalog:<name>} reference into the shared library, a {@code classpath:} resource, or a
+     * file on disk. Tried in that order, and a reference that names nothing fails with the name in
+     * the message rather than being run as if it were an expression — {@code catalog:orderRows} is
+     * not valid JSONata, and the error it would otherwise raise says nothing about the library.
+     */
     private String resolveJsonataExpression(String value) throws Exception {
         if (value == null || value.isBlank()) return value;
+        String libraryName = JsonataLibraryService.refName(value);
+        if (libraryName != null) {
+            String expression = jsonataLibrary.expressionOf(libraryName);
+            if (expression == null)
+                throw new IllegalArgumentException("JSONata '" + libraryName + "' is not in the shared library");
+            return expression;
+        }
         if (value.startsWith("classpath:")) {
             String resource = value.substring("classpath:".length());
             try (InputStream is = getClass().getClassLoader().getResourceAsStream(resource)) {

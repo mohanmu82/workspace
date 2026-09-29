@@ -57,6 +57,40 @@
             return ['get', 'post', 'put', 'delete'].includes(m) ? m : 'other';
         },
 
+        // ── Document inputs (json / xml) ─────────────────────────────────────
+        // A use case input declared json or xml holds a whole document rather than a word, so both
+        // the use case editor (its default) and the instance editor (the value for this run) give it
+        // a textarea with a pretty printer. The formatting lives here so the two agree on what
+        // "formatted" means, and on what a document that will not parse is told.
+
+        /** The input types whose value is a document — edited in a textarea, and pretty-printable. */
+        DOCUMENT_TYPES: ['json', 'xml'],
+
+        isDocumentType(type) { return AC.DOCUMENT_TYPES.includes(type || 'string'); },
+
+        /** Pretty-prints a json or xml document, throwing a readable message when it is neither. */
+        formatDocument(type, text) {
+            if (type === 'xml') return AC.formatXml(text);
+            try {
+                return JSON.stringify(JSON.parse(text), null, 2);
+            } catch (e) {
+                throw new Error('Not valid JSON: ' + e.message);
+            }
+        },
+
+        /**
+         * Re-indents XML using the browser's own parser, so what comes back is only ever a document
+         * that parsed. Any leading declaration is kept as written — the parser drops it, and a value
+         * that names its encoding means to keep naming it.
+         */
+        formatXml(text) {
+            const doc = new DOMParser().parseFromString(text, 'application/xml');
+            const error = doc.querySelector('parsererror');
+            if (error) throw new Error('Not valid XML: ' + error.textContent.trim().split('\n')[0]);
+            const declaration = text.match(/^\s*<\?xml[^>]*\?>/);
+            return (declaration ? declaration[0].trim() + '\n' : '') + formatXmlNode(doc.documentElement, 0);
+        },
+
         // ── REST ─────────────────────────────────────────────────────────────
 
         /** Fetches JSON, surfacing the server's {"error": "..."} message as the thrown Error. */
@@ -140,6 +174,63 @@
             return global.confirm('Delete ' + what + ' "' + name + '"? This cannot be undone.');
         }
     };
+
+    // ── XML formatting internals ─────────────────────────────────────────────
+
+    function formatXmlNode(node, depth) {
+        const indent = '  '.repeat(depth);
+        const childIndent = '  '.repeat(depth + 1);
+        const open = '<' + node.nodeName + xmlAttributes(node) + '>';
+        const close = '</' + node.nodeName + '>';
+
+        // Whitespace-only text between elements is the previous indentation and goes; anything else a
+        // child node carries is content.
+        const children = [...node.childNodes].filter(child =>
+            child.nodeType === Node.ELEMENT_NODE
+            || child.nodeType === Node.CDATA_SECTION_NODE
+            || child.nodeType === Node.COMMENT_NODE
+            || (child.nodeType === Node.TEXT_NODE && child.nodeValue.trim()));
+
+        if (!children.length) return indent + '<' + node.nodeName + xmlAttributes(node) + '/>';
+
+        // A lone text child stays on the element's own line — <id>42</id> reads worse over three.
+        if (children.length === 1 && children[0].nodeType === Node.TEXT_NODE) {
+            return indent + open + escapeXmlText(children[0].nodeValue.trim()) + close;
+        }
+        // Content mixed in among the elements is written back exactly as it stands: indenting text is
+        // editing it, and formatting reformats a document rather than changing what it says.
+        if (children.some(child => child.nodeType !== Node.ELEMENT_NODE && child.nodeType !== Node.COMMENT_NODE)) {
+            return indent + open + [...node.childNodes].map(serializeXmlInline).join('') + close;
+        }
+
+        const inner = children.map(child => child.nodeType === Node.ELEMENT_NODE
+            ? formatXmlNode(child, depth + 1)
+            : childIndent + '<!--' + child.nodeValue + '-->').join('\n');
+        return indent + open + '\n' + inner + '\n' + indent + close;
+    }
+
+    /** One node and everything under it on a single line, exactly as the parser read it. */
+    function serializeXmlInline(node) {
+        if (node.nodeType === Node.CDATA_SECTION_NODE) return '<![CDATA[' + node.nodeValue + ']]>';
+        if (node.nodeType === Node.COMMENT_NODE)       return '<!--' + node.nodeValue + '-->';
+        if (node.nodeType !== Node.ELEMENT_NODE)       return escapeXmlText(node.nodeValue);
+        const children = [...node.childNodes];
+        if (!children.length) return '<' + node.nodeName + xmlAttributes(node) + '/>';
+        return '<' + node.nodeName + xmlAttributes(node) + '>'
+             + children.map(serializeXmlInline).join('') + '</' + node.nodeName + '>';
+    }
+
+    function xmlAttributes(node) {
+        let attributes = '';
+        for (const attribute of node.attributes) {
+            attributes += ' ' + attribute.name + '="' + attribute.value.replace(/"/g, '&quot;') + '"';
+        }
+        return attributes;
+    }
+
+    function escapeXmlText(text) {
+        return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
 
     global.AC = AC;
 

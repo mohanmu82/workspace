@@ -1,10 +1,12 @@
 package com.mycompany.batch.staticdataset;
 
+import com.dashjoin.jsonata.Jsonata;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jayway.jsonpath.Configuration;
 import com.jayway.jsonpath.JsonPath;
 import com.jayway.jsonpath.Option;
+import com.mycompany.batch.appcatalog.JsonataLibraryService;
 import com.mycompany.batch.config.ServerPropertiesLoader;
 import com.mycompany.batch.onedrive.OneDriveClient;
 import jakarta.annotation.PostConstruct;
@@ -32,7 +34,7 @@ import java.util.regex.Pattern;
  * live together as a single JSON array at {@code ${DATADIR}/staticdatasets.json}, (re)loaded
  * at startup. Edits made through the UI are written back to the same file.
  *
- * <p>Row data fetched from each dataset's configured source (file, HTTP or OneDrive) is cached in
+ * <p>Row data fetched from each dataset's configured source (file, HTTP, pasted text or OneDrive) is cached in
  * memory keyed by dataset name; consumers such as the Service Dashboard read the cached
  * rows rather than re-fetching on every page load.
  */
@@ -60,15 +62,17 @@ public class StaticDatasetService {
     private final ObjectMapper objectMapper;
     private final ServerPropertiesLoader serverPropertiesLoader;
     private final OneDriveClient oneDriveClient;
+    private final JsonataLibraryService jsonataLibrary;
 
     private final Map<String, StaticDatasetDef> defs  = new ConcurrentHashMap<>();
     private final Map<String, DatasetState>     state = new ConcurrentHashMap<>();
 
     public StaticDatasetService(ObjectMapper objectMapper, ServerPropertiesLoader serverPropertiesLoader,
-                                OneDriveClient oneDriveClient) {
+                                OneDriveClient oneDriveClient, JsonataLibraryService jsonataLibrary) {
         this.objectMapper = objectMapper;
         this.serverPropertiesLoader = serverPropertiesLoader;
         this.oneDriveClient = oneDriveClient;
+        this.jsonataLibrary = jsonataLibrary;
     }
 
     @PostConstruct
@@ -187,10 +191,19 @@ public class StaticDatasetService {
     public synchronized StaticDatasetDef save(StaticDatasetDef def) throws Exception {
         if (def.getName() == null || !def.getName().matches("[\\w\\-]+"))
             throw new IllegalArgumentException("name is required and must contain only word characters or dashes");
-        if (def.getSource() == null || !List.of("file", "http", "paste", "onedrive").contains(def.getSource()))
-            throw new IllegalArgumentException("source must be 'file', 'http', 'paste' or 'onedrive'");
+        if (def.getSource() == null || !List.of("file", "http", "paste", "json", "onedrive").contains(def.getSource()))
+            throw new IllegalArgumentException("source must be 'file', 'http', 'paste', 'json' or 'onedrive'");
         if (def.getLocation() == null || def.getLocation().isBlank())
             throw new IllegalArgumentException("location is required");
+        // Compile the expression now rather than letting a typo surface as a failed load: a dataset
+        // that cannot parse its own transform is worth refusing while the person is still looking at it.
+        if (def.getJsonata() != null && JsonataLibraryService.refName(def.getJsonata()) == null) {
+            try {
+                Jsonata.jsonata(def.getJsonata().trim());
+            } catch (Exception e) {
+                throw new IllegalArgumentException("jsonata does not parse: " + describe(e));
+            }
+        }
 
         defs.put(def.getName(), def);
         writeConfigFile();
@@ -232,8 +245,9 @@ public class StaticDatasetService {
             List<Map<String, Object>> rows = switch (def.getSource()) {
                 case "file"  -> loadFromFile(def.getLocation());
                 case "paste" -> loadFromPaste(def.getLocation());
+                case "json"  -> extractRows(def.getLocation(), def.getArrayElement(), def.getJsonata());
                 case "onedrive" -> loadFromOneDrive(def.getLocation(), def.getArrayElement());
-                default      -> loadFromHttp(def.getLocation(), def.getArrayElement());
+                default      -> loadFromHttp(def.getLocation(), def.getArrayElement(), def.getJsonata());
             };
 
             List<String> attributes = computeAttributes(rows);
@@ -310,8 +324,7 @@ public class StaticDatasetService {
         return oneDriveClient.readExcelRows(location, sheet);
     }
 
-    @SuppressWarnings("unchecked")
-    private List<Map<String, Object>> loadFromHttp(String url, String arrayElement) throws Exception {
+    private List<Map<String, Object>> loadFromHttp(String url, String arrayElement, String jsonata) throws Exception {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(url))
                 .timeout(Duration.ofSeconds(20))
@@ -323,12 +336,50 @@ public class StaticDatasetService {
             throw new RuntimeException("HTTP " + resp.statusCode() + " fetching " + url);
         }
 
+        return extractRows(resp.body(), arrayElement, jsonata);
+    }
+
+    /**
+     * Pulls the rows out of a JSON document — the body of an HTTP response (source=http), or the JSON
+     * pasted into the dataset itself (source=json). {@code arrayElement} is a JSONPath selecting the
+     * array of objects (default {@code $}); {@code jsonata}, when set, then reshapes what it selected.
+     * Either way each object's keys become the attributes.
+     *
+     * <p>The JSONPath runs first and the JSONata second, so adding an expression to a dataset that
+     * already had an arrayElement starts from the rows that arrayElement was picking instead of
+     * having to find them again. Nothing needs to be an array until the end of that pipeline: with a
+     * JSONata set, what the path selected may be an object the expression turns into rows — a map
+     * keyed by id, needing {@code $each}, being the usual reason to want one.
+     */
+    private List<Map<String, Object>> extractRows(String json, String arrayElement, String jsonata) throws Exception {
+        if (json == null || json.isBlank()) return List.of();
+
         String path = arrayElement == null || arrayElement.isBlank() ? "$" : arrayElement.trim();
-        Object document = JsonPath.using(JSONPATH_CONF).parse(resp.body()).json();
+        Object document = JsonPath.using(JSONPATH_CONF).parse(json).json();
         Object extracted = JsonPath.using(JSONPATH_CONF).parse(document).read(path);
 
-        if (!(extracted instanceof List<?> list)) {
-            throw new RuntimeException("arrayElement '" + path + "' did not resolve to an array");
+        boolean transformed = jsonata != null && !jsonata.isBlank();
+        if (transformed) extracted = applyJsonata(extracted, jsonata);
+
+        return toRows(extracted, path, transformed);
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> toRows(Object value, String path, boolean transformed) {
+        // An expression that matched nothing returns the empty sequence, not an empty array: a filter
+        // no row satisfies is an answer, so it loads as a dataset with no rows rather than as a
+        // failure. Without one, a null is the JSONPath missing, which is still worth reporting.
+        if (value == null && transformed) return List.of();
+
+        // A single object is read as a one-row dataset rather than refused — a document is often
+        // narrowed down to one object before it gets pasted, and an expression that builds one row
+        // is a reasonable thing to have written.
+        if (value instanceof Map<?, ?> single) return List.of((Map<String, Object>) single);
+
+        if (!(value instanceof List<?> list)) {
+            throw new RuntimeException(transformed
+                    ? "the JSONata did not return an array of objects"
+                    : "arrayElement '" + path + "' did not resolve to an array");
         }
 
         List<Map<String, Object>> rows = new ArrayList<>();
@@ -336,6 +387,41 @@ public class StaticDatasetService {
             if (item instanceof Map<?, ?> m) rows.add((Map<String, Object>) m);
         }
         return rows;
+    }
+
+    /**
+     * Runs the dataset's expression over what the JSONPath selected. The value is round-tripped
+     * through Jackson first so the evaluator is handed plain maps and lists rather than whatever
+     * types the JsonPath provider happens to return — the same thing
+     * {@link com.mycompany.batch.service.BatchService} does before evaluating one. Key order is
+     * insertion order on both sides of the trip, so the columns keep the order the document had.
+     */
+    private Object applyJsonata(Object value, String expression) throws Exception {
+        String expr = resolveJsonataExpression(expression);
+        Object input = objectMapper.readValue(objectMapper.writeValueAsString(value), Object.class);
+        try {
+            return Jsonata.jsonata(expr).evaluate(input);
+        } catch (Exception e) {
+            throw new RuntimeException("JSONata failed: " + describe(e), e);
+        }
+    }
+
+    /**
+     * The expression itself, or the one the shared library holds under a {@code catalog:<name>}
+     * reference — the same form the rest of the tools accept, so a dataset can name a transform
+     * that is maintained in one place instead of keeping its own copy of it.
+     */
+    private String resolveJsonataExpression(String value) {
+        String libraryName = JsonataLibraryService.refName(value);
+        if (libraryName == null) return value.trim();
+        String expression = jsonataLibrary.expressionOf(libraryName);
+        if (expression == null)
+            throw new IllegalArgumentException("JSONata '" + libraryName + "' is not in the shared library");
+        return expression;
+    }
+
+    private static String describe(Exception e) {
+        return e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
     }
 
     private List<String> computeAttributes(List<Map<String, Object>> rows) {

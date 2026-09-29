@@ -30,10 +30,15 @@ import java.util.Map;
  * <p>{@link #source} decides what the paths are read out of: the response payload as before, or the
  * call's own metadata — the URL, the status code, how long it took. See {@link #METADATA}.
  *
+ * <p>{@link #actionKind} can also take the action out of that shape entirely: a {@link #PERFORMANCE}
+ * action summarises this server's own run history and makes no call, and a {@link #COMPARE} action
+ * makes two — one instance against two environments — and fills a grid with what differs.
+ *
  * <p>{@link #rowSourceControlId} turns all of the above into a fan-out: instead of running once
  * against the page's controls, the action runs once per row of a grid already on the page, with each
  * row's own columns answering the {@code ${name}} placeholders. See {@link #ROWS} and {@link #TABS}
- * for where the answers land.
+ * for where the answers land — collected, they fill one grid or one dropdown; a tab apiece, they
+ * fill a tab set.
  *
  * <p>{@link #transformNames} optionally reshapes that root with the page's named transforms first,
  * in the order given — XML into JSON, then JSONata over the result, then more JSONata if that is
@@ -70,12 +75,96 @@ public class AppPageAction {
      */
     public static final String PERFORMANCE = "PERFORMANCE";
 
+    /**
+     * {@link #actionKind}: run one use case instance twice — once against each of two environments —
+     * and fill a grid with what differs between the two answers.
+     *
+     * <p>It is the question every release asks and nothing here answered: <em>does UAT still say
+     * what production says?</em> Until now that meant running the instance twice by hand, saving two
+     * responses and diffing them in something else, which loses the inputs, the environments and the
+     * moment as soon as the files are closed. This makes it a button: the same instance, the same
+     * inputs, two environments, one table of differences.
+     *
+     * <p>What is compared is not necessarily the whole response. {@link #comparePath} narrows it to
+     * a field, and the action's {@link #transformNames} run over each side first, so two endpoints
+     * that answer with the same facts in different wrappers can still be held against each other.
+     * {@link #compareType} says how each body is read — JSON as it stands, XML converted first —
+     * and {@link #compareTolerancePercent} says how far two numbers may drift before the difference
+     * is worth reporting.
+     *
+     * <p>Order is never a difference. Two arrays holding the same elements in a different sequence
+     * compare equal, because an endpoint that returns its rows in whatever order the database handed
+     * them is not a regression, and a diff that says all two hundred rows changed is a diff nobody
+     * reads twice.
+     *
+     * <p>Its answer is a table, so like {@link #PERFORMANCE} it targets a grid and nothing else.
+     */
+    public static final String COMPARE = "COMPARE";
+
+    /**
+     * {@link #actionKind}: fill a control from the rows of a static dataset instead of from a
+     * response — the reference lists this server already holds, put on a page behind a button.
+     *
+     * <p>A great deal of what a page needs to show is not an endpoint's answer at all. The desks,
+     * the regions, the books, the services being watched, the accounts in scope for a release — all
+     * of it is already maintained as a static dataset, and until now a page could only reach one in
+     * two fixed ways: a grid wired straight to a dataset, which fills itself as the page opens and
+     * shows the whole of it, or a dropdown sourced from one, which does the same for its options.
+     * Neither is triggered by anything and neither can be narrowed, so a page wanting "the desks in
+     * the region the operator just picked" had to wrap the list in a use case and call it over HTTP
+     * to ask a question this server could already answer out of what it holds.
+     *
+     * <p>This is that question as an ordinary action: it runs when something is clicked, like any
+     * other, and it narrows. {@link #datasetFilters} are conditions written against the dataset's
+     * own columns whose values may be {@code ${field}} templates, so a grid under a region dropdown
+     * reloads to that region; {@link #datasetFavorite} names a filter already saved on the dataset,
+     * so a question the library has already been taught is asked by name rather than copied. Both
+     * may be given, and are then AND-ed.
+     *
+     * <p>The filtering happens in the dataset library rather than here, so a page pulling twelve
+     * rows out of a dataset of fifty thousand is handed twelve. Like {@link #PERFORMANCE} it calls
+     * nothing outward and names no instance, so there is no environment to send it to, no response
+     * for a path to be read out of, and nothing to transform: its answer is already rows.
+     *
+     * <p>Rows are what most of a page holds, so unlike the other special kinds this one is not
+     * confined to a grid — a select or a chart takes a list as readily, under the same
+     * {@link #keyField}, {@link #labelField} and {@link #valueField} that name the parts of a row
+     * everywhere else.
+     */
+    public static final String DATASET = "DATASET";
+
+    /** {@link #compareType}: each response is read as JSON — the default. */
+    public static final String COMPARE_JSON = "JSON";
+
+    /**
+     * {@link #compareType}: each response is parsed as an XML document and compared as the tree it
+     * describes — elements as keys, a repeated tag as a list, attributes under {@code @attributes}.
+     * Attribute order, whitespace between elements and the order sibling elements appear in are all
+     * outside that tree, so none of them can show up as a difference.
+     */
+    public static final String COMPARE_XML = "XML";
+
+    /** {@link #compareReport}: only what differs by more than the threshold — the default. */
+    public static final String REPORT_DIFFERENCES = "DIFFERENCES";
+
+    /**
+     * {@link #compareReport}: what differs, and also what differed by less than the threshold — so
+     * the report can be read as "these six moved, and four of them moved within tolerance" rather
+     * than leaving the tolerated ones indistinguishable from the identical ones.
+     */
+    public static final String REPORT_TOLERATED = "TOLERATED";
+
+    /** {@link #compareReport}: every field compared, matching or not — the full side-by-side. */
+    public static final String REPORT_EVERYTHING = "EVERYTHING";
+
     /** {@link #source}: bind from the response body, which is what an action has always done. */
     public static final String PAYLOAD = "PAYLOAD";
 
     /**
-     * {@link #rowOutputMode}: every row's answer lands in one grid, a row of it per call, so a
-     * hundred calls read as a hundred-row table that sorts, filters and exports like any other.
+     * {@link #rowOutputMode}: every row's answer lands in one control, a row of it per call — a grid,
+     * so a hundred calls read as a hundred-row table that sorts, filters and exports like any other,
+     * or a select or multi-select, so those same rows become the options of one dropdown under
+     * {@link #keyField} and {@link #labelField}. Which of the two is the target's to say.
      */
     public static final String ROWS = "ROWS";
 
@@ -111,6 +200,19 @@ public class AppPageAction {
      */
     private String actionKind = USECASE;
     private String appUseCaseInstanceId;
+    /** {@link #DATASET} only — which static dataset's rows this action binds. */
+    private String datasetName;
+    /**
+     * {@link #DATASET} only — the name of a filter saved on that dataset, whose conditions are
+     * applied before the rows come back. Blank asks for the dataset unfiltered, or for
+     * {@link #datasetFilters} alone.
+     */
+    private String datasetFavorite;
+    /**
+     * {@link #DATASET} only — conditions written on the page itself, AND-ed with each other and with
+     * whatever {@link #datasetFavorite} carries. Empty asks for every row the favourite left.
+     */
+    private List<AppPageDatasetFilter> datasetFilters = new ArrayList<>();
     /**
      * Overrides which of the instance's environments this run calls — the same {@code ${field}}
      * template grammar as {@link #inputs}. Typically points at a select control sourced from
@@ -140,7 +242,11 @@ public class AppPageAction {
      * {@code javascript:} one in an href would be that data running as the page.
      */
     private String valuePath;
-    /** Which element fields become a select's value and text; ignored for a grid target. */
+    /**
+     * Which element fields become a select's value and text; ignored for a grid target. Read the
+     * same way where a fan-out collects its answers into a select: each collected row is an option,
+     * and these name the two columns of it that matter.
+     */
     private String keyField;
     private String labelField;
     /**
@@ -160,6 +266,16 @@ public class AppPageAction {
      * exactly as it always was.
      */
     private boolean scalarsOnly;
+    /**
+     * Placed grid targets only: add what this binds to the rows the grid already holds rather than
+     * replacing them, so a button clicked once per order — or an action run again over a different
+     * environment — builds one table out of several answers instead of showing only the last.
+     *
+     * <p>Nothing to {@link #NEW_GRID}, which already keeps every run: it draws another grid per run,
+     * which is this same idea as a stack rather than as one table. Off, which is every action saved
+     * before this existed, each run replaces the grid's rows exactly as it always did.
+     */
+    private boolean appendRows;
     /** {@link #PAYLOAD} or {@link #METADATA}; anything unrecognised reads as PAYLOAD. */
     private String source = PAYLOAD;
     /**
@@ -228,7 +344,8 @@ public class AppPageAction {
 
     /**
      * Columns added to every row of the grid this action fills, as it fills it — a field of the call
-     * record, a response header, or a lookup into a static dataset. See {@link AppPageEnrichColumn}.
+     * record, a response header, a lookup into a static dataset or into another grid on the page, and
+     * a regex over one column making another. See {@link AppPageEnrichColumn}.
      *
      * <p>Only a grid has rows to add them to, so they are taken only where the target is a grid, a
      * {@link #NEW_GRID}, or — for a fan-out giving each row a tab — the tab set whose grids those are.
@@ -246,6 +363,77 @@ public class AppPageAction {
      * grid per call and no one table to group.
      */
     private AppPagePivot pivot;
+
+    /**
+     * {@link #COMPARE} only: the environment the comparison treats as the baseline — the side a
+     * difference is reported as being <em>from</em>. Same {@code ${field}} template grammar as
+     * {@link #environmentOverride}, and usually pointed at a select sourced from the app's
+     * environments, so the operator picks the pair.
+     */
+    private String compareEnvironmentA;
+
+    /** {@link #COMPARE} only: the environment held against the baseline. See {@link #compareEnvironmentA}. */
+    private String compareEnvironmentB;
+
+    /** {@link #COMPARE} only: {@link #COMPARE_JSON} or {@link #COMPARE_XML}; anything else reads as JSON. */
+    private String compareType = COMPARE_JSON;
+
+    /**
+     * {@link #COMPARE} only: what inside each response is compared. Blank, or {@code $}, compares
+     * the response whole; anything else is the same path grammar {@link #arrayPath} uses, read out
+     * of each side after that side has been through {@link #transformNames} — so a comparison can be
+     * narrowed to one field, or widened back to the reshaped document a JSONata step produced.
+     */
+    private String comparePath;
+
+    /**
+     * {@link #COMPARE} only: how far two numbers may differ, as a percentage of the larger of them,
+     * before the difference is reported. 0 — the default — reports any difference at all.
+     *
+     * <p>Relative rather than absolute, and measured against the larger side rather than the
+     * baseline, so the same threshold means the same thing on a price and on a notional and reads
+     * the same whichever environment happens to be the bigger number. It applies to numbers only:
+     * two strings are equal or they are not, and a "0.1% different" identifier is a different
+     * identifier.
+     */
+    private double compareTolerancePercent;
+
+    /**
+     * {@link #COMPARE} only: how much of the comparison ends up in the grid — {@link #REPORT_DIFFERENCES},
+     * {@link #REPORT_TOLERATED} or {@link #REPORT_EVERYTHING}. Anything unrecognised reads as differences only.
+     */
+    private String compareReport = REPORT_DIFFERENCES;
+
+    public String getCompareEnvironmentA()                              { return compareEnvironmentA; }
+    public void   setCompareEnvironmentA(String compareEnvironmentA)    { this.compareEnvironmentA = compareEnvironmentA; }
+
+    public String getCompareEnvironmentB()                              { return compareEnvironmentB; }
+    public void   setCompareEnvironmentB(String compareEnvironmentB)    { this.compareEnvironmentB = compareEnvironmentB; }
+
+    public String getCompareType()                    { return compareType; }
+    public void   setCompareType(String compareType)  { this.compareType = COMPARE_XML.equalsIgnoreCase(compareType) ? COMPARE_XML : COMPARE_JSON; }
+
+    public String getComparePath()                    { return comparePath; }
+    public void   setComparePath(String comparePath)  { this.comparePath = comparePath; }
+
+    public double getCompareTolerancePercent()        { return compareTolerancePercent; }
+    /** A negative threshold would accept nothing and mean nothing, so it reads as no threshold at all. */
+    public void   setCompareTolerancePercent(double compareTolerancePercent) {
+        this.compareTolerancePercent = compareTolerancePercent > 0 ? compareTolerancePercent : 0;
+    }
+
+    public String getCompareReport()                      { return compareReport; }
+    public void   setCompareReport(String compareReport)  {
+        this.compareReport = REPORT_EVERYTHING.equalsIgnoreCase(compareReport) ? REPORT_EVERYTHING
+                : REPORT_TOLERATED.equalsIgnoreCase(compareReport) ? REPORT_TOLERATED
+                : REPORT_DIFFERENCES;
+    }
+
+    /** Whether this action compares one instance across two environments rather than calling one. */
+    public boolean isCompare() { return COMPARE.equals(actionKind); }
+
+    /** Whether this action reads each response as an XML document rather than as JSON. */
+    public boolean isCompareXml() { return COMPARE_XML.equals(compareType); }
 
     public AppPagePivot getPivot()              { return pivot; }
     public void setPivot(AppPagePivot pivot)    { this.pivot = pivot; }
@@ -267,7 +455,12 @@ public class AppPageAction {
 
     public String getActionKind()                    { return actionKind; }
     /** Anything unrecognised reads as {@link #USECASE}, which is what a page saved without one is. */
-    public void   setActionKind(String actionKind)   { this.actionKind = PERFORMANCE.equalsIgnoreCase(actionKind) ? PERFORMANCE : USECASE; }
+    public void   setActionKind(String actionKind)   {
+        this.actionKind = PERFORMANCE.equalsIgnoreCase(actionKind) ? PERFORMANCE
+                : COMPARE.equalsIgnoreCase(actionKind) ? COMPARE
+                : DATASET.equalsIgnoreCase(actionKind) ? DATASET
+                : USECASE;
+    }
 
     public String getAppUseCaseInstanceId()                              { return appUseCaseInstanceId; }
     public void   setAppUseCaseInstanceId(String appUseCaseInstanceId)   { this.appUseCaseInstanceId = appUseCaseInstanceId; }
@@ -298,6 +491,9 @@ public class AppPageAction {
 
     public boolean isScalarsOnly()                     { return scalarsOnly; }
     public void    setScalarsOnly(boolean scalarsOnly) { this.scalarsOnly = scalarsOnly; }
+
+    public boolean isAppendRows()                    { return appendRows; }
+    public void    setAppendRows(boolean appendRows) { this.appendRows = appendRows; }
 
     public String getSource()                { return source; }
     public void   setSource(String source)   { this.source = METADATA.equalsIgnoreCase(source) ? METADATA : PAYLOAD; }
@@ -344,8 +540,8 @@ public class AppPageAction {
     private List<AppPageRowFilter> rowFilters = new ArrayList<>();
 
     /**
-     * The columns of the grid a collected fan-out fills — see {@link AppPageResultColumn}. Empty,
-     * which is what every fan-out written before this existed is, keeps the old shape: a leading
+     * Columns added to the grid a collected fan-out fills, beside the ones its answers bring — see
+     * {@link AppPageResultColumn}. Empty, and the grid is what it has always been: a leading
      * {@code source} column and then whatever fields each answer happened to carry.
      *
      * <p>Only {@link #ROWS} has one grid to lay out this way. Under {@link #TABS} every call has a
@@ -354,8 +550,35 @@ public class AppPageAction {
      */
     private List<AppPageResultColumn> rowColumns = new ArrayList<>();
 
+    /**
+     * Narrows what is bound, after it has been read and before it fills the control — see
+     * {@link AppPageRowFilter}. Every filter has to pass for a row to be kept.
+     *
+     * <p>A grid and a dropdown both take a list, and neither always wants all of it. The endpoint
+     * that answers with every order is the grid of the open ones; the instance list that answers with
+     * every environment is the dropdown of the production ones. Without this the choices were to
+     * write a JSONata transform for each such reading, or to bind the lot and leave the operator to
+     * type into the grid's filter row every time — and the second is not open to a dropdown at all,
+     * which has no filter row to type into.
+     *
+     * <p>It is the same test, written the same way, as the filters a fan-out narrows its rows with,
+     * and it runs at the same point in the reading: after the transforms and the path, after the
+     * enriched columns are added — so a filter may test a column that came off the call record
+     * rather than out of the body — and before a group-by, so what is grouped is what passed. Values
+     * are templates, and one resolving to nothing drops its filter rather than matching nothing, so
+     * a filter written against a dropdown the operator has not touched means <em>any</em>.
+     *
+     * <p>Only a grid, a new grid or a select reads these: the other targets take one value rather
+     * than a list of rows, and a filter on one of those is refused rather than saved as a test
+     * nothing would ever make.
+     */
+    private List<AppPageRowFilter> bindFilters = new ArrayList<>();
+
     public List<AppPageRowFilter> getRowFilters()                        { return rowFilters; }
     public void setRowFilters(List<AppPageRowFilter> rowFilters)         { this.rowFilters = rowFilters != null ? rowFilters : new ArrayList<>(); }
+
+    public List<AppPageRowFilter> getBindFilters()                       { return bindFilters; }
+    public void setBindFilters(List<AppPageRowFilter> bindFilters)       { this.bindFilters = bindFilters != null ? bindFilters : new ArrayList<>(); }
 
     public List<AppPageResultColumn> getRowColumns()                     { return rowColumns; }
     public void setRowColumns(List<AppPageResultColumn> rowColumns)      { this.rowColumns = rowColumns != null ? rowColumns : new ArrayList<>(); }
@@ -418,7 +641,7 @@ public class AppPageAction {
 
     /**
      * Where a fan-out's answers land: {@link #ROWS} — the default — collects them into the one grid
-     * this action targets, a row per call; {@link #TABS} gives each call a grid of its own inside
+     * or dropdown this action targets, a row per call; {@link #TABS} gives each call a grid of its own inside
      * the tab set this action targets. Ignored entirely while {@link #rowSourceControlId} is blank.
      */
     private String rowOutputMode = ROWS;
@@ -465,6 +688,24 @@ public class AppPageAction {
 
     /** Whether this action fills a grid with performance figures instead of running an instance. */
     public boolean isPerformance() { return PERFORMANCE.equals(actionKind); }
+
+    /** Whether this action binds a static dataset's rows instead of running an instance. */
+    public boolean isDataset() { return DATASET.equals(actionKind); }
+
+    public String getDatasetName()                     { return datasetName; }
+    public void   setDatasetName(String datasetName)   {
+        this.datasetName = datasetName == null || datasetName.isBlank() ? null : datasetName.trim();
+    }
+
+    public String getDatasetFavorite()                       { return datasetFavorite; }
+    public void   setDatasetFavorite(String datasetFavorite) {
+        this.datasetFavorite = datasetFavorite == null || datasetFavorite.isBlank() ? null : datasetFavorite.trim();
+    }
+
+    public List<AppPageDatasetFilter> getDatasetFilters()    { return datasetFilters; }
+    public void setDatasetFilters(List<AppPageDatasetFilter> datasetFilters) {
+        this.datasetFilters = datasetFilters != null ? datasetFilters : new ArrayList<>();
+    }
 
     /** Whether this action reads the call's metadata rather than its response body. */
     public boolean isMetadata()   { return METADATA.equals(source); }

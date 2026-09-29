@@ -11,9 +11,10 @@ import java.util.List;
  * every call has to carry the date it was made, or the box it was made from, says so once here
  * instead of in a hidden control per page and a placeholder per action.
  *
- * <p>{@link #BUILT_IN} is the set every page has without declaring anything: the machine, the date
- * and time the trigger fired, a fresh UUID, — inside a fan-out — which row is being asked about,
- * and the page's {@code DEBUG} switch. All but the last are computed when the trigger runs rather
+ * <p>{@link #BUILT_IN} is the set every page has without declaring anything: the machine, the
+ * process serving the page, the date and time the trigger fired, the business days either side of
+ * it, a fresh UUID, — inside a fan-out — which row is being asked about, and the page's
+ * {@code DEBUG} switch. All but the last are computed when the trigger runs rather
  * than stored, which is the whole of the difference between them and the ad-hoc ones held here: a
  * stored variable is a value somebody typed, and a built-in is a value the run has. {@code DEBUG}
  * is the exception that proves the rule — a value the <em>page</em> has rather than the run, kept
@@ -37,7 +38,12 @@ public record AppPageVariable(String name, String value, String description) {
      *
      * <ul>
      *   <li>{@code MACHINE} — the host this server runs on, without its domain</li>
+     *   <li>{@code PID} — the process id of the JVM serving the page, which is what "which of the
+     *       three instances answered this" is asked with</li>
      *   <li>{@code DATESTAMP} — the date the trigger fired, {@code yyyyMMdd}</li>
+     *   <li>{@code PREVDATESTAMP} — the business day before it, {@code yyyyMMdd}: the nearest
+     *       earlier weekday, so a Monday run looks back to the Friday</li>
+     *   <li>{@code NEXTDATESTAMP} — the business day after it, on the same rule</li>
      *   <li>{@code DATETIME} — the moment it fired, {@code yyyyMMddHHmmss}</li>
      *   <li>{@code DATETIMEHR} — the same moment written for a person to read</li>
      *   <li>{@code UUID} — a fresh one per call, so every call of a fan-out carries its own</li>
@@ -49,7 +55,8 @@ public record AppPageVariable(String name, String value, String description) {
      * </ul>
      */
     public static final List<String> BUILT_IN =
-            List.of("MACHINE", "DATESTAMP", "DATETIME", "DATETIMEHR", "UUID", "ROWNUM", "DEBUG");
+            List.of("MACHINE", "PID", "DATESTAMP", "PREVDATESTAMP", "NEXTDATESTAMP",
+                    "DATETIME", "DATETIMEHR", "UUID", "ROWNUM", "DEBUG");
 
     /** What a name has to look like to be written as {@code ${name}} in a template at all. */
     public static boolean isLegalName(String name) {

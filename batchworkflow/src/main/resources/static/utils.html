@@ -287,6 +287,9 @@
 
     <div class="toolbar">
         <button class="primary"  onclick="runJsonata()">Apply</button>
+        <select id="jsonataLibrarySelect" onchange="jsonataLoadShared()" style="max-width:300px"></select>
+        <button class="tool-btn" onclick="jsonataSaveToLibrary()">Save as&hellip;</button>
+        <a class="hint" href="app.html#jsonata" target="_blank" style="align-self:center">JSONata library</a>
         <button class="danger"   onclick="clearJsonata()" style="margin-left:auto">Clear</button>
     </div>
 
@@ -1087,6 +1090,82 @@
         }
     }
 
+    // ---- The shared JSONata library ----
+    // The scratchpad is where an expression gets written and argued with; the library is where it
+    // goes once it works. Saving from here means the expression a page or a use case ends up naming
+    // is the one that was actually tried, rather than a retyping of it.
+
+    let jsonataLibrary = [];
+
+    async function loadJsonataLibrary(selected) {
+        try {
+            const response = await fetch('/jsonata');
+            jsonataLibrary = response.ok ? await response.json() : [];
+        } catch (e) {
+            jsonataLibrary = [];
+        }
+        // Built as elements rather than as markup: a saved name is whatever somebody typed, and the
+        // browser setting .value and .textContent needs no escaping rules of its own to get right.
+        const select = document.getElementById('jsonataLibrarySelect');
+        select.innerHTML = '';
+        const blank = document.createElement('option');
+        blank.value = '';
+        blank.textContent = jsonataLibrary.length ? '— load a shared expression —' : '— library is empty —';
+        select.appendChild(blank);
+        jsonataLibrary.forEach(j => {
+            const option = document.createElement('option');
+            option.value = j.name;
+            option.textContent = j.name + (j.description ? ' — ' + j.description : '');
+            option.selected = j.name === selected;
+            select.appendChild(option);
+        });
+    }
+
+    /** Loads a saved expression, and the document it was saved with, so it can be tried as it is. */
+    function jsonataLoadShared() {
+        const name = document.getElementById('jsonataLibrarySelect').value;
+        if (!name) return;
+        const entry = jsonataLibrary.find(j => j.name === name);
+        if (!entry) return;
+        document.getElementById('jsonataExpr').value = entry.expression || '';
+        // Only when there is nothing to lose: the input box is usually the thing being examined, and
+        // overwriting it to show an example would be taking away the reason the page was open.
+        const input = document.getElementById('jsonataInput');
+        if (!input.value.trim() && entry.sampleInput) input.value = entry.sampleInput;
+        setJsonataStatus('Loaded "' + name + '" from the library', 'ok');
+    }
+
+    async function jsonataSaveToLibrary() {
+        const expression = document.getElementById('jsonataExpr').value.trim();
+        if (!expression) { setJsonataStatus('No JSONata expression to save', 'error'); return; }
+
+        const name = (prompt('Save this expression in the shared JSONata library as:',
+                document.getElementById('jsonataLibrarySelect').value || '') || '').trim();
+        if (!name) return;
+
+        const existing = jsonataLibrary.find(j => j.name === name);
+        if (existing && !confirm('"' + name + '" is already in the library. Replace what it holds?\n\n'
+                + 'Everything else that names it will run this expression instead.')) return;
+
+        // The input goes with it: an expression saved with the document it was tried against is one
+        // the next person can run rather than only read.
+        const entry = { name: name, description: '', expression: expression,
+                        sampleInput: document.getElementById('jsonataInput').value };
+        try {
+            const response = await fetch('/jsonata' + (existing ? '/' + encodeURIComponent(name) : ''), {
+                method: existing ? 'PUT' : 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(entry)
+            });
+            const answer = await response.json();
+            if (!response.ok) throw new Error(answer && answer.error ? answer.error : response.statusText);
+            await loadJsonataLibrary(name);
+            setJsonataStatus('Saved as "' + name + '" — reference it anywhere as catalog:' + name, 'ok');
+        } catch (e) {
+            setJsonataStatus('Could not save it to the library: ' + e.message, 'error');
+        }
+    }
+
     function setJsonataStatus(msg, type) {
         const el = document.getElementById('jsonataStatus');
         el.textContent = msg;
@@ -1148,6 +1227,10 @@
             navigator.clipboard.write([new ClipboardItem({ 'text/html': blob })]).then(flash).catch(fallback);
         } catch (e) { fallback(); }
     }
+
+    // The library dropdown fills itself as the page opens. It never blocks anything: this is a
+    // scratchpad, and it stays a working scratchpad on a server with no library saved yet.
+    loadJsonataLibrary();
 </script>
 <div id="copyToast">Copied!</div>
 

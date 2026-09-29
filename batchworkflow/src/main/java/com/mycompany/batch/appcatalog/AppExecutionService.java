@@ -738,19 +738,44 @@ public class AppExecutionService {
 
     /**
      * The variables every run has without anyone declaring them — the same names and formats a page
-     * resolves ({@code AppPageVariable#BUILT_IN}, {@code refreshGlobals} in apppage.html): the machine,
-     * the date and time the run started, and a fresh UUID. {@code ROWNUM} and {@code DEBUG} belong to a
-     * page's trigger rather than to a run, and a page sends those in as inputs already.
+     * resolves ({@code AppPageVariable#BUILT_IN}, {@code refreshGlobals} in apppage.js): the machine
+     * and the process serving it, the date and time the run started, the business days either side of
+     * that date, and a fresh UUID. {@code ROWNUM} and {@code DEBUG} belong to a page's trigger rather
+     * than to a run, and a page sends those in as inputs already.
      */
     static Map<String, Object> builtInVariables() {
         java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        java.time.format.DateTimeFormatter stamp = java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd");
         Map<String, Object> builtIns = new LinkedHashMap<>();
-        builtIns.put("MACHINE",    MachineName.local());
-        builtIns.put("DATESTAMP",  now.format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd")));
-        builtIns.put("DATETIME",   now.format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss")));
-        builtIns.put("DATETIMEHR", now.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
-        builtIns.put("UUID",       UUID.randomUUID().toString());
+        builtIns.put("MACHINE",       MachineName.local());
+        // A string like every other built-in: these are written into URLs, headers and bodies as
+        // text, and a number here would only be turned back into one at the other end.
+        builtIns.put("PID",           String.valueOf(ProcessHandle.current().pid()));
+        builtIns.put("DATESTAMP",     now.format(stamp));
+        builtIns.put("PREVDATESTAMP", businessDay(now.toLocalDate(), -1).format(stamp));
+        builtIns.put("NEXTDATESTAMP", businessDay(now.toLocalDate(), 1).format(stamp));
+        builtIns.put("DATETIME",      now.format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss")));
+        builtIns.put("DATETIMEHR",    now.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+        builtIns.put("UUID",          UUID.randomUUID().toString());
         return builtIns;
+    }
+
+    /**
+     * The nearest business day in the given direction — one step off {@code from}, then on past any
+     * Saturday and Sunday. Weekends only: this server holds no holiday calendar, and guessing at one
+     * would be worse than a rule everybody can state. The same rule
+     * {@code BatchService#loadOperationProperties} applies to its own {@code PREVDATESTAMP}, and the
+     * same one {@code refreshGlobals} in apppage.js applies in the browser.
+     *
+     * @param step {@code -1} for the previous business day, {@code +1} for the next
+     */
+    static java.time.LocalDate businessDay(java.time.LocalDate from, int step) {
+        java.time.LocalDate day = from.plusDays(step);
+        while (day.getDayOfWeek() == java.time.DayOfWeek.SATURDAY
+                || day.getDayOfWeek() == java.time.DayOfWeek.SUNDAY) {
+            day = day.plusDays(step);
+        }
+        return day;
     }
 
     /** How deep one variable may be written in terms of another before the chain is left as it stands. */
@@ -790,11 +815,17 @@ public class AppExecutionService {
         return value;
     }
 
-    /** Coerces a declared input's string default into the type the use case says it is. */
+    /**
+     * Coerces a declared input's string default into the type the use case says it is. An {@code xml}
+     * default stays the text it was written as — there is nothing to turn it into that substituting it
+     * into a request body would want.
+     */
     private Object coerce(String value, String type) {
         try {
             return switch (type == null ? "string" : type) {
-                case "number"  -> value.contains(".") ? Double.valueOf(value) : Long.valueOf(value);
+                // The cast keeps this a reference conditional: an untyped ternary over Double and Long
+                // promotes both to double, and a whole-number default would substitute in as "50.0".
+                case "number"  -> value.contains(".") ? (Object) Double.valueOf(value) : Long.valueOf(value);
                 case "boolean" -> Boolean.valueOf(value);
                 case "json"    -> objectMapper.readValue(value, Object.class);
                 default        -> value;

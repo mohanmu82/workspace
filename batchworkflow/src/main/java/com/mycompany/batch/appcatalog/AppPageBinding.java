@@ -41,11 +41,19 @@ public class AppPageBinding {
     private boolean keyValueGrid;
     /** Grid targets: leave the object and array properties out — see {@link AppPageAction#isScalarsOnly()}. */
     private boolean scalarsOnly;
+    /** Grid targets: add the rows to what the grid holds — see {@link AppPageAction#isAppendRows()}. */
+    private boolean appendRows;
     /** Grid targets: columns added to every row as it is bound — see {@link AppPageEnrichColumn}. */
     private List<AppPageEnrichColumn> enrichColumns = new ArrayList<>();
 
     /** Grid targets: the rows grouped before they fill the grid — see {@link AppPagePivot}. */
     private AppPagePivot pivot;
+
+    /** Grid and select targets: the rows kept as they are bound — see {@link AppPageAction#getBindFilters()}. */
+    private List<AppPageRowFilter> bindFilters = new ArrayList<>();
+
+    public List<AppPageRowFilter> getBindFilters()                       { return bindFilters; }
+    public void setBindFilters(List<AppPageRowFilter> bindFilters)       { this.bindFilters = bindFilters != null ? bindFilters : new ArrayList<>(); }
 
     public AppPagePivot getPivot()             { return pivot; }
     public void setPivot(AppPagePivot pivot)   { this.pivot = pivot; }
@@ -88,4 +96,7 @@ public class AppPageBinding {
 
     public boolean isScalarsOnly()                     { return scalarsOnly; }
     public void    setScalarsOnly(boolean scalarsOnly) { this.scalarsOnly = scalarsOnly; }
+
+    public boolean isAppendRows()                    { return appendRows; }
+    public void    setAppendRows(boolean appendRows) { this.appendRows = appendRows; }
 }

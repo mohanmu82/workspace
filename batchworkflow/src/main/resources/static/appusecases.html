@@ -23,6 +23,31 @@
         .var-chip.from-app     { background: #eae6ff; color: #403294; border-color: #c0b6f2; }
         .var-chip.unresolved   { background: #ffebe6; color: #bf2600; border-color: #ffbdad; }
 
+        /* Copying use cases onto another app. Opens above the list rather than over the page: what
+           is being copied is the list itself, and a dialog covering it would hide the thing being
+           picked from. */
+        .copy-panel {
+            border: 1px solid #b3d4ff; background: #f4f8ff; border-radius: 4px;
+            padding: 8px 10px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 6px;
+        }
+        .copy-panel .copy-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .copy-panel .copy-head select { flex: 1 1 140px; min-width: 0; }
+        .copy-panel .copy-picks {
+            max-height: 30vh; overflow-y: auto; display: flex; flex-direction: column; gap: 1px;
+            border: 1px solid #dfe1e6; border-radius: 3px; background: #fff; padding: 4px 6px;
+        }
+        .copy-panel .copy-picks label {
+            display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer;
+            padding: 1px 0; white-space: nowrap;
+        }
+        .copy-panel .copy-picks label input { margin: 0; flex: none; }
+        .copy-panel .copy-picks .pill { flex: none; font-size: 10px; padding: 0 5px; min-width: 42px; text-align: center; }
+        .copy-panel .copy-picks .copy-suffix {
+            color: #5e6c84; overflow: hidden; text-overflow: ellipsis;
+            font-family: "Cascadia Code", Consolas, monospace; font-size: 11px;
+        }
+        .copy-panel .copy-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
         /* One thin line per use case, so a long list fits on screen without scrolling. */
         #useCaseList { gap: 2px; max-height: 70vh; }
         #useCaseList .record {
@@ -46,6 +71,13 @@
         .list-search { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
         .list-search input { flex: 1; min-width: 0; padding: 4px 8px; font-size: 12px; }
         .list-search .hint { white-space: nowrap; }
+
+        /* A json or xml input's default goes in a textarea under its row rather than in the one-line
+           box the other types share — see .input-doc in appcatalog.css. */
+        .input-def { margin-bottom: 6px; }
+        .input-def .kv-row { margin-bottom: 0; }
+        /* No one-line default to hold a column open, so the name gets the width instead. */
+        .input-def .kv-row.doc-row { grid-template-columns: 1fr 120px 32px; }
     </style>
 </head>
 <body>
@@ -76,7 +108,10 @@
         <div class="panel-title">
             <span>Use Cases</span>
             <button class="tool-btn" onclick="newUseCase()">+ New</button>
+            <button class="tool-btn" id="copyToAppBtn" onclick="toggleCopyToApp()"
+                    title="Copy any number of these use cases onto another app">To app&hellip;</button>
         </div>
+        <div id="copyToApp" class="copy-panel" style="display:none"></div>
         <div class="list-search">
             <input id="useCaseSearch" type="search" placeholder="Search use cases — name, method, URL…"
                    autocomplete="off" oninput="applyUseCaseFilter()">
@@ -152,8 +187,9 @@
                 <textarea id="useCaseVariables" spellcheck="false" oninput="renderVariableScan()"
                           placeholder='{"pageSize": 50}'></textarea>
                 <span class="hint">Overrides app variables; an instance input of the same name still wins. Values may use
-                    <code>${DATESTAMP}</code>, <code>${DATETIME}</code>, <code>${DATETIMEHR}</code>, <code>${UUID}</code>,
-                    <code>${MACHINE}</code> or another variable — <code>{"file": "fx_${DATESTAMP}.csv"}</code>.</span>
+                    <code>${DATESTAMP}</code>, <code>${PREVDATESTAMP}</code>, <code>${NEXTDATESTAMP}</code>,
+                    <code>${DATETIME}</code>, <code>${DATETIMEHR}</code>, <code>${UUID}</code>,
+                    <code>${MACHINE}</code>, <code>${PID}</code> or another variable — <code>{"file": "fx_${DATESTAMP}.csv"}</code>.</span>
             </div>
 
             <div class="form-group wide">
@@ -162,12 +198,20 @@
                 <div class="toolbar" style="margin-top:6px">
                     <button class="tool-btn" onclick="addInputRow()">+ Add Input</button>
                 </div>
-                <span class="hint">Each instance of this use case supplies values for these. Name / type / optional default.</span>
+                <span class="hint">Each instance of this use case supplies values for these. Name / type / optional default.
+                    A <code>json</code> or <code>xml</code> input takes its default in a textarea, with a pretty printer
+                    that says so when the document will not parse.</span>
             </div>
 
             <div class="form-group wide">
                 <label for="jsonataTransform">JSONata Transform (optional)</label>
+                <div class="toolbar" style="margin-bottom:6px">
+                    <select id="jsonataSource" onchange="applyJsonataSource()" style="max-width:340px"></select>
+                    <button class="tool-btn" id="jsonataSaveAsBtn" onclick="saveJsonataToLibrary()">Save as&hellip;</button>
+                    <a class="hint" href="appjsonata.html" target="_blank">Open the JSONata library</a>
+                </div>
                 <textarea id="jsonataTransform" spellcheck="false" placeholder='{"id": order.id, "total": order.amount}'></textarea>
+                <span class="hint" id="jsonataSharedHint" style="display:none"></span>
                 <span class="hint">Applied to the parsed response; the result comes back as <code>transformedResponse</code>.
                     <code>${name}</code> fills in one of this run's own values — an input, an instance input or an app
                     variable — before the expression is evaluated, so
@@ -199,6 +243,21 @@
     let currentApp = null;
     let editingUseCaseName = null;
     let inputRows = [];     // [{ name, type, defaultValue }] — the editable input definitions
+
+    // ── Copying onto another app ─────────────────────────────────────────────
+    // Two apps deployed in the same estate routinely answer the same calls — the same health check,
+    // the same status lookup, the same submit — and defining each of them twice by hand is the whole
+    // of the work of adding the second app. The same-app Clone beside it does the other half of this:
+    // one use case under a new name, for "same call, one field different".
+    //
+    // What crosses is a copy, never a reference. A use case belongs to an app, so there is nothing
+    // to be shared between two of them — and what a copy names has to mean something over there:
+    // its $appVariables resolve against the destination app's, and its URL prefix type against that
+    // app's environments. Neither is checked here, because neither can be: both are answered when
+    // the use case is actually run, and the panel says so rather than pretending otherwise.
+    let copyOpen = false;
+    let copyTargetApp = '';
+    let copyPicks = [];     // the use case names ticked
 
     // ── App selection ────────────────────────────────────────────────────────
 
@@ -241,6 +300,14 @@
     }
 
     function renderUseCaseList() {
+        // The picks name use cases of the app that was being looked at, so switching app or
+        // reloading the list closes the panel rather than leaving ticks against names that have
+        // gone. Drawn from here so it is refreshed wherever the list is.
+        if (copyOpen && copyPicks.some(name => !useCases.some(u => u.useCaseName === name))) {
+            copyOpen = false;
+            copyPicks = [];
+        }
+        renderCopyToApp();
         const list = document.getElementById('useCaseList');
         if (!currentApp) {
             list.innerHTML = '<div class="empty-note">Select an app first.</div>';
@@ -283,7 +350,131 @@
             !rows.length ? '' : terms.length ? shown + ' of ' + rows.length : rows.length + ' use case' + (rows.length !== 1 ? 's' : '');
     }
 
+    // ── The shared JSONata library ───────────────────────────────────────────
+    // A use case's response transform is either written here or named in the library. Naming one is
+    // what stops the same reshaping being pasted into six use cases that then drift apart; the saved
+    // use case holds "catalog:<name>" and the server reads the expression out of the library when the
+    // call runs, so correcting it there corrects every use case that named it.
+
+    let jsonataLibrary = [];
+
+    async function loadJsonataLibrary() {
+        try {
+            jsonataLibrary = await AC.api('GET', '/jsonata');
+        } catch (e) {
+            // Not fatal: a use case whose transform is written here has no business failing to open
+            // because the library is unavailable. One that names a shared expression says so.
+            jsonataLibrary = [];
+        }
+        renderJsonataSource(currentJsonataRef());
+    }
+
+    /** The library name this use case's transform points at, or '' when it writes its own. */
+    function currentJsonataRef() {
+        const select = document.getElementById('jsonataSource');
+        return select ? select.value : '';
+    }
+
+    /** The name inside "catalog:<name>", or '' for an ordinary expression. */
+    function jsonataRefOf(value) {
+        const text = String(value || '').trim();
+        return text.toLowerCase().startsWith('catalog:') ? text.slice('catalog:'.length).trim() : '';
+    }
+
+    function renderJsonataSource(selected) {
+        const select = document.getElementById('jsonataSource');
+        const known = jsonataLibrary.some(j => j.name === selected);
+        select.innerHTML = '<option value="">Written on this use case</option>'
+            + jsonataLibrary.map(j => '<option value="' + AC.attr(j.name) + '"'
+                + (j.name === selected ? ' selected' : '') + '>Shared: ' + AC.esc(j.name)
+                + (j.description ? ' — ' + AC.esc(j.description) : '') + '</option>').join('')
+            // A name the library no longer holds is still what this use case says it runs, so it
+            // stays on screen and says what is wrong rather than silently reverting to the box.
+            + (selected && !known
+                ? '<option value="' + AC.attr(selected) + '" selected>Shared: ' + AC.esc(selected)
+                    + ' (not in the library)</option>'
+                : '');
+        applyJsonataSource();
+    }
+
+    /**
+     * Shows whichever of the two the use case is using. A shared expression fills the box read-only:
+     * it is worth reading — it is what the call will run — but editing it here would be editing
+     * everybody's copy from a form that never said so. The library page is where it is edited.
+     */
+    function applyJsonataSource() {
+        const name = document.getElementById('jsonataSource').value;
+        const box = document.getElementById('jsonataTransform');
+        const hint = document.getElementById('jsonataSharedHint');
+        const saveAs = document.getElementById('jsonataSaveAsBtn');
+
+        if (!name) {
+            // Whatever was typed here before a shared one was picked, blank included — testing for
+            // truth instead would hand back the library's text to someone who had written nothing.
+            if (box.readOnly && box.dataset.own !== undefined) box.value = box.dataset.own;
+            box.readOnly = false;
+            hint.style.display = 'none';
+            saveAs.style.display = '';
+            return;
+        }
+
+        // Keep what was typed here, so picking a shared one and changing your mind gives it back.
+        if (!box.readOnly) box.dataset.own = box.value;
+        const entry = jsonataLibrary.find(j => j.name === name);
+        box.readOnly = true;
+        box.value = entry ? (entry.expression || '') : '';
+        saveAs.style.display = 'none';
+        hint.style.display = '';
+        hint.innerHTML = entry
+            ? 'Shared — saved as <code>catalog:' + AC.esc(name) + '</code> and read from the library when this runs. '
+                + 'Edit it in the <a href="appjsonata.html#' + encodeURIComponent(name) + '" target="_blank">JSONata library</a>.'
+            : '<span style="color:#bf2600">The library has nothing called "' + AC.esc(name)
+                + '" — this use case will fail when it runs until it names one that is there.</span>';
+    }
+
+    /**
+     * Save as… — this use case's expression into the shared library, and this use case turned into a
+     * reference to it. The expression goes in as it stands, <code>${name}</code> placeholders
+     * included: they are filled in from the run's own values, so a shared expression that reads an
+     * input keeps reading one wherever else it is named.
+     */
+    async function saveJsonataToLibrary() {
+        const expression = document.getElementById('jsonataTransform').value.trim();
+        if (!expression) {
+            AC.setStatus('statusBar', 'There is no JSONata to save yet.', 'error');
+            return;
+        }
+
+        const suggested = (editingUseCaseName || document.getElementById('useCaseName').value.trim() || 'transform');
+        const name = (prompt('Save this expression in the shared JSONata library as:', suggested) || '').trim();
+        if (!name) return;
+
+        const existing = jsonataLibrary.find(j => j.name === name);
+        if (existing && !confirm('"' + name + '" is already in the library. Replace what it holds?\n\n'
+                + 'Everything else that names it will run this expression instead.')) return;
+
+        try {
+            const entry = { name: name, description: '', expression: expression,
+                            sampleInput: (existing || {}).sampleInput || '' };
+            if (existing) {
+                await AC.api('PUT', '/jsonata/' + encodeURIComponent(name), entry);
+            } else {
+                await AC.api('POST', '/jsonata', entry);
+            }
+            jsonataLibrary = await AC.api('GET', '/jsonata');
+            renderJsonataSource(name);
+            AC.setStatus('statusBar', 'Saved to the library as "' + name
+                + '". This use case now references it — save the use case to keep that.', 'ok');
+        } catch (e) {
+            AC.setStatus('statusBar', 'Could not save it to the library: ' + e.message, 'error');
+        }
+    }
+
     // ── Input definition rows ────────────────────────────────────────────────
+
+    // json and xml hold a whole document, so their default is edited in a textarea with the pretty
+    // printer for that format — see AC.formatDocument, which the instance editor shares.
+    const INPUT_TYPES = ['string', 'number', 'boolean', 'json', 'xml'];
 
     function addInputRow(input) {
         inputRows.push(input || { name: '', type: 'string', defaultValue: '' });
@@ -300,6 +491,16 @@
         if (field === 'name') renderVariableScan();
     }
 
+    /**
+     * A type change swaps the value editor between the one-line default and the document textarea,
+     * so the rows are redrawn — the value itself is kept, since the same text is usually what was
+     * meant either way.
+     */
+    function changeInputType(index, type) {
+        inputRows[index].type = type;
+        renderInputRows();
+    }
+
     function renderInputRows() {
         const container = document.getElementById('inputRows');
         if (!inputRows.length) {
@@ -307,20 +508,65 @@
             renderVariableScan();
             return;
         }
-        const types = ['string', 'number', 'boolean', 'json'];
-        container.innerHTML = inputRows.map((input, index) =>
-            '<div class="kv-row">' +
-                '<input type="text" placeholder="variable name" value="' + AC.esc(input.name) + '" ' +
-                       'oninput="updateInputRow(' + index + ', \'name\', this.value)">' +
-                '<select onchange="updateInputRow(' + index + ', \'type\', this.value)">' +
-                    types.map(t => '<option value="' + t + '"' + (input.type === t ? ' selected' : '') + '>' + t + '</option>').join('') +
-                '</select>' +
-                '<input type="text" placeholder="default (optional)" value="' + AC.esc(input.defaultValue || '') + '" ' +
-                       'oninput="updateInputRow(' + index + ', \'defaultValue\', this.value)">' +
-                '<button class="icon-btn" title="Remove" onclick="removeInputRow(' + index + ')">&times;</button>' +
-            '</div>'
-        ).join('');
+        container.innerHTML = inputRows.map((input, index) => {
+            const type = input.type || 'string';
+            const value = input.defaultValue || '';
+            const isDoc = AC.isDocumentType(type);
+            return '<div class="input-def">' +
+                '<div class="kv-row' + (isDoc ? ' doc-row' : '') + '">' +
+                    '<input type="text" placeholder="variable name" value="' + AC.esc(input.name) + '" ' +
+                           'oninput="updateInputRow(' + index + ', \'name\', this.value)">' +
+                    '<select onchange="changeInputType(' + index + ', this.value)">' +
+                        INPUT_TYPES.map(t => '<option value="' + t + '"' + (type === t ? ' selected' : '') + '>' + t + '</option>').join('') +
+                    '</select>' +
+                    (isDoc ? '' : '<input type="text" placeholder="default (optional)" value="' + AC.esc(value) + '" ' +
+                                         'oninput="updateInputRow(' + index + ', \'defaultValue\', this.value)">') +
+                    '<button class="icon-btn" title="Remove" onclick="removeInputRow(' + index + ')">&times;</button>' +
+                '</div>' +
+                (isDoc
+                    ? '<div class="input-doc">' +
+                          '<textarea id="inputDoc' + index + '" spellcheck="false" ' +
+                                    'placeholder="' + AC.esc(type === 'json' ? '{"ids": [1, 2, 3]}' : '<order><id>1</id></order>') + '" ' +
+                                    'oninput="updateInputRow(' + index + ', \'defaultValue\', this.value)"></textarea>' +
+                          '<div class="fmt-tools">' +
+                              '<button class="tool-btn" onclick="prettyPrintInput(' + index + ')">' +
+                                  'Pretty print ' + type.toUpperCase() + '</button>' +
+                              '<span class="fmt-status" id="inputFmt' + index + '"></span>' +
+                          '</div>' +
+                      '</div>'
+                    : '') +
+            '</div>';
+        }).join('');
+        // The document defaults go in through the DOM rather than the markup: written between the
+        // tags they would be read as HTML — entities decoded, a leading newline dropped — and a
+        // default is text, not markup.
+        inputRows.forEach((input, index) => {
+            const box = document.getElementById('inputDoc' + index);
+            if (box) box.value = input.defaultValue || '';
+        });
         renderVariableScan();
+    }
+
+    /** The Pretty print button: formats the row's default in place, or says why it cannot. */
+    function prettyPrintInput(index) {
+        const type = inputRows[index].type || 'string';
+        const box = document.getElementById('inputDoc' + index);
+        const status = document.getElementById('inputFmt' + index);
+        box.classList.remove('doc-ok', 'doc-err');
+        status.className = 'fmt-status';
+        const raw = (box.value || '').trim();
+        if (!raw) { status.textContent = 'Nothing to format yet.'; return; }
+        try {
+            box.value = AC.formatDocument(type, raw);
+            inputRows[index].defaultValue = box.value;
+            box.classList.add('doc-ok');
+            status.className = 'fmt-status ok';
+            status.textContent = type.toUpperCase() + ' formatted.';
+        } catch (e) {
+            box.classList.add('doc-err');
+            status.className = 'fmt-status error';
+            status.textContent = e.message;
+        }
     }
 
     // ── Variable scan ────────────────────────────────────────────────────────
@@ -330,7 +576,8 @@
      * will resolve it — instance input, use case variable, app variable, or nothing at all.
      */
     /** What every run has without declaring it — see AppExecutionService#builtInVariables. */
-    const BUILT_IN_VARIABLES = ['MACHINE', 'DATESTAMP', 'DATETIME', 'DATETIMEHR', 'UUID'];
+    const BUILT_IN_VARIABLES = ['MACHINE', 'PID', 'DATESTAMP', 'PREVDATESTAMP', 'NEXTDATESTAMP',
+                                'DATETIME', 'DATETIMEHR', 'UUID'];
 
     function renderVariableScan() {
         const haystack = [
@@ -388,6 +635,8 @@
         document.getElementById('httpBody').value = '';
         document.getElementById('useCaseVariables').value = '';
         document.getElementById('jsonataTransform').value = '';
+        document.getElementById('jsonataTransform').dataset.own = '';
+        renderJsonataSource('');
         document.getElementById('deleteBtn').style.display = 'none';
         document.getElementById('cloneBtn').style.display = 'none';
         inputRows = [];
@@ -415,7 +664,13 @@
         document.getElementById('httpHeaders').value = uc.httpHeaders || '';
         document.getElementById('httpBody').value = uc.httpBody || '';
         document.getElementById('useCaseVariables').value = AC.prettyJson(uc.appUseCaseVariables);
-        document.getElementById('jsonataTransform').value = (uc.jsonataTransform && uc.jsonataTransform.value) || '';
+        const saved = (uc.jsonataTransform && uc.jsonataTransform.value) || '';
+        const sharedName = jsonataRefOf(saved);
+        document.getElementById('jsonataTransform').value = sharedName ? '' : saved;
+        document.getElementById('jsonataTransform').dataset.own = sharedName ? '' : saved;
+        // Fills the box from the library when it is a reference, and leaves what was written here
+        // alone when it is not.
+        renderJsonataSource(sharedName);
         document.getElementById('deleteBtn').style.display = '';
         document.getElementById('cloneBtn').style.display = '';
         inputRows = (uc.appUseCaseInputs || []).map(i => ({ name: i.name, type: i.type || 'string', defaultValue: i.defaultValue || '' }));
@@ -443,9 +698,24 @@
         for (const row of named) {
             if (seen.has(row.name.trim())) throw new Error('Duplicate input name: ' + row.name.trim());
             seen.add(row.name.trim());
+            // A json or xml default that does not parse is caught here rather than at run time, where
+            // the server falls back to sending the text as it stands.
+            const value = (row.defaultValue || '').trim();
+            if (value && AC.isDocumentType(row.type)) {
+                try {
+                    AC.formatDocument(row.type, value);
+                } catch (e) {
+                    throw new Error('Default for input "' + row.name.trim() + '" — ' + e.message);
+                }
+            }
         }
 
-        const jsonata = document.getElementById('jsonataTransform').value.trim();
+        // A shared expression is saved as the reference, never as the copy that happens to be in the
+        // box: the box is showing the library's text, and writing that out would fork it the moment
+        // somebody corrected the library.
+        const sharedName = currentJsonataRef();
+        const jsonata = sharedName ? 'catalog:' + sharedName
+                                   : document.getElementById('jsonataTransform').value.trim();
 
         return {
             appName:     currentApp.appName,
@@ -487,6 +757,142 @@
         }
     }
 
+    function toggleCopyToApp() {
+        copyOpen = !copyOpen;
+        if (copyOpen) {
+            // Opened with nothing ticked: "copy use cases to another app" has no one use case in
+            // mind until one is picked, and the one in the editor is not necessarily it.
+            copyPicks = [];
+            copyTargetApp = '';
+        }
+        renderCopyToApp();
+    }
+
+    function toggleCopyPick(name, on) {
+        copyPicks = on ? copyPicks.concat([name]) : copyPicks.filter(n => n !== name);
+        renderCopyToApp();
+    }
+
+    function setCopyTargetApp(appName) {
+        copyTargetApp = appName;
+        renderCopyToApp();
+    }
+
+    /** Every use case ticked, or none — the list runs to dozens and ticking them one at a time is work. */
+    function setAllCopyPicks(on) {
+        copyPicks = on ? useCases.map(u => u.useCaseName) : [];
+        renderCopyToApp();
+    }
+
+    /** What is being copied and where to. Redrawn on every change, as the rest of this page is. */
+    function renderCopyToApp() {
+        const host = document.getElementById('copyToApp');
+        const button = document.getElementById('copyToAppBtn');
+        const others = apps.filter(a => !currentApp || a.appName !== currentApp.appName);
+        button.style.display = currentApp && useCases.length && others.length ? '' : 'none';
+        host.style.display = copyOpen && button.style.display === '' ? '' : 'none';
+        if (host.style.display === 'none') { host.innerHTML = ''; return; }
+
+        const target = apps.find(a => a.appName === copyTargetApp);
+        const ready = !!target && copyPicks.length > 0;
+        host.innerHTML =
+            '<div class="copy-head">'
+                + '<label class="hint" style="flex:none">Copy to</label>'
+                + '<select onchange="setCopyTargetApp(this.value)">'
+                    + '<option value="">&mdash; pick an app &mdash;</option>'
+                    + others.map(a => '<option value="' + AC.attr(a.appName) + '"'
+                        + (a.appName === copyTargetApp ? ' selected' : '') + '>' + AC.esc(a.appName) + '</option>').join('')
+                + '</select>'
+                + '<button class="tool-btn" onclick="setAllCopyPicks(true)">All</button>'
+                + '<button class="tool-btn" onclick="setAllCopyPicks(false)">None</button>'
+                + '<button class="icon-btn" onclick="toggleCopyToApp()" title="Close">&times;</button>'
+            + '</div>'
+            + '<div class="copy-picks">' + useCases.slice()
+                .sort((a, b) => a.useCaseName.localeCompare(b.useCaseName))
+                .map(u => '<label><input type="checkbox"'
+                    + (copyPicks.includes(u.useCaseName) ? ' checked' : '')
+                    + ' onchange="toggleCopyPick(\'' + AC.attr(u.useCaseName) + '\', this.checked)">'
+                    + '<span class="pill ' + AC.methodClass(u.httpMethod) + '">'
+                        + AC.esc(u.httpMethod || 'GET') + '</span>'
+                    + '<span>' + AC.esc(u.useCaseName) + '</span>'
+                    + '<span class="copy-suffix">' + AC.esc(u.urlSuffix || '') + '</span></label>').join('')
+            + '</div>'
+            + '<div class="copy-actions">'
+                + '<button class="primary" onclick="copyUseCasesToApp()"' + (ready ? '' : ' disabled') + '>'
+                    + 'Copy ' + (copyPicks.length || '') + ' &rarr; ' + AC.esc(copyTargetApp || 'app') + '</button>'
+                + '<span class="hint" style="margin:0">'
+                    + (!target ? 'Pick the app to copy onto.'
+                        : !copyPicks.length ? 'Tick the use cases to copy.'
+                        : 'Copied whole — URL, method, headers, body, timeout, inputs, variables and transform. A name '
+                            + AC.esc(copyTargetApp) + ' already uses gets <code>-copy</code> added rather than '
+                            + 'overwriting what is there. <code>$variables</code> resolve against '
+                            + AC.esc(copyTargetApp) + '&#39;s own app variables and environments once copied, so check '
+                            + 'anything the two apps do not share.')
+                + '</span>'
+            + '</div>';
+    }
+
+    /** A name the destination is not already using, so a copy never overwrites what is there. */
+    function freeUseCaseName(base, taken) {
+        if (!taken.has(base)) return base;
+        let name = base + '-copy';
+        for (let n = 2; taken.has(name); n++) name = base + '-copy-' + n;
+        return name;
+    }
+
+    /**
+     * Copies every ticked use case onto the chosen app, one POST each.
+     *
+     * <p>One at a time rather than all at once, and each one's outcome kept: a copy of twenty that
+     * stops at the third leaves seventeen undone and nothing said about which, and a name clash on
+     * one of them is no reason for the other nineteen not to cross. What happened is reported
+     * afterwards in full — renamed, failed and copied — because a copy that quietly lost one is
+     * found out a week later by somebody looking for a use case that was never there.
+     */
+    async function copyUseCasesToApp() {
+        const target = copyTargetApp;
+        if (!target || !copyPicks.length || !currentApp) return;
+
+        let taken;
+        try {
+            const existing = await AC.listUseCases(target);
+            taken = new Set(existing.map(u => u.useCaseName));
+        } catch (e) {
+            AC.setStatus('statusBar', 'Could not read the use cases of ' + target + ': ' + e.message, 'error');
+            return;
+        }
+
+        const renamed = [];
+        const failed = [];
+        let copied = 0;
+        for (const name of copyPicks) {
+            const source = useCases.find(u => u.useCaseName === name);
+            if (!source) continue;
+            const copy = JSON.parse(JSON.stringify(source));
+            copy.appName = target;
+            copy.useCaseName = freeUseCaseName(name, taken);
+            if (copy.useCaseName !== name) renamed.push(name + ' as ' + copy.useCaseName);
+            try {
+                await AC.api('POST', '/appcatalog/usecases', copy);
+                // Added as it goes, so two copies in one run cannot both land on the same free name.
+                taken.add(copy.useCaseName);
+                copied++;
+            } catch (e) {
+                failed.push(name + ' (' + (e.message || e) + ')');
+            }
+        }
+
+        const parts = ['Copied ' + copied + ' use case' + (copied === 1 ? '' : 's') + ' to ' + target + '.'];
+        if (renamed.length) parts.push('Renamed to avoid a clash: ' + renamed.join(', ') + '.');
+        if (failed.length) parts.push('Not copied: ' + failed.join('; ') + '.');
+        AC.setStatus('statusBar', parts.join(' '), failed.length ? 'error' : 'ok');
+        if (!failed.length) {
+            copyOpen = false;
+            copyPicks = [];
+            renderCopyToApp();
+        }
+    }
+
     /** Copies the saved use case under a new name — the fast path for "same call, one field different". */
     async function cloneUseCase() {
         if (!editingUseCaseName || !currentApp) return;
@@ -521,6 +927,7 @@
 
     AC.applyEmbedding();
     loadApps();
+    loadJsonataLibrary();
 </script>
 
 </body>

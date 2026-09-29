@@ -20,7 +20,9 @@ import java.util.List;
  * <p>{@link #sortOrder} is asked of every mode alike, because it is a question about the list the
  * operator reads rather than about where the list came from: a dropdown of two hundred desks is
  * unusable in whatever order the endpoint happened to return them, and the fix should not depend on
- * whether they arrived from a use case, a dataset or a typed-in list.
+ * whether they arrived from a use case, a dataset or a typed-in list. {@link #selectFirst} is asked
+ * of every mode for the same reason — whether the dropdown opens on something or on the blank row is
+ * a question about the list, not about where it came from.
  *
  * <p>The {@code DATASET} mode reads {@link #datasetName}'s rows out of the static dataset library
  * and takes {@link #keyField}/{@link #labelField} off each, exactly as {@code USECASE} does — the
@@ -51,6 +53,22 @@ public class AppPageOptionSource {
      * amounts does not run 1, 10, 2.
      */
     private String sortOrder = "NONE";
+    /**
+     * Whether the dropdown opens on its first option instead of on the empty row — asked of every
+     * mode alike, for the same reason {@link #sortOrder} is: it is a question about the list the
+     * operator reads rather than about where the list came from.
+     *
+     * <p>Off by default, which is every page saved before this existed: a select opens on the blank
+     * row and the operator picks. On, a list that came back with anything in it is opened on the
+     * first of them, so a dropdown with one sensible answer does not have to be pointed at before
+     * the page can be used. The first option is the first <em>after</em> sorting, since that is the
+     * one at the top of the list the operator reads.
+     *
+     * <p>It is a default rather than a lock: the operator may pick something else, and it never
+     * wins over a value that is already there — one carried in on a link, or the pick that survived
+     * the list being refreshed under it — because a value somebody chose beats one nobody did.
+     */
+    private boolean selectFirst;
 
     public String getMode()             { return mode; }
     public void   setMode(String mode)  { this.mode = mode != null && !mode.isBlank() ? mode : "NONE"; }
@@ -75,6 +93,9 @@ public class AppPageOptionSource {
 
     public String getDatasetName()                     { return datasetName; }
     public void   setDatasetName(String datasetName)   { this.datasetName = datasetName; }
+
+    public boolean isSelectFirst()                      { return selectFirst; }
+    public void    setSelectFirst(boolean selectFirst)  { this.selectFirst = selectFirst; }
 
     public String getSortOrder()                 { return sortOrder; }
     /** Anything but an explicit ASC or DESC is "leave them as they came". */
