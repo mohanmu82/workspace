@@ -2,6 +2,7 @@ package com.mycompany.batch.config;
 
 import com.mycompany.batch.web.AgentConsoleWebSocketHandler;
 import com.mycompany.batch.web.AgentWebSocketHandler;
+import com.mycompany.batch.web.AppWebSocketRelayHandler;
 import com.mycompany.batch.web.BatchWebSocketHandler;
 import com.mycompany.batch.web.LogTailWebSocketHandler;
 import com.mycompany.batch.web.SshCommandWebSocketHandler;
@@ -23,17 +24,20 @@ public class WebSocketConfig implements WebSocketConfigurer {
     @NonNull private final SshCommandWebSocketHandler   sshCommandHandler;
     @NonNull private final AgentWebSocketHandler        agentHandler;
     @NonNull private final AgentConsoleWebSocketHandler agentConsoleHandler;
+    @NonNull private final AppWebSocketRelayHandler     appRelayHandler;
 
     public WebSocketConfig(@NonNull BatchWebSocketHandler batchHandler,
                            @NonNull LogTailWebSocketHandler logTailHandler,
                            @NonNull SshCommandWebSocketHandler sshCommandHandler,
                            @NonNull AgentWebSocketHandler agentHandler,
-                           @NonNull AgentConsoleWebSocketHandler agentConsoleHandler) {
+                           @NonNull AgentConsoleWebSocketHandler agentConsoleHandler,
+                           @NonNull AppWebSocketRelayHandler appRelayHandler) {
         this.batchHandler        = batchHandler;
         this.logTailHandler      = logTailHandler;
         this.sshCommandHandler   = sshCommandHandler;
         this.agentHandler        = agentHandler;
         this.agentConsoleHandler = agentConsoleHandler;
+        this.appRelayHandler     = appRelayHandler;
     }
 
     /**
@@ -59,5 +63,6 @@ public class WebSocketConfig implements WebSocketConfigurer {
         registry.addHandler(sshCommandHandler,    "/ssh/ws").setAllowedOrigins("*");
         registry.addHandler(agentHandler,         "/agent/ws").setAllowedOrigins("*");
         registry.addHandler(agentConsoleHandler,  "/agentconsole/ws").setAllowedOrigins("*");
+        registry.addHandler(appRelayHandler,      "/appcatalog/ws").setAllowedOrigins("*");
     }
 }

@@ -17,11 +17,15 @@ public class AppDefinition {
     /** Unique key across the catalog; referenced by environments, use cases and instances. */
     private String appName;
     private String appDescription;
-    /** HTTP or SOLACE. Only HTTP is executable server-side today. */
+    /**
+     * HTTP, SOLACE or WS. HTTP use cases are called once per run; WS use cases are WebSocket
+     * subscriptions, opened from a page's WEBSOCKET action — the environment's URL prefix is then
+     * the {@code ws://} or {@code wss://} address. SOLACE is not executable server-side.
+     */
     private String appMode = "HTTP";
     /** ACTIVE or INACTIVE — INACTIVE apps stay in the catalog but are blocked from executing. */
     private String appStatus = "ACTIVE";
-    /** NONE, JWT, KERBEROS, USERNAMEPASSWORD or DIGEST — the credentials come from the environment. */
+    /** NONE, JWT, KERBEROS, USERNAMEPASSWORD, DIGEST or NTLM — the credentials come from the environment. */
     private String authMethod = "NONE";
     /** Default variables for every use case of this app; lowest precedence at execution time. */
     private Map<String, Object> appVariables = new LinkedHashMap<>();

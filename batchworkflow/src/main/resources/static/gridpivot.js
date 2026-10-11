@@ -123,8 +123,58 @@
             grandCol: true,
             blanks: true,
             rowOrder: 'key',   // 'key' | 'valueDesc' | 'valueAsc'
-            colOrder: 'key'
+            colOrder: 'key',
+            filters: []        // [{ field, mode: 'include' | 'exclude', values: [cell text…] }]
         };
+    }
+
+    // ── Filtering ────────────────────────────────────────────────────────────
+    // Which rows go into the pivot at all, decided before any grouping. Each filter names a column
+    // and a list of its values, kept or dropped — the shorter list is the one saved, so "everything
+    // but CANCELLED" still lets through a status that first turns up next week, while "only EMEA"
+    // does not quietly widen when a new region appears. Filters on different columns AND together.
+
+    const FILTER_MODES = ['include', 'exclude'];
+
+    /** Filters that actually narrow something; a malformed one is ignored rather than emptying the pivot. */
+    function activeFilters(filters) {
+        return (filters || []).filter(f => f && f.field && FILTER_MODES.includes(f.mode) && Array.isArray(f.values)
+            && (f.mode === 'include' || f.values.length));
+    }
+
+    /** The rows every filter lets through. */
+    function applyFilters(rows, filters, options) {
+        const read = (options && options.read) || cellText;
+        const active = activeFilters(filters).map(f => ({ field: f.field, include: f.mode === 'include', set: new Set(f.values.map(String)) }));
+        if (!active.length) return rows || [];
+        return (rows || []).filter(row => active.every(f => f.set.has(read(row, f.field)) === f.include));
+    }
+
+    /**
+     * A filter from the values an operator ticked out of all those a column holds, saved in whichever
+     * form lists fewer values. Null when everything is ticked, which filters nothing.
+     */
+    function filterFor(field, allValues, kept) {
+        const keptSet = kept instanceof Set ? kept : new Set(kept);
+        const dropped = allValues.filter(v => !keptSet.has(v));
+        if (!dropped.length) return null;
+        const included = allValues.filter(v => keptSet.has(v));
+        return included.length < dropped.length
+            ? { field: field, mode: 'include', values: included }
+            : { field: field, mode: 'exclude', values: dropped };
+    }
+
+    /** Whether one value of a column gets through that column's filter. */
+    function filterKeeps(filter, value) {
+        if (!filter) return true;
+        return filter.values.includes(value) === (filter.mode === 'include');
+    }
+
+    /** One filter as words — "status is not CANCELLED", "region is EMEA or APAC". */
+    function describeFilter(filter) {
+        const shown = filter.values.slice(0, 3).map(keyLabel).join(' or ')
+            + (filter.values.length > 3 ? ' or ' + (filter.values.length - 3) + ' more' : '');
+        return filter.field + (filter.mode === 'include' ? ' is ' : ' is not ') + (shown || 'anything');
     }
 
     /**
@@ -157,7 +207,7 @@
             return accs;
         };
 
-        for (const row of rows || []) {
+        for (const row of applyFilters(rows, cfg.filters, { read: read })) {
             const rowParts = rowFields.map(f => read(row, f));
             const colParts = colFields.map(f => read(row, f));
 
@@ -330,7 +380,8 @@
             grandCol: cfg.grandCol !== false,
             blanks: cfg.blanks !== false,
             rowOrder: ORDERS.includes(cfg.rowOrder) ? cfg.rowOrder : 'key',
-            colOrder: ORDERS.includes(cfg.colOrder) ? cfg.colOrder : 'key'
+            colOrder: ORDERS.includes(cfg.colOrder) ? cfg.colOrder : 'key',
+            filters: activeFilters(cfg.filters).map(f => ({ field: f.field, mode: f.mode, values: f.values.map(String) }))
         };
     }
 
@@ -349,6 +400,7 @@
         cfg.blanks = spec.blanks !== false;
         cfg.rowOrder = ORDERS.includes(spec.rowOrder) ? spec.rowOrder : 'key';
         cfg.colOrder = ORDERS.includes(spec.colOrder) ? spec.colOrder : 'key';
+        cfg.filters = activeFilters(spec.filters).map(f => ({ field: f.field, mode: f.mode, values: f.values.map(String) }));
         return cfg;
     }
 
@@ -365,13 +417,15 @@
         const what = cfg.values.map(measureLabel).join(', ');
         const by = [cfg.rows.length ? 'by ' + cfg.rows.join(', ') : '', cfg.cols.length ? 'across ' + cfg.cols.join(', ') : '']
             .filter(Boolean).join(' ');
-        return what + (by ? ' ' + by : '');
+        const where = cfg.filters.length ? ' where ' + cfg.filters.map(describeFilter).join(' and ') : '';
+        return what + (by ? ' ' + by : '') + where;
     }
 
     global.GridPivot = {
-        ROW_COUNT, ROW_COUNT_LABEL, ROW_COUNT_AGG, AGGS, SEP, ORDERS,
+        ROW_COUNT, ROW_COUNT_LABEL, ROW_COUNT_AGG, AGGS, SEP, ORDERS, FILTER_MODES,
         cellText, toNumber, compareText, fieldLabel, measureLabel, keyLabel,
         newAcc, accept, accValue, defaults, compute, matrix, table, detectNumeric,
+        activeFilters, applyFilters, filterFor, filterKeeps, describeFilter,
         toSpec, fromSpec, isActive, describe
     };
 })(window);

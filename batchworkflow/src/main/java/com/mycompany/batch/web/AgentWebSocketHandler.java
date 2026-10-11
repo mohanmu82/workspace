@@ -31,6 +31,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * {"type":"line","requestId":"...","text":"..."}
  * {"type":"done","requestId":"...","exitCode":0}
  * {"type":"httpResult","requestId":"...","statusCode":200,"headers":{...},"body":"...","durationMs":42}
+ * {"type":"fileInfoResult","requestId":"...","files":[{"path":"...","exists":true,"type":"file","size":123,...}],"durationMs":3}
+ * {"type":"systemInfoResult","requestId":"...","os":{...},"cpu":{...},"memory":{...},"disks":[...],"fileDescriptors":{...},"processes":{...}}
  * {"type":"error","requestId":"...","message":"..."}
  * </pre>
  *
@@ -40,6 +42,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * {"type":"error","message":"..."}
  * {"type":"exec","requestId":"...","command":"..."}
  * {"type":"http","requestId":"...","url":"...","method":"POST","headers":{...},"body":"...","timeoutMs":30000}
+ * {"type":"fileInfo","requestId":"...","paths":["/var/log/app.log","/opt/app/lib"]}
+ * {"type":"systemInfo","requestId":"...","topN":10,"sampleMs":1000}
  * {"type":"truststore","requestId":"...","mode":"INLINE|FILE|DEFAULT|INSECURE","data":"base64","password":"...","storeType":"JKS","includeDefaults":true}
  * </pre>
  *
@@ -75,6 +79,8 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
                 case "done"       -> forwardToBrowser(params, "done");
                 case "httpResult" -> forwardToBrowser(params, "httpResult");
                 case "truststoreResult" -> forwardToBrowser(params, "truststoreResult");
+                case "fileInfoResult"   -> forwardToBrowser(params, "fileInfoResult");
+                case "systemInfoResult" -> forwardToBrowser(params, "systemInfoResult");
                 case "error"      -> forwardToBrowser(params, "error");
                 default          -> sendError(ws, "Unknown message type: " + str(params, "type"));
             }
@@ -128,7 +134,8 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
         // A terminal message ends the request: the reply slot is released and, for a server-side
         // dispatch, the waiting future is completed with it.
         boolean terminal = type.equals("done") || type.equals("error")
-                || type.equals("httpResult") || type.equals("truststoreResult");
+                || type.equals("httpResult") || type.equals("truststoreResult")
+                || type.equals("fileInfoResult") || type.equals("systemInfoResult");
 
         // Server-dispatched (bulk fan-out) requests are tracked by a future, not a browser session.
         if (terminal && registry.completeHttpRequest(requestId, outbound)) return;

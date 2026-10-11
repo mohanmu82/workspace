@@ -893,10 +893,11 @@ public class AppCatalogService {
     }
 
     /**
-     * A link's own address, when the designer gave it one. Only {@code http}, {@code https} and a
-     * path rooted on this server are allowed through, and it is the same rule the running page
-     * applies to an address an action binds — the value ends up in an href either way, and a
-     * {@code javascript:} one there would be whatever was typed running as the page.
+     * A link's own address, when the designer gave it one. Any address with a scheme — http, https,
+     * or an application's own such as {@code fin:} — and a path rooted on this server are allowed
+     * through, except the schemes that run as the page ({@code javascript:}, {@code vbscript:},
+     * {@code data:}). It is the same rule the running page applies to an address an action binds —
+     * the value ends up in an href either way.
      *
      * <p>Refused at the save rather than left to the browser, which drops such an address silently:
      * the page would store a link that looked wired up and went nowhere, with nothing anywhere to
@@ -918,12 +919,21 @@ public class AppCatalogService {
         // A leading "//" is another host, not a path on this one, so it is held to the same rule as
         // any other absolute address rather than let through as if it were rooted here.
         boolean rooted   = url.startsWith("/") && !url.startsWith("//");
-        boolean absolute = url.regionMatches(true, 0, "http://", 0, 7)
-                        || url.regionMatches(true, 0, "https://", 0, 8);
+        java.util.regex.Matcher scheme = LINK_SCHEME.matcher(url);
+        boolean absolute = scheme.lookingAt()
+                && !SCRIPT_SCHEMES.contains(scheme.group(1).toLowerCase(java.util.Locale.ROOT));
         if (!rooted && !absolute)
             throw new IllegalArgumentException(where + " has a URL a link cannot point at: " + url
-                    + " — http, https, or a path on this server.");
+                    + " — it needs a scheme (http, https, fin, ...) other than javascript, vbscript"
+                    + " or data, or a path on this server.");
     }
+
+    /** A URL scheme as RFC 3986 spells it, and the colon that ends it. */
+    private static final java.util.regex.Pattern LINK_SCHEME =
+            java.util.regex.Pattern.compile("([A-Za-z][A-Za-z0-9+.-]*):");
+
+    /** Schemes whose address is code the browser would run as the page rather than a place to go. */
+    private static final java.util.Set<String> SCRIPT_SCHEMES = java.util.Set.of("javascript", "vbscript", "data");
 
     /**
      * Whether an address opens with a {@code ${name}} or {@code $name} placeholder, which is the one
@@ -1660,7 +1670,17 @@ public class AppCatalogService {
             validateDatasetAction(page, action, name -> staticDatasets.get(name) != null, where);
             return;
         }
+        if (!action.isWebSocket() && !action.getExcludeFilters().isEmpty())
+            throw new IllegalArgumentException(where + " excludes messages, which only a WebSocket connect action "
+                    + "receives — take the exclude filters off");
         requireInstance(action.getAppUseCaseInstanceId(), where);
+        if (action.isWebSocket()) {
+            AppUseCaseInstance instance = getInstance(action.getAppUseCaseInstanceId());
+            AppDefinition app = instance == null ? null : getApp(instance.getAppName());
+            validateWebSocketAction(page, action, app == null ? null : app.getAppName(),
+                    app == null ? null : app.getAppMode(), where);
+            return;
+        }
         for (String name : action.getTransformNames()) {
             if (!transformNames.contains(name))
                 throw new IllegalArgumentException(where + " applies a transform that is not on this page: " + name);
@@ -1708,9 +1728,11 @@ public class AppCatalogService {
             throw new IllegalArgumentException(where + " compares two environments but only names "
                     + ((a == null || a.isBlank()) && (b == null || b.isBlank()) ? "neither" : "one")
                     + " — name both, or it would run the same environment twice and report no differences.");
-        if (a.trim().equals(b.trim()) && !a.contains("${"))
+        // One environment twice is a fair comparison when the two calls are sent different inputs.
+        if (a.trim().equals(b.trim()) && !a.contains("${") && !action.isCompareSeparateInputs())
             throw new IllegalArgumentException(where + " compares '" + a.trim() + "' against itself, which can only "
-                    + "ever report no differences — name two different environments.");
+                    + "ever report no differences — name two different environments, or send the candidate "
+                    + "different inputs.");
 
         if (action.getCompareTolerancePercent() > 100)
             throw new IllegalArgumentException(where + " sets a threshold of " + action.getCompareTolerancePercent()
@@ -2280,6 +2302,13 @@ public class AppCatalogService {
                 throw new IllegalArgumentException(where + " has a group-by value (" + value.agg()
                         + ") that names no column to work it out over");
         }
+        for (AppPagePivot.Filter filter : pivot.getFilters()) {
+            if (filter == null || isBlank(filter.field()))
+                throw new IllegalArgumentException(where + " has a group-by filter that names no column");
+            if (!AppPagePivot.FILTER_MODES.contains(filter.mode()))
+                throw new IllegalArgumentException(where + " filters " + filter.field()
+                        + " with an unknown mode: " + filter.mode());
+        }
     }
 
     private static boolean isBlank(String value) {
@@ -2288,6 +2317,56 @@ public class AppCatalogService {
 
     private static String actionName(AppPageAction action, String fallback) {
         return action.getActionLabel() != null && !action.getActionLabel().isBlank() ? action.getActionLabel() : fallback;
+    }
+
+    /**
+     * What a WebSocket action has to be for the page to be storable: an instance of a {@code WS}
+     * app, and — for the one operation that binds anything — a placed grid to stream into.
+     *
+     * <p>Everything about reading one response is refused, since a socket has no one response: no
+     * fan-out, no transforms, no further targets, no enriched columns, no group-by, no keep-filters
+     * (its filters are the exclude list). A new grid is refused too — every message would stack
+     * another one.
+     *
+     * @param appName the app the action's instance belongs to, or null when it is not in the catalog
+     * @param appMode that app's mode
+     */
+    static void validateWebSocketAction(AppPage page, AppPageAction action, String appName, String appMode, String where) {
+        if (appName == null || !"WS".equalsIgnoreCase(appMode))
+            throw new IllegalArgumentException(where + " drives a WebSocket, but its instance belongs to "
+                    + (appName == null ? "an unknown app" : "app '" + appName + "', whose mode is " + appMode)
+                    + " — pick an instance of a WS app");
+        if (action.isRowFanOut() || !action.getRowFilters().isEmpty() || !action.getRowColumns().isEmpty())
+            throw new IllegalArgumentException(where + " drives a WebSocket, which is one connection rather than "
+                    + "a call per row — clear its \"for each row of\"");
+        if (!action.getTransformNames().isEmpty() || !action.getExtraBindings().isEmpty()
+                || !action.getEnrichColumns().isEmpty() || action.hasPivot() || !action.getBindFilters().isEmpty())
+            throw new IllegalArgumentException(where + " drives a WebSocket, whose messages stream into one grid — "
+                    + "take off its transforms, further targets, enriched columns, group-by and keep-filters");
+
+        boolean connect = AppPageAction.WS_CONNECT.equals(action.getWsOperation());
+        if (!connect && !action.getExcludeFilters().isEmpty())
+            throw new IllegalArgumentException(where + " excludes messages, but only Connect receives any — "
+                    + "put the exclude filters on the Connect action");
+        checkRowFilters(action.getExcludeFilters(), where);
+
+        String target = action.getTargetControlId();
+        if (!connect) {
+            if (target != null && !target.isBlank())
+                throw new IllegalArgumentException(where + " is a WebSocket " + action.getWsOperation().toLowerCase()
+                        + ", which binds nothing — clear its target; the Connect action names the grid");
+            return;
+        }
+        if (target == null || target.isBlank() || AppPageAction.NEW_GRID.equals(target))
+            throw new IllegalArgumentException(where + " connects a WebSocket but has no grid to stream into — "
+                    + "aim it at a grid placed on the page");
+        AppPageControl control = page.getControls().stream()
+                .filter(c -> target.equals(c.getControlId())).findFirst().orElse(null);
+        if (control == null)
+            throw new IllegalArgumentException(where + " targets a control that is not on this page");
+        if (!"grid".equals(control.getType()))
+            throw new IllegalArgumentException(where + " streams WebSocket messages, which are rows — so it must "
+                    + "target a grid, not a " + control.getType());
     }
 
     private void requireInstance(String instanceId, String where) {

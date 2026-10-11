@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File Compare</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+               background: #f4f5f7; color: #172b4d; padding: 24px; }
+        .nav { margin-bottom: 18px; }
+        .nav a { font-size: 13px; color: #0052cc; text-decoration: none; }
+        .nav a:hover { text-decoration: underline; }
+        h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+        .subtitle { font-size: 13px; color: #5e6c84; margin-bottom: 16px; }
+
+        .file-panels { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+        @media (max-width: 900px) { .file-panels { grid-template-columns: 1fr; } }
+
+        .panel { background: #fff; border: 1px solid #dfe1e6; border-radius: 6px; padding: 16px; margin-bottom: 14px; }
+        .panel-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px;
+                       margin-bottom: 12px; color: #5e6c84; display: flex; align-items: center; gap: 8px; }
+        .panel-title.f1 { color: #0052cc; }
+        .panel-title.f2 { color: #974900; }
+        .panel-title .meta { font-weight: 400; text-transform: none; letter-spacing: 0; color: #5e6c84; }
+
+        .form-row { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-end; }
+        .form-group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; min-width: 0; }
+        .form-group label { font-size: 11px; font-weight: 600; color: #5e6c84; text-transform: uppercase; letter-spacing: .4px; }
+        .form-group input[type=text], .form-group input[type=number], .form-group select, .form-group textarea {
+            padding: 7px 10px; font-size: 13px; border: 1px solid #ccc; border-radius: 4px;
+            outline: none; background: #fff; font-family: inherit; }
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+            border-color: #4c9aff; box-shadow: 0 0 0 2px rgba(76,154,255,.25); }
+        .form-group textarea { resize: vertical; font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+                               font-size: 12px; min-height: 110px; white-space: pre; }
+        .check { font-size: 13px; display: flex; align-items: center; gap: 6px; margin-bottom: 10px; cursor: pointer; }
+        .hint { font-size: 11px; color: #7a869a; margin-top: 2px; line-height: 1.4; }
+
+        .drop { border: 2px dashed #c1c7d0; border-radius: 6px; padding: 14px; text-align: center; font-size: 13px;
+                color: #5e6c84; cursor: pointer; margin-bottom: 10px; transition: background .1s, border-color .1s; }
+        .drop:hover, .drop.over { background: #f4f8ff; border-color: #4c9aff; }
+        .drop b { color: #172b4d; }
+
+        .chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 0; }
+        .chip { padding: 4px 10px; background: #f4f5f7; border: 1px solid #dfe1e6; border-radius: 14px;
+                font-size: 12px; cursor: pointer; user-select: none; }
+        .chip:hover { background: #ebecf0; }
+        .chip.key { background: #deebff; border-color: #4c9aff; color: #0052cc; font-weight: 600; }
+        .chip.off { text-decoration: line-through; color: #a5adba; }
+        .chip.one-side { border-style: dashed; color: #7a869a; cursor: default; }
+
+        button { padding: 8px 16px; font-size: 13px; font-weight: 500; border: none; border-radius: 4px;
+                 cursor: pointer; white-space: nowrap; font-family: inherit; }
+        button.primary { background: #0052cc; color: #fff; }
+        button.primary:hover { background: #0065ff; }
+        button.primary:disabled { background: #a5adba; cursor: not-allowed; }
+        button.secondary { background: #fff; color: #0052cc; border: 1px solid #0052cc; }
+        button.secondary:hover { background: #e9f0ff; }
+        button.link { background: none; color: #0052cc; padding: 4px 6px; }
+        button.link:disabled { color: #a5adba; cursor: default; }
+        .toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+
+        .status-bar { font-size: 13px; color: #5e6c84; min-height: 18px; }
+        .status-bar.error { color: #de350b; background: #ffebe6; border: 1px solid #ff8f73; border-radius: 4px; padding: 8px 12px; }
+        .status-bar.ok { color: #006644; }
+
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+        .stat { background: #fff; border: 1px solid #dfe1e6; border-radius: 6px; padding: 10px 14px; cursor: pointer; }
+        .stat:hover { border-color: #4c9aff; }
+        .stat .n { font-size: 22px; font-weight: 600; }
+        .stat .l { font-size: 11px; font-weight: 700; color: #5e6c84; text-transform: uppercase; letter-spacing: .4px; }
+        .stat.both .n { color: #006644; } .stat.diff .n { color: #de350b; } .stat.tol .n { color: #974900; }
+        .stat.only1 .n { color: #0052cc; } .stat.only2 .n { color: #974900; }
+
+        .tabs { display: flex; gap: 2px; border-bottom: 1px solid #dfe1e6; margin-bottom: 10px; flex-wrap: wrap; }
+        .tab { padding: 8px 14px; font-size: 13px; font-weight: 500; color: #5e6c84; background: none;
+               border-bottom: 2px solid transparent; border-radius: 0; }
+        .tab:hover { color: #172b4d; background: #f4f5f7; }
+        .tab.active { color: #0052cc; border-bottom-color: #0052cc; font-weight: 600; }
+        .tab .count { font-size: 11px; background: #ebecf0; border-radius: 9px; padding: 1px 7px; margin-left: 4px; }
+
+        .result-tools { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; font-size: 13px; }
+        .result-tools select, .result-tools input[type=text] { padding: 5px 8px; font-size: 13px; border: 1px solid #ccc; border-radius: 4px; font-family: inherit; }
+        .pager { margin-left: auto; display: flex; align-items: center; gap: 4px; color: #5e6c84; }
+
+        .table-wrap { overflow: auto; max-height: 65vh; border: 1px solid #dfe1e6; border-radius: 4px; background: #fff; }
+        table { border-collapse: collapse; font-size: 12px; width: max-content; min-width: 100%; }
+        th { position: sticky; top: 0; background: #f4f5f7; padding: 6px 10px; text-align: left; font-size: 11px;
+             font-weight: 700; color: #5e6c84; border-bottom: 1px solid #dfe1e6; white-space: nowrap; z-index: 1; }
+        th.key { color: #0052cc; }
+        td { padding: 5px 10px; border-bottom: 1px solid #f4f5f7; white-space: nowrap; max-width: 420px;
+             overflow: hidden; text-overflow: ellipsis; vertical-align: top; }
+        td.num { text-align: right; font-variant-numeric: tabular-nums; }
+        td.key { font-weight: 600; }
+        td.lineno { color: #a5adba; text-align: right; }
+        td.c-diff { background: #ffebe6; }
+        td.c-tol  { background: #fffae6; }
+        .v1 { color: #0052cc; } .v2 { color: #974900; }
+        .delta { color: #7a869a; font-size: 11px; margin-left: 4px; }
+        .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+        .b-match { background: #e3fcef; color: #006644; }
+        .b-diff  { background: #ffebe6; color: #de350b; }
+        .b-tol   { background: #fffae6; color: #974900; }
+        .empty { padding: 24px; text-align: center; color: #7a869a; font-size: 13px; }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+
+<div class="nav"><a href="/">&larr; Batch Workflow</a></div>
+<h1>File Compare</h1>
+<div class="subtitle">Line up two delimited files by a key column and compare every other column. Files are read in your browser and never uploaded.</div>
+
+<div class="file-panels">
+    <div class="panel" id="panel1"></div>
+    <div class="panel" id="panel2"></div>
+</div>
+
+<div class="panel">
+    <div class="panel-title">Format &amp; Filter</div>
+    <div class="form-row">
+        <div class="form-group">
+            <label>Delimiter</label>
+            <select id="delimiter" onchange="reparse()">
+                <option value="auto">Auto-detect</option>
+                <option value=",">Comma ,</option>
+                <option value="&#9;">Tab</option>
+                <option value="|">Pipe |</option>
+                <option value=";">Semicolon ;</option>
+                <option value="custom">Custom…</option>
+            </select>
+        </div>
+        <div class="form-group" id="customDelimGroup" style="display:none">
+            <label>Custom</label>
+            <input type="text" id="customDelim" size="4" oninput="reparse()">
+        </div>
+        <label class="check"><input type="checkbox" id="hasHeader" checked onchange="reparse()"> First line is a header</label>
+        <label class="check"><input type="checkbox" id="trimValues" checked> Trim spaces</label>
+        <label class="check"><input type="checkbox" id="ignoreCase"> Ignore case</label>
+    </div>
+    <div class="form-row">
+        <div class="form-group" style="flex:1; min-width:240px">
+            <label>Line filter</label>
+            <input type="text" id="filterText" placeholder="e.g. XYZ — leave blank to keep every line" oninput="reparseSoon()">
+        </div>
+        <div class="form-group">
+            <label>Keep lines that</label>
+            <select id="filterMode" onchange="reparse()">
+                <option value="contains">contain it</option>
+                <option value="notContains">do not contain it</option>
+            </select>
+        </div>
+        <label class="check"><input type="checkbox" id="filterCase" onchange="reparse()"> Match case</label>
+    </div>
+    <div class="hint">The filter is tested against each raw line of both files (the header line is always kept), before anything is split into columns.</div>
+</div>
+
+<div class="panel">
+    <div class="panel-title">Key &amp; Columns</div>
+    <div class="form-group">
+        <label>Key column(s) <span style="text-transform:none;font-weight:400">— click to toggle; several make a composite key</span></label>
+        <div class="chips" id="keyChips"><span class="hint">Load both files to pick a key.</span></div>
+    </div>
+    <div class="form-group">
+        <label>Compared columns <span style="text-transform:none;font-weight:400">— click to leave a column out; dashed ones exist in only one file</span></label>
+        <div class="chips" id="colChips"><span class="hint">—</span></div>
+    </div>
+</div>
+
+<div class="panel">
+    <div class="panel-title">Numeric Thresholds <span class="meta">— applies to rows in both files</span></div>
+    <div class="form-row">
+        <div class="form-group">
+            <label>Threshold (absolute)</label>
+            <input type="number" id="thrAbs" min="0" step="any" placeholder="e.g. 0.01">
+        </div>
+        <div class="form-group">
+            <label>Threshold %</label>
+            <input type="number" id="thrPct" min="0" step="any" placeholder="e.g. 0.5">
+        </div>
+        <div class="form-group">
+            <label>When both are set</label>
+            <select id="thrMode">
+                <option value="either">Within either one is a match</option>
+                <option value="both">Must be within both</option>
+            </select>
+        </div>
+    </div>
+    <div class="hint">When both sides of a column are numbers, a difference no bigger than the absolute threshold, or no bigger than the
+        percentage of the File 1 value, is reported as <b>within threshold</b> instead of a difference. Leave a box blank to not use it.
+        Numbers are compared as numbers, so <code>1.50</code> and <code>1.5</code> match. Text values match exactly (after the options above).</div>
+</div>
+
+<div class="toolbar">
+    <button class="primary" id="compareBtn" onclick="runCompare()" disabled>Compare</button>
+    <div class="status-bar" id="status"></div>
+</div>
+
+<div id="results" class="hidden">
+    <div class="stats" id="stats"></div>
+    <div class="panel">
+        <div class="tabs" id="tabs"></div>
+        <div class="result-tools" id="resultTools"></div>
+        <div class="table-wrap" id="tableWrap"></div>
+    </div>
+</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────
+// One entry per side: the file as text, and what it parsed to under the current format and filter.
+const files = [
+    { name: '', text: '', parsed: null },
+    { name: '', text: '', parsed: null }
+];
+let keyCols = [];          // chosen key columns, in click order
+let excluded = new Set();  // compared columns the user left out
+let result = null;         // the last comparison
+let view = { tab: 'both', bothFilter: 'notMatch', search: '', page: 0, diffColsOnly: true };
+const PAGE_SIZE = 500;
+
+const esc = s => String(s === undefined || s === null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const $ = id => document.getElementById(id);
+
+function setStatus(msg, type) {
+    const bar = $('status');
+    bar.textContent = msg || '';
+    bar.className = 'status-bar' + (type ? ' ' + type : '');
+}
+
+// ── File panels ───────────────────────────────────────────────────────────
+function renderPanel(i) {
+    const f = files[i];
+    const p = f.parsed;
+    const meta = p ? p.rows.length.toLocaleString() + ' rows'
+        + (p.filteredOut ? ', ' + p.filteredOut.toLocaleString() + ' filtered out' : '')
+        + ' · ' + p.headers.length + ' columns' : '';
+    $('panel' + (i + 1)).innerHTML =
+        '<div class="panel-title f' + (i + 1) + '">File ' + (i + 1) + (f.name ? ' <span class="meta">' + esc(f.name) + '</span>' : '')
+            + (meta ? ' <span class="meta">— ' + esc(meta) + '</span>' : '') + '</div>'
+        + '<div class="drop" id="drop' + i + '" onclick="$(\'file' + i + '\').click()">'
+            + '<b>Choose a file</b> or drop it here'
+            + '<input type="file" id="file' + i + '" class="hidden" onchange="loadFile(' + i + ', this.files[0])">'
+        + '</div>'
+        + '<div class="form-group"><label>…or paste its contents</label>'
+            + '<textarea spellcheck="false" id="text' + i + '" oninput="pasted(' + i + ', this.value)">'
+            + (f.text.length < 200000 ? esc(f.text) : '') + '</textarea>'
+            + (f.text.length >= 200000 ? '<span class="hint">Loaded file is too large to show here; it is still used.</span>' : '')
+        + '</div>';
+    const drop = $('drop' + i);
+    drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+    drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+    drop.addEventListener('drop', e => {
+        e.preventDefault(); drop.classList.remove('over');
+        if (e.dataTransfer.files[0]) loadFile(i, e.dataTransfer.files[0]);
+    });
+}
+
+function loadFile(i, file) {
+    if (!file) return;
+    setStatus('Reading ' + file.name + '…');
+    const reader = new FileReader();
+    reader.onload = () => {
+        files[i].name = file.name;
+        files[i].text = String(reader.result || '');
+        reparse();
+        renderPanel(i);
+        setStatus('');
+    };
+    reader.onerror = () => setStatus('Could not read ' + file.name + ': ' + reader.error, 'error');
+    reader.readAsText(file);
+}
+
+let pasteTimer = null;
+function pasted(i, text) {
+    files[i].name = text ? '(pasted)' : '';
+    files[i].text = text;
+    clearTimeout(pasteTimer);
+    pasteTimer = setTimeout(() => { reparse(); refreshPanelTitles(); }, 300);
+}
+
+/** Updates just the panel headings, so typing into a paste box does not lose focus. */
+function refreshPanelTitles() {
+    [0, 1].forEach(i => {
+        const focused = document.activeElement && document.activeElement.id === 'text' + i;
+        if (!focused) renderPanel(i);
+        else {
+            const title = $('panel' + (i + 1)).querySelector('.panel-title');
+            const p = files[i].parsed;
+            title.innerHTML = 'File ' + (i + 1) + (p ? ' <span class="meta">— ' + p.rows.length.toLocaleString() + ' rows · '
+                + p.headers.length + ' columns</span>' : '');
+        }
+    });
+}
+
+// ── Parsing ───────────────────────────────────────────────────────────────
+function chosenDelimiter() {
+    const d = $('delimiter').value;
+    $('customDelimGroup').style.display = d === 'custom' ? '' : 'none';
+    if (d === 'custom') return $('customDelim').value || ',';
+    return d;
+}
+
+/** The delimiter that splits a sample line into the most fields, ignoring anything inside quotes. */
+function detectDelimiter(sample) {
+    const candidates = [',', '\t', '|', ';'];
+    let best = ',', bestCount = 0;
+    candidates.forEach(d => {
+        const n = splitLine(sample, d).length;
+        if (n > bestCount) { best = d; bestCount = n; }
+    });
+    return best;
+}
+
+/** One line split into fields, honouring "double quoted" fields and "" as an escaped quote. */
+function splitLine(line, delim) {
+    if (line.indexOf('"') < 0) return line.split(delim);
+    const out = [];
+    let cur = '', inQ = false;
+    for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (inQ) {
+            if (ch === '"') {
+                if (line[i + 1] === '"') { cur += '"'; i++; } else inQ = false;
+            } else cur += ch;
+        } else if (ch === '"' && cur.trim() === '') {
+            inQ = true; cur = '';
+        } else if (line.startsWith(delim, i)) {
+            out.push(cur); cur = ''; i += delim.length - 1;
+        } else cur += ch;
+    }
+    out.push(cur);
+    return out;
+}
+
+function lineFilter() {
+    const text = $('filterText').value;
+    if (!text) return null;
+    const matchCase = $('filterCase').checked;
+    const needle = matchCase ? text : text.toLowerCase();
+    const keep = $('filterMode').value !== 'notContains';
+    return line => (matchCase ? line : line.toLowerCase()).includes(needle) === keep;
+}
+
+function parseFile(text, delimChoice, hasHeader, filter) {
+    const lines = text.split(/\r\n|\n|\r/);
+    while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
+    if (!lines.length) return { headers: [], rows: [], filteredOut: 0, delimiter: delimChoice };
+    const firstLine = lines[0].replace(/^﻿/, '');
+    lines[0] = firstLine;
+    const delim = delimChoice === 'auto' ? detectDelimiter(firstLine) : delimChoice;
+
+    let headers, start;
+    if (hasHeader) {
+        headers = splitLine(firstLine, delim).map((h, i) => h.trim() || 'Column ' + (i + 1));
+        start = 1;
+    } else {
+        headers = [];
+        start = 0;
+    }
+    // Repeated header names would collide in the row objects, so later ones get a suffix.
+    const seen = {};
+    headers = headers.map(h => { seen[h] = (seen[h] || 0) + 1; return seen[h] > 1 ? h + ' (' + seen[h] + ')' : h; });
+
+    const rows = [];
+    let filteredOut = 0;
+    for (let n = start; n < lines.length; n++) {
+        const line = lines[n];
+        if (line.trim() === '') continue;
+        if (filter && !filter(line)) { filteredOut++; continue; }
+        const cells = splitLine(line, delim);
+        while (!hasHeader && headers.length < cells.length) headers.push('Column ' + (headers.length + 1));
+        rows.push({ lineNo: n + 1, cells: cells });
+    }
+    return { headers, rows, filteredOut, delimiter: delim };
+}
+
+let reparseTimer = null;
+function reparseSoon() { clearTimeout(reparseTimer); reparseTimer = setTimeout(reparse, 300); }
+
+function reparse() {
+    const delim = chosenDelimiter();
+    const hasHeader = $('hasHeader').checked;
+    const filter = lineFilter();
+    files.forEach(f => { f.parsed = f.text ? parseFile(f.text, delim, hasHeader, filter) : null; });
+    refreshPanelTitles();
+    renderColumnChips();
+}
+
+// ── Key and column choice ─────────────────────────────────────────────────
+function commonColumns() {
+    if (!files[0].parsed || !files[1].parsed) return [];
+    const h2 = new Set(files[1].parsed.headers);
+    return files[0].parsed.headers.filter(h => h2.has(h));
+}
+
+function renderColumnChips() {
+    const common = commonColumns();
+    const ready = files[0].parsed && files[1].parsed;
+    keyCols = keyCols.filter(k => common.includes(k));
+    if (ready && !keyCols.length && common.length) keyCols = [common[0]];
+
+    $('keyChips').innerHTML = !ready ? '<span class="hint">Load both files to pick a key.</span>'
+        : !common.length ? '<span class="hint">The two files share no column names. Check the delimiter, or untick "First line is a header" to compare by position.</span>'
+        : common.map(c => '<span class="chip' + (keyCols.includes(c) ? ' key' : '') + '" onclick="toggleKey(' + jsArg(c) + ')">'
+            + esc(c) + (keyCols.length > 1 && keyCols.includes(c) ? ' <sup>' + (keyCols.indexOf(c) + 1) + '</sup>' : '') + '</span>').join('');
+
+    if (!ready) { $('colChips').innerHTML = '<span class="hint">—</span>'; }
+    else {
+        const h1 = files[0].parsed.headers, h2 = files[1].parsed.headers;
+        const onlyOne = h1.filter(h => !h2.includes(h)).map(h => ({ c: h, side: 1 }))
+            .concat(h2.filter(h => !h1.includes(h)).map(h => ({ c: h, side: 2 })));
+        $('colChips').innerHTML = common.filter(c => !keyCols.includes(c))
+                .map(c => '<span class="chip' + (excluded.has(c) ? ' off' : '') + '" onclick="toggleCol(' + jsArg(c) + ')">' + esc(c) + '</span>').join('')
+            + onlyOne.map(o => '<span class="chip one-side" title="Only in File ' + o.side + ' — not compared">'
+                + esc(o.c) + ' <small>(File ' + o.side + ' only)</small></span>').join('')
+            || '<span class="hint">No other columns.</span>';
+    }
+    $('compareBtn').disabled = !(ready && keyCols.length);
+}
+
+function jsArg(s) { return esc(JSON.stringify(s)); }
+function toggleKey(c) {
+    keyCols = keyCols.includes(c) ? keyCols.filter(k => k !== c) : keyCols.concat([c]);
+    renderColumnChips();
+}
+function toggleCol(c) {
+    if (excluded.has(c)) excluded.delete(c); else excluded.add(c);
+    renderColumnChips();
+}
+
+// ── Comparing ─────────────────────────────────────────────────────────────
+const STATUS = { match: 'MATCH', tol: 'WITHIN THRESHOLD', diff: 'DIFFERENT' };
+
+/** A cell read as a number, or null. Accepts 1,234.50 style thousands separators. */
+function toNumber(v) {
+    let s = String(v).trim();
+    if (s === '') return null;
+    if (/^[-+]?\d{1,3}(,\d{3})+(\.\d+)?$/.test(s)) s = s.replace(/,/g, '');
+    if (!/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(s)) return null;
+    const n = Number(s);
+    return isFinite(n) ? n : null;
+}
+
+function readNumberBox(id) {
+    const v = $(id).value.trim();
+    if (v === '') return null;
+    const n = Number(v);
+    return isFinite(n) && n >= 0 ? n : null;
+}
+
+function runCompare() {
+    const p1 = files[0].parsed, p2 = files[1].parsed;
+    if (!p1 || !p2 || !keyCols.length) return;
+    setStatus('Comparing…');
+    // Let the status paint before a big comparison holds the thread.
+    setTimeout(() => {
+        try {
+            const t0 = performance.now();
+            result = compareFiles(p1, p2);
+            view.page = 0;
+            view.tab = 'both';
+            renderResults();
+            setStatus('Compared in ' + Math.round(performance.now() - t0) + ' ms.', 'ok');
+        } catch (e) {
+            setStatus(e.message || String(e), 'error');
+        }
+    }, 20);
+}
+
+function compareFiles(p1, p2) {
+    const trim = $('trimValues').checked;
+    const ignoreCase = $('ignoreCase').checked;
+    const thrAbs = readNumberBox('thrAbs');
+    const thrPct = readNumberBox('thrPct');
+    const thrBoth = $('thrMode').value === 'both';
+    const norm = v => {
+        let s = v === undefined || v === null ? '' : String(v);
+        if (trim) s = s.trim();
+        if (ignoreCase) s = s.toLowerCase();
+        return s;
+    };
+
+    const idx1 = Object.fromEntries(p1.headers.map((h, i) => [h, i]));
+    const idx2 = Object.fromEntries(p2.headers.map((h, i) => [h, i]));
+    const compared = commonColumns().filter(c => !keyCols.includes(c) && !excluded.has(c));
+
+    const keyOf = (row, idx) => keyCols.map(k => norm(row.cells[idx[k]])).join('\u0001');
+    const index = (p, idx) => {
+        const map = new Map();
+        const dups = [];
+        p.rows.forEach(row => {
+            const k = keyOf(row, idx);
+            if (map.has(k)) dups.push(row); else map.set(k, row);
+        });
+        return { map, dups };
+    };
+    const a = index(p1, idx1), b = index(p2, idx2);
+
+    const both = [], only1 = [], only2 = [], cellDiffs = [];
+    const colDiffCount = Object.fromEntries(compared.map(c => [c, 0]));
+
+    a.map.forEach((r1, k) => {
+        const r2 = b.map.get(k);
+        if (!r2) { only1.push(r1); return; }
+        let status = STATUS.match, diffs = 0, tols = 0;
+        const cols = {};
+        compared.forEach(c => {
+            const raw1 = r1.cells[idx1[c]], raw2 = r2.cells[idx2[c]];
+            const v1 = norm(raw1), v2 = norm(raw2);
+            const cell = { v1: raw1 === undefined ? '' : raw1, v2: raw2 === undefined ? '' : raw2, st: STATUS.match };
+            if (v1 !== v2) {
+                const n1 = toNumber(v1), n2 = toNumber(v2);
+                if (n1 !== null && n2 !== null) {
+                    const d = n2 - n1;
+                    const pct = n1 === 0 ? (n2 === 0 ? 0 : Infinity) : Math.abs(d) / Math.abs(n1) * 100;
+                    cell.delta = d; cell.pct = pct;
+                    if (d === 0) cell.st = STATUS.match;
+                    else {
+                        // A hair of slack so 0.1 + 0.2 style float noise does not miss a threshold it meets.
+                        const eps = 1e-9;
+                        const absOk = thrAbs !== null ? Math.abs(d) <= thrAbs + eps : null;
+                        const pctOk = thrPct !== null ? pct <= thrPct + eps : null;
+                        const set = [absOk, pctOk].filter(x => x !== null);
+                        const ok = set.length && (thrBoth ? set.every(Boolean) : set.some(Boolean));
+                        cell.st = ok ? STATUS.tol : STATUS.diff;
+                    }
+                } else cell.st = STATUS.diff;
+            }
+            if (cell.st === STATUS.diff) { diffs++; colDiffCount[c]++; }
+            if (cell.st === STATUS.tol) tols++;
+            if (cell.st !== STATUS.match) cellDiffs.push({ key: k, r1, r2, col: c, cell });
+            cols[c] = cell;
+        });
+        if (diffs) status = STATUS.diff; else if (tols) status = STATUS.tol;
+        both.push({ key: k, r1, r2, cols, status, diffs, tols });
+    });
+    b.map.forEach((r2, k) => { if (!a.map.has(k)) only2.push(r2); });
+
+    return {
+        p1, p2, idx1, idx2, compared, colDiffCount, both, only1, only2, cellDiffs,
+        dups1: a.dups, dups2: b.dups, keyCols: keyCols.slice(),
+        thr: { abs: thrAbs, pct: thrPct, both: thrBoth },
+        counts: {
+            both: both.length,
+            match: both.filter(r => r.status === STATUS.match).length,
+            tol: both.filter(r => r.status === STATUS.tol).length,
+            diff: both.filter(r => r.status === STATUS.diff).length,
+            only1: only1.length, only2: only2.length
+        }
+    };
+}
+
+// ── Results ───────────────────────────────────────────────────────────────
+function renderResults() {
+    const r = result, c = r.counts;
+    $('results').classList.remove('hidden');
+    const stat = (cls, n, label, tab, filter) => '<div class="stat ' + cls + '" onclick="goTo(\'' + tab + '\'' + (filter ? ', \'' + filter + '\'' : '') + ')">'
+        + '<div class="n">' + n.toLocaleString() + '</div><div class="l">' + label + '</div></div>';
+    $('stats').innerHTML =
+          stat('both', c.both, 'In both files', 'both', 'all')
+        + stat('', c.match, 'Identical', 'both', 'match')
+        + stat('diff', c.diff, 'Different', 'both', 'diff')
+        + stat('tol', c.tol, 'Within threshold', 'both', 'tol')
+        + stat('only1', c.only1, 'File 1 only', 'only1')
+        + stat('only2', c.only2, 'File 2 only', 'only2')
+        + (r.dups1.length || r.dups2.length ? stat('diff', r.dups1.length + r.dups2.length, 'Duplicate keys', 'dups') : '');
+    renderTab();
+}
+
+function goTo(tab, filter) {
+    view.tab = tab;
+    if (filter) view.bothFilter = filter;
+    view.page = 0;
+    renderTab();
+}
+
+function setView(field, value) { view[field] = value; view.page = 0; renderTab(); }
+
+function tabRows() {
+    const r = result;
+    const q = view.search.trim().toLowerCase();
+    const hit = row => !q || row.cells.join(' ').toLowerCase().includes(q);
+    switch (view.tab) {
+        case 'both': {
+            const f = view.bothFilter;
+            return r.both.filter(x =>
+                (f === 'all' || (f === 'notMatch' && x.status !== STATUS.match)
+                    || (f === 'match' && x.status === STATUS.match) || (f === 'diff' && x.status === STATUS.diff)
+                    || (f === 'tol' && x.status === STATUS.tol))
+                && (!q || hit(x.r1) || hit(x.r2)));
+        }
+        case 'cells': return r.cellDiffs.filter(x => (view.bothFilter !== 'diff' || x.cell.st === STATUS.diff)
+            && (!q || hit(x.r1) || hit(x.r2) || x.col.toLowerCase().includes(q)));
+        case 'only1': return r.only1.filter(hit);
+        case 'only2': return r.only2.filter(hit);
+        case 'dups': return r.dups1.map(row => ({ side: 1, row })).concat(r.dups2.map(row => ({ side: 2, row })))
+            .filter(x => hit(x.row));
+    }
+    return [];
+}
+
+function renderTab() {
+    const r = result, c = r.counts;
+    const tab = (id, label, n) => '<button class="tab' + (view.tab === id ? ' active' : '') + '" onclick="goTo(\'' + id + '\')">'
+        + label + '<span class="count">' + n.toLocaleString() + '</span></button>';
+    $('tabs').innerHTML = tab('both', 'In Both', c.both)
+        + tab('cells', 'Differences by Column', r.cellDiffs.length)
+        + tab('only1', 'File 1 Only', c.only1)
+        + tab('only2', 'File 2 Only', c.only2)
+        + (r.dups1.length || r.dups2.length ? tab('dups', 'Duplicate Keys', r.dups1.length + r.dups2.length) : '');
+
+    const rows = tabRows();
+    const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+    view.page = Math.min(view.page, pages - 1);
+    const from = view.page * PAGE_SIZE;
+    const slice = rows.slice(from, from + PAGE_SIZE);
+
+    let tools = '';
+    if (view.tab === 'both') {
+        tools += '<label>Show <select onchange="setView(\'bothFilter\', this.value)">'
+            + [['notMatch', 'Different or within threshold'], ['diff', 'Different only'], ['tol', 'Within threshold only'],
+               ['match', 'Identical only'], ['all', 'All rows']]
+                .map(([v, l]) => '<option value="' + v + '"' + (view.bothFilter === v ? ' selected' : '') + '>' + l + '</option>').join('')
+            + '</select></label>'
+            + '<label class="check" style="margin:0"><input type="checkbox"' + (view.diffColsOnly ? ' checked' : '')
+            + ' onchange="setView(\'diffColsOnly\', this.checked)"> Only columns with differences</label>';
+    } else if (view.tab === 'cells') {
+        tools += '<label class="check" style="margin:0"><input type="checkbox"' + (view.bothFilter === 'diff' ? ' checked' : '')
+            + ' onchange="setView(\'bothFilter\', this.checked ? \'diff\' : \'notMatch\')"> Hide within-threshold</label>';
+    }
+    tools += '<input type="text" placeholder="Search rows…" value="' + esc(view.search) + '" id="searchBox" oninput="searchSoon(this.value)">'
+        + '<button class="secondary" onclick="exportCsv()">Export CSV</button>'
+        + '<div class="pager">'
+            + (rows.length ? (from + 1).toLocaleString() + '–' + Math.min(from + PAGE_SIZE, rows.length).toLocaleString()
+                + ' of ' + rows.length.toLocaleString() : '0 rows')
+            + '<button class="link" ' + (view.page ? '' : 'disabled') + ' onclick="view.page--; renderTab()">&lsaquo; Prev</button>'
+            + '<button class="link" ' + (view.page < pages - 1 ? '' : 'disabled') + ' onclick="view.page++; renderTab()">Next &rsaquo;</button>'
+        + '</div>';
+    const hadFocus = document.activeElement && document.activeElement.id === 'searchBox';
+    $('resultTools').innerHTML = tools;
+    if (hadFocus) { const s = $('searchBox'); s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
+
+    $('tableWrap').innerHTML = slice.length ? tableFor(view.tab, slice) : '<div class="empty">Nothing to show here.</div>';
+}
+
+let searchTimer = null;
+function searchSoon(v) { clearTimeout(searchTimer); searchTimer = setTimeout(() => setView('search', v), 250); }
+
+function fmtNum(n) {
+    if (n === Infinity) return '∞';
+    const abs = Math.abs(n);
+    return abs !== 0 && (abs < 0.0001 || abs >= 1e12) ? n.toExponential(3) : String(+n.toFixed(6));
+}
+
+function cellHtml(cell) {
+    if (cell.st === STATUS.match) return '<td>' + esc(cell.v1) + '</td>';
+    const delta = cell.delta !== undefined
+        ? '<span class="delta">(' + (cell.delta > 0 ? '+' : '') + fmtNum(cell.delta) + ', ' + fmtNum(cell.pct) + '%)</span>' : '';
+    return '<td class="' + (cell.st === STATUS.diff ? 'c-diff' : 'c-tol') + '" title="' + esc('File 1: ' + cell.v1 + '\nFile 2: ' + cell.v2) + '">'
+        + '<span class="v1">' + esc(cell.v1) + '</span> → <span class="v2">' + esc(cell.v2) + '</span>' + delta + '</td>';
+}
+
+function badge(st) {
+    return '<span class="badge ' + (st === STATUS.diff ? 'b-diff' : st === STATUS.tol ? 'b-tol' : 'b-match') + '">' + st + '</span>';
+}
+
+function visibleBothColumns(slice) {
+    const r = result;
+    if (!view.diffColsOnly || view.bothFilter === 'match') return r.compared;
+    const used = r.compared.filter(c => slice.some(x => x.cols[c].st !== STATUS.match));
+    return used.length ? used : r.compared;
+}
+
+function tableFor(tab, slice) {
+    const r = result;
+    const keyHead = r.keyCols.map(k => '<th class="key">' + esc(k) + '</th>').join('');
+    if (tab === 'both') {
+        const cols = visibleBothColumns(slice);
+        return '<table><thead><tr><th>Line 1</th><th>Line 2</th>' + keyHead + '<th>Status</th><th>Diffs</th>'
+            + cols.map(c => '<th>' + esc(c) + (r.colDiffCount[c] ? ' <span style="color:#de350b">(' + r.colDiffCount[c] + ')</span>' : '') + '</th>').join('')
+            + '</tr></thead><tbody>'
+            + slice.map(x => '<tr><td class="lineno">' + x.r1.lineNo + '</td><td class="lineno">' + x.r2.lineNo + '</td>'
+                + r.keyCols.map(k => '<td class="key">' + esc(x.r1.cells[r.idx1[k]]) + '</td>').join('')
+                + '<td>' + badge(x.status) + '</td><td class="num">' + (x.diffs || '') + (x.tols ? ' <span class="delta">+' + x.tols + '~</span>' : '') + '</td>'
+                + cols.map(c => cellHtml(x.cols[c])).join('') + '</tr>').join('')
+            + '</tbody></table>';
+    }
+    if (tab === 'cells') {
+        return '<table><thead><tr><th>Line 1</th><th>Line 2</th>' + keyHead
+            + '<th>Column</th><th>Status</th><th>File 1</th><th>File 2</th><th>Difference</th><th>Difference %</th></tr></thead><tbody>'
+            + slice.map(x => '<tr><td class="lineno">' + x.r1.lineNo + '</td><td class="lineno">' + x.r2.lineNo + '</td>'
+                + r.keyCols.map(k => '<td class="key">' + esc(x.r1.cells[r.idx1[k]]) + '</td>').join('')
+                + '<td>' + esc(x.col) + '</td><td>' + badge(x.cell.st) + '</td>'
+                + '<td class="v1">' + esc(x.cell.v1) + '</td><td class="v2">' + esc(x.cell.v2) + '</td>'
+                + '<td class="num">' + (x.cell.delta !== undefined ? fmtNum(x.cell.delta) : '') + '</td>'
+                + '<td class="num">' + (x.cell.pct !== undefined ? fmtNum(x.cell.pct) + '%' : '') + '</td></tr>').join('')
+            + '</tbody></table>';
+    }
+    if (tab === 'only1' || tab === 'only2') {
+        const p = tab === 'only1' ? r.p1 : r.p2;
+        return plainTable(p.headers, slice, 'Line');
+    }
+    if (tab === 'dups') {
+        const headers = r.p1.headers;
+        return '<table><thead><tr><th>File</th><th>Line</th>' + headers.map(h => '<th>' + esc(h) + '</th>').join('') + '</tr></thead><tbody>'
+            + slice.map(x => {
+                const hs = x.side === 1 ? r.p1.headers : r.p2.headers;
+                return '<tr><td>File ' + x.side + '</td><td class="lineno">' + x.row.lineNo + '</td>'
+                    + headers.map(h => { const i = hs.indexOf(h); return '<td>' + esc(i >= 0 ? x.row.cells[i] : '') + '</td>'; }).join('') + '</tr>';
+            }).join('')
+            + '</tbody></table>'
+            + '<div class="hint" style="padding:8px">A repeated key keeps its first line for the comparison; the lines listed here were set aside.</div>';
+    }
+    return '';
+}
+
+function plainTable(headers, rows, lineLabel) {
+    const keySet = new Set(result.keyCols);
+    return '<table><thead><tr><th>' + lineLabel + '</th>'
+        + headers.map(h => '<th' + (keySet.has(h) ? ' class="key"' : '') + '>' + esc(h) + '</th>').join('') + '</tr></thead><tbody>'
+        + rows.map(row => '<tr><td class="lineno">' + row.lineNo + '</td>'
+            + headers.map((h, i) => '<td' + (keySet.has(h) ? ' class="key"' : '') + '>' + esc(row.cells[i]) + '</td>').join('') + '</tr>').join('')
+        + '</tbody></table>';
+}
+
+// ── Export ────────────────────────────────────────────────────────────────
+function csvCell(v) {
+    const s = v === undefined || v === null ? '' : String(v);
+    return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+function exportCsv() {
+    const r = result;
+    const rows = tabRows();
+    let out = [];
+    if (view.tab === 'both') {
+        out.push(['File1 Line', 'File2 Line'].concat(r.keyCols, ['Status', 'Diffs'],
+            ...r.compared.map(c => [c + ' (File1)', c + ' (File2)', c + ' Status'])));
+        rows.forEach(x => out.push([x.r1.lineNo, x.r2.lineNo].concat(r.keyCols.map(k => x.r1.cells[r.idx1[k]]), [x.status, x.diffs],
+            ...r.compared.map(c => [x.cols[c].v1, x.cols[c].v2, x.cols[c].st]))));
+    } else if (view.tab === 'cells') {
+        out.push(['File1 Line', 'File2 Line'].concat(r.keyCols, ['Column', 'Status', 'File1', 'File2', 'Difference', 'Difference %']));
+        rows.forEach(x => out.push([x.r1.lineNo, x.r2.lineNo].concat(r.keyCols.map(k => x.r1.cells[r.idx1[k]]),
+            [x.col, x.cell.st, x.cell.v1, x.cell.v2, x.cell.delta !== undefined ? x.cell.delta : '', x.cell.pct !== undefined ? x.cell.pct : ''])));
+    } else if (view.tab === 'only1' || view.tab === 'only2') {
+        const p = view.tab === 'only1' ? r.p1 : r.p2;
+        out.push(['Line'].concat(p.headers));
+        rows.forEach(row => out.push([row.lineNo].concat(p.headers.map((h, i) => row.cells[i]))));
+    } else if (view.tab === 'dups') {
+        out.push(['File', 'Line'].concat(r.p1.headers));
+        rows.forEach(x => {
+            const hs = x.side === 1 ? r.p1.headers : r.p2.headers;
+            out.push(['File ' + x.side, x.row.lineNo].concat(r.p1.headers.map(h => { const i = hs.indexOf(h); return i >= 0 ? x.row.cells[i] : ''; })));
+        });
+    }
+    const csv = out.map(line => line.map(csvCell).join(',')).join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'filecompare-' + view.tab + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+}
+
+renderPanel(0);
+renderPanel(1);
+</script>
+</body>
+</html>

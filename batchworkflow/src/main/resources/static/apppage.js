@@ -63,7 +63,7 @@ const PALETTE = [
     { type: 'link',     glyph: '↗', label: 'Link' },
     { type: 'grid',     glyph: '☷', label: 'Grid' },
     { type: 'tabs',     glyph: '⊞', label: 'Tabs' },
-    { type: 'panel',    glyph: '▢', label: 'Panel' },
+    { type: 'panel',    glyph: '▢', label: 'Group / Panel' },
     { type: 'pie',      glyph: '◔', label: 'Pie Chart' },
     { type: 'piegrid',  glyph: '◕', label: 'Pie + Grids' },
     { type: 'bar',      glyph: '▥', label: 'Bar Chart' },
@@ -367,6 +367,21 @@ const USECASE_ACTION = 'USECASE';
 const PERFORMANCE_ACTION = 'PERFORMANCE';
 const COMPARE_ACTION = 'COMPARE';
 const DATASET_ACTION = 'DATASET';
+const WEBSOCKET_ACTION = 'WEBSOCKET';
+
+// What a WebSocket action does to its instance's connection. Every operation names the same
+// instance, and the instance id is the connection's key on the page — so a Connect button and the
+// Send, Pause and Stop buttons beside it all act on one socket. Mirrors AppPageAction#WS_OPERATIONS.
+const WS_OPERATIONS = [
+    { op: 'CONNECT', label: 'Connect and stream into a grid' },
+    { op: 'SEND',    label: 'Send a message' },
+    { op: 'PAUSE',   label: 'Pause (stay connected, skip messages)' },
+    { op: 'RESUME',  label: 'Resume after a pause' },
+    { op: 'STOP',    label: 'Stop (close the connection)' },
+    { op: 'RESTART', label: 'Restart (reconnect as last connected)' }
+];
+// Mirrors AppPageAction#DEFAULT_WS_MAX_ROWS.
+const DEFAULT_WS_MAX_ROWS = 1000;
 
 // How a dataset action's own condition tests a column. These are the dataset library's own
 // operator names rather than a set of our own mapped onto them: the condition is sent for the
@@ -526,7 +541,13 @@ function isDatasetAction(a) { return !!a && a.actionKind === DATASET_ACTION; }
  * ordinary way — asked wherever the answer is "it has its own shape and its own form", which is
  * most of the places the two special kinds are asked about at all.
  */
-function isSpecialAction(a) { return isPerformanceAction(a) || isCompareAction(a) || isDatasetAction(a); }
+function isSpecialAction(a) { return isPerformanceAction(a) || isCompareAction(a) || isDatasetAction(a) || isWebSocketAction(a); }
+
+/** Whether this action drives a WebSocket connection rather than making one call. */
+function isWebSocketAction(a) { return !!a && a.actionKind === WEBSOCKET_ACTION; }
+
+/** A WebSocket action's operation, CONNECT for one saved without one. */
+function wsOperationOf(a) { return (a && a.wsOperation) || 'CONNECT'; }
 
 // Controls that pick from a list of options. The two differ in how many may be picked and in
 // nothing else — same option sources, same designer panel, same thing an action fills — so
@@ -1072,9 +1093,16 @@ function hydratePage() {
             // And the same for opening on the first option: absent means off, so a page saved
             // before it existed opens on the blank row exactly as it always did.
             c.optionSource.selectFirst = c.optionSource.selectFirst === true;
+            // And absent top row means the blank "—" every select has always opened with.
+            c.optionSource.topLabel = c.optionSource.topLabel || '';
+            c.optionSource.topValue = c.optionSource.topValue || '';
         }
         c.tabControlIds = c.tabControlIds || [];
         c.panelControlIds = c.panelControlIds || [];
+        // A panel saved before its look could be set is the bordered white box it always was.
+        c.showBorder = c.showBorder !== false;
+        c.borderColor = c.borderColor || '';
+        c.fillColor = c.fillColor || '';
         c.menuOptions = (c.menuOptions || []).map(o => ({
             label: o.label || '', actionIds: o.actionIds || [], color: o.color || ''
         }));
@@ -1195,6 +1223,10 @@ function hydrateAction(a) {
     // is what the form's selects and number box need to draw at all.
     a.compareEnvironmentA = a.compareEnvironmentA || '';
     a.compareEnvironmentB = a.compareEnvironmentB || '';
+    // Whether the candidate is sent inputs of its own, and what they are. Off on every page saved
+    // before there was a choice, which sends both sides the same inputs exactly as it always did.
+    a.compareSeparateInputs = !!a.compareSeparateInputs;
+    a.compareInputsB = a.compareInputsB || {};
     a.compareType = a.compareType === COMPARE_XML ? COMPARE_XML : COMPARE_JSON;
     a.comparePath = a.comparePath || '';
     a.compareTolerancePercent = Math.max(+a.compareTolerancePercent || 0, 0);
@@ -1730,6 +1762,7 @@ function designPreview(c) {
         return '<div class="fake">' + (c.type === 'multiselect' ? '≡ ' : '▾ ') + AC.esc(from)
             + (order === 'ASC' ? ' · sorted ▲' : order === 'DESC' ? ' · sorted ▼' : '')
             + (source.selectFirst ? ' · opens on first' : '')
+            + (c.type === 'select' && (source.topLabel || source.topValue) ? ' · top: ' + AC.esc(topOption(c).label) : '')
             + (c.type === 'multiselect' ? ' · several' : '') + '</div>';
     }
     // A text area is drawn filling its control, the way a grid is: it is the one field whose
@@ -1948,21 +1981,43 @@ function releaseFromContainers(controlId) {
 // aimed at it — putting a control into a panel moves where it is drawn and nothing else, and
 // taking it out again puts it back on the layout with all of it still pointing where it pointed.
 
+/**
+ * The inline style a panel's box is drawn with: its border taken away, or coloured, and the fill
+ * behind its controls — or nothing, for the plain bordered white box every panel used to be.
+ * Shared by the canvas and the running page so the designer sees the group the reader will.
+ */
+function panelBoxStyle(c) {
+    const rules = [];
+    const border = cssColor(c.borderColor);
+    const fill = cssColor(c.fillColor);
+    if (c.showBorder === false) {
+        rules.push('border-color:transparent');
+        // Without a border or a fill there is no box to pad, so the controls line up with the
+        // ones outside the group rather than sitting inset from them.
+        if (!fill) rules.push('padding:0');
+    } else if (border) {
+        rules.push('border-color:' + border);
+    }
+    if (fill) rules.push('background:' + fill);
+    return rules.length ? ' style="' + AC.attr(rules.join(';')) + '"' : '';
+}
+
 /** How many half-rows tall the mini layout inside a panel chip is drawn. */
 const PANEL_PREVIEW_HALF_ROW = 13;
 
 /** The controls inside a panel, drawn where they will actually be — a small copy of the layout. */
 function panelPreview(c) {
     const children = containerChildren(c);
+    const look = panelBoxStyle(c);
     if (!children.length) {
-        return '<div class="fake panel">drag any control in here — it is laid out inside the box</div>';
+        return '<div class="fake panel"' + look + '>drag any control in here — it is laid out inside the box</div>';
     }
     // Measured from the topmost control rather than from row 0, so a panel whose contents start
     // at row 4 — because that is where they were on the page before being gathered up — draws
     // them at the top of the box instead of below four rows of nothing.
     const top = Math.min(...children.map(k => k.row || 0));
     const rows = Math.max(1, Math.ceil(Math.max(...children.map(k => (k.row || 0) - top + rowSpanOf(k))) * 2));
-    return '<div class="fake panel"><div class="panel-mini" style="grid-template-rows:repeat('
+    return '<div class="fake panel"' + look + '><div class="panel-mini" style="grid-template-rows:repeat('
         + rows + ',' + PANEL_PREVIEW_HALF_ROW + 'px)">'
         + children.map(k =>
             '<span class="panel-slot' + (k.controlId === selectedId ? ' selected' : '') + '" draggable="true"'
@@ -2101,11 +2156,14 @@ function panelProps(c) {
         + '<button class="tool-btn" onclick="addPanelChild(\'select\')">+ Select</button>'
         + '<button class="tool-btn" onclick="addPanelChild(\'button\')">+ Button</button>'
         + '<button class="tool-btn" onclick="addPanelChild(\'grid\')">+ Grid</button>'
+        + '<button class="tool-btn" onclick="addPanelChild(\'pie\')">+ Pie</button>'
+        + '<button class="tool-btn" onclick="addPanelChild(\'bar\')">+ Bar</button>'
         + '<button class="tool-btn" onclick="addPanelChild(\'panel\')" title="A box inside this one">+ Panel</button></div>'
         + '<span class="hint">Drag any control onto the panel on the canvas and it is laid out inside the box, '
         + 'at the place it was let go. Row, column and width are then places in the panel rather than on the '
         + 'page — the panel is the grid they are counted on — so a panel gathers a form into one thing that '
         + 'moves, and a tab holding one is a tab whose content is that form.</span>';
+    html += panelLookProps(c);
     if (!children.length) {
         html += '<div class="empty-note">Nothing in this panel yet.</div>';
         return html + '</div>';
@@ -2127,7 +2185,32 @@ function panelProps(c) {
             + ' in here, however deep. When the page runs, the panel\'s own name carries the worst of what '
             + 'they came back as — and so does the tab holding it, if it is in one.</span>';
     }
+    html += '<div class="toolbar" style="margin-top:6px">'
+        + '<button class="secondary" onclick="openControlCopyEditor(\'' + AC.attr(c.controlId) + '\')"'
+        + ' title="Copy this group, everything in it, and the actions they run onto another page">Copy Group to Page…</button>'
+        + '</div>';
     return html + '</div>';
+}
+
+/**
+ * How the group reads on the page: whether it has a border, what colour that is, and what fills
+ * the box behind its controls. All optional — a panel left alone is the bordered white box it has
+ * always been — and all only looks: the controls inside are grouped, moved and copied together
+ * whether or not the reader can see the box around them.
+ */
+function panelLookProps(c) {
+    const border = c.showBorder !== false;
+    return '<label class="inline-check"><input type="checkbox"' + (border ? ' checked' : '')
+            + ' onchange="setProp(\'showBorder\', this.checked); renderProps()"> Show border</label>'
+        + '<div class="form-row" style="margin-bottom:0">'
+        + (border ? field('Border Color', '<input type="text" value="' + AC.attr(c.borderColor || '')
+                + '" placeholder="#dfe1e6" oninput="setProp(\'borderColor\', this.value)">') : '')
+        + field('Fill Color', '<input type="text" value="' + AC.attr(c.fillColor || '')
+                + '" placeholder="white, #f4f5f7" oninput="setProp(\'fillColor\', this.value)">')
+        + '</div>'
+        + '<span class="hint" style="margin-top:-4px">Optional — shows the reader which controls belong '
+        + 'together. Any CSS colour. With no border and no fill the group is invisible on the page, but its '
+        + 'controls still move and copy as one.</span>';
 }
 
 /**
@@ -2888,7 +2971,8 @@ function barProps(c) {
             + '<option value="HORIZONTAL"' + (c.orientation === 'HORIZONTAL' ? ' selected' : '') + '>Horizontal — bars</option>'
             + '</select>')
         + '<span class="hint">Aim an action at this chart and say, on the action, where the rows are (the array path), '
-        + 'which column is the <b>category</b> — a bar per distinct value — and which is the <b>value</b>. Leave the value '
+        + 'which column is the <b>category</b> — a bar per distinct value, or several comma-separated whose values are '
+        + 'joined into one — and which is the <b>value</b>. Leave the value '
         + 'blank to count the rows in each category; name a column to add it up per category instead, or name several, '
         + 'comma-separated, for a group of bars per category. Column names match regardless of case.</span></div>';
 }
@@ -4458,7 +4542,7 @@ function addControl(type, cell, quiet) {
             : type === 'button' || type === 'multibutton' ? 4 : type === 'pie' || type === 'bar' ? 8
             : type === 'piegrid' || isSeries(type) ? 12 : 6,
         rowSpan: defaultRowSpan(type),
-        optionSource: isSelect(type) ? { mode: 'NONE', staticOptions: [], appUseCaseInstanceId: '', arrayPath: '', keyField: '', labelField: '', appName: '', sortOrder: 'NONE', selectFirst: false } : null,
+        optionSource: isSelect(type) ? { mode: 'NONE', staticOptions: [], appUseCaseInstanceId: '', arrayPath: '', keyField: '', labelField: '', appName: '', sortOrder: 'NONE', selectFirst: false, topLabel: '', topValue: '' } : null,
         actions: [],
         assignments: [],
         dateFormat: '',
@@ -4480,6 +4564,9 @@ function addControl(type, cell, quiet) {
         sliceErrorExpression: '',
         tabControlIds: [],
         panelControlIds: [],
+        showBorder: true,
+        borderColor: '',
+        fillColor: '',
         menuOptions: [],
         defaultTabControlId: '',
         tabsControlId: '',
@@ -4869,7 +4956,9 @@ function groupProps() {
             + ' Controls Selected</span></div>'
         + '<span class="hint">Drag any one of them and they all move, keeping the shape they are in. '
         + 'Ctrl-click a control to add it or take it out, ctrl-drag a second band to add what it catches, '
-        + 'and click the empty canvas — or press Escape — to put the group down.</span>'
+        + 'and click the empty canvas — or press Escape — to put the group down. <b>Group</b> makes it '
+        + 'permanent: a panel around them that moves and copies to other pages as one, with an optional '
+        + 'border and fill colour.</span>'
         + '<div class="group-list">' + controls.map(c =>
             '<span class="group-item" onclick="selectControl(\'' + AC.attr(c.controlId) + '\')"'
                 + ' title="Show this control on its own">'
@@ -4879,9 +4968,61 @@ function groupProps() {
         + '</div>';
 
     return html + '<div class="toolbar" style="margin-top:10px">'
+        + '<button class="primary" onclick="groupSelection()"'
+        + ' title="Put these controls into a new group (panel) where they are now, so they move and copy as one">Group</button>'
         + '<button class="secondary" onclick="setSelection([])">Clear Selection</button>'
         + '<button class="danger" onclick="deleteSelection()">Remove ' + controls.length + ' Controls</button>'
         + '</div></div>';
+}
+
+/**
+ * Gathers the selected controls into a new panel drawn exactly where they are, so what was a
+ * band of loose controls becomes one group that moves, copies and can be given a border or a
+ * colour as a whole.
+ *
+ * <p>Only controls laid out on the page itself are taken. One already in a tab set or a panel
+ * belongs to that container, and a hidden field has no place on screen for a box to hold — both
+ * are left where they are and the status line says so. Their arrangement is kept: the panel covers
+ * the area they occupied, and each control's column and width are rescaled onto the panel's own
+ * twenty-four columns so it sits where it did rather than spreading out to the panel's full width.
+ */
+function groupSelection() {
+    const picked = [...selectedIds].map(findControl).filter(Boolean);
+    const taken = picked.filter(c => !heldBy(c.controlId) && isTabChild(c.type));
+    const left = picked.length - taken.length;
+    if (!taken.length) {
+        AC.setStatus('statusBar', 'Nothing to group: only controls laid out on the page itself — not ones '
+            + 'already in a tab set or a panel, and not hidden fields — can be put into a new group.', 'error');
+        return;
+    }
+    const top = Math.min(...taken.map(c => c.row || 0));
+    const bottom = Math.max(...taken.map(c => (c.row || 0) + rowSpanOf(c)));
+    const left0 = Math.min(...taken.map(c => c.col || 0));
+    const right = Math.max(...taken.map(c => (c.col || 0) + c.span));
+
+    const panelId = addControl('panel', { row: top, col: left0 }, true);
+    const panel = findControl(panelId);
+    panel.label = 'Group';
+    panel.span = Math.max(right - left0, 1);
+    panel.col = Math.min(left0, COLUMNS - panel.span);
+    // Half a row on top of what the controls cover, for the name along the box's top edge.
+    panel.rowSpan = Math.min(Math.max(Math.round((bottom - top + 0.5) * 2) / 2, MIN_ROW_SPAN), MAX_ROW_SPAN);
+
+    const scale = COLUMNS / panel.span;
+    taken.slice().sort((a, b) => (a.row - b.row) || (a.col - b.col)).forEach(c => {
+        c.span = Math.min(Math.max(Math.round(c.span * scale), 1), COLUMNS);
+        c.col = Math.min(Math.max(Math.round((c.col - left0) * scale), 0), COLUMNS - c.span);
+        c.row = (c.row || 0) - top;
+        // A container draws what it holds — the same bargain as dropping one in.
+        c.hideOnRun = false;
+        childIdsOf(panel).push(c.controlId);
+    });
+
+    setSelection([panelId]);
+    AC.setStatus('statusBar', taken.length + ' control' + (taken.length === 1 ? '' : 's') + ' grouped into "'
+        + controlTitle(panel) + '". Rename it, give it a border or a fill colour below, or copy it to another page.'
+        + (left ? ' ' + left + ' selected control' + (left === 1 ? ' was' : 's were')
+            + ' left out: already inside a container, or a hidden field.' : ''), 'ok');
 }
 
 /**
@@ -5211,7 +5352,7 @@ function appOptions(selected) {
  * <p>Two fields rather than one box that takes both, because the two are not the same kind of
  * thing to get wrong. A page is picked from what exists, so it cannot be misspelt and is checked
  * again when this page is saved; an address is typed, so it can be anything and is only held to
- * being http, https or rooted here. Naming a page wins over the typed address and over anything
+ * having a scheme (http, https, fin, ... — never javascript, vbscript or data) or being rooted here. Naming a page wins over the typed address and over anything
  * an action later binds — a link told to open a page is one somebody meant to open that page.
  */
 function linkProps(c) {
@@ -5315,6 +5456,21 @@ function selectProps(c) {
         + 'whose grid hangs off a dropdown opens with rows in it. The first <em>after</em> sorting. A value the '
         + 'page already has beats it: one carried in on a link, or a pick that survived the list being '
         + 'refreshed under it, stays put.</span>';
+
+    // A multi-select has no top row — picking none of it is how it says "nothing" — so only a
+    // single dropdown is asked what its top row reads.
+    if (c.type === 'select') {
+        html += '<div class="form-row" style="margin-bottom:0">'
+             + field('Top Row Label', '<input type="text" value="' + AC.attr(source.topLabel || '')
+                    + '" placeholder="—" oninput="setOption(\'topLabel\', this.value)">')
+             + field('Top Row Value', '<input type="text" value="' + AC.attr(source.topValue || '')
+                    + '" placeholder="blank" oninput="setOption(\'topValue\', this.value)">')
+             + '</div>'
+             + '<span class="hint" style="margin-top:-4px">The entry above every option the source supplies — '
+             + '"All" sending <code>*</code>, say, rather than a blank. Its value is what <code>${'
+             + AC.esc(c.fieldName || 'name') + '}</code> holds until somebody picks, so a page nobody has touched '
+             + 'sends it. Leave both blank for the usual empty row.</span>';
+    }
 
     if (source.mode === 'STATIC') {
         const options = source.staticOptions || [];
@@ -6403,6 +6559,7 @@ function actionCard(a, i, count, fns) {
             + '<option value="' + PERFORMANCE_ACTION + '"' + (isPerformanceAction(a) ? ' selected' : '') + '>Show performance details</option>'
             + '<option value="' + COMPARE_ACTION + '"' + (isCompareAction(a) ? ' selected' : '') + '>Compare two environments</option>'
             + '<option value="' + DATASET_ACTION + '"' + (isDatasetAction(a) ? ' selected' : '') + '>Load a static dataset</option>'
+            + '<option value="' + WEBSOCKET_ACTION + '"' + (isWebSocketAction(a) ? ' selected' : '') + '>WebSocket: connect, send, pause, stop…</option>'
             + '</select>')
         + field('Runs After', '<select onchange="' + set('dependsOnActionId', 'this.value') + '">'
             + dependencyOptions(a) + '</select>', DEPENDS_HINT);
@@ -6414,6 +6571,7 @@ function actionCard(a, i, count, fns) {
     if (isPerformanceAction(a)) return head + performanceFields(a, i, targets, target, fns, set) + '</div>';
     if (isCompareAction(a)) return head + compareFields(a, i, targets, fns, set) + '</div>';
     if (isDatasetAction(a)) return head + datasetFields(a, i, targets, target, fns, set) + '</div>';
+    if (isWebSocketAction(a)) return head + webSocketFields(a, i, targets, fns, set) + '</div>';
 
     // What the call is — sent once, however many places its answer goes.
     const callPart = field('Instance', '<select onchange="' + set('appUseCaseInstanceId', 'this.value') + '">' + instanceOptions(a.appUseCaseInstanceId) + '</select>')
@@ -6486,6 +6644,8 @@ function actionCard(a, i, count, fns) {
             : '')
         + field('Environment', '<input type="text" value="' + AC.attr(a.environmentOverride || '') + '" placeholder="${envSelect}" oninput="' + set('environmentOverride', 'this.value') + '">',
             'Overrides which environment this run calls. <code>${fieldName}</code> picks up a control (usually a select sourced from App environments); leave blank to use the instance\'s own environment.')
+        + field('Timeout (ms)', '<input type="text" value="' + AC.attr(a.timeoutOverride || '') + '" placeholder="${TIMEOUT_MS}" oninput="' + set('timeoutOverride', 'this.value') + '">',
+            'Overrides the use case\'s HTTP timeout for this action\'s calls. A number (<code>60000</code>) or <code>${name}</code> for a page variable or control; leave blank, or let it resolve to anything but a positive whole number, to keep the use case\'s own timeout.')
         + inputsEditor(a, i, fns);
 
     // Where the answer goes: the action's own target, which is the first of its targets.
@@ -6834,7 +6994,8 @@ function chartFieldsEditor(type, a, set) {
             + field(bar ? 'Value Column(s)' : 'Slice Value Field(s)', input('valueField', bar ? 'count — or amount, fees' : 'count, amount'))
         + '</div>'
         + (bar
-            ? '<span class="hint">A bar per distinct value of the category column. Leave the value blank and each bar is '
+            ? '<span class="hint">A bar per distinct value of the category column — or name several, comma-separated — '
+                + '<code>region, status</code> — and the category is their values joined, "EU / OPEN". Leave the value blank and each bar is '
                 + 'how many rows fall in its category; name a column and it is that column added up across them; name '
                 + 'several, comma-separated — <code>amount, fees</code> — and each category gets a bar per column, with a '
                 + 'legend. Column names match regardless of case. A value that is not a number, or is below zero, is '
@@ -6982,6 +7143,13 @@ function pivotEditor(p, call) {
                 + '</div>';
         }).join('')
         : '<div class="empty-note">None — each cell counts its rows.</div>')
+        + ((p.filters || []).length
+            ? '<div class="props-title" style="margin-top:4px"><span>Filters</span></div>'
+                + p.filters.map((f, at) => '<div class="chain-step"><span title="' + AC.attr(f.values.join(', ')) + '">'
+                    + AC.esc(GridPivot.describeFilter(f)) + '</span>'
+                    + '<button class="icon-btn" onclick="' + call('removeFilter', at) + '" title="Remove">×</button></div>').join('')
+                + '<span class="hint">Only rows passing every filter are grouped. Filters are built on the <b>Analyze</b> screen.</span>'
+            : '')
         + '<div class="form-row" style="margin-bottom:0">'
             + field('Row Order', order('rowOrder'))
             + field('Column Order', order('colOrder'))
@@ -7012,6 +7180,7 @@ function pivotSteps(holder, op, at, name, value) {
     }
     if (op === 'addValue') { p.values.push({ field: '', agg: 'sum' }); return true; }
     if (op === 'removeValue') { p.values.splice(at, 1); return true; }
+    if (op === 'removeFilter') { (p.filters || []).splice(at, 1); return true; }
     if (op === 'setValue' && p.values[at]) {
         p.values[at][name] = value;
         if (name === 'agg' && value === GridPivot.ROW_COUNT_AGG) p.values[at].field = '';
@@ -7352,7 +7521,7 @@ function rowListSteps(actions, index, list, op, at, name, value) {
     if (op === 'add') {
         items.push(list === 'datasetFilters'
             ? { attribute: '', op: DATASET_DEFAULT_OPERATOR, value: '' }
-            : list === 'rowFilters' || list === 'bindFilters'
+            : list === 'rowFilters' || list === 'bindFilters' || list === 'excludeFilters'
             ? { column: '', operator: 'CONTAINS', value: '' }
             : list === 'enrichColumns'
             ? { name: 'enriched' + (items.length + 1), kind: 'META', expression: META_FIELDS[0],
@@ -7426,6 +7595,94 @@ function rowListDraft(index, list, op, at, name, value) {
  * no response for a path to be read out of. What is left is the grid the table lands in and, if
  * the page wants one, a filter narrowing which endpoints are in it.
  */
+/**
+ * The instances a WebSocket action can drive: those of WS apps. One already chosen that is not —
+ * the app's mode changed since — stays listed and selected, so redrawing the form never rewires it.
+ */
+function wsInstanceOptions(selected) {
+    const wsApps = new Set(apps.filter(app => app.appMode === 'WS').map(app => app.appName));
+    const byApp = new Map();
+    instances.filter(x => wsApps.has(x.appName) || x.appUseCaseInstanceId === selected).forEach(x => {
+        if (!byApp.has(x.appName)) byApp.set(x.appName, []);
+        byApp.get(x.appName).push(x);
+    });
+    return '<option value="">' + (byApp.size ? '— select an instance —' : '— no WS app instances in the catalog —') + '</option>'
+        + [...byApp.entries()].map(([app, list]) =>
+            '<optgroup label="' + AC.attr(app) + (wsApps.has(app) ? '' : ' (not a WS app)') + '">'
+            + list.map(x => '<option value="' + AC.attr(x.appUseCaseInstanceId) + '"'
+                + (x.appUseCaseInstanceId === selected ? ' selected' : '') + '>'
+                + AC.esc(x.instanceLabel || (x.appUseCaseName + ' @ ' + x.appEnvironment)) + '</option>').join('')
+            + '</optgroup>').join('');
+}
+
+/**
+ * A WebSocket action's form. Every operation names the instance — that is what ties a Connect
+ * button to the Send, Pause and Stop buttons beside it — and then asks only for what its operation
+ * uses: Connect where to connect, with what, and where the messages go; Send what to send; the
+ * rest nothing at all.
+ */
+function webSocketFields(a, i, targets, fns, set) {
+    const op = wsOperationOf(a);
+    let html = field('Instance', '<select onchange="' + set('appUseCaseInstanceId', 'this.value') + '">'
+            + wsInstanceOptions(a.appUseCaseInstanceId) + '</select>',
+            'A use case instance of a <b>WS</b> app. The instance is the connection' + Q + 's name on this page: '
+            + 'every WebSocket action naming it — Connect, Send, Pause, Stop — acts on the same socket.')
+        + field('Operation', '<select onchange="' + set('wsOperation', 'this.value') + '">'
+            + WS_OPERATIONS.map(o => '<option value="' + o.op + '"' + (o.op === op ? ' selected' : '') + '>'
+                + AC.esc(o.label) + '</option>').join('')
+            + '</select>',
+            op === 'CONNECT' ? 'Opens the connection from this server — the environment' + Q + 's WebSocket URL plus the '
+                    + 'use case' + Q + 's suffix, its headers and the app' + Q + 's credentials on the handshake — sends the '
+                    + 'use case' + Q + 's body as the opening message, if it has one, and streams every message into the grid. '
+                    + 'Connecting again replaces the connection.'
+            : op === 'SEND' ? 'Sends a message over the open connection.'
+            : op === 'PAUSE' ? 'Keeps the connection open but skips what arrives until resumed; the grid says how many were skipped.'
+            : op === 'RESUME' ? 'Shows what arrives again after a pause.'
+            : op === 'STOP' ? 'Closes the connection. The grid keeps what it already shows.'
+            : 'Closes the connection and opens it again with the environment and inputs Connect last used.');
+
+    if (op === 'SEND') {
+        return html + field('Message', '<textarea spellcheck="false" placeholder=\'{"action": "subscribe", "topic": "${topic}"}\' oninput="'
+                + set('wsMessage', 'this.value') + '">' + AC.esc(a.wsMessage || '') + '</textarea>',
+                '<code>${fieldName}</code> picks up a control on this page, and the use case' + Q + 's own variables '
+                + '(<code>$region</code>) are filled in by the server as they are in its body. Blank sends the use '
+                + 'case' + Q + 's body again.');
+    }
+    if (op !== 'CONNECT') return html;
+
+    html += field('Environment', '<input type="text" placeholder="${envPick}   or   uat — blank uses the instance' + Q + 's own" value="'
+                + AC.attr(a.environmentOverride || '') + '" oninput="' + set('environmentOverride', 'this.value') + '">',
+                'Which of the instance' + Q + 's environments to connect to.')
+        + inputsEditor(a, i, fns, 'Sent with the connection: they fill the URL, the headers and the opening message.')
+        + field('Target', '<select onchange="' + set('targetControlId', 'this.value') + '">'
+            + '<option value="">— select a grid —</option>'
+            + targets.map(t => '<option value="' + AC.attr(t.controlId) + '"' + (t.controlId === a.targetControlId ? ' selected' : '') + '>'
+                + AC.esc(controlTitle(t)) + ' (grid)</option>').join('')
+            + '</select>',
+            targets.length
+                ? 'Each message becomes a row, newest at the top, with a <code>receivedAt</code> column first. A JSON '
+                    + 'message' + Q + 's fields are its columns; anything else arrives as a <code>message</code> column.'
+                : 'Nowhere to put the messages yet — drag a <b>Grid</b> onto the layout and aim this at it.')
+        + '<div class="form-row" style="margin-bottom:0">'
+        + field('Rows In Each Message', '<input type="text" placeholder="blank — the message is the row" value="'
+            + AC.attr(a.arrayPath || '') + '" oninput="' + set('arrayPath', 'this.value') + '">',
+            'A path to an array when one message carries several rows, e.g. <code>data.trades</code>.')
+        + field('Keep At Most', '<input type="number" min="1" step="100" value="' + AC.attr(String(a.wsMaxRows || DEFAULT_WS_MAX_ROWS))
+            + '" oninput="' + set('wsMaxRows', 'Number(this.value) || ' + DEFAULT_WS_MAX_ROWS) + '">',
+            'Rows; the oldest fall off as new ones arrive.')
+        + '</div>';
+
+    const call = (listOp, at, name, value) => fns.rows + '(' + i + ', \'excludeFilters\', \'' + listOp + '\', ' + at
+        + ', ' + (name ? '\'' + name + '\'' : 'null') + ', ' + (value === undefined ? 'null' : value) + ')';
+    return html + filterListEditor(a.excludeFilters || [], call, 'Exclude Messages Where',
+        'Every message goes in.',
+        'A message matching <b>any</b> of these is left out of the grid (and counted as excluded). The column is a '
+        + 'field of the message, and may be a dotted path into it — <code>payload.type</code> equals '
+        + '<code>heartbeat</code>. Text tests ignore case. A value may be written <code>${field}</code> to test against a '
+        + 'control, and is read as each batch of messages arrives, so changing that control changes what is excluded '
+        + 'from then on; one that comes out empty drops its filter.');
+}
+
 function performanceFields(a, i, targets, target, fns, set) {
     const filters = a.inputs && Object.keys(a.inputs).length ? a.inputs : null;
     const unknown = filters ? Object.keys(filters).filter(k => !PERFORMANCE_FILTERS.includes(k)) : [];
@@ -7566,6 +7823,40 @@ function datasetFilterEditor(a, i, fns) {
 }
 
 /**
+ * The candidate's own inputs on a compare action that sends the two sides different ones: a map
+ * laid over the baseline's, so only the names that differ need writing — {"accountId": "${acctB}"}
+ * sends the candidate everything the baseline gets except its account. Typed as JSON, and left as
+ * it was rather than wiped while what is typed does not parse yet.
+ */
+function compareCandidateInputs(a, i, set) {
+    const map = a.compareInputsB || {};
+    return field('Candidate Inputs', '<textarea spellcheck="false" placeholder=\'{"accountId": "${accountB}"}\' oninput="'
+            + 'var v = compareInputsFromText(this.value); if (v !== undefined) ' + set('compareInputsB', 'v') + '">'
+            + AC.esc(Object.keys(map).length ? JSON.stringify(map, null, 2) : '') + '</textarea>',
+        'Laid over the baseline inputs for the candidate call only. Name just what differs; anything not named '
+        + 'here is sent as the baseline gets it. <code>${fieldName}</code> picks up a control, so a page can put '
+        + 'two inputs side by side — one per environment. With different inputs the two sides may also be the '
+        + 'same environment.');
+}
+
+/** A candidate-inputs map typed as JSON, or undefined — with a note in the status — while it does not parse. */
+function compareInputsFromText(text) {
+    const note = msg => {
+        AC.setStatus('statusBar', msg, msg ? 'error' : undefined);
+        AC.setStatus('editorStatus', msg, msg ? 'error' : undefined);
+    };
+    try {
+        const parsed = text.trim() ? JSON.parse(text) : {};
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('it has to be a {"name": value} map');
+        note('');
+        return parsed;
+    } catch (e) {
+        note('Candidate inputs are not valid JSON yet: ' + e.message);
+        return undefined;
+    }
+}
+
+/**
  * A compare action's form. It names one instance and two environments rather than one, and then
  * says what part of each answer is held against the other and how closely: a path into the
  * response, whether the response is JSON or XML, the chain that reshapes each side first, and
@@ -7594,8 +7885,15 @@ function compareFields(a, i, targets, fns, set) {
             + 'control — usually two selects sourced from App environments — so the operator chooses the pair. The '
             + 'baseline is the side a difference is reported as being <b>from</b>: what it holds and the candidate '
             + 'does not reads <b>' + COMPARE_STATUS.onlyA + '</b>.</span>'
-        + inputsEditor(a, i, fns, 'Sent identically to both environments — the whole point is that the only thing '
-            + 'differing between the two calls is where they went.')
+        + '<div class="form-group"><label style="font-weight:normal"><input type="checkbox"'
+            + (a.compareSeparateInputs ? ' checked' : '')
+            + ' onchange="' + set('compareSeparateInputs', 'this.checked') + '"> Send the candidate different inputs</label></div>'
+        + (a.compareSeparateInputs
+            ? inputsEditor(a, i, fns, '<b>Baseline inputs.</b> Sent to the baseline, and to the candidate too for '
+                + 'every name the candidate inputs below do not override.')
+              + compareCandidateInputs(a, i, set)
+            : inputsEditor(a, i, fns, 'Sent identically to both environments — the whole point is that the only thing '
+                + 'differing between the two calls is where they went.'))
         + field('Read As', '<select onchange="' + set('compareType', 'this.value') + '">'
             + '<option value="' + COMPARE_JSON + '"' + (xml ? '' : ' selected') + '>JSON</option>'
             + '<option value="' + COMPARE_XML + '"' + (xml ? ' selected' : '') + '>XML</option>'
@@ -7778,6 +8076,7 @@ function actionSummary(a, i, count, fns) {
                     : 'no dataset chosen yet')
                : instance ? (instance.instanceLabel || (instance.appUseCaseName + ' @ ' + instance.appEnvironment))
                     + (compare ? ' — ' + (a.compareEnvironmentA || 'baseline?') + ' vs ' + (a.compareEnvironmentB || 'candidate?') : '')
+                    + (isWebSocketAction(a) ? ' — WebSocket ' + wsOperationOf(a).toLowerCase() : '')
                : a.appUseCaseInstanceId ? 'instance no longer in the catalog' : 'no instance chosen yet';
     const target = findControl(a.targetControlId);
     const extra = performance || compare || dataset || a.rowSourceControlId ? [] : (a.extraBindings || []);
@@ -7806,7 +8105,9 @@ function actionSummary(a, i, count, fns) {
     // and then the control deleted, or a new action nobody finished. Either way it is the one
     // thing about an action that cannot be told from the rest of the card, so it is marked rather
     // than left to read like any other line, and the designer decides which of the two it is.
-    const noTarget = !performance && !compare && !dataset && !a.targetControlId && !extra.length;
+    // A WebSocket operation other than Connect binds nothing by design — it acts on the connection.
+    const noTarget = !performance && !compare && !dataset && !a.targetControlId && !extra.length
+        && !(isWebSocketAction(a) && wsOperationOf(a) !== 'CONNECT');
     // Where this action is triggered from, for a page action — see #actionUsage. A control's own
     // action is run by the control it is written on and has nothing to answer here.
     const shared = isPageAction(a.actionId);
@@ -7851,6 +8152,7 @@ function actionSummary(a, i, count, fns) {
             + '<span' + (instance || performance || (dataset && a.datasetName) ? '' : ' class="muted"') + '>' + AC.esc(runs) + '</span>'
             + (performance ? '<span class="badge auth">performance</span>' : '')
             + (dataset ? '<span class="badge auth">dataset</span>' : '')
+            + (isWebSocketAction(a) ? '<span class="badge auth">websocket</span>' : '')
             + (isMetadataAction(a) && !performance && !dataset ? '<span class="badge auth">metadata</span>' : '')
             + (a.ownCall ? '<span class="badge warn">own call</span>' : '')
             + (fanOut ? '<span class="badge' + (rowSource ? '' : ' err') + '">' + AC.esc(fanOut) + '</span>' : '')
@@ -8456,14 +8758,16 @@ function setHiddenColumns(text) {
 
 function blankAction(label) {
     return { actionId: newActionId(), actionLabel: label, actionKind: USECASE_ACTION, appUseCaseInstanceId: '',
-             environmentOverride: '', inputs: {}, targetControlId: '', arrayPath: '', valuePath: '',
+             environmentOverride: '', timeoutOverride: '', inputs: {}, targetControlId: '', arrayPath: '', valuePath: '',
              keyField: '', labelField: '', valueField: '', dependsOnActionId: '',
              keyValueGrid: false, scalarsOnly: false, appendRows: false, source: 'PAYLOAD', transformNames: [], ownCall: false,
              rowSourceControlId: '', rowOutputMode: 'ROWS', rowLabelTemplate: '', rowErrorExpression: '', displayFilterExpression: '', rowElements: '', rowLimit: DEFAULT_ROW_LIMIT,
              rowFilters: [], bindFilters: [], rowColumns: [], enrichColumns: [], extraBindings: [], pivot: null,
-             compareEnvironmentA: '', compareEnvironmentB: '', compareType: COMPARE_JSON, comparePath: '',
+             compareEnvironmentA: '', compareEnvironmentB: '', compareSeparateInputs: false, compareInputsB: {},
+             compareType: COMPARE_JSON, comparePath: '',
              compareTolerancePercent: 0, compareReport: REPORT_DIFFERENCES,
-             datasetName: '', datasetFavorite: '', datasetFilters: [] };
+             datasetName: '', datasetFavorite: '', datasetFilters: [],
+             wsOperation: 'CONNECT', wsMessage: '', excludeFilters: [], wsMaxRows: DEFAULT_WS_MAX_ROWS };
 }
 
 /** Page actions are referred to by id from every control that triggers them, so each needs one. */
@@ -8516,11 +8820,13 @@ function addAction() {
 // datasetName is here because it decides what every column dropdown under it may offer, and which
 // saved filters there are to choose from at all.
 const REDRAWING_FIELDS = ['targetControlId', 'rowSourceControlId', 'rowOutputMode', 'keyValueGrid',
-                          'compareType', 'datasetName',
+                          'compareType', 'compareSeparateInputs', 'datasetName',
                           // The instance decides which variables the Inputs field lists, so the
                           // panel has to be redrawn around a new one rather than left listing the
                           // previous use case's.
-                          'appUseCaseInstanceId'];
+                          'appUseCaseInstanceId',
+                          // Which WebSocket operation decides which of its fields the form shows.
+                          'wsOperation'];
 
 /**
  * A different dataset has different columns and different saved filters, so what was picked out of
@@ -8541,7 +8847,7 @@ function dropDatasetColumns(a, name) {
 function setAction(index, name, value) {
     const c = findControl(selectedId);
     c.actions[index][name] = value;
-    dropDatasetColumns(c.actions[index], name);
+    settleActionField(c.actions[index], name);
     if (REDRAWING_FIELDS.includes(name)) renderProps();
     renderCanvas();
 }
@@ -8560,7 +8866,44 @@ function applyActionKind(a, kind) {
     a.actionKind = kind === PERFORMANCE_ACTION ? PERFORMANCE_ACTION
                  : kind === COMPARE_ACTION ? COMPARE_ACTION
                  : kind === DATASET_ACTION ? DATASET_ACTION
+                 : kind === WEBSOCKET_ACTION ? WEBSOCKET_ACTION
                  : USECASE_ACTION;
+    // Only a WebSocket connect receives messages to exclude, and the catalog refuses the list on
+    // anything else.
+    if (!isWebSocketAction(a)) a.excludeFilters = [];
+    // A WebSocket action keeps the instance, the environment and the inputs — they mean on it what
+    // they mean on a call — and loses everything about reading one response, which a socket does
+    // not have: its messages stream into one grid, through its own exclude list.
+    if (isWebSocketAction(a)) {
+        a.wsOperation = wsOperationOf(a);
+        a.wsMaxRows = a.wsMaxRows || DEFAULT_WS_MAX_ROWS;
+        a.excludeFilters = a.excludeFilters || [];
+        a.valuePath = '';
+        a.keyField = '';
+        a.labelField = '';
+        a.valueField = '';
+        a.transformNames = [];
+        a.source = 'PAYLOAD';
+        a.keyValueGrid = false;
+        a.scalarsOnly = false;
+        a.appendRows = false;
+        a.ownCall = true;
+        a.rowSourceControlId = '';
+        a.rowLabelTemplate = '';
+        a.rowErrorExpression = '';
+        a.displayFilterExpression = '';
+        a.rowFilters = [];
+        a.rowColumns = [];
+        a.bindFilters = [];
+        a.enrichColumns = [];
+        a.extraBindings = [];
+        a.pivot = null;
+        a.datasetName = '';
+        a.datasetFavorite = '';
+        a.datasetFilters = [];
+        settleWsTarget(a);
+        return;
+    }
     // A dataset action keeps what is about the rows and loses what is about a call. The key and
     // label fields stay, because they mean on it exactly what they mean on an ordinary action
     // filling the same dropdown, and so do the filters, the group-by and the enriched lookups —
@@ -8568,6 +8911,7 @@ function applyActionKind(a, kind) {
     if (isDatasetAction(a)) {
         a.appUseCaseInstanceId = '';
         a.environmentOverride = '';
+        a.timeoutOverride = '';
         a.inputs = {};
         a.arrayPath = '';
         a.valuePath = '';
@@ -8645,6 +8989,7 @@ function applyActionKind(a, kind) {
     if (!isPerformanceAction(a)) return;
     a.appUseCaseInstanceId = '';
     a.environmentOverride = '';
+    a.timeoutOverride = '';
     a.arrayPath = '';
     a.valuePath = '';
     a.keyField = '';
@@ -8698,6 +9043,27 @@ function clearNonGridTarget(a) {
     if (a.targetControlId && a.targetControlId !== NEW_GRID && (!target || target.type !== 'grid')) {
         a.targetControlId = '';
     }
+}
+
+/**
+ * A WebSocket action's target as its operation allows: a placed grid for Connect — a new grid per
+ * message is no way to watch a feed — and nothing at all for the rest, which bind nothing. The
+ * exclude list goes with the target, since only Connect has messages to exclude.
+ */
+function settleWsTarget(a) {
+    if (wsOperationOf(a) === 'CONNECT') {
+        if (a.targetControlId === NEW_GRID) a.targetControlId = '';
+        clearNonGridTarget(a);
+        return;
+    }
+    a.targetControlId = '';
+    a.excludeFilters = [];
+}
+
+/** What changing one field of an action takes with it — see #dropDatasetColumns and #settleWsTarget. */
+function settleActionField(a, name) {
+    dropDatasetColumns(a, name);
+    if (name === 'wsOperation' && isWebSocketAction(a)) settleWsTarget(a);
 }
 
 function setActionKind(index, kind) {
@@ -8859,7 +9225,7 @@ function clonePageAction(index) {
 
 function setPageAction(index, name, value) {
     page.actions[index][name] = value;
-    dropDatasetColumns(page.actions[index], name);
+    settleActionField(page.actions[index], name);
     if (REDRAWING_FIELDS.includes(name)) renderProps();
     if (name === 'actionLabel') renderControlList();
 }
@@ -9348,7 +9714,7 @@ async function saveTransformToLibrary() {
 function setDraft(index, name, value) {
     if (!editor) return;
     editor.draft[name] = value;
-    dropDatasetColumns(editor.draft, name);
+    settleActionField(editor.draft, name);
     if (editor.kind === 'action') {
         const fanOut = !!editor.draft.rowSourceControlId;
         dropUnusablePivot(editor.draft, fanOut && editor.draft.rowOutputMode === 'TABS');
@@ -10756,7 +11122,9 @@ async function startRun() {
         // another page has that page's address instead, and keeps it — see #pageLinkUrl.
         if (c.type === 'link') linkUrls[c.controlId] = pageLinkUrl(c) || c.defaultValue || '';
         if (!VALUE_TYPES.includes(c.type)) return;
-        values[c.fieldName] = c.type === 'checkbox' ? c.defaultValue === 'true' : (c.defaultValue || '');
+        // A dropdown with nothing picked holds whatever its top row sends — see #topOption.
+        values[c.fieldName] = c.type === 'checkbox' ? c.defaultValue === 'true'
+            : (c.defaultValue || (c.type === 'select' ? topOption(c).value : ''));
     });
     // A grid's status variable exists from the start, blank, so ${name} is known before it is filled.
     page.controls.forEach(c => {
@@ -11430,11 +11798,12 @@ function panelRun(c) {
         + '<span class="' + tally.cls + '" data-tabset-check="' + AC.attr(c.controlId) + '"'
             + ' title="' + AC.attr(tally.title) + '">' + AC.esc(tally.text) + '</span>'
         + '</div>';
+    const box = '<div class="panel-box"' + panelBoxStyle(c) + '>';
     if (!children.length) {
-        return '<div class="panel-box">' + head + '<div class="grid-empty">This panel holds nothing yet.</div></div>';
+        return box + head + '<div class="grid-empty">This panel holds nothing yet.</div></div>';
     }
     const top = Math.min(...children.map(k => k.row || 0));
-    return '<div class="panel-box">' + head + '<div class="panel-body">'
+    return box + head + '<div class="panel-body">'
         + children.map(k =>
             '<div class="run-ctl ' + AC.esc(k.type) + '-ctl" id="rc-' + AC.attr(k.controlId) + '"'
             + ' style="grid-column:' + (k.col + 1) + '/span ' + k.span
@@ -11827,7 +12196,7 @@ function runControl(c) {
         case 'page':
             return childPageRun(c, style);
         case 'select':
-            return label + '<select data-field="' + AC.attr(c.fieldName) + '"' + style + '><option value="">—</option></select>' + hint;
+            return label + '<select data-field="' + AC.attr(c.fieldName) + '"' + style + '>' + topOptionHtml(c) + '</select>' + hint;
         // No blank option: on a list where several may be picked, "none" is picking none of them
         // rather than picking a row that means none. The box fills the height the control was
         // given, so how many options are on screen at once is a layout decision like any other.
@@ -11963,16 +12332,20 @@ function linkAttrs(url, live) {
 }
 
 /**
- * An address a link may actually point at, or nothing. Only http, https and a path rooted on this
- * server survive: an address bound out of a response is data, and a <code>javascript:</code> one
- * in an href would be that data running as this page. Anything else is refused rather than
+ * An address a link may actually point at, or nothing. Any address with a scheme — http, https,
+ * or an application's own such as <code>fin:</code> — and a path rooted on this server survive,
+ * except <code>javascript:</code>, <code>vbscript:</code> and <code>data:</code>: an address bound
+ * out of a response is data, and one of those in an href would be that data running as this
+ * page. Anything else is refused rather than
  * quietly rewritten into something that looked close enough — see {@link #bindLink}, which says
  * so out loud.
  */
 function safeUrl(url) {
     const text = (url === undefined || url === null ? '' : String(url)).trim();
     if (/^\/[^\/]/.test(text)) return text;   // rooted here; a second slash is another host
-    return /^https?:\/\//i.test(text) ? text : '';
+    const scheme = /^([a-z][a-z0-9+.\-]*):/i.exec(text);
+    if (!scheme) return '';
+    return /^(javascript|vbscript|data)$/i.test(scheme[1]) ? '' : text;
 }
 
 /**
@@ -12217,6 +12590,26 @@ function picksFirst(c) {
 }
 
 /**
+ * The row at the top of a dropdown, above everything a source supplies: a blank "—" unless the
+ * designer named one of their own — "All" sending <code>*</code>, "Any desk" sending nothing. The
+ * value is what the control holds until somebody picks, so an action reading ${field} on a page
+ * nobody has touched sends it. A label with no value of its own is a nicer blank; a value with no
+ * label is shown as itself.
+ */
+function topOption(c) {
+    const source = c.optionSource || {};
+    const value = source.topValue || '';
+    const label = source.topLabel || value || '—';
+    return { value: value, label: label };
+}
+
+/** The top row as markup — see {@link #topOption}. */
+function topOptionHtml(c) {
+    const top = topOption(c);
+    return '<option value="' + AC.attr(top.value) + '">' + AC.esc(top.label) + '</option>';
+}
+
+/**
  * Puts a dropdown's options in the order its designer asked for, whatever put them there — the
  * list fetched as the page opens, and the list an action binds into it later. Sorted here rather
  * than at each of those, so "this select reads A to Z" is one setting on the control instead of a
@@ -12245,8 +12638,11 @@ function fillOptions(c, options, quiet) {
     // Kept as well as written in, so a redraw of whatever the control is drawn inside can put
     // them back rather than leaving an empty dropdown behind — see #shownOptions.
     shownOptions[c.controlId] = options;
-    select.innerHTML = (multi ? '' : '<option value="">—</option>')
+    select.innerHTML = (multi ? '' : topOptionHtml(c))
         + shown.map(o => '<option value="' + AC.attr(o.value) + '">' + AC.esc(o.label) + '</option>').join('');
+    // What the top row sends is "nothing picked yet", whatever it says — so it is not a pick to
+    // keep, and "select the first option" still moves off it.
+    const unpicked = multi ? '' : topOption(c).value;
     // Keep whatever was already chosen (or the control's default) when it survives the refresh.
     // On a multi-select that is each pick judged separately: a refreshed list that dropped one of
     // five keeps the other four rather than throwing the lot away over the one that went.
@@ -12262,11 +12658,11 @@ function fillOptions(c, options, quiet) {
             picked = true;
         }
         values[c.fieldName] = multiValue(select);
-    } else if (previous && [...select.options].some(o => o.value === previous)) {
+    } else if (previous && previous !== unpicked && [...select.options].some(o => o.value === previous)) {
         select.value = previous;
         values[c.fieldName] = select.value;
     } else {
-        // Index 0 is the blank row this control was just given, not an option anybody supplied —
+        // Index 0 is the top row this control was just given, not an option anybody supplied —
         // so the first real option is the one after it, and a list that came back empty has none.
         if (picksFirst(c) && select.options.length > 1) {
             select.selectedIndex = 1;
@@ -12729,22 +13125,20 @@ function clearControl(control) {
  * calls do not depend on one another, and making the fifth wait on the fourth only made the
  * page slower.
  *
- * <p>Fired together, bound in the order they are listed. Binding is where the page changes, so
- * a stacked grid, an error and the status line all read as the order the actions were written
- * in rather than as whichever call happened to answer first: the same trigger produces the same
- * page every time, however the network staggered the responses.
+ * <p>Each action binds as soon as its own call answers, so a slow call holds up nothing but
+ * itself. The one exception is two actions writing into the same control: those bind in the order
+ * they are listed, so the page ends up showing the one listed last however the network staggered
+ * the responses — see {@link #bindOrder}.
  *
- * <p>An action that names another under Runs After is held out of that first wave and sent once
- * the one it waits for has come back and bound. Only then are its inputs and its environment
+ * <p>An action that names another under Runs After is sent the moment that one has come back and
+ * bound — not once everything sent alongside it has. Only then are its inputs and its environment
  * resolved, which is the whole reason to wait: they read the page as the earlier action left it,
- * so one call can genuinely feed the next. Actions waiting on the same action form a wave of
- * their own and still go out together, so a chain costs a round trip per level rather than one
- * per action, and an action with nothing to wait for never waits for anything.
+ * so one call can genuinely feed the next. Actions waiting on the same action still go out
+ * together, and an action with nothing to wait for never waits for anything.
  *
- * <p>A failure stops what was waiting on it and nothing else. The rest of its own wave are
- * already in flight by the time it comes back bad; everything downstream of it is not sent at
- * all and says so, since an action whose input was to come out of a call that failed has nothing
- * to send. Every action is reported on and every problem is listed, rather than the first error
+ * <p>A failure stops what was waiting on it and nothing else. Everything else is already in
+ * flight or carries on; everything downstream of it is not sent at all and says so, since an
+ * action whose input was to come out of a call that failed has nothing to send. Every action is reported on and every problem is listed, rather than the first error
  * standing in for all of them.
  *
  * <p>A metadata action binds whatever its call did, so a failed call still fills in the URL and
@@ -12783,8 +13177,8 @@ async function runActions(actions, label, element, keepErrors) {
         // What the page put on the wire, which is a different thing from what the instance was
         // saved with — the technical details are only worth reading if they report the former.
         // The inputs and the environment are filled in as each action is about to be sent rather
-        // than all at once up front: an action in a later wave resolves its own against the page
-        // the wave before it left behind, and one that is never sent has none to report.
+        // than all at once up front: an action that waits resolves its own against the page the
+        // action it waited for left behind, and one that is never sent has none to report.
         const record = actions.map((action, i) => ({
             name: names[i],
             instanceId: action.appUseCaseInstanceId,
@@ -12802,6 +13196,10 @@ async function runActions(actions, label, element, keepErrors) {
             // dataset is in the list saying what it is rather than reading as one that was skipped.
             dataset: isDatasetAction(action),
             datasetName: action.datasetName || '',
+            // A WebSocket action hands a command to the relay rather than making a call, so —
+            // like a summary — it is marked rather than shown as a call with no request.
+            websocket: isWebSocketAction(action),
+            wsOperation: isWebSocketAction(action) ? wsOperationOf(action) : '',
             result: null,
             error: ''
         }));
@@ -12811,7 +13209,6 @@ async function runActions(actions, label, element, keepErrors) {
         const fanNotes = [];
 
         let done = 0;
-        const succeeded = new Array(actions.length).fill(false);
         // What each action resolved its templates against, kept so the paths that read its
         // answer are resolved against the same thing its request was. Filled as each call is
         // about to go out, for the same reason the inputs beside it are.
@@ -12825,171 +13222,207 @@ async function runActions(actions, label, element, keepErrors) {
             addError(why);
         };
 
-        for (const wave of plan.waves) {
-            // Whoever was waiting on something that did not come back has nothing to send.
-            const live = [];
-            wave.forEach(i => {
-                const on = plan.waitsFor[i];
-                if (on < 0 || succeeded[on]) live.push(i);
-                else notSent(i, names[i] + ' was not sent: it waits for "' + names[on] + '", which did not succeed.');
-            });
-            if (!live.length) continue;
-
-            // Every call in the wave is started before any of them is waited on — that is the
-            // whole of the parallelism. Two actions resolving to the same instance, environment
-            // and inputs still share one flight: the batch caches the promise, not the answer,
-            // so asking at the same moment is exactly the case it was built for.
-            //
-            // Rejections are turned into values here rather than left to the await below. A
-            // promise that fails while the page is still waiting on its siblings has nobody
-            // handling it yet, and the browser would report it as unhandled before the loop
-            // below ever reached it.
-            const calls = live.map(i => {
-                // A performance action makes no outward call at all — it asks this server to
-                // summarise what it already knows. Its filters are resolved against the page
-                // exactly as an ordinary action's inputs are, so a grid under an app dropdown
-                // narrows as the operator chooses.
-                if (isPerformanceAction(actions[i])) {
-                    record[i].inputs = resolveInputs(actions[i].inputs, actionScope(null));
-                    return Promise.resolve()
-                        .then(() => runPerformance(record[i].inputs, names[i]))
-                        .then(rows => ({ rows: rows }), error => ({ error: error }));
-                }
-                // A comparison is one action and two calls, sent together against two
-                // environments. Like a fan-out it writes its own entries into the record — one
-                // per side — so both requests and both responses are there to be read after.
-                if (isCompareAction(actions[i])) {
-                    return Promise.resolve()
-                        .then(() => runCompare(actions[i], names[i], record, i))
-                        .then(cmp => ({ cmp: cmp }), error => ({ error: error }));
-                }
-                // A dataset action makes no outward call either — it asks the dataset library for
-                // the rows it already holds. Its conditions are resolved against the page exactly
-                // as an ordinary action's inputs are, so a grid under a region dropdown narrows as
-                // the operator chooses, and what it asked is kept for the record.
-                if (isDatasetAction(actions[i])) {
-                    const asked = datasetQueryOf(actions[i]);
-                    record[i].inputs = asked.described;
-                    return Promise.resolve()
-                        .then(() => runDataset(actions[i], names[i], asked.query))
-                        .then(rows => ({ dsRows: rows }), error => ({ error: error }));
-                }
-                // A fan-out is one action and many calls. It resolves its own inputs a row at a
-                // time and writes its own entries into the record, so nothing is resolved for it
-                // here; what comes back is every row's answer rather than one.
-                if (isFanOut(actions[i])) {
-                    return Promise.resolve()
-                        .then(() => runFanOut(actions[i], names[i], record, i))
-                        .then(fan => ({ fan: fan }), error => ({ error: error }));
-                }
-                // One scope for this call, settled before any of it is resolved, so a $UUID in
-                // the body and the same $UUID in the path that reads the answer are one value.
-                scopes[i] = actionScope(null);
-                record[i].inputs = resolveInputs(actions[i].inputs, scopes[i]);
-                record[i].environment = resolveTemplate(actions[i].environmentOverride, scopes[i]);
+        // Every action is started the moment what it waits for has bound — the ones waiting on
+        // nothing straight away, all together, which is the whole of the parallelism. Two actions
+        // resolving to the same instance, environment and inputs still share one flight: the
+        // batch caches the promise, not the answer, so asking at the same moment is exactly the
+        // case it was built for.
+        //
+        // Rejections are turned into values here rather than left to an await further on. A
+        // promise that fails while the page is still waiting on something else has nobody
+        // handling it yet, and the browser would report it as unhandled.
+        const startCall = i => {
+            // A performance action makes no outward call at all — it asks this server to
+            // summarise what it already knows. Its filters are resolved against the page
+            // exactly as an ordinary action's inputs are, so a grid under an app dropdown
+            // narrows as the operator chooses.
+            if (isPerformanceAction(actions[i])) {
+                record[i].inputs = resolveInputs(actions[i].inputs, actionScope(null));
                 return Promise.resolve()
-                    .then(() => runExecution(record[i].instanceId, record[i].inputs, names[i],
-                            record[i].environment, record[i].metadataOnly, actions[i].ownCall))
-                    .then(result => ({ result: result }), error => ({ error: error }));
-            });
-
-            // Bound in the order the actions were listed, not in the order they answered, so the
-            // same trigger produces the same page however the network staggered the responses.
-            for (let k = 0; k < live.length; k++) {
-                const i = live[k];
-                const action = actions[i];
-                const name = names[i];
-                const settled = await calls[k];
-                const result = settled.result === undefined ? null : settled.result;
-                // The record gets what is worth keeping; everything below binds from `result`
-                // itself, which is whole whatever the switch says. See #runDetail.
-                if (!settled.fan && !settled.rows && !settled.cmp && !settled.dsRows) record[i].result = runDetail(result);
-                try {
-                    if (settled.error) throw settled.error;
-
-                    // A summary is rows and nothing else — there is no call behind it whose
-                    // status or URL a grid could report — so it goes straight in under the
-                    // columns it is known to have.
-                    if (settled.rows) {
-                        bindPerformance(action, name, settled.rows, i);
-                        done++;
-                        succeeded[i] = true;
-                        continue;
-                    }
-
-                    // The same for a dataset's rows: they arrived without a call behind them, so
-                    // there is no status or URL for the grid to report — only which list they are.
-                    if (settled.dsRows) {
-                        await bindDataset(action, name, settled.dsRows, i);
-                        done++;
-                        succeeded[i] = true;
-                        continue;
-                    }
-
-                    // A comparison has made both its calls and reported both; what is left is to
-                    // read the two answers and put what differs where it was aimed. The line it
-                    // hands back goes in the status beside a fan-out's, since "one action
-                    // completed" says nothing about whether the two environments agreed.
-                    if (settled.cmp) {
-                        fanNotes.push(await bindCompare(action, name, settled.cmp, i));
-                        done++;
-                        succeeded[i] = true;
-                        continue;
-                    }
-
-                    // A fan-out has already made its calls and already reported each of them;
-                    // what is left is to put the answers where they were aimed. It counts as
-                    // succeeded once it has, so an action waiting on it reads a page that is
-                    // filled in — the same rule every other action answers to.
-                    if (settled.fan) {
-                        fanNotes.push(await bindFanOut(actions[i], names[i], settled.fan));
-                        done++;
-                        succeeded[i] = true;
-                        continue;
-                    }
-
-                    const failure = failureMessage(result, name);
-                    if (!failure) {
-                        // Every target is bound, even after one of them could not be: the grid
-                        // whose path was wrong says so, and the select beside it still fills.
-                        const problems = await bindEveryTarget(action, name, result, i, scopes[i]);
-                        if (problems.length) {
-                            record[i].error = problems.join(' ');
-                            problems.forEach(problem => addError(problem, i));
-                            continue;
-                        }
-                        done++;
-                        // Counted as succeeded only once it has bound, since that is what anything
-                        // waiting on it is waiting for: a call that came back 200 and whose response
-                        // no path could be read out of has put nothing on the page to be read.
-                        succeeded[i] = true;
-                    } else {
-                        // A failure is bound as well as reported, whenever there is anything to
-                        // bind. A metadata action always has something — the status code of a
-                        // failure is the whole reason someone put a metadata panel on the page —
-                        // and a payload action has something whenever the call answered with a
-                        // body: a 400 that explains itself in JSON is worth reading, and the
-                        // action's transforms are exactly what turn it into rows. The grid,
-                        // chart or panel still says the call failed, since its record carries
-                        // the failure with it.
-                        const why = await bindFailure(action, name, result, i, failure, scopes[i]);
-                        record[i].error = why;
-                        addError(why, i);
-                        // Left as not succeeded whatever was bound: an action waiting on this one
-                        // is waiting for an answer, and a 500 with a body is not one.
-                    }
-                } catch (e) {
-                    // The grid or chart this action was aimed at says so, rather than staying
-                    // empty and leaving the error list at the top of the page as the only sign
-                    // anything went out at all. Then the next action is reported on as well: it
-                    // went out too, and saying nothing about it would leave the page half
-                    // explained.
-                    record[i].error = e.message || String(e);
-                    noteTargetFailure(action, name, result, e.message || String(e), i);
-                    addError(e.message || String(e), i);
-                }
+                    .then(() => runPerformance(record[i].inputs, names[i]))
+                    .then(rows => ({ rows: rows }), error => ({ error: error }));
             }
-        }
+            // A comparison is one action and two calls, sent together against two
+            // environments. Like a fan-out it writes its own entries into the record — one
+            // per side — so both requests and both responses are there to be read after.
+            if (isCompareAction(actions[i])) {
+                return Promise.resolve()
+                    .then(() => runCompare(actions[i], names[i], record, i))
+                    .then(cmp => ({ cmp: cmp }), error => ({ error: error }));
+            }
+            // A dataset action makes no outward call either — it asks the dataset library for
+            // the rows it already holds. Its conditions are resolved against the page exactly
+            // as an ordinary action's inputs are, so a grid under a region dropdown narrows as
+            // the operator chooses, and what it asked is kept for the record.
+            if (isDatasetAction(actions[i])) {
+                const asked = datasetQueryOf(actions[i]);
+                record[i].inputs = asked.described;
+                return Promise.resolve()
+                    .then(() => runDataset(actions[i], names[i], asked.query))
+                    .then(rows => ({ dsRows: rows }), error => ({ error: error }));
+            }
+            // A WebSocket action is a command to this page's relay — connect, send, pause, stop —
+            // and settles as soon as the command is handed over. What the connection then does
+            // arrives on its own, into the grid Connect named.
+            if (isWebSocketAction(actions[i])) {
+                return Promise.resolve()
+                    .then(() => runWebSocket(actions[i], names[i], record[i]))
+                    .then(note => ({ ws: note }), error => ({ error: error }));
+            }
+            // A fan-out is one action and many calls. It resolves its own inputs a row at a
+            // time and writes its own entries into the record, so nothing is resolved for it
+            // here; what comes back is every row's answer rather than one.
+            if (isFanOut(actions[i])) {
+                return Promise.resolve()
+                    .then(() => runFanOut(actions[i], names[i], record, i))
+                    .then(fan => ({ fan: fan }), error => ({ error: error }));
+            }
+            // One scope for this call, settled before any of it is resolved, so a $UUID in
+            // the body and the same $UUID in the path that reads the answer are one value.
+            scopes[i] = actionScope(null);
+            record[i].inputs = resolveInputs(actions[i].inputs, scopes[i]);
+            record[i].environment = resolveTemplate(actions[i].environmentOverride, scopes[i]);
+            return Promise.resolve()
+                .then(() => runExecution(record[i].instanceId, record[i].inputs, names[i],
+                        record[i].environment, record[i].metadataOnly, actions[i].ownCall,
+                        resolveTimeout(actions[i], scopes[i])))
+                .then(result => ({ result: result }), error => ({ error: error }));
+        };
+
+        // Puts one settled call on the page and says whether it succeeded — which is what anything
+        // waiting on it is waiting for.
+        const bindSettled = async (i, settled) => {
+            const action = actions[i];
+            const name = names[i];
+            const result = settled.result === undefined ? null : settled.result;
+            // The record gets what is worth keeping; everything below binds from `result`
+            // itself, which is whole whatever the switch says. See #runDetail.
+            if (!settled.fan && !settled.rows && !settled.cmp && !settled.dsRows && !settled.ws) record[i].result = runDetail(result);
+            try {
+                if (settled.error) throw settled.error;
+
+                // The command is with the relay; the line it hands back goes in the status beside a
+                // fan-out's, since "one action completed" says nothing about a socket.
+                if (settled.ws) {
+                    fanNotes[i] = settled.ws;
+                    done++;
+                    return true;
+                }
+
+                // A summary is rows and nothing else — there is no call behind it whose
+                // status or URL a grid could report — so it goes straight in under the
+                // columns it is known to have.
+                if (settled.rows) {
+                    bindPerformance(action, name, settled.rows, i);
+                    done++;
+                    return true;
+                }
+
+                // The same for a dataset's rows: they arrived without a call behind them, so
+                // there is no status or URL for the grid to report — only which list they are.
+                if (settled.dsRows) {
+                    await bindDataset(action, name, settled.dsRows, i);
+                    done++;
+                    return true;
+                }
+
+                // A comparison has made both its calls and reported both; what is left is to
+                // read the two answers and put what differs where it was aimed. The line it
+                // hands back goes in the status beside a fan-out's, since "one action
+                // completed" says nothing about whether the two environments agreed.
+                if (settled.cmp) {
+                    fanNotes[i] = await bindCompare(action, name, settled.cmp, i);
+                    done++;
+                    return true;
+                }
+
+                // A fan-out has already made its calls and already reported each of them;
+                // what is left is to put the answers where they were aimed. It counts as
+                // succeeded once it has, so an action waiting on it reads a page that is
+                // filled in — the same rule every other action answers to.
+                if (settled.fan) {
+                    fanNotes[i] = await bindFanOut(actions[i], names[i], settled.fan);
+                    done++;
+                    return true;
+                }
+
+                const failure = failureMessage(result, name);
+                if (!failure) {
+                    // Every target is bound, even after one of them could not be: the grid
+                    // whose path was wrong says so, and the select beside it still fills.
+                    const problems = await bindEveryTarget(action, name, result, i, scopes[i]);
+                    if (problems.length) {
+                        record[i].error = problems.join(' ');
+                        problems.forEach(problem => addError(problem, i));
+                        return false;
+                    }
+                    done++;
+                    // Counted as succeeded only once it has bound, since that is what anything
+                    // waiting on it is waiting for: a call that came back 200 and whose response
+                    // no path could be read out of has put nothing on the page to be read.
+                    return true;
+                }
+                // A failure is bound as well as reported, whenever there is anything to
+                // bind. A metadata action always has something — the status code of a
+                // failure is the whole reason someone put a metadata panel on the page —
+                // and a payload action has something whenever the call answered with a
+                // body: a 400 that explains itself in JSON is worth reading, and the
+                // action's transforms are exactly what turn it into rows. The grid,
+                // chart or panel still says the call failed, since its record carries
+                // the failure with it.
+                const why = await bindFailure(action, name, result, i, failure, scopes[i]);
+                record[i].error = why;
+                addError(why, i);
+                // Not succeeded whatever was bound: an action waiting on this one is
+                // waiting for an answer, and a 500 with a body is not one.
+                return false;
+            } catch (e) {
+                // The grid or chart this action was aimed at says so, rather than staying
+                // empty and leaving the error list at the top of the page as the only sign
+                // anything went out at all.
+                record[i].error = e.message || String(e);
+                noteTargetFailure(action, name, result, e.message || String(e), i);
+                addError(e.message || String(e), i);
+                return false;
+            }
+        };
+
+        // One promise per action, settling to whether it bound successfully. Made up front, before
+        // anything starts, because an action may wait on one listed after it.
+        const bound = actions.map(() => {
+            let settle;
+            const promise = new Promise(resolve => { settle = resolve; });
+            return { promise: promise, settle: settle };
+        });
+        const cyclic = new Set(plan.cyclic);
+        const bindAfter = bindOrder(actions, plan.waitsFor, cyclic);
+
+        const runOne = async i => {
+            const on = plan.waitsFor[i];
+            // Waits for exactly the one action it reads from and for nothing else: an action
+            // beside that one taking its time holds up nobody but whatever waits on it.
+            if (on >= 0 && !(await bound[on].promise)) {
+                notSent(i, names[i] + ' was not sent: it waits for "' + names[on] + '", which did not succeed.');
+                return false;
+            }
+            const settled = await startCall(i);
+            // Two actions writing into the same control land in the order they were listed, so
+            // the last one listed is what the page shows whichever answered first — and stacked
+            // grids stack in the order they always did. Anything aimed elsewhere binds the moment
+            // it answers, so whatever waits on it can go out at once.
+            await Promise.all(bindAfter[i].map(j => bound[j].promise));
+            return bindSettled(i, settled);
+        };
+
+        await Promise.all(actions.map((a, i) => {
+            if (cyclic.has(i)) { bound[i].settle(false); return null; }
+            return runOne(i).then(ok => bound[i].settle(!!ok), e => {
+                // bindSettled reports its own failures, so this is only ever something unexpected
+                // — settled all the same, or whatever waits on this action would wait forever.
+                addError(names[i] + ': ' + ((e && e.message) || String(e)), i);
+                bound[i].settle(false);
+            });
+        }));
 
         // Anything left in a cycle, reported by name. Nothing in one can go first, so nothing in
         // one could ever go at all — and a page that quietly ran four of its six actions would
@@ -12997,9 +13430,11 @@ async function runActions(actions, label, element, keepErrors) {
         plan.cyclic.forEach(i => notSent(i, names[i] + ' was not sent: it and "'
             + names[plan.waitsFor[i]] + '" are waiting on each other, so neither could go first.'));
 
+        // In the order the actions are listed, whichever of them finished first.
+        const notes = fanNotes.filter(Boolean);
         AC.setStatus('runStatus', errors.length ? '' : done + ' of ' + actions.length + ' action'
             + (actions.length > 1 ? 's' : '') + ' completed.'
-            + (fanNotes.length ? ' ' + fanNotes.join(' ') : ''), 'ok');
+            + (notes.length ? ' ' + notes.join(' ') : ''), 'ok');
     } finally {
         endCallBatch();
         if (element) element.classList.remove('busy');
@@ -13428,6 +13863,221 @@ async function datasetGridRows(action, name, rows, columns, call) {
         withEnrichedColumns(bound.columns || columns, action));
 }
 
+// ── WebSocket actions ─────────────────────────────────────────────────────
+// A WS app's use case is a subscription, not a call. The page never connects to it itself: it has
+// one socket to this server's relay (/appcatalog/ws), and tells it what to do by instance — the
+// server resolves the use case exactly as it would a call's request and holds the real connection.
+// What arrives comes back over the same socket, is put through the Connect action's exclude list,
+// and streams into its grid newest first. See AppWebSocketRelayHandler.
+
+// How often arrivals are put into the grid. Repainting per message would have a busy feed spend
+// the whole of the browser redrawing one table.
+const WS_FLUSH_MS = 300;
+
+let wsRelay = null;           // the page's socket to the relay, once asked for
+let wsRelayOpen = null;       // a promise of it being open
+const wsLinks = {};           // by connection key (instance id): what Connect set up on this page
+
+/** The relay socket, opened on first use and reopened after it drops. */
+function wsRelaySocket() {
+    if (wsRelay && (wsRelay.readyState === WebSocket.OPEN || wsRelay.readyState === WebSocket.CONNECTING)) return wsRelayOpen;
+    const socket = new WebSocket((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/appcatalog/ws');
+    wsRelay = socket;
+    wsRelayOpen = new Promise((resolve, reject) => {
+        socket.onopen = () => resolve(socket);
+        socket.onerror = () => reject(new Error('Could not reach this server' + "'" + 's WebSocket relay'));
+    });
+    socket.onmessage = event => {
+        let message;
+        try { message = JSON.parse(event.data); } catch (e) { return; }
+        if (message.type === 'message') wsArrived(message);
+        else if (message.type === 'status') wsStatus(message);
+    };
+    // The server closes every upstream connection along with this socket, so each one is over.
+    socket.onclose = () => {
+        if (wsRelay !== socket) return;
+        wsRelay = null;
+        Object.keys(wsLinks).forEach(key => {
+            const link = wsLinks[key];
+            if (link.state !== 'CLOSED' && link.state !== 'ERROR') {
+                wsStatus({ key: key, state: 'CLOSED', message: 'The page lost its connection to this server' });
+            }
+        });
+    };
+    return wsRelayOpen;
+}
+
+async function wsCommand(command) {
+    const socket = await wsRelaySocket();
+    socket.send(JSON.stringify(command));
+}
+
+/**
+ * Runs one WebSocket action: hands its command to the relay and says what it did. Connect also
+ * sets the grid up to receive — emptied, and marked as connecting — before anything can arrive.
+ */
+async function runWebSocket(action, name, record) {
+    const key = action.appUseCaseInstanceId;
+    if (!key) throw new Error(name + ': no instance chosen.');
+    const op = wsOperationOf(action);
+
+    if (op === 'CONNECT') {
+        const target = findControl(action.targetControlId);
+        if (!target || target.type !== 'grid') throw new Error(name + ': its target grid is no longer on this page.');
+        const scope = actionScope(null);
+        record.inputs = resolveInputs(action.inputs, scope);
+        record.environment = resolveTemplate(action.environmentOverride, scope);
+        // A second Connect to the same instance into another grid takes the connection over;
+        // the grid it leaves keeps what it shows.
+        const previous = wsLinks[key];
+        if (previous && previous.timer) clearTimeout(previous.timer);
+        const link = wsLinks[key] = {
+            action: action, name: name, gridId: target.controlId, state: 'CONNECTING', message: '',
+            url: '', received: 0, excluded: 0, skipped: 0, pending: [], timer: null
+        };
+        setGridData(link.gridId, [], target.columns, controlTitle(target));
+        wsPaintStatus(link);
+        await wsCommand({ op: 'connect', key: key, instanceId: key, environment: record.environment, inputs: record.inputs });
+        return name + ': connecting…';
+    }
+
+    if (op === 'SEND') {
+        const message = resolveTemplate(action.wsMessage || '', actionScope(null));
+        record.inputs = message ? { message: message } : null;
+        await wsCommand({ op: 'send', key: key, message: message });
+        return name + ': sent' + (message ? '' : ' the use case' + "'" + 's own message');
+    }
+
+    await wsCommand({ op: op.toLowerCase(), key: key });
+    return name + ': ' + (op === 'PAUSE' ? 'paused' : op === 'RESUME' ? 'resumed'
+        : op === 'STOP' ? 'stopped' : 'restarting…');
+}
+
+/** One status report from the relay: kept on the link, shown over its grid, and any failure listed. */
+function wsStatus(message) {
+    const link = wsLinks[message.key];
+    if (!link) {
+        if (message.state === 'ERROR' && message.message) addError('WebSocket: ' + message.message);
+        return;
+    }
+    link.state = message.state || link.state;
+    link.message = message.message || '';
+    if (message.url) link.url = message.url;
+    if (typeof message.skipped === 'number') link.skipped = message.skipped;
+    if (message.state === 'ERROR') addError(link.name + ': ' + link.message);
+    wsPaintStatus(link);
+}
+
+/** The line over the grid saying what the connection is doing and what it has delivered. */
+function wsPaintStatus(link) {
+    const counts = [link.received.toLocaleString() + ' received'];
+    if (link.excluded) counts.push(link.excluded.toLocaleString() + ' excluded');
+    if (link.skipped) counts.push(link.skipped.toLocaleString() + ' skipped while paused');
+    const note = 'WebSocket ' + link.state.toLowerCase() + (link.url ? ' · ' + link.url : '') + ' · ' + counts.join(', ')
+        + (link.message && link.state !== 'ERROR' ? ' — ' + link.message : '');
+    gridMeta[link.gridId] = callRecord(null, link.state === 'ERROR' ? 'FAILED' : 'SUCCESS',
+        link.state === 'ERROR' ? link.message : '', null, note);
+    wsPaint(link);
+}
+
+/** One message off the relay: made into rows and queued for the next flush. */
+function wsArrived(message) {
+    const link = wsLinks[message.key];
+    if (!link) return;
+    link.received++;
+    const receivedAt = new Date(message.at || Date.now()).toLocaleTimeString([], { hour12: false })
+        + '.' + String((message.at || Date.now()) % 1000).padStart(3, '0');
+    let payload;
+    try { payload = JSON.parse(message.data); } catch (e) { payload = message.data; }
+
+    let found = link.action.arrayPath ? pathGet(payload, link.action.arrayPath) : payload;
+    if (found === undefined || found === null) found = [];
+    const items = Array.isArray(found) ? found : [found];
+    items.forEach(item => link.pending.push(item !== null && typeof item === 'object' && !Array.isArray(item)
+        ? Object.assign({ receivedAt: receivedAt }, item)
+        : { receivedAt: receivedAt, message: typeof item === 'string' ? item : JSON.stringify(item) }));
+
+    if (!link.timer) link.timer = setTimeout(() => wsFlush(link), WS_FLUSH_MS);
+}
+
+/** A field of a message as text for an exclude test: by name first, then as a dotted path into it. */
+function wsCellText(row, column) {
+    let cell = rowField(row, column);
+    if (cell === undefined && /[.\[\/]/.test(column)) cell = pathGet(row, column);
+    if (cell === undefined || cell === null) return '';
+    return typeof cell === 'object' ? JSON.stringify(cell) : String(cell);
+}
+
+/**
+ * Puts what has arrived since the last flush into the grid, newest first, dropping what the
+ * exclude list matches and whatever falls past the row cap. The filters are read now rather than
+ * at Connect, so a control they are written against narrows the feed from the moment it changes.
+ */
+function wsFlush(link) {
+    link.timer = null;
+    if (wsLinks[link.action.appUseCaseInstanceId] !== link || !link.pending.length) return;
+    // Repainting the grid rebuilds its filter row, so it waits while the operator is typing in it.
+    const host = document.querySelector('[data-grid="' + CSS.escape(link.gridId) + '"]');
+    if (host && host.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') {
+        link.timer = setTimeout(() => wsFlush(link), WS_FLUSH_MS);
+        return;
+    }
+    const arrived = link.pending;
+    link.pending = [];
+    const filters = filtersNow(link.action.excludeFilters);
+    const kept = filters.length
+        ? arrived.filter(row => !filters.some(filter => cellPasses(wsCellText(row, filter.column), filter)))
+        : arrived;
+    link.excluded += arrived.length - kept.length;
+
+    const state = gridState[link.gridId];
+    if (!state) {
+        const control = findControl(link.gridId);
+        setGridData(link.gridId, kept.reverse().slice(0, link.action.wsMaxRows || DEFAULT_WS_MAX_ROWS),
+            control ? control.columns : null, control ? controlTitle(control) : link.name);
+    } else if (kept.length) {
+        wsPrependRows(link, state, kept.reverse());
+    }
+    wsPaintStatus(link);
+}
+
+/**
+ * {@link #addGridData} for a feed: the arrivals go on top rather than at the bottom, and the grid
+ * is cut back to the action's row cap from the oldest end. The operator's filters, sort, column
+ * picks and wrap are kept, as an appended answer keeps them.
+ */
+function wsPrependRows(link, state, rows) {
+    const control = findControl(link.gridId);
+    const shown = applyDisplayFilter(rows, displayFilterOf(link.gridId));
+    const columns = (control && control.columns && control.columns.length) ? control.columns : columnsOf(shown.rows);
+    let added = false;
+    columns.forEach(column => { if (!state.baseColumns.includes(column)) { state.baseColumns.push(column); added = true; } });
+    if (added) {
+        state.baseColumns = showableColumns(link.gridId, state.baseColumns);
+        const arranged = state.allColumns;
+        state.allColumns = state.baseColumns.slice();
+        applyColumnPick(state, arranged);
+    }
+    const max = link.action.wsMaxRows || DEFAULT_WS_MAX_ROWS;
+    state.rows = shown.rows.concat(state.rows);
+    if (state.rows.length > max) state.rows.length = max;
+    state.filteredOut += shown.hidden;
+    state.filterError = shown.error;
+    invalidateView(state);
+    applyRowCheck(state, rowCheckOf(link.gridId));
+}
+
+/** Repaints a feed's grid, unless the operator is typing in its filter row — see #wsFlush. */
+function wsPaint(link) {
+    const host = document.querySelector('[data-grid="' + CSS.escape(link.gridId) + '"]');
+    if (host && host.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') {
+        paintGridStatus(link.gridId);
+        return;
+    }
+    paintGrid(link.gridId);
+    feedChartsFromGrid(link.gridId);
+}
+
 // ── Comparing one use case across two environments ────────────────────────
 // "Does UAT still say what production says?" used to mean running the same instance twice by
 // hand, saving both responses and diffing them somewhere else — which loses the inputs, the
@@ -13454,6 +14104,10 @@ async function datasetGridRows(action, name, rows, columns, call) {
 async function runCompare(action, name, record, firstAt) {
     const scope = actionScope(null);
     const inputs = resolveInputs(action.inputs, scope);
+    // The candidate gets the baseline's inputs with its own laid over them, so a page only has to
+    // name what differs. Without separate inputs both sides are sent the very same map.
+    const separate = !!action.compareSeparateInputs;
+    const inputsB = separate ? Object.assign({}, inputs, resolveInputs(action.compareInputsB, scope)) : inputs;
     const envA = resolveTemplate(action.compareEnvironmentA, scope);
     const envB = resolveTemplate(action.compareEnvironmentB, scope);
     if (!envA || !envB) {
@@ -13462,18 +14116,20 @@ async function runCompare(action, name, record, firstAt) {
             + ' — whatever "' + (!envA ? action.compareEnvironmentA : action.compareEnvironmentB)
             + '" reads has no value on this page yet.');
     }
-    if (envA === envB) {
+    // One environment is a fair comparison when the two calls are sent different inputs — "does
+    // account A price the same as account B" — and a pointless one when they are not.
+    if (envA === envB && !separate) {
         throw new Error(name + ': both sides resolved to "' + envA + '", so there is nothing to compare — '
             + 'it would run the same environment twice and report no differences.');
     }
 
     const sides = [
-        { role: 'baseline',  environment: envA, at: firstAt, result: null, error: '' },
-        { role: 'candidate', environment: envB, at: -1,      result: null, error: '' }
+        { role: 'baseline',  environment: envA, inputs: inputs,  at: firstAt, result: null, error: '' },
+        { role: 'candidate', environment: envB, inputs: inputsB, at: -1,      result: null, error: '' }
     ];
     sides.forEach(side => {
         side.label = name + ' · ' + side.role + ' (' + side.environment + ')';
-        const entry = { name: side.label, instanceId: action.appUseCaseInstanceId, inputs: inputs,
+        const entry = { name: side.label, instanceId: action.appUseCaseInstanceId, inputs: side.inputs,
                         environment: side.environment, metadataOnly: false, result: null, error: '' };
         if (side.at >= 0) record[side.at] = entry;
         else { side.at = record.length; record.push(entry); }
@@ -13488,8 +14144,8 @@ async function runCompare(action, name, record, firstAt) {
             // keys on that, but a comparison reusing an answer some other action in the same
             // trigger happened to fetch is the one place a shared flight could quietly compare
             // something other than what this action asked for.
-            side.result = await runExecution(action.appUseCaseInstanceId, inputs, side.label,
-                    side.environment, false, true);
+            side.result = await runExecution(action.appUseCaseInstanceId, side.inputs, side.label,
+                    side.environment, false, true, resolveTimeout(action, null));
             side.entry.result = runDetail(side.result);
             const failure = failureMessage(side.result, side.label);
             if (failure) { side.error = failure; side.entry.error = failure; }
@@ -13505,7 +14161,7 @@ async function runCompare(action, name, record, firstAt) {
             + (broken.length === 2 ? 'neither call came back. ' : 'one call did not come back. ')
             + broken.map(side => side.error).join(' '));
     }
-    return { sides: sides, envA: envA, envB: envB, inputs: inputs };
+    return { sides: sides, envA: envA, envB: envB, inputs: inputs, inputsB: inputsB };
 }
 
 /**
@@ -14069,10 +14725,11 @@ async function runFanOut(action, name, record, firstAt) {
         const rowName = name + ' · ' + call.label;
         // Resolved per row, at the moment that row is sent — the same rule an ordinary action
         // follows, one row at a time.
-        let inputs, environment;
+        let inputs, environment, timeoutMs;
         try {
             inputs = resolveInputs(action.inputs, call.scope);
             environment = resolveTemplate(action.environmentOverride, call.scope);
+            timeoutMs = resolveTimeout(action, call.scope);
         } catch (e) {
             call.error = e.message || String(e);
             return;
@@ -14085,7 +14742,7 @@ async function runFanOut(action, name, record, firstAt) {
 
         try {
             call.result = await runExecution(action.appUseCaseInstanceId, inputs, rowName,
-                    environment, entry.metadataOnly, action.ownCall);
+                    environment, entry.metadataOnly, action.ownCall, timeoutMs);
             entry.result = runDetail(call.result);
             const failure = failureMessage(call.result, rowName);
             if (failure) {
@@ -14844,10 +15501,10 @@ function repaintTabChildren(control, depth) {
 }
 
 /**
- * The actions grouped into the waves they go out in: everything with nothing to wait for first,
- * then everything waiting on one of those, and so on down. Each wave is sent together, so a
- * chain three deep costs three round trips rather than one per action, and a trigger where
- * nothing waits for anything is a single wave — exactly what it was before waiting existed.
+ * Which action each one waits for, and which can never start. The actions are also grouped into
+ * levels — everything with nothing to wait for first, then everything waiting on one of those, and
+ * so on down — which is how a cycle is found. The run itself does not go level by level: each
+ * action is sent as soon as the one it waits for has bound — see #runActions.
  *
  * <p>An action whose dependency is not in this list has nothing to wait for and joins the first
  * wave. The wait is written on the action, not on the control, so attaching it somewhere the
@@ -14889,6 +15546,58 @@ function runWaves(actions) {
     const cyclic = [];
     for (let i = 0; i < actions.length; i++) if (!placed[i]) cyclic.push(i);
     return { waves: waves, waitsFor: waitsFor, cyclic: cyclic };
+}
+
+/** Every control an action writes into: its own target and any further ones. */
+function actionTargets(action) {
+    return [action.targetControlId].concat((action.extraBindings || []).map(b => b && b.targetControlId))
+        .filter(Boolean);
+}
+
+/**
+ * For each action, the earlier-listed actions it has to let bind first: those writing into a
+ * control it also writes into. Two calls filling the same grid would otherwise leave whichever
+ * answered last on screen, which is a page that changes with the network rather than with what
+ * was written; ordered, the one listed last wins every time. Stacked grids count as one shared
+ * target so they stack in the order the actions are listed.
+ *
+ * <p>An ordering that would close a loop with the Runs After waits is left out rather than
+ * honoured — an action listed earlier that waits, however indirectly, for this one binds after it
+ * anyway, and waiting for it here would be two actions each waiting for the other. Checked against
+ * every wait already in the graph, so no combination of the two kinds can deadlock the trigger.
+ *
+ * @param waitsFor the index each action waits for, -1 for none — as {@link #runWaves} returns it
+ * @param cyclic   actions that never start, and so are nothing to wait for
+ * @return per action, the indexes it waits on before binding
+ */
+function bindOrder(actions, waitsFor, cyclic) {
+    const after = actions.map(() => []);
+    // Everything that has to happen before an action binds: the action it waits for, and the
+    // orderings added so far.
+    const reaches = (from, to) => {
+        const stack = [from];
+        const seen = new Set();
+        while (stack.length) {
+            const at = stack.pop();
+            if (at === to) return true;
+            if (seen.has(at)) continue;
+            seen.add(at);
+            if (waitsFor[at] >= 0) stack.push(waitsFor[at]);
+            after[at].forEach(j => stack.push(j));
+        }
+        return false;
+    };
+    const targets = actions.map(actionTargets);
+    for (let i = 0; i < actions.length; i++) {
+        if (cyclic.has(i)) continue;
+        for (let j = 0; j < i; j++) {
+            if (cyclic.has(j)) continue;
+            if (!targets[i].some(t => targets[j].includes(t))) continue;
+            if (reaches(j, i)) continue;
+            after[i].push(j);
+        }
+    }
+    return after;
 }
 
 /**
@@ -15259,6 +15968,19 @@ function resolveTemplate(template, row) {
 }
 
 /**
+ * An action's timeout override resolved the way {@link #resolveTemplate} resolves its environment —
+ * so <code>60000</code> and <code>${TIMEOUT_MS}</code> (a page variable or a control) both work. Null
+ * when it is blank or does not come to a positive whole number of milliseconds, which leaves the
+ * use case's own timeout in charge rather than sending something the server would have to guess at.
+ */
+function resolveTimeout(action, row) {
+    const text = resolveTemplate(action && action.timeoutOverride, row).trim();
+    if (!/^\d+$/.test(text)) return null;
+    const ms = parseInt(text, 10);
+    return ms > 0 ? ms : null;
+}
+
+/**
  * Runs one instance and hands back the whole execution record — the response and the call's own
  * metadata together. Whether the caller wants rows, one attribute, or the status code is a
  * separate question answered by {@link #rootFor}, since the same run can feed a grid, a dropdown,
@@ -15281,8 +16003,10 @@ function resolveTemplate(template, row) {
  *                     which is what you want when they only differ in how they read it and
  *                     exactly what you do not want when the call itself is the point — a POST
  *                     that re-sends something has to go out as many times as it is asked to
+ * @param timeoutMs    this call's HTTP timeout in milliseconds, in place of the use case's own —
+ *                     see {@link #resolveTimeout}. Null keeps the use case's configured timeout.
  */
-async function runExecution(instanceId, inputs, name, environment, metadataOnly, ownCall) {
+async function runExecution(instanceId, inputs, name, environment, metadataOnly, ownCall, timeoutMs) {
     if (!instanceId) throw new Error(name + ': no use case instance is configured.');
     const request = {
         appUseCaseInstanceId: instanceId,
@@ -15293,7 +16017,8 @@ async function runExecution(instanceId, inputs, name, environment, metadataOnly,
         // different questions, which is why this is not includePayload: a DEBUG-off page still
         // wants the body — it is about to bind it into a grid — and still does not want it filed
         // away for a "fetch bodies" button nobody is going to press.
-        debug: pageDebug()
+        debug: pageDebug(),
+        timeoutMs: timeoutMs || null
     };
     if (ownCall || !callCache) return AC.api('POST', '/appcatalog/pages/run', request);
 
@@ -15301,6 +16026,7 @@ async function runExecution(instanceId, inputs, name, environment, metadataOnly,
     // happen to list them differently still recognise each other as the same call. The promise
     // is what is cached, not the result, so actions asking at the same time share one flight.
     const key = JSON.stringify([request.appUseCaseInstanceId, request.environment, request.includePayload,
+        request.timeoutMs,
         Object.keys(inputs || {}).sort().map(k => [k, inputs[k]])]);
     if (!callCache.has(key)) callCache.set(key, AC.api('POST', '/appcatalog/pages/run', request));
     return callCache.get(key);
@@ -15913,22 +16639,29 @@ function tallySlices(rows, keyField) {
  * <p>A value that is not a number, or is below zero, is left out of its category's sum and listed
  * as uncharted, the rule a pie follows. No category column puts every row in a category of its own
  * under its place in the list.
+ *
+ * <p>The category column can name several, comma-separated — <code>region, status</code> — and the
+ * category is then their values joined, "EU / OPEN". A row is missing its category only when every
+ * one of those columns is blank on it; a blank among the others is charted as an empty part.
  */
 function barModelOf(shape) {
     const { rows, keyField, valueFields } = shape;
+    const keyFields = String(keyField || '').split(',').map(f => f.trim()).filter(Boolean);
     const categories = [];
     const at = new Map();
     const problems = [];
     const counting = !valueFields.length;
     const series = (counting ? ['count'] : valueFields).map(name => ({ name: name, values: [] }));
+    const blank = v => v === undefined || v === null || v === '';
+    const part = v => blank(v) ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v);
 
     rows.forEach((row, i) => {
-        const raw = keyField ? rowField(row, keyField) : i + 1;
-        if (keyField && (raw === undefined || raw === null || raw === '')) {
-            problems.push('row ' + (i + 1) + ' has no "' + keyField + '"');
+        const raws = keyFields.length ? keyFields.map(f => rowField(row, f)) : [i + 1];
+        if (keyFields.length && raws.every(blank)) {
+            problems.push('row ' + (i + 1) + ' has no "' + keyFields.join('", "') + '"');
             return;
         }
-        const category = typeof raw === 'object' ? JSON.stringify(raw) : String(raw);
+        const category = raws.map(part).join(' / ');
         if (!at.has(category)) {
             at.set(category, categories.length);
             categories.push(category);
@@ -16062,12 +16795,19 @@ function chartKeyPicker(c) {
     const picked = chartKeyPick[c.controlId];
     const current = picked !== undefined && (picked === '' || columns.includes(picked)) ? picked : source.shape.keyField;
     // Matched as the chart matches it, regardless of case, so "STATUS" on the action selects "status".
-    const selected = columns.find(col => col.toLowerCase() === String(current || '').toLowerCase()) || '';
     const series = isSeries(c.type);
+    // A bar chart's category can be several columns joined; offered as its own choice so the
+    // dropdown neither loses it nor claims the chart is by row number.
+    const configured = String(source.shape.keyField || '');
+    const combined = c.type === 'bar' && configured.includes(',') ? configured : '';
+    const selected = (combined && String(current || '') === combined ? combined : '')
+        || columns.find(col => col.toLowerCase() === String(current || '').toLowerCase()) || '';
     return '<span class="chart-key"><span>' + (series ? 'Lines By' : c.type === 'bar' ? 'Category' : 'Slice Name') + '</span>'
         + '<select onchange="pickChartKey(\'' + AC.attr(c.controlId) + '\', this.value)" title="The column each '
             + (series ? 'line' : c.type === 'bar' ? 'bar' : 'slice') + ' is named by">'
         + '<option value=""' + (selected ? '' : ' selected') + '>' + (series ? '— one line —' : '— row number —') + '</option>'
+        + (combined ? '<option value="' + AC.attr(combined) + '"' + (selected === combined ? ' selected' : '') + '>'
+            + AC.esc(combined) + '</option>' : '')
         + columns.map(col => '<option value="' + AC.attr(col) + '"' + (col === selected ? ' selected' : '') + '>'
             + AC.esc(col) + '</option>').join('')
         + '</select></span>';
@@ -16453,7 +17193,7 @@ function bindLink(control, value, valuePath, name, call) {
     linkUrls[control.controlId] = url;
     paintLink(control);
     if (url && !safeUrl(url)) {
-        addError(name + ': "' + url + '" is not an http or https address, so "' + controlTitle(control)
+        addError(name + ': "' + url + '" is not an address a link can open (it needs a scheme such as http, https or fin, and not javascript, vbscript or data), so "' + controlTitle(control)
             + '" was left without one.', call);
     }
 }
@@ -18524,6 +19264,22 @@ function techCallSection(call, index, forExport) {
             + '<p class="tech-muted">Summarised from this server' + Q + 's own run history — no call was made, '
             + 'so there is no request or response to show.</p>'
             + techKeyValueBlock('Filters Applied', call.inputs)
+            + (call.error ? '<div class="tech-block"><h3>What Went Wrong</h3>'
+                + '<p class="tech-muted tech-err">' + AC.esc(call.error) + '</p></div>' : '')
+            + '</section>';
+    }
+    // A WebSocket action hands a command to this page's relay; the connection it acts on is held by
+    // the server, and what arrives on it is in the grid rather than in a response here.
+    if (call.websocket) {
+        return '<section class="tech-call">'
+            + '<h2><span class="tech-num">' + (index + 1) + '</span>' + AC.esc(call.name)
+            + '<span class="tech-badge ' + (call.error ? 'err' : 'ok') + '">'
+            + (call.error ? 'failed' : 'websocket ' + AC.esc(String(call.wsOperation || '').toLowerCase())) + '</span></h2>'
+            + '<p class="tech-muted">A WebSocket ' + AC.esc(String(call.wsOperation || '').toLowerCase()) + ' on instance <b>'
+            + AC.esc(call.instanceId || '') + '</b>' + (call.environment ? ' in <b>' + AC.esc(call.environment) + '</b>' : '')
+            + ' — the connection is held by the server, and its messages stream into the grid rather than coming back '
+            + 'as one response.</p>'
+            + techKeyValueBlock('Inputs Sent', call.inputs)
             + (call.error ? '<div class="tech-block"><h3>What Went Wrong</h3>'
                 + '<p class="tech-muted tech-err">' + AC.esc(call.error) + '</p></div>' : '')
             + '</section>';

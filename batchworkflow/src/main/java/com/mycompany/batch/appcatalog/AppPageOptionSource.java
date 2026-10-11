@@ -69,8 +69,24 @@ public class AppPageOptionSource {
      * the list being refreshed under it — because a value somebody chose beats one nobody did.
      */
     private boolean selectFirst;
+    /**
+     * Single selects only: what the row above every supplied option reads — "All", "Any desk".
+     * Blank, which is every page saved before this existed, is the plain "—" row.
+     */
+    private String topLabel;
+    /**
+     * Single selects only: what that top row sends — the value {@code ${field}} holds until somebody
+     * picks something. Blank sends nothing, exactly as the plain row always has.
+     */
+    private String topValue;
 
-    public String getMode()             { return mode; }
+    public String getTopLabel()                 { return topLabel; }
+    public void   setTopLabel(String topLabel)  { this.topLabel = topLabel == null || topLabel.isBlank() ? null : topLabel; }
+
+    public String getTopValue()                 { return topValue; }
+    public void   setTopValue(String topValue)  { this.topValue = topValue == null || topValue.isEmpty() ? null : topValue; }
+
+    public String getMode()            { return mode; }
     public void   setMode(String mode)  { this.mode = mode != null && !mode.isBlank() ? mode : "NONE"; }
 
     public List<AppPageOption> getStaticOptions()                          { return staticOptions; }

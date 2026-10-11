@@ -43,7 +43,7 @@ public class AppEnvironment {
      * the default, since that is what every environment configured before this field existed did.
      */
     private String jwtMethod = "POST";
-    /** Used by JWT, USERNAMEPASSWORD and DIGEST auth. */
+    /** Used by JWT, USERNAMEPASSWORD, DIGEST, KERBEROS and NTLM auth. */
     private String username;
     private String password;
     /** ACTIVE or INACTIVE â INACTIVE environments are blocked from executing. */

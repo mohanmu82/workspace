@@ -204,6 +204,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .badge.dev      { background: #e6fcff; color: #00728e; }
 .badge.http     { background: #deebff; color: #0747a6; }
 .badge.solace   { background: #eae6ff; color: #403294; }
+.badge.ws       { background: #e3fcef; color: #006644; }
 .badge.auth     { background: #f4f5f7; color: #5e6c84; }
 .badge.ok       { background: #e3fcef; color: #006644; }
 .badge.err      { background: #ffebe6; color: #bf2600; }

@@ -7,6 +7,7 @@ import com.mycompany.batch.auth.DigestAuthProvider;
 import com.mycompany.batch.auth.HttpAuthProvider;
 import com.mycompany.batch.auth.JwtAuthProvider;
 import com.mycompany.batch.auth.KerberosAuthProvider;
+import com.mycompany.batch.auth.NtlmAuthProvider;
 import com.mycompany.batch.model.HttpBatchRequest;
 import com.mycompany.batch.model.HttpMethod;
 import com.mycompany.batch.model.JsonataTransform;
@@ -20,7 +21,11 @@ import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
 import javax.xml.parsers.DocumentBuilderFactory;
+import javax.net.ssl.HttpsURLConnection;
 import java.io.ByteArrayInputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -363,11 +368,101 @@ public class AppExecutionService {
                                                       Map<String, Object> inputs,
                                                       ExecutionTarget target, String agentId,
                                                       boolean keepBodies) {
+        return executeWithInputs(instanceId, environment, inputs, target, agentId, keepBodies, null);
+    }
+
+    /**
+     * The same run, with the use case's HTTP timeout overridden for this call alone — a page action
+     * that knows its call is slow (a month-end report) can wait longer than the use case's default
+     * without every other caller of that use case waiting as long.
+     *
+     * @param timeoutMs the timeout in milliseconds; null or non-positive keeps the use case's own
+     */
+    public AppUseCaseInstanceOutput executeWithInputs(String instanceId, String environment,
+                                                      Map<String, Object> inputs,
+                                                      ExecutionTarget target, String agentId,
+                                                      boolean keepBodies, Integer timeoutMs) {
         AppUseCaseInstance instance = catalog.getInstance(instanceId);
         String chosen = environment != null && !environment.isBlank() ? environment
                 : instance != null ? firstEnvironment(instance) : null;
-        return execute(new RunPlan(instanceId, chosen, 1, 1, inputs != null ? inputs : Map.of()),
+        return execute(new RunPlan(instanceId, chosen, 1, 1, inputs != null ? inputs : Map.of(),
+                        timeoutMs != null && timeoutMs > 0 ? timeoutMs : null),
                 target, agentId, keepBodies);
+    }
+
+    // -------------------------------------------------------------------------
+    // WebSocket — a WS app's use case resolved into a connection to open
+    // -------------------------------------------------------------------------
+
+    /**
+     * Everything needed to open one WebSocket subscription, resolved exactly as an HTTP call's
+     * request would be: the URL off the environment's prefix and the use case's suffix, the headers,
+     * the credentials, and the use case's body as the message sent the moment the socket opens
+     * (typically the subscribe request). {@code variables} is kept so a message sent later can be
+     * written against the same values.
+     */
+    public record WebSocketTarget(String url, Map<String, String> headers, String openingMessage,
+                                  String outputFormat, String appName, String environment,
+                                  String useCaseName, int connectTimeoutMs, Map<String, Object> variables) {}
+
+    /**
+     * Resolves an instance of a {@code WS} app into the connection to open, with the page's values
+     * laid over the instance's inputs as {@link #executeWithInputs} does for a call. Throws with a
+     * message fit to show the operator when anything about it cannot be run.
+     *
+     * <p>An {@code http(s)} prefix is accepted and turned into {@code ws(s)}, and a relative one
+     * resolves against this server as it does for a call — so a page can subscribe to an endpoint
+     * this server itself publishes.
+     */
+    public WebSocketTarget prepareWebSocket(String instanceId, String environment, Map<String, Object> inputs) throws Exception {
+        AppUseCaseInstance instance = catalog.getInstance(instanceId);
+        if (instance == null) throw new IllegalArgumentException("Unknown instance id: " + instanceId);
+        String chosen = environment != null && !environment.isBlank() ? environment : firstEnvironment(instance);
+        if (chosen == null) throw new IllegalArgumentException("Instance names no environment to connect to");
+
+        AppDefinition  app     = catalog.getApp(instance.getAppName());
+        AppUseCase     useCase = catalog.getUseCase(instance.getAppName(), instance.getAppUseCaseName());
+        AppEnvironment env     = catalog.getEnvironment(instance.getAppName(), chosen);
+        if (app == null)     throw new IllegalArgumentException("Unknown app: " + instance.getAppName());
+        if (useCase == null) throw new IllegalArgumentException("Unknown use case: " + instance.getAppUseCaseName());
+        if (env == null)     throw new IllegalArgumentException("Unknown environment: " + chosen);
+        if (!"WS".equalsIgnoreCase(app.getAppMode()))
+            throw new IllegalArgumentException("App '" + app.getAppName() + "' is " + app.getAppMode() + ", not WS — "
+                    + "only a WebSocket app's use cases can be subscribed to");
+        if (!"ACTIVE".equalsIgnoreCase(app.getAppStatus()))
+            throw new IllegalArgumentException("App '" + app.getAppName() + "' is " + app.getAppStatus());
+        if (!"ACTIVE".equalsIgnoreCase(env.getEnvStatus()))
+            throw new IllegalArgumentException("Environment '" + env.getEnvironment() + "' is " + env.getEnvStatus());
+        if ("NTLM".equalsIgnoreCase(nullToEmpty(app.getAuthMethod()).trim()))
+            throw new IllegalArgumentException("NTLM auth is not supported for WebSocket apps — the handshake cannot "
+                    + "be carried on a WebSocket upgrade. Use another auth method for '" + app.getAppName() + "'.");
+        String prefix = env.prefixFor(useCase.getUrlPrefixType());
+        if (prefix == null)
+            throw new IllegalArgumentException("Environment '" + env.getEnvironment() + "' has no "
+                    + (isMonitoring(useCase) ? "monitoring " : "") + "WebSocket URL");
+
+        Map<String, Object> variables = mergeVariables(app, env, useCase, instance);
+        if (inputs != null) variables.putAll(inputs);
+        resolveVariableValues(variables);
+
+        String authorization = applyAuth(app, env, useCase, variables);
+        String url = toWebSocketScheme(substitute(nullToEmpty(localServer.resolve(prefix, isMonitoring(useCase), false))
+                + nullToEmpty(useCase.getUrlSuffix()), variables));
+        Map<String, String> headers = parseHeaders(useCase.getHttpHeaders(), variables);
+        if (authorization != null && !containsHeaderIgnoreCase(headers, "Authorization"))
+            headers.put("Authorization", authorization);
+        String opening = useCase.getHttpBody() != null && !useCase.getHttpBody().isBlank()
+                ? substitute(useCase.getHttpBody(), variables) : null;
+
+        return new WebSocketTarget(url, headers, opening, useCase.getOutputFormat(), app.getAppName(),
+                env.getEnvironment(), useCase.getUseCaseName(), useCase.getTimeout(), variables);
+    }
+
+    /** {@code http://} → {@code ws://} and {@code https://} → {@code wss://}; anything else as it is. */
+    private static String toWebSocketScheme(String url) {
+        if (url.regionMatches(true, 0, "http://", 0, 7))  return "ws://" + url.substring(7);
+        if (url.regionMatches(true, 0, "https://", 0, 8)) return "wss://" + url.substring(8);
+        return url;
     }
 
     // -------------------------------------------------------------------------
@@ -385,9 +480,17 @@ public class AppExecutionService {
      *                    values supplied by the caller for this run alone, sitting above the
      *                    instance's own inputs. Empty for every run started from the catalog pages;
      *                    populated when a page button hands over what the operator typed.
+     * @param timeoutOverrideMs
+     *                    this run's HTTP timeout in place of the use case's own, or null to keep it
      */
     private record RunPlan(String instanceId, String environment, int runIndex, int runCount,
-                           Map<String, Object> inputOverrides) {}
+                           Map<String, Object> inputOverrides, Integer timeoutOverrideMs) {
+
+        RunPlan(String instanceId, String environment, int runIndex, int runCount,
+                Map<String, Object> inputOverrides) {
+            this(instanceId, environment, runIndex, runCount, inputOverrides, null);
+        }
+    }
 
     /**
      * The full expansion of one instance: every environment it names, each repeated {@code runCount}
@@ -481,6 +584,9 @@ public class AppExecutionService {
             return errorOutput(runPlan, instance, "App '" + app.getAppName() + "' is " + app.getAppStatus(), env, useCase);
         if (!"ACTIVE".equalsIgnoreCase(env.getEnvStatus()))
             return errorOutput(runPlan, instance, "Environment '" + env.getEnvironment() + "' is " + env.getEnvStatus(), env, useCase);
+        if ("WS".equalsIgnoreCase(app.getAppMode()))
+            return errorOutput(runPlan, instance, "App '" + app.getAppName() + "' is a WebSocket app — its use cases are "
+                    + "subscriptions, opened from a page's WebSocket action rather than run as a single call", env, useCase);
         if (!"HTTP".equalsIgnoreCase(app.getAppMode()))
             return errorOutput(runPlan, instance, "App mode '" + app.getAppMode() + "' cannot be executed — only HTTP is supported", env, useCase);
         // A monitoring use case against an environment that never got a monitoring address would
@@ -515,9 +621,16 @@ public class AppExecutionService {
             }
 
             String method = useCase.getHttpMethod();
+            int timeoutMs = runPlan.timeoutOverrideMs() != null ? runPlan.timeoutOverrideMs() : useCase.getTimeout();
+            NtlmAuthProvider ntlm = ntlmFor(app, env);
+            if (ntlm != null && target == ExecutionTarget.AGENT)
+                throw new IllegalArgumentException("NTLM auth cannot run through an agent: the handshake is bound to the "
+                        + "connection, and the agent only forwards a finished request. Run this app locally.");
             HttpOutcome outcome = target == ExecutionTarget.AGENT
-                    ? sendViaAgent(method, url, requestHeaders, requestBody, useCase.getTimeout(), agentId)
-                    : sendLocally(method, url, requestHeaders, requestBody, useCase.getTimeout());
+                    ? sendViaAgent(method, url, requestHeaders, requestBody, timeoutMs, agentId)
+                    : ntlm != null
+                    ? sendLocallyWithNtlm(method, url, requestHeaders, requestBody, timeoutMs, ntlm)
+                    : sendLocally(method, url, requestHeaders, requestBody, timeoutMs);
             long elapsed = System.currentTimeMillis() - started;
 
             Object transformed = null;
@@ -613,6 +726,53 @@ public class AppExecutionService {
         HttpResponse<String> response = localServer.clientFor(url, HTTP).send(builder.build(), HttpResponse.BodyHandlers.ofString());
         return new HttpOutcome(response.statusCode(), response.body(),
                 new LinkedHashMap<>(response.headers().map()), ExecutionTarget.LOCAL.name());
+    }
+
+    /**
+     * {@link #sendLocally} for NTLM apps. {@link HttpClient}'s authenticator only answers Basic
+     * challenges, so NTLM goes through {@link HttpURLConnection}, whose built-in NTLM support runs
+     * the negotiate/challenge/authenticate exchange on one kept-alive connection. The body is left
+     * buffered (no streaming mode) so it can be replayed on the authenticated leg of the handshake.
+     *
+     * <p>{@code HttpURLConnection} accepts only GET, POST, HEAD, OPTIONS, PUT, DELETE and TRACE — a
+     * PATCH use case fails here with a ProtocolException rather than being silently rewritten.
+     */
+    private HttpOutcome sendLocallyWithNtlm(String method, String url, Map<String, String> headers,
+                                            String body, int timeoutMs, NtlmAuthProvider ntlm) throws Exception {
+        HttpURLConnection conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
+        try {
+            // A call to this server's own https port needs the same self-trusting TLS as sendLocally.
+            HttpClient selfTrusting = localServer.clientFor(url, null);
+            if (selfTrusting != null && conn instanceof HttpsURLConnection https)
+                https.setSSLSocketFactory(selfTrusting.sslContext().getSocketFactory());
+
+            // Per-connection, so one environment's credentials never answer another's challenge.
+            conn.setAuthenticator(ntlm.toAuthenticator());
+            conn.setRequestMethod(method);
+            conn.setConnectTimeout(timeoutMs);
+            conn.setReadTimeout(timeoutMs);
+            conn.setUseCaches(false);
+            headers.forEach(conn::setRequestProperty);
+
+            if (body != null && !body.isBlank()) {
+                conn.setDoOutput(true);
+                try (OutputStream out = conn.getOutputStream()) {
+                    out.write(body.getBytes(StandardCharsets.UTF_8));
+                }
+            }
+
+            int status = conn.getResponseCode();
+            String responseBody;
+            try (InputStream in = status >= 400 ? conn.getErrorStream() : conn.getInputStream()) {
+                responseBody = in == null ? "" : new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            }
+            Map<String, List<String>> responseHeaders = new LinkedHashMap<>();
+            // The null key is the status line, not a header.
+            conn.getHeaderFields().forEach((name, values) -> { if (name != null) responseHeaders.put(name, values); });
+            return new HttpOutcome(status, responseBody, responseHeaders, ExecutionTarget.LOCAL.name());
+        } finally {
+            conn.disconnect();
+        }
     }
 
     /**
@@ -963,10 +1123,27 @@ public class AppExecutionService {
                 return new KerberosAuthProvider(env.getUsername(), env.getPassword(), servicePrincipal)
                         .getAuthorizationHeader();
             }
+            case "NTLM" -> {
+                // Challenge-response, so there is no header to compute up front: the credentials
+                // are checked here and used by sendLocallyWithNtlm during the handshake itself.
+                ntlmFor(app, env);
+                return null;
+            }
             default -> {
                 return null;
             }
         }
+    }
+
+    /**
+     * The NTLM credentials for an NTLM app, or null for any other auth method. The username may
+     * carry its domain as {@code DOMAIN&#92;user}; the JDK's NTLM implementation splits it off.
+     */
+    private static NtlmAuthProvider ntlmFor(AppDefinition app, AppEnvironment env) {
+        if (app.getAuthMethod() == null || !"NTLM".equalsIgnoreCase(app.getAuthMethod().trim())) return null;
+        if (env.getUsername() == null || env.getUsername().isBlank())
+            throw new IllegalArgumentException("NTLM auth requires a username on environment " + env.getEnvironment());
+        return new NtlmAuthProvider(env.getUsername().trim(), nullToEmpty(env.getPassword()));
     }
 
     /**

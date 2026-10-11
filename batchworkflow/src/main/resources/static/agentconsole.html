@@ -220,6 +220,8 @@
     <div class="mode-toggle">
         <button type="button" id="modeBtnCommand" class="active" onclick="setMode('command')">Command Line</button>
         <button type="button" id="modeBtnHttp" onclick="setMode('http')">HTTP Request</button>
+        <button type="button" id="modeBtnFileInfo" onclick="setMode('fileInfo')">File Info</button>
+        <button type="button" id="modeBtnSystemInfo" onclick="setMode('systemInfo')">System Info</button>
     </div>
     <div class="form-row">
         <div class="form-group">
@@ -258,10 +260,32 @@
         </div>
     </div>
 
+    <div id="modeFileInfo" style="display:none">
+        <div class="form-group" style="margin-bottom:10px">
+            <label>File paths (one per line)</label>
+            <textarea class="small-input" id="fileInfoPaths" style="min-height:110px"
+                      placeholder="/var/log/app/app.log&#10;/opt/app/lib/app.jar&#10;C:\data\inbound"></textarea>
+        </div>
+    </div>
+
+    <div id="modeSystemInfo" style="display:none">
+        <div class="form-row">
+            <div class="form-group">
+                <label>Top processes</label>
+                <input type="number" id="sysTopN" value="10" min="1" max="100" style="width:110px">
+            </div>
+            <div class="form-group">
+                <label>CPU sample (ms)</label>
+                <input type="number" id="sysSampleMs" value="1000" min="100" max="5000" step="100" style="width:130px">
+            </div>
+        </div>
+    </div>
+
     <div class="toolbar">
         <button class="primary"   id="btnExec" onclick="runCurrentMode()">Execute</button>
         <button class="secondary" onclick="clearOutput()">Clear Output</button>
         <button class="tool-btn"  onclick="copyOutput()">Copy Output</button>
+        <button class="tool-btn"  id="btnExportCsv" onclick="exportFileInfoCsv()" style="display:none">Export File Info CSV</button>
     </div>
 </div>
 
@@ -310,6 +334,12 @@
                 case 'httpResult':
                     appendHttpResult(msg);
                     break;
+                case 'fileInfoResult':
+                    appendFileInfoResult(msg);
+                    break;
+                case 'systemInfoResult':
+                    appendSystemInfoResult(msg);
+                    break;
                 case 'error':
                     setStatus('Error: ' + msg.message, 'error');
                     appendError(msg.message);
@@ -357,6 +387,12 @@
         // first option and the usual answer.
         trustSelect.innerHTML = '<option value="">Every connected agent (' + agents.length + ')</option>';
 
+        // Only the File Info / System Info skills can fan out; setMode hides this for the others.
+        const allOpt = document.createElement('option');
+        allOpt.value = ALL_AGENTS;
+        allOpt.textContent = 'All connected agents (' + agents.length + ')';
+        select.appendChild(allOpt);
+
         agents.forEach(a => {
             const tr = document.createElement('tr');
             tr.innerHTML = `<td>${esc(a.agentId)}</td><td>${esc(a.hostname)}</td>` +
@@ -377,7 +413,12 @@
             trustSelect.appendChild(trustOpt);
         });
 
-        if (agents.some(a => a.agentId === previouslySelected)) select.value = previouslySelected;
+        if (agents.some(a => a.agentId === previouslySelected) || previouslySelected === ALL_AGENTS) {
+            select.value = previouslySelected;
+        } else {
+            select.value = agents[0].agentId;
+        }
+        syncAllAgentsOption();
         if (previousTrustTarget === '' || agents.some(a => a.agentId === previousTrustTarget)) {
             trustSelect.value = previousTrustTarget;
         }
@@ -534,16 +575,42 @@
 
     let mode = 'command';
 
+    const MODES = { command: 'Command', http: 'Http', fileInfo: 'FileInfo', systemInfo: 'SystemInfo' };
+
+    const ALL_AGENTS = '__all__';
+
     function setMode(next) {
         mode = next;
-        document.getElementById('modeCommand').style.display = next === 'command' ? '' : 'none';
-        document.getElementById('modeHttp').style.display    = next === 'http'    ? '' : 'none';
-        document.getElementById('modeBtnCommand').classList.toggle('active', next === 'command');
-        document.getElementById('modeBtnHttp').classList.toggle('active', next === 'http');
+        Object.entries(MODES).forEach(([key, suffix]) => {
+            document.getElementById('mode' + suffix).style.display = next === key ? '' : 'none';
+            document.getElementById('modeBtn' + suffix).classList.toggle('active', next === key);
+        });
+        syncAllAgentsOption();
+    }
+
+    /** "All connected agents" is offered only to the skills that fan out; a command or HTTP call targets one host. */
+    function syncAllAgentsOption() {
+        const select = document.getElementById('agentSelect');
+        const allOpt = select.querySelector(`option[value="${ALL_AGENTS}"]`);
+        if (!allOpt) return;
+        const fanOut = mode === 'fileInfo' || mode === 'systemInfo';
+        allOpt.hidden = !fanOut;
+        allOpt.disabled = !fanOut;
+        if (!fanOut && select.value === ALL_AGENTS) select.value = agents.length ? agents[0].agentId : '';
+    }
+
+    /** The agents the selected target means: every connected one for "All", otherwise just the one picked. */
+    function selectedTargets() {
+        const value = document.getElementById('agentSelect').value;
+        if (value === ALL_AGENTS) return agents.map(a => a.agentId);
+        return value ? [value] : [];
     }
 
     function runCurrentMode() {
-        if (mode === 'http') runHttpRequest(); else runExecCommand();
+        if (mode === 'http') runHttpRequest();
+        else if (mode === 'fileInfo') runFileInfo();
+        else if (mode === 'systemInfo') runSystemInfo();
+        else runExecCommand();
     }
 
     // -------------------------------------------------------------------------
@@ -595,6 +662,273 @@
         });
         return headers;
     }
+
+    // -------------------------------------------------------------------------
+    // Skills: getFileInfo / getSystemInfo
+    // -------------------------------------------------------------------------
+
+    /** Every agent's file-info reply from the latest run, for the CSV export. */
+    let lastFileInfo = [];
+
+    /**
+     * A multi-agent skill run in flight: which agents were asked and what each has answered. When
+     * the last one replies (or the wait runs out) the per-agent results are folded into one
+     * comparison — the reason for asking the whole fleet at once.
+     */
+    let batch = null;
+    const BATCH_WAIT_MS = 60000;
+
+    function runFileInfo() {
+        const targets = selectedTargets();
+        const paths = document.getElementById('fileInfoPaths').value
+            .split('\n').map(p => p.trim()).filter(Boolean);
+        if (!targets.length) { setStatus('Select a target agent first', 'error'); return; }
+        if (!paths.length) { setStatus('Enter at least one path', 'error'); return; }
+        if (!ws || ws.readyState !== WebSocket.OPEN) { setStatus('Console channel not connected', 'error'); return; }
+
+        lastFileInfo = [];
+        document.getElementById('btnExportCsv').style.display = 'none';
+        startBatch('fileInfo', targets, { paths });
+        currentCommand = `getFileInfo (${paths.length} path${paths.length === 1 ? '' : 's'})`;
+        targets.forEach(agentId => ws.send(JSON.stringify({ type: 'fileInfo', agentId, paths })));
+        setStatus(`getFileInfo sent to ${targets.length} agent(s)`, 'ok');
+    }
+
+    function runSystemInfo() {
+        const targets  = selectedTargets();
+        const topN     = parseInt(document.getElementById('sysTopN').value, 10) || 10;
+        const sampleMs = parseInt(document.getElementById('sysSampleMs').value, 10) || 1000;
+        if (!targets.length) { setStatus('Select a target agent first', 'error'); return; }
+        if (!ws || ws.readyState !== WebSocket.OPEN) { setStatus('Console channel not connected', 'error'); return; }
+
+        startBatch('systemInfo', targets, {});
+        currentCommand = `getSystemInfo (top ${topN}, sample ${sampleMs}ms)`;
+        targets.forEach(agentId => ws.send(JSON.stringify({ type: 'systemInfo', agentId, topN, sampleMs })));
+        setStatus(`getSystemInfo sent to ${targets.length} agent(s)`, 'ok');
+    }
+
+    function startBatch(kind, targets, context) {
+        if (batch) clearTimeout(batch.timer);
+        batch = targets.length > 1
+            ? { kind, targets, context, results: {}, timer: setTimeout(() => finishBatch(), BATCH_WAIT_MS) }
+            : null;
+    }
+
+    function recordBatch(kind, msg) {
+        if (!batch || batch.kind !== kind || !batch.targets.includes(msg.agentId)) return;
+        batch.results[msg.agentId] = msg;
+        if (Object.keys(batch.results).length === batch.targets.length) finishBatch();
+    }
+
+    function finishBatch() {
+        const b = batch;
+        batch = null;
+        if (!b) return;
+        clearTimeout(b.timer);
+        if (b.kind === 'fileInfo') appendFileComparison(b); else appendFleetSummary(b);
+        const missing = b.targets.filter(id => !b.results[id]);
+        if (missing.length) appendStyled(`  no reply from: ${missing.join(', ')} (older agent jar, or disconnected)`, 'stderr');
+    }
+
+    function appendFileInfoResult(msg) {
+        appendStyled(`[${msg.agentId || '?'}] file info`, 'status-ok');
+        if (msg.error) { appendError(msg.error); recordBatch('fileInfo', msg); return; }
+        const files = msg.files || [];
+        lastFileInfo.push({ agentId: msg.agentId, files });
+        document.getElementById('btnExportCsv').style.display = '';
+
+        const rows = files.map(f => [
+            f.exists ? (f.error ? 'ERR' : 'yes') : 'NO',
+            f.type || '',
+            f.exists && f.size != null ? fmtBytes(f.size) : '',
+            f.modified ? fmtTime(f.modified) : '',
+            f.created ? fmtTime(f.created) : '',
+            [f.permissions, f.mode, f.attributes].filter(Boolean).join(' '),
+            [f.owner, f.group].filter(Boolean).join(':'),
+            f.path + (f.linkTarget ? ' -> ' + f.linkTarget : '') + (f.error ? '  [' + f.error + ']' : '')
+        ]);
+        appendTable(['EXISTS', 'TYPE', 'SIZE', 'MODIFIED', 'CREATED', 'PERMS', 'OWNER', 'PATH'], rows);
+
+        const found = files.filter(f => f.exists).length;
+        const total = files.filter(f => f.exists && f.type === 'file').reduce((s, f) => s + (f.size || 0), 0);
+        appendStyled(`${found}/${files.length} exist · ${fmtBytes(total)} in files · ${msg.durationMs}ms`,
+                     found === files.length ? 'done-ok' : 'done-err');
+        recordBatch('fileInfo', msg);
+    }
+
+    /**
+     * One row per path, one column per agent: whether it exists there and its size and age. Rows
+     * where existence or size differ between agents are flagged — the drift a fleet-wide check is
+     * looking for. Modified times alone are not flagged, since a redeploy rewrites them everywhere.
+     */
+    function appendFileComparison(b) {
+        const ids = b.targets.filter(id => b.results[id] && Array.isArray(b.results[id].files));
+        if (!ids.length) return;
+        const byAgent = Object.fromEntries(ids.map(id => [id, new Map(b.results[id].files.map(f => [f.path, f]))]));
+
+        let differing = 0;
+        const rows = b.context.paths.map(path => {
+            const entries = ids.map(id => byAgent[id].get(path));
+            const keys = new Set(entries.map(f => !f ? '?' : !f.exists ? 'missing' : f.type + ':' + f.size));
+            const same = keys.size === 1;
+            if (!same) differing++;
+            const cells = entries.map(f => !f ? '?' : !f.exists ? 'MISSING'
+                : `${f.type === 'file' ? fmtBytes(f.size) : f.type} · ${fmtAge(f.ageSeconds)}`);
+            return [same ? 'same' : 'DIFF', ...cells, path];
+        });
+
+        appendStyled(`COMPARISON ACROSS ${ids.length} AGENTS`, 'status-ok');
+        appendTable(['', ...ids, 'PATH'], rows);
+        appendStyled(`${rows.length} path(s) · ${differing} differ across agents`, differing ? 'done-err' : 'done-ok');
+    }
+
+    /** One row per agent with the headline numbers, so the outlier in a fleet stands out at a glance. */
+    function appendFleetSummary(b) {
+        const ids = b.targets.filter(id => b.results[id]);
+        if (!ids.length) return;
+        const rows = ids.map(id => {
+            const m = b.results[id];
+            if (m.error) return [id, 'ERR ' + m.error, '', '', '', '', '', ''];
+            const cpu = m.cpu || {}, mem = m.memory || {}, fd = m.fileDescriptors || {};
+            const disks = Array.isArray(m.disks) ? m.disks.filter(d => d.usedPercent != null) : [];
+            const fullest = disks.reduce((a, d) => (!a || d.usedPercent > a.usedPercent ? d : a), null);
+            const load = cpu.loadAverage ? cpu.loadAverage[0] : cpu.loadAverage1m;
+            return [id, pct(cpu.usagePercent), load != null ? load : '-', pct(mem.usedPercent), pct(mem.swapUsedPercent),
+                    fullest ? `${pct(fullest.usedPercent)} ${fullest.mount}` : '-',
+                    fd.systemUsedPercent != null ? pct(fd.systemUsedPercent) : '-',
+                    m.processes && m.processes.count != null ? m.processes.count : '-'];
+        });
+        appendStyled(`FLEET SUMMARY (${ids.length} AGENTS)`, 'status-ok');
+        appendTable(['AGENT', 'CPU', 'LOAD', 'MEM', 'SWAP', 'FULLEST DISK', 'FDS', 'PROCS'], rows);
+    }
+
+    function appendSystemInfoResult(msg) {
+        appendStyled(`[${msg.agentId || '?'}] system info`, 'status-ok');
+        if (msg.error) { appendError(msg.error); recordBatch('systemInfo', msg); return; }
+        const os = msg.os || {}, cpu = msg.cpu || {}, mem = msg.memory || {}, fd = msg.fileDescriptors || {};
+
+        appendSection('HOST');
+        appendSectionError(os);
+        appendLine(`  ${os.hostname || ''}  ${os.name || ''} ${os.version || ''} (${os.arch || ''})  java ${os.javaVersion || ''}`);
+        if (os.uptime) appendLine(`  uptime ${os.uptime}  (booted ${fmtTime(os.bootTime)})`);
+
+        appendSection('CPU');
+        appendSectionError(cpu);
+        appendLine(`  ${cpu.cores} cores${cpu.model ? ' · ' + cpu.model : ''}`);
+        appendLine(`  usage ${pct(cpu.usagePercent)}  agent ${pct(cpu.agentProcessPercent)}` +
+                   (cpu.loadAverage ? `  load ${cpu.loadAverage.join(' / ')}` : cpu.loadAverage1m != null ? `  load ${cpu.loadAverage1m}` : '') +
+                   (cpu.totalThreads ? `  threads ${cpu.runningThreads}/${cpu.totalThreads}` : ''));
+
+        appendSection('MEMORY');
+        appendSectionError(mem);
+        appendLine(`  used ${fmtBytes(mem.used)} / ${fmtBytes(mem.total)} (${pct(mem.usedPercent)})  available ${fmtBytes(mem.available)}` +
+                   (mem.cached != null ? `  cached ${fmtBytes(mem.cached)}` : ''));
+        appendLine(`  swap ${fmtBytes(mem.swapUsed)} / ${fmtBytes(mem.swapTotal)} (${pct(mem.swapUsedPercent)})` +
+                   `  agent heap ${fmtBytes(mem.agentHeapUsed)} / ${fmtBytes(mem.agentHeapMax)}`);
+
+        appendSection('DISKS');
+        if (Array.isArray(msg.disks)) {
+            appendTable(['MOUNT', 'TYPE', 'SIZE', 'USED', 'FREE', 'USE%'], msg.disks.map(d => d.error
+                ? [d.mount, '', '', '', '', 'ERR ' + d.error]
+                : [d.mount, d.type, fmtBytes(d.total), fmtBytes(d.used), fmtBytes(d.usable), pct(d.usedPercent)]));
+        } else appendSectionError(msg.disks);
+
+        appendSection('FILE DESCRIPTORS');
+        appendSectionError(fd);
+        if (fd.systemOpen != null) appendLine(`  system ${fd.systemOpen} / ${fd.systemMax} (${pct(fd.systemUsedPercent)})`);
+        if (fd.agentOpen != null)  appendLine(`  agent  ${fd.agentOpen} / ${fd.agentMax}`);
+        if (fd.note) appendStyled('  ' + fd.note, 'system');
+
+        if (Array.isArray(msg.network) && msg.network.length) {
+            appendSection('NETWORK');
+            msg.network.forEach(n => appendLine(`  ${n.name.padEnd(12)} ${n.addresses.join(', ')}`));
+        }
+
+        const procs = msg.processes || {};
+        appendSection(`PROCESSES (${procs.count != null ? procs.count : '?'})`);
+        appendSectionError(procs);
+        const procTable = (title, list) => {
+            if (!list || !list.length) return;
+            appendStyled('  ' + title, 'system');
+            appendTable(['PID', 'CPU%', 'MEM', 'FDS', 'USER', 'NAME'], list.map(p => [
+                p.pid, p.cpuPercent != null ? p.cpuPercent.toFixed(1) : '', p.memoryBytes != null ? fmtBytes(p.memoryBytes) : '',
+                p.fileDescriptors != null ? p.fileDescriptors : '', p.user || '', p.name || p.command || '']));
+        };
+        procTable('by CPU', procs.topByCpu);
+        procTable('by memory', procs.topByMemory);
+        procTable('by file descriptors', procs.topByFileDescriptors);
+
+        appendStyled(`[collected ${fmtTime(msg.collectedAt)} in ${msg.durationMs}ms]`, 'done-ok');
+        recordBatch('systemInfo', msg);
+    }
+
+    function exportFileInfoCsv() {
+        if (!lastFileInfo.length) return;
+        const cols = ['path', 'absolutePath', 'exists', 'name', 'type', 'extension', 'size', 'created', 'modified',
+                      'accessed', 'ageSeconds', 'permissions', 'mode', 'attributes', 'owner', 'group', 'readable',
+                      'writable', 'executable', 'hidden', 'contentType', 'linkTarget', 'error'];
+        const cell = v => {
+            const s = v === undefined || v === null ? '' : String(v);
+            return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+        };
+        const csv = ['agentId,' + cols.join(',')]
+            .concat(lastFileInfo.flatMap(r => r.files.map(f => [r.agentId, ...cols.map(c => f[c])].map(cell).join(','))))
+            .join('\n');
+        const scope = lastFileInfo.length === 1 ? lastFileInfo[0].agentId : 'all-agents';
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+        a.download = `fileinfo-${scope}-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+    }
+
+    function appendTable(headers, rows) {
+        const all = [headers, ...rows].map(r => r.map(c => String(c === undefined || c === null ? '' : c)));
+        const widths = headers.map((_, i) => Math.max(...all.map(r => r[i].length)));
+        // Last column is left unpadded: it is the long free-text one (path, process name).
+        const fmt = r => '  ' + r.map((c, i) => i === r.length - 1 ? c : c.padEnd(widths[i])).join('  ');
+        appendStyled(fmt(all[0]), 'system');
+        all.slice(1).forEach(r => appendLine(fmt(r)));
+    }
+
+    function appendSection(title) { appendStyled(title, 'status-ok'); }
+
+    function appendSectionError(section) {
+        if (section && section.error) appendStyled('  [error] ' + section.error, 'stderr');
+    }
+
+    function appendStyled(text, cls) {
+        const box  = document.getElementById('outputBox');
+        const span = document.createElement('span');
+        span.className   = 'out-line ' + cls;
+        span.textContent = text;
+        box.appendChild(span);
+        box.scrollTop = box.scrollHeight;
+    }
+
+    function fmtBytes(n) {
+        if (n === undefined || n === null || n < 0) return '-';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        let i = 0;
+        while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+        return (i === 0 ? n : n.toFixed(1)) + ' ' + units[i];
+    }
+
+    function fmtTime(iso) {
+        if (!iso) return '';
+        const d = new Date(iso);
+        return isNaN(d) ? iso : d.toLocaleString();
+    }
+
+    function fmtAge(seconds) {
+        if (seconds === undefined || seconds === null) return '-';
+        if (seconds < 60)    return seconds + 's ago';
+        if (seconds < 3600)  return Math.floor(seconds / 60) + 'm ago';
+        if (seconds < 86400) return Math.floor(seconds / 3600) + 'h ago';
+        return Math.floor(seconds / 86400) + 'd ago';
+    }
+
+    function pct(v) { return v === undefined || v === null ? '-' : v + '%'; }
 
     // -------------------------------------------------------------------------
     // Output helpers

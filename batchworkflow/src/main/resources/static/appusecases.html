@@ -277,6 +277,30 @@
         }
     }
 
+    // What the request fields mean for a WebSocket app's use case, which is a subscription rather
+    // than a call: the headers go on the handshake, the body is the message sent the moment the
+    // socket opens (a subscribe request, typically), and the method is not used at all.
+    const WS_LABELS = {
+        httpMethod:   'HTTP Method (not used)',
+        timeout:      'Connect Timeout (ms)',
+        httpHeaders:  'Handshake Headers',
+        httpBody:     'Opening Message (sent on connect)',
+        outputFormat: 'Message Format'
+    };
+    const HTTP_LABELS = {};
+
+    function applyAppModeLabels() {
+        const ws = !!currentApp && currentApp.appMode === 'WS';
+        Object.keys(WS_LABELS).forEach(id => {
+            const label = document.querySelector('label[for="' + id + '"]');
+            if (!label) return;
+            if (!(id in HTTP_LABELS)) HTTP_LABELS[id] = label.textContent;
+            label.textContent = ws ? WS_LABELS[id] : HTTP_LABELS[id];
+        });
+        document.getElementById('httpMethod').disabled = ws;
+        document.getElementById('httpBody').placeholder = ws ? '{"action": "subscribe", "topic": "$topic"}' : '{"orderId": "$orderId"}';
+    }
+
     async function onAppChange() {
         const appName = document.getElementById('appSelect').value;
         AC.setSelectedApp(appName);
@@ -284,6 +308,7 @@
 
         const appVars = currentApp ? Object.keys(currentApp.appVariables || {}) : [];
         document.getElementById('appVariablesPreview').value = appVars.length ? appVars.join(', ') : '(none)';
+        applyAppModeLabels();
 
         newUseCase();
         if (!appName) {

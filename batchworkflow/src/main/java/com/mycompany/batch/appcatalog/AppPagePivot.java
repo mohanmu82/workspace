@@ -39,6 +39,24 @@ public class AppPagePivot {
         public boolean countsRows() { return ROW_COUNT.equals(agg); }
     }
 
+    /** {@link Filter#mode()}: keep only rows whose column holds one of the values, or drop them. */
+    public static final List<String> FILTER_MODES = List.of("include", "exclude");
+
+    /**
+     * Narrows the rows before anything is grouped — see GridPivot.applyFilters in gridpivot.js.
+     * Filters on different columns AND together.
+     *
+     * @param field  the column read, matched regardless of case
+     * @param mode   one of {@link #FILTER_MODES}
+     * @param values the cell texts kept ({@code include}) or dropped ({@code exclude}); an empty
+     *               include list lets nothing through
+     */
+    public record Filter(String field, String mode, List<String> values) {
+        public Filter {
+            values = values != null ? List.copyOf(values) : List.of();
+        }
+    }
+
     /** Columns grouped down the side, outermost first. */
     private List<String> rows = new ArrayList<>();
     /** Columns pivoted across the top, outermost first. */
@@ -51,6 +69,8 @@ public class AppPagePivot {
     private boolean blanks = true;
     private String rowOrder = "key";
     private String colOrder = "key";
+    /** Which rows go into the grouping at all; empty takes every row. */
+    private List<Filter> filters = new ArrayList<>();
 
     /** Whether this groups anything at all; one that does not leaves the rows as they came. */
     public boolean groupsAnything() {
@@ -80,6 +100,9 @@ public class AppPagePivot {
 
     public String getColOrder()                  { return colOrder; }
     public void   setColOrder(String colOrder)   { this.colOrder = ORDERS.contains(colOrder) ? colOrder : "key"; }
+
+    public List<Filter> getFilters()             { return filters; }
+    public void setFilters(List<Filter> filters) { this.filters = filters != null ? new ArrayList<>(filters) : new ArrayList<>(); }
 
     private static List<String> names(List<String> names) {
         List<String> out = new ArrayList<>();

@@ -13,9 +13,13 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 /**
  * REST surface for the remote agent feature:
@@ -25,6 +29,8 @@ import java.util.Map;
  *                             (or all to one agent via {@code agentId}), and return every result in
  *                             one response (see {@link AgentHttpDispatchService})
  * POST /agents/truststore  — reload the outbound TLS trust of one agent, or of every connected one
+ * POST /agents/file-info   — getFileInfo skill: stat an array of paths on one agent, or on every one
+ * POST /agents/system-info — getSystemInfo skill: CPU/memory/disk/fd/top-process snapshot per agent
  */
 @RestController
 public class AgentController {
@@ -116,6 +122,82 @@ public class AgentController {
                 })
                 .toList();
         return ResponseEntity.ok(results);
+    }
+
+    /**
+     * The {@code getFileInfo} skill: stats every path in {@code paths} on the agent's host — exists,
+     * name, type, created/modified/accessed, size, permissions, owner — in one reply per agent.
+     *
+     * <p>With no {@code agentId} the same paths are checked on every connected agent, which is how
+     * a fleet is compared ("is this jar the same size and age everywhere?"). Always 200 with a
+     * per-agent result, for the same reason as {@link #pushTrustStore}.
+     */
+    @PostMapping(value = "/agents/file-info", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<?> fileInfo(@RequestBody FileInfoRequest request) {
+        if (request.paths() == null || request.paths().isEmpty())
+            return ResponseEntity.badRequest().body(Map.of("error", "paths must not be empty"));
+
+        List<String> targets = targetsFor(request.agentId());
+        if (targets.isEmpty()) return ResponseEntity.badRequest().body(Map.of("error", "No agents connected"));
+
+        Map<String, Object> message = Map.of("paths", request.paths());
+        int timeoutMs = request.timeoutMs() != null ? request.timeoutMs() : 30_000;
+        return ResponseEntity.ok(fanOut(targets, "fileInfo", message, timeoutMs));
+    }
+
+    /**
+     * The {@code getSystemInfo} skill: a health snapshot of the agent's host — OS and uptime, CPU
+     * usage and load, memory and swap, disks, file descriptors, network interfaces, and the top
+     * {@code topN} processes by CPU, memory and (Linux) open file descriptors.
+     *
+     * <p>{@code sampleMs} is the CPU measurement window; with no {@code agentId} every connected
+     * agent is sampled concurrently, so the whole fleet costs one window rather than one per host.
+     */
+    @PostMapping(value = "/agents/system-info", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<?> systemInfo(@RequestBody(required = false) SystemInfoRequest request) {
+        SystemInfoRequest req = request != null ? request : new SystemInfoRequest(null, null, null, null);
+        List<String> targets = targetsFor(req.agentId());
+        if (targets.isEmpty()) return ResponseEntity.badRequest().body(Map.of("error", "No agents connected"));
+
+        Map<String, Object> message = new LinkedHashMap<>();
+        message.put("topN", req.topN() != null ? req.topN() : 10);
+        message.put("sampleMs", req.sampleMs() != null ? req.sampleMs() : 1000);
+        int timeoutMs = req.timeoutMs() != null ? req.timeoutMs() : 30_000;
+        return ResponseEntity.ok(fanOut(targets, "systemInfo", message, timeoutMs));
+    }
+
+    /** Body for {@code POST /agents/file-info}; blank {@code agentId} means every connected agent. */
+    public record FileInfoRequest(String agentId, List<String> paths, Integer timeoutMs) {}
+
+    /** Body for {@code POST /agents/system-info}; blank {@code agentId} means every connected agent. */
+    public record SystemInfoRequest(String agentId, Integer topN, Integer sampleMs, Integer timeoutMs) {}
+
+    private List<String> targetsFor(String agentId) {
+        return agentId != null && !agentId.isBlank() ? List.of(agentId) : httpDispatchService.connectedAgentIds();
+    }
+
+    /** Sends {@code message} to every target concurrently and collects one reply per agent, in target order. */
+    private List<Map<String, Object>> fanOut(List<String> targets, String type, Map<String, Object> message, int timeoutMs) {
+        try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            List<Future<Map<String, Object>>> futures = targets.stream()
+                    .map(agentId -> pool.submit(() -> {
+                        try {
+                            return httpDispatchService.sendControl(agentId, type, new LinkedHashMap<>(message), timeoutMs);
+                        } catch (IllegalStateException e) {
+                            return Map.<String, Object>of("agentId", agentId, "error", e.getMessage());
+                        }
+                    }))
+                    .toList();
+            List<Map<String, Object>> results = new ArrayList<>(futures.size());
+            for (int i = 0; i < futures.size(); i++) {
+                try {
+                    results.add(futures.get(i).get());
+                } catch (Exception e) {
+                    results.add(Map.of("agentId", targets.get(i), "error", String.valueOf(e.getMessage())));
+                }
+            }
+            return results;
+        }
     }
 
     /**

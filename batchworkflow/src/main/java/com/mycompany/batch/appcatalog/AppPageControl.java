@@ -415,8 +415,27 @@ public class AppPageControl {
      * {@link AppPageMenuOption}.
      */
     private List<AppPageMenuOption> menuOptions = new ArrayList<>();
+    /**
+     * Panel controls only: whether the box is drawn with its border. On by default, which is how
+     * every panel saved before this existed looks; off, the panel is a group with no outline — its
+     * controls still move, copy and are laid out together, the reader simply sees no box.
+     */
+    private boolean showBorder = true;
+    /** Panel controls only: a CSS colour for the border, blank for the usual grey. */
+    private String borderColor;
+    /** Panel controls only: a CSS colour filling the box behind its controls, blank for white. */
+    private String fillColor;
 
-    public List<String> getPanelControlIds()                      { return panelControlIds; }
+    public boolean isShowBorder()                    { return showBorder; }
+    public void    setShowBorder(boolean showBorder) { this.showBorder = showBorder; }
+
+    public String getBorderColor()                     { return borderColor; }
+    public void   setBorderColor(String borderColor)   { this.borderColor = borderColor == null || borderColor.isBlank() ? null : borderColor.trim(); }
+
+    public String getFillColor()                   { return fillColor; }
+    public void   setFillColor(String fillColor)   { this.fillColor = fillColor == null || fillColor.isBlank() ? null : fillColor.trim(); }
+
+    public List<String> getPanelControlIds()                     { return panelControlIds; }
     public void setPanelControlIds(List<String> panelControlIds)  {
         this.panelControlIds = panelControlIds != null ? panelControlIds : new ArrayList<>();
     }

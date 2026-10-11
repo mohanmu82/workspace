@@ -27,6 +27,8 @@ import java.util.Map;
  * {"type":"list"}
  * {"type":"exec","agentId":"host1","command":"uptime"}
  * {"type":"http","agentId":"host1","url":"https://...","method":"POST","headers":{...},"body":"...","timeoutMs":30000}
+ * {"type":"fileInfo","agentId":"host1","paths":["/var/log/app.log","/opt/app/lib"]}
+ * {"type":"systemInfo","agentId":"host1","topN":10,"sampleMs":1000}
  * </pre>
  *
  * <p>Protocol (server → browser):
@@ -36,6 +38,8 @@ import java.util.Map;
  * {"type":"line","requestId":"...","text":"..."}
  * {"type":"done","requestId":"...","exitCode":0}
  * {"type":"httpResult","requestId":"...","statusCode":200,"headers":{...},"body":"...","durationMs":42}
+ * {"type":"fileInfoResult","requestId":"...","files":[...]}
+ * {"type":"systemInfoResult","requestId":"...","os":{...},"cpu":{...},"memory":{...},...}
  * {"type":"error","message":"..."}
  * </pre>
  */
@@ -59,6 +63,8 @@ public class AgentConsoleWebSocketHandler extends TextWebSocketHandler {
                 case "list" -> sendAgentList(ws);
                 case "exec" -> handleExec(ws, params);
                 case "http" -> handleHttp(ws, params);
+                case "fileInfo"   -> handleFileInfo(ws, params);
+                case "systemInfo" -> handleSystemInfo(ws, params);
                 default     -> sendError(ws, "Unknown message type: " + str(params, "type"));
             }
         } catch (Exception e) {
@@ -134,6 +140,40 @@ public class AgentConsoleWebSocketHandler extends TextWebSocketHandler {
         outbound.put("body", params.getOrDefault("body", ""));
         outbound.put("timeoutMs", params.getOrDefault("timeoutMs", 30000));
 
+        sendJson(ws, Map.of("type", "started", "requestId", requestId, "agentId", agentId));
+        sendJson(conn.getSession(), outbound);
+    }
+
+    private void handleFileInfo(WebSocketSession ws, Map<String, Object> params) {
+        String agentId = str(params, "agentId");
+        if (agentId.isBlank() || !(params.get("paths") instanceof List<?> paths) || paths.isEmpty()) {
+            sendError(ws, "agentId and paths are required");
+            return;
+        }
+        forward(ws, agentId, Map.of("type", "fileInfo", "paths", paths));
+    }
+
+    private void handleSystemInfo(WebSocketSession ws, Map<String, Object> params) {
+        String agentId = str(params, "agentId");
+        if (agentId.isBlank()) {
+            sendError(ws, "agentId is required");
+            return;
+        }
+        forward(ws, agentId, Map.of("type", "systemInfo",
+                "topN", params.getOrDefault("topN", 10),
+                "sampleMs", params.getOrDefault("sampleMs", 1000)));
+    }
+
+    /** Tracks a request for this browser session and hands {@code message} to the agent, stamped with its id. */
+    private void forward(WebSocketSession ws, String agentId, Map<String, Object> message) {
+        AgentConnection conn = registry.get(agentId);
+        if (conn == null || !conn.getSession().isOpen()) {
+            sendError(ws, "Agent not connected: " + agentId);
+            return;
+        }
+        String requestId = registry.trackRequest(ws);
+        Map<String, Object> outbound = new LinkedHashMap<>(message);
+        outbound.put("requestId", requestId);
         sendJson(ws, Map.of("type", "started", "requestId", requestId, "agentId", agentId));
         sendJson(conn.getSession(), outbound);
     }

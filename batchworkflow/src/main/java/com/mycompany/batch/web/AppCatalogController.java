@@ -331,7 +331,7 @@ public class AppCatalogController {
         if (service.getInstance(instanceId) == null) return notFound("Instance", instanceId);
         AppUseCaseInstanceOutput output = execution.executeWithInputs(instanceId, request.environment(),
                 request.inputs(), ExecutionTarget.from(request.target()), request.agentId(),
-                !Boolean.FALSE.equals(request.debug()));
+                !Boolean.FALSE.equals(request.debug()), request.timeoutMs());
         return ResponseEntity.ok(Boolean.FALSE.equals(request.includePayload()) ? output.withoutPayload() : output);
     }
 
@@ -348,9 +348,12 @@ public class AppCatalogController {
      *                       addressable for its bodies to be fetched again. What the page's
      *                       {@code DEBUG} variable comes to; null (the default) keeps it, so a
      *                       caller that has never heard of the switch behaves as it always did.
+     * @param timeoutMs      this call's HTTP timeout in milliseconds, in place of the use case's own;
+     *                       null or non-positive keeps the use case's configured timeout
      */
     public record PageRunRequest(String appUseCaseInstanceId, String environment, Map<String, Object> inputs,
-                                 String target, String agentId, Boolean includePayload, Boolean debug) {}
+                                 String target, String agentId, Boolean includePayload, Boolean debug,
+                                 Integer timeoutMs) {}
 
     /**
      * The values a running page's built-in variables take that only this server can answer for.

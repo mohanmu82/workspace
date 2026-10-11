@@ -70,7 +70,23 @@ class AppCatalogServiceTest {
     void placeholderInsideAnAddressThatSaysWhatItIs_isStillCheckedLikeAnyOther() {
         assertThatCode(() -> AppCatalogService.validateLinkUrl(link("https://reports/orders/${orderId}"), "Control 'x'"))
                 .doesNotThrowAnyException();
-        assertThatThrownBy(() -> AppCatalogService.validateLinkUrl(link("ftp://reports/${orderId}"), "Control 'x'"))
+        assertThatThrownBy(() -> AppCatalogService.validateLinkUrl(link("data:text/html,${orderId}"), "Control 'x'"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void applicationScheme_isKept() {
+        assertThatCode(() -> AppCatalogService.validateLinkUrl(link("fin://apps/blotter?id=7"), "Control 'x'"))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> AppCatalogService.validateLinkUrl(link("FIN:open/orders"), "Control 'x'"))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void otherScriptSchemes_areRefused() {
+        assertThatThrownBy(() -> AppCatalogService.validateLinkUrl(link("VBScript:msgbox(1)"), "Control 'x'"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> AppCatalogService.validateLinkUrl(link("data:text/html,<b>x</b>"), "Control 'x'"))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 

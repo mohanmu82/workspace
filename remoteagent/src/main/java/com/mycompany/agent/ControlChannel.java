@@ -5,7 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.net.URI;
 import java.net.http.WebSocket;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
@@ -14,8 +16,9 @@ import java.util.concurrent.TimeUnit;
 /**
  * Dials out to the batchworkflow server's {@code /agent/ws} endpoint and stays connected,
  * reconnecting with exponential backoff on any drop. Once registered, it dispatches incoming
- * commands to either a {@link CommandExecutor} ({@code exec}) or a {@link HttpRequestExecutor}
- * ({@code http}) and streams/returns the results back.
+ * commands to a {@link CommandExecutor} ({@code exec}), a {@link HttpRequestExecutor}
+ * ({@code http}), a {@link FileInfoCollector} ({@code fileInfo}) or a {@link SystemInfoCollector}
+ * ({@code systemInfo}) and streams/returns the results back.
  *
  * <p>The agent always initiates the connection so the remote host needs no inbound firewall
  * rule — only outbound access to the server. Both command modes ride this same outbound
@@ -32,6 +35,8 @@ public class ControlChannel {
     private final TrustStoreManager    trustStore;
     private final ObjectMapper         objectMapper = new ObjectMapper();
     private final CommandExecutor      executor     = new CommandExecutor();
+    private final FileInfoCollector    fileInfo     = new FileInfoCollector();
+    private final SystemInfoCollector  systemInfo   = new SystemInfoCollector();
     private final HttpRequestExecutor  httpExecutor;
 
     private volatile WebSocket webSocket;
@@ -179,6 +184,16 @@ public class ControlChannel {
                     outbound.put("requestId", requestId);
                     sendJson(webSocket, outbound);
                 });
+            } else if ("fileInfo".equals(msg.get("type"))) {
+                String requestId = String.valueOf(msg.get("requestId"));
+                fileInfo.execute(toStringList(msg.get("paths")),
+                        result -> sendResult("fileInfoResult", requestId, result));
+            } else if ("systemInfo".equals(msg.get("type"))) {
+                String requestId = String.valueOf(msg.get("requestId"));
+                systemInfo.execute(
+                        msg.get("topN") instanceof Number n ? n.intValue() : 10,
+                        msg.get("sampleMs") instanceof Number n ? n.intValue() : 1000,
+                        result -> sendResult("systemInfoResult", requestId, result));
             } else if ("truststore".equals(msg.get("type"))) {
                 handleTrustStore(msg);
             } else if ("error".equals(msg.get("type"))) {
@@ -225,6 +240,21 @@ public class ControlChannel {
         outbound.put("requestId", requestId);
         outbound.put("agentId", agentId);
         sendJson(webSocket, outbound);
+    }
+
+    private void sendResult(String type, String requestId, Map<String, Object> result) {
+        Map<String, Object> outbound = new LinkedHashMap<>(result);
+        outbound.put("type", type);
+        outbound.put("requestId", requestId);
+        outbound.put("agentId", agentId);
+        sendJson(webSocket, outbound);
+    }
+
+    private static List<String> toStringList(Object raw) {
+        if (!(raw instanceof List<?> list)) return List.of();
+        List<String> out = new ArrayList<>(list.size());
+        for (Object o : list) if (o != null) out.add(o.toString());
+        return out;
     }
 
     private Map<String, String> toHeaderMap(Object raw) {

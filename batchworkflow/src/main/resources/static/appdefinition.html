@@ -38,7 +38,10 @@
                 <select id="appMode">
                     <option value="HTTP">HTTP</option>
                     <option value="SOLACE">SOLACE</option>
+                    <option value="WS">WS (WebSocket)</option>
                 </select>
+                <span class="hint">WS: each environment's URL is the <code>ws://</code> / <code>wss://</code> address, and
+                    use cases are subscriptions a page connects to.</span>
             </div>
             <div class="form-group">
                 <label for="appStatus">App Status</label>
@@ -55,6 +58,7 @@
                     <option value="KERBEROS">Kerberos</option>
                     <option value="USERNAMEPASSWORD">UserNamePassword</option>
                     <option value="DIGEST">Digest</option>
+                    <option value="NTLM">NTLM</option>
                 </select>
                 <span class="hint" id="authHint"></span>
             </div>
@@ -89,7 +93,8 @@
         JWT:              'Environment supplies jwtUrl + username/password. Token also available as $jwtToken.',
         KERBEROS:         'Environment supplies the principal (username) and keytab path (password).',
         USERNAMEPASSWORD: 'Environment supplies username + password, sent as HTTP Basic.',
-        DIGEST:           'Environment supplies username, password and the token URL (jwtUrl).'
+        DIGEST:           'Environment supplies username, password and the token URL (jwtUrl).',
+        NTLM:             'Environment supplies username (DOMAIN\\user) + password for the NTLM handshake. Local runs only, not via an agent.'
     };
 
     let apps = [];

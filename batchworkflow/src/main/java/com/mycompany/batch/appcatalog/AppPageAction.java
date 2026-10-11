@@ -133,6 +133,39 @@ public class AppPageAction {
      */
     public static final String DATASET = "DATASET";
 
+    /**
+     * {@link #actionKind}: drive a WebSocket connection to a use case of a {@code WS} app — open
+     * it, send it a message, pause it, resume it, close it or reopen it, as {@link #wsOperation}
+     * says.
+     *
+     * <p>Every operation names the same instance, and that is what ties them together: the instance
+     * id is the connection's key on the page, so a Connect button and the Send, Pause and Stop
+     * buttons beside it all act on one socket. The connection itself is held by this server — see
+     * {@code AppWebSocketRelayHandler} — so the use case's URL, headers and credentials are
+     * resolved exactly as an HTTP call's would be, and the browser only ever sees the messages.
+     *
+     * <p>Only {@link #WS_CONNECT} binds anything. Its messages stream into a placed grid, newest
+     * at the top, up to {@link #wsMaxRows}; {@link #arrayPath} picks the rows out of a message that
+     * carries several, and {@link #excludeFilters} drop the messages nobody wants to see.
+     */
+    public static final String WEBSOCKET = "WEBSOCKET";
+
+    /** {@link #wsOperation}: open the connection and stream its messages into the target grid. */
+    public static final String WS_CONNECT = "CONNECT";
+    /** {@link #wsOperation}: send {@link #wsMessage} over the open connection. */
+    public static final String WS_SEND = "SEND";
+    /** {@link #wsOperation}: keep the connection open but stop showing what arrives on it. */
+    public static final String WS_PAUSE = "PAUSE";
+    /** {@link #wsOperation}: show what arrives again after a pause. */
+    public static final String WS_RESUME = "RESUME";
+    /** {@link #wsOperation}: close the connection. */
+    public static final String WS_STOP = "STOP";
+    /** {@link #wsOperation}: close the connection and open it again with what Connect last sent. */
+    public static final String WS_RESTART = "RESTART";
+
+    /** Every {@link #wsOperation} there is, in the order the designer offers them. */
+    public static final List<String> WS_OPERATIONS = List.of(WS_CONNECT, WS_SEND, WS_PAUSE, WS_RESUME, WS_STOP, WS_RESTART);
+
     /** {@link #compareType}: each response is read as JSON — the default. */
     public static final String COMPARE_JSON = "JSON";
 
@@ -221,6 +254,13 @@ public class AppPageAction {
      * the instance's configured environment untouched.
      */
     private String environmentOverride;
+    /**
+     * Overrides the use case's own HTTP timeout for this action's calls, in milliseconds — the same
+     * {@code ${field}} template grammar as {@link #environmentOverride}, so it can be a literal
+     * ({@code 60000}) or a page variable ({@code ${TIMEOUT_MS}}). Blank, or anything that does not
+     * resolve to a positive whole number, keeps the use case's configured timeout.
+     */
+    private String timeoutOverride;
     private Map<String, String> inputs = new LinkedHashMap<>();
     private String targetControlId;
     /**
@@ -375,6 +415,19 @@ public class AppPageAction {
     /** {@link #COMPARE} only: the environment held against the baseline. See {@link #compareEnvironmentA}. */
     private String compareEnvironmentB;
 
+    /**
+     * {@link #COMPARE} only: whether the candidate is sent inputs of its own. Off — the default, and
+     * every page saved before there was a choice — sends both sides exactly {@link #inputs}.
+     */
+    private boolean compareSeparateInputs;
+
+    /**
+     * {@link #COMPARE} with {@link #compareSeparateInputs} only: the candidate's inputs, laid over
+     * {@link #inputs} for that call alone — so only the names that differ need writing. Same
+     * {@code ${field}} template grammar as {@link #inputs}.
+     */
+    private Map<String, String> compareInputsB = new LinkedHashMap<>();
+
     /** {@link #COMPARE} only: {@link #COMPARE_JSON} or {@link #COMPARE_XML}; anything else reads as JSON. */
     private String compareType = COMPARE_JSON;
 
@@ -409,6 +462,12 @@ public class AppPageAction {
 
     public String getCompareEnvironmentB()                              { return compareEnvironmentB; }
     public void   setCompareEnvironmentB(String compareEnvironmentB)    { this.compareEnvironmentB = compareEnvironmentB; }
+
+    public boolean isCompareSeparateInputs()                            { return compareSeparateInputs; }
+    public void    setCompareSeparateInputs(boolean compareSeparateInputs) { this.compareSeparateInputs = compareSeparateInputs; }
+
+    public Map<String, String> getCompareInputsB()                      { return compareInputsB; }
+    public void setCompareInputsB(Map<String, String> compareInputsB)   { this.compareInputsB = compareInputsB != null ? compareInputsB : new LinkedHashMap<>(); }
 
     public String getCompareType()                    { return compareType; }
     public void   setCompareType(String compareType)  { this.compareType = COMPARE_XML.equalsIgnoreCase(compareType) ? COMPARE_XML : COMPARE_JSON; }
@@ -459,14 +518,67 @@ public class AppPageAction {
         this.actionKind = PERFORMANCE.equalsIgnoreCase(actionKind) ? PERFORMANCE
                 : COMPARE.equalsIgnoreCase(actionKind) ? COMPARE
                 : DATASET.equalsIgnoreCase(actionKind) ? DATASET
+                : WEBSOCKET.equalsIgnoreCase(actionKind) ? WEBSOCKET
                 : USECASE;
     }
+
+    /**
+     * {@link #WEBSOCKET} only — which of {@link #WS_OPERATIONS} this action performs on the
+     * instance's connection. Anything unrecognised reads as {@link #WS_CONNECT}.
+     */
+    private String wsOperation = WS_CONNECT;
+
+    /**
+     * {@link #WEBSOCKET} with {@link #WS_SEND} only — the text sent, in the same {@code ${field}}
+     * template grammar as {@link #inputs}, so a box on the page can supply what goes out. Blank
+     * sends the use case's own body, which is the message a page most often wants to send again.
+     */
+    private String wsMessage;
+
+    /**
+     * {@link #WEBSOCKET} with {@link #WS_CONNECT} only — messages to leave out of the grid. The
+     * reverse of {@link #bindFilters}: a row matching <em>any</em> of these is dropped. The same
+     * tests in the same grammar, with the column read as a dotted path into the message, so
+     * {@code payload.type EQUALS heartbeat} drops the heartbeats.
+     */
+    private List<AppPageRowFilter> excludeFilters = new ArrayList<>();
+
+    /**
+     * {@link #WEBSOCKET} with {@link #WS_CONNECT} only — how many rows the grid keeps; the oldest
+     * fall off the bottom as new ones arrive. A socket never stops sending, and a grid that kept
+     * everything would hold the browser's whole memory by the end of the afternoon.
+     */
+    private int wsMaxRows = DEFAULT_WS_MAX_ROWS;
+
+    /** {@link #wsMaxRows} for an action that does not set one. */
+    public static final int DEFAULT_WS_MAX_ROWS = 1000;
+
+    public String getWsOperation()                     { return wsOperation; }
+    public void   setWsOperation(String wsOperation)   {
+        String op = wsOperation == null ? "" : wsOperation.trim().toUpperCase();
+        this.wsOperation = WS_OPERATIONS.contains(op) ? op : WS_CONNECT;
+    }
+
+    public String getWsMessage()                   { return wsMessage; }
+    public void   setWsMessage(String wsMessage)   { this.wsMessage = wsMessage; }
+
+    public List<AppPageRowFilter> getExcludeFilters()                    { return excludeFilters; }
+    public void setExcludeFilters(List<AppPageRowFilter> excludeFilters) { this.excludeFilters = excludeFilters != null ? excludeFilters : new ArrayList<>(); }
+
+    public int  getWsMaxRows()              { return wsMaxRows; }
+    public void setWsMaxRows(int wsMaxRows) { this.wsMaxRows = wsMaxRows > 0 ? wsMaxRows : DEFAULT_WS_MAX_ROWS; }
+
+    /** Whether this action drives a WebSocket connection rather than making one call. */
+    public boolean isWebSocket() { return WEBSOCKET.equals(actionKind); }
 
     public String getAppUseCaseInstanceId()                              { return appUseCaseInstanceId; }
     public void   setAppUseCaseInstanceId(String appUseCaseInstanceId)   { this.appUseCaseInstanceId = appUseCaseInstanceId; }
 
     public String getEnvironmentOverride()                                  { return environmentOverride; }
     public void   setEnvironmentOverride(String environmentOverride)        { this.environmentOverride = environmentOverride; }
+
+    public String getTimeoutOverride()                                      { return timeoutOverride; }
+    public void   setTimeoutOverride(String timeoutOverride)                { this.timeoutOverride = timeoutOverride; }
 
     public Map<String, String> getInputs()                        { return inputs; }
     public void setInputs(Map<String, String> inputs)             { this.inputs = inputs != null ? inputs : new LinkedHashMap<>(); }

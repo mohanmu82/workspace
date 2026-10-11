@@ -90,6 +90,31 @@
         }
         .ga-zone .empty { font-size: 11px; color: #97a0af; font-style: italic; }
 
+        /* ── Filters ─────────────────────────────────────────────────────────
+           Which rows go in at all, decided before anything is grouped. A column dropped here is
+           copied rather than moved — filtering on status while also breaking down by it is the
+           usual thing to want — and its chip opens the column's values to tick. */
+        .ga-zone.ga-filter-zone { min-height: 0; flex: none; }
+        .ga-chip.flt { background: #fffae6; border-color: #ffe380; color: #7a5300; cursor: pointer; }
+        .ga-chip.flt.on { background: #ffab00; border-color: #ff991f; color: #172b4d; }
+        .ga-chip.flt .cnt { font-size: 10px; opacity: .8; }
+        .ga-pop {
+            position: fixed; z-index: 40; width: 300px; max-height: 420px; display: flex; flex-direction: column;
+            background: #fff; border: 1px solid #c1c7d0; border-radius: 5px; box-shadow: 0 6px 18px rgba(9, 30, 66, .22);
+            font-size: 12px;
+        }
+        .ga-pop .hd { padding: 8px 10px 6px; border-bottom: 1px solid #ebecf0; }
+        .ga-pop .hd b { display: block; margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .ga-pop .hd input { width: 100%; padding: 4px 7px; font-size: 12px; }
+        .ga-pop .bar { display: flex; gap: 5px; margin-top: 6px; flex-wrap: wrap; }
+        .ga-pop .list { overflow: auto; flex: 1; padding: 4px 0; }
+        .ga-pop .list label { display: flex; align-items: center; gap: 6px; padding: 2px 10px; cursor: pointer; }
+        .ga-pop .list label:hover { background: #f4f5f7; }
+        .ga-pop .list input { width: auto; margin: 0; padding: 0; flex: none; }
+        .ga-pop .list .v { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .ga-pop .list .n { color: #97a0af; font-variant-numeric: tabular-nums; }
+        .ga-pop .ft { padding: 6px 10px; border-top: 1px solid #ebecf0; color: #5e6c84; font-size: 11px; }
+
         .ga-opts { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: #5e6c84; flex: none; align-items: center; }
         .ga-opts label { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
         .ga-opts input[type=checkbox] { width: auto; padding: 0; margin: 0; }
@@ -186,6 +211,10 @@
     </aside>
 
     <main class="ga-main">
+        <div class="ga-zone ga-filter-zone" data-zone="filters">
+            <h3>Filters <span class="what">&mdash; only rows matching every filter go in; click a filter to pick its values</span></h3>
+            <div class="ga-chips" id="gaFilterZone"></div>
+        </div>
         <div class="ga-zones">
             <div class="ga-zone" data-zone="rows">
                 <h3>Rows <span class="what">&mdash; one line per value</span></h3>
@@ -340,25 +369,28 @@ function render() {
 
     model = computePivot();
     const { rowFields, colFields, measures, rowKeys, colKeys } = model;
+    const rowsIn = filteredRows().length;
+    const rowsInText = rowsIn.toLocaleString() + (cfg.filters.length ? ' of ' + SOURCE.rows.length.toLocaleString() : '') + ' rows';
 
     if (!hasChoice()) {
         // Nothing has been chosen yet. Say what to do rather than showing a one-cell table whose
         // only number is the row count already printed in the header.
         out.innerHTML = '<div class="ga-hint">'
-            + 'Drag a column into <b>Rows</b> to break the ' + SOURCE.rows.length.toLocaleString()
-            + ' rows down by it, and another into <b>Columns</b> to pivot them across.<br>'
+            + 'Drag a column into <b>Rows</b> to break the ' + rowsInText
+            + ' down by it, and another into <b>Columns</b> to pivot them across.<br>'
             + 'Then put the column you want measured into <b>Values</b> and pick '
             + '<b>Sum</b>, <b>Count</b>, <b>Unique</b>, <b>Average</b>, <b>Min</b> or <b>Max</b> on it.<br>'
-            + 'Each column also has <b>R</b>, <b>C</b> and <b>&Sigma;</b> buttons if you would rather not drag.'
+            + 'Drop a column into <b>Filters</b> to keep only some of its values.<br>'
+            + 'Each column also has <b>R</b>, <b>C</b>, <b>&Sigma;</b> and <b>F</b> buttons if you would rather not drag.'
             + '</div>';
-        $('gaShape').textContent = SOURCE.rows.length.toLocaleString() + ' rows';
+        $('gaShape').textContent = rowsInText;
         return;
     }
 
     $('gaShape').textContent = rowKeys.length.toLocaleString() + ' row group'
         + (rowKeys.length === 1 ? '' : 's') + ' × ' + colKeys.length.toLocaleString()
         + ' column group' + (colKeys.length === 1 ? '' : 's')
-        + ' · ' + SOURCE.rows.length.toLocaleString() + ' rows in';
+        + ' · ' + rowsInText + ' in';
 
     const renderer = RENDERERS[cfg.renderer] || RENDERERS.table;
     if (renderer.type) { renderChart(out, renderer); return; }
@@ -821,6 +853,8 @@ function renderFields() {
                 + '<button type="button" class="ga-mini" data-add="rows"   title="Add to Rows">R</button>'
                 + '<button type="button" class="ga-mini" data-add="cols"   title="Add to Columns">C</button>'
                 + '<button type="button" class="ga-mini" data-add="values" title="Add to Values">&Sigma;</button>'
+                + (field === ROW_COUNT ? ''
+                    : '<button type="button" class="ga-mini" data-add="filters" title="Filter by this column">F</button>')
             + '</div>').join('')
         : '<div class="empty">No column matches.</div>';
 
@@ -837,6 +871,7 @@ function renderFields() {
 }
 
 function renderZones() {
+    renderFilterZone();
     renderKeyZone('gaRowZone', 'rows');
     renderKeyZone('gaColZone', 'cols');
     renderValueZone();
@@ -907,6 +942,7 @@ function wireChips(host, zone) {
 
 /** What a field becomes in a zone: a grouping key, or a measure with the aggregation that suits it. */
 function addField(zone, field, at) {
+    if (zone === 'filters') { addFilter(field, true); return; }
     if (zone === 'values') {
         const agg = field === ROW_COUNT ? 'count' : (numericFields.has(field) ? 'sum' : 'count');
         insert(cfg.values, { field: field, agg: agg }, at);
@@ -942,6 +978,10 @@ function drop(e, zone, at) {
     const moved = source[payload.index];
     if (moved === undefined) return;
 
+    // Into Filters a column is copied, not moved: filtering on a column and grouping by it at once
+    // is the ordinary case, not a clash.
+    if (zone === 'filters') { addFilter(typeof moved === 'string' ? moved : moved.field, true); return; }
+
     if (payload.from === zone) {
         source.splice(payload.index, 1);
         insert(source, moved, at !== undefined && at > payload.index ? at - 1 : at);
@@ -959,6 +999,171 @@ function refresh() {
     render();
 }
 
+// ── Filters ──────────────────────────────────────────────────────────────────
+// One entry per column in the Filters zone, holding the values ticked — null while every value is,
+// so a filter just dropped in narrows nothing until the operator unticks something. cfg.filters is
+// worked out from these after every change, in the saved form GridPivot.compute reads, so what an
+// action added to the page filters on is exactly what was filtered here.
+
+/** [{ field, kept: Set | null }] in the order they were added. */
+let filterState = [];
+
+/** Each column's distinct values with how many rows hold each, worked out once per column. */
+const distinctCache = new Map();
+
+function distinctValues(field) {
+    if (distinctCache.has(field)) return distinctCache.get(field);
+    const counts = new Map();
+    SOURCE.rows.forEach(row => {
+        const text = cellText(row, field);
+        counts.set(text, (counts.get(text) || 0) + 1);
+    });
+    const values = [...counts.keys()].sort(compareText).map(v => ({ value: v, count: counts.get(v) }));
+    distinctCache.set(field, values);
+    return values;
+}
+
+function syncFilters() {
+    cfg.filters = filterState
+        .map(f => f.kept ? GridPivot.filterFor(f.field, distinctValues(f.field).map(d => d.value), f.kept) : null)
+        .filter(Boolean);
+}
+
+/** The rows the filters let through — what every count on screen is of. */
+function filteredRows() {
+    return cfg.filters.length ? GridPivot.applyFilters(SOURCE.rows, cfg.filters) : SOURCE.rows;
+}
+
+function addFilter(field, open) {
+    if (field === ROW_COUNT) return;
+    let at = filterState.findIndex(f => f.field === field);
+    if (at < 0) { filterState.push({ field: field, kept: null }); at = filterState.length - 1; }
+    renderFilterZone();
+    if (open) openFilterPop(at);
+}
+
+function renderFilterZone() {
+    const host = $('gaFilterZone');
+    host.innerHTML = filterState.length
+        ? filterState.map((f, i) => {
+            const total = distinctValues(f.field).length;
+            const kept = f.kept ? f.kept.size : total;
+            return '<span class="ga-chip flt' + (f.kept ? ' on' : '') + '" data-index="' + i + '" title="Pick which values of '
+                + esc(f.field) + ' to keep">' + esc(f.field)
+                + ' <span class="cnt">' + (f.kept ? kept.toLocaleString() + ' of ' + total.toLocaleString() : 'all') + '</span>'
+                + '<button type="button" title="Remove filter">&times;</button></span>';
+        }).join('')
+        : '<span class="empty">Drop a column here, or use its F button, to keep only some of its values</span>';
+
+    host.querySelectorAll('.ga-chip').forEach(chip => {
+        const i = +chip.dataset.index;
+        chip.addEventListener('click', e => {
+            if (e.target.tagName === 'BUTTON') return;
+            openFilterPop(i, chip);
+        });
+        chip.querySelector('button').addEventListener('click', () => {
+            closeFilterPop();
+            filterState.splice(i, 1);
+            syncFilters();
+            renderFilterZone();
+            render();
+        });
+    });
+}
+
+/** Past this many values the list stops drawing them all; the search narrows it instead. */
+const MAX_LISTED_VALUES = 1000;
+
+let filterPop = null;
+
+function closeFilterPop() {
+    if (filterPop) { filterPop.remove(); filterPop = null; }
+}
+
+function openFilterPop(index, anchor) {
+    closeFilterPop();
+    const f = filterState[index];
+    if (!f) return;
+    anchor = anchor || $('gaFilterZone').querySelector('.ga-chip[data-index="' + index + '"]');
+    const all = distinctValues(f.field);
+
+    const pop = document.createElement('div');
+    pop.className = 'ga-pop';
+    pop.innerHTML = '<div class="hd"><b title="' + esc(f.field) + '">' + esc(f.field) + '</b>'
+        + '<input type="text" placeholder="Search ' + all.length.toLocaleString() + ' values">'
+        + '<div class="bar">'
+            + '<button type="button" class="ga-mini" data-do="all">All</button>'
+            + '<button type="button" class="ga-mini" data-do="none">None</button>'
+            + '<button type="button" class="ga-mini" data-do="only" title="Keep only the values matching the search">Only matching</button>'
+            + '<button type="button" class="ga-mini" data-do="drop" title="Untick the values matching the search">Drop matching</button>'
+        + '</div></div>'
+        + '<div class="list"></div><div class="ft"></div>';
+    document.body.appendChild(pop);
+    filterPop = pop;
+
+    const search = pop.querySelector('input');
+    const list = pop.querySelector('.list');
+    const foot = pop.querySelector('.ft');
+    const isKept = value => !f.kept || f.kept.has(value);
+    const matching = () => {
+        const q = search.value.trim().toLowerCase();
+        return q ? all.filter(d => keyLabel(d.value).toLowerCase().includes(q)) : all;
+    };
+
+    const apply = () => {
+        // Every value ticked is the same as no filter at all, and is kept that way so the chip reads "all".
+        if (f.kept && f.kept.size === all.length) f.kept = null;
+        syncFilters();
+        renderFilterZone();
+        render();
+        drawList();
+    };
+
+    function drawList() {
+        const shown = matching();
+        list.innerHTML = shown.slice(0, MAX_LISTED_VALUES).map((d, i) =>
+            '<label><input type="checkbox" data-i="' + i + '"' + (isKept(d.value) ? ' checked' : '') + '>'
+            + '<span class="v" title="' + esc(keyLabel(d.value)) + '">' + esc(keyLabel(d.value)) + '</span>'
+            + '<span class="n">' + d.count.toLocaleString() + '</span></label>').join('')
+            || '<div class="ga-hint" style="padding:8px 10px">No value matches.</div>';
+        list.querySelectorAll('input').forEach(box => box.addEventListener('change', () => {
+            const value = shown[+box.dataset.i].value;
+            if (!f.kept) f.kept = new Set(all.map(d => d.value));
+            if (box.checked) f.kept.add(value); else f.kept.delete(value);
+            apply();
+        }));
+        const keptCount = f.kept ? f.kept.size : all.length;
+        foot.textContent = keptCount.toLocaleString() + ' of ' + all.length.toLocaleString() + ' values kept · '
+            + filteredRows().length.toLocaleString() + ' of ' + SOURCE.rows.length.toLocaleString() + ' rows pass every filter'
+            + (shown.length > MAX_LISTED_VALUES ? ' · listing the first ' + MAX_LISTED_VALUES.toLocaleString() + ' — search to narrow' : '');
+    }
+
+    search.addEventListener('input', drawList);
+    pop.querySelectorAll('[data-do]').forEach(btn => btn.addEventListener('click', () => {
+        const hits = matching().map(d => d.value);
+        if (btn.dataset.do === 'all') f.kept = null;
+        else if (btn.dataset.do === 'none') f.kept = new Set();
+        else if (btn.dataset.do === 'only') f.kept = new Set(hits);
+        else {
+            if (!f.kept) f.kept = new Set(all.map(d => d.value));
+            hits.forEach(v => f.kept.delete(v));
+        }
+        apply();
+    }));
+
+    // Under the chip, kept on screen.
+    const box = anchor ? anchor.getBoundingClientRect() : { left: 20, bottom: 80 };
+    pop.style.left = Math.max(8, Math.min(box.left, window.innerWidth - 310)) + 'px';
+    pop.style.top = Math.min(box.bottom + 4, window.innerHeight - 200) + 'px';
+    drawList();
+    search.focus();
+}
+
+document.addEventListener('mousedown', e => {
+    if (filterPop && !filterPop.contains(e.target) && !e.target.closest('.ga-chip.flt')) closeFilterPop();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeFilterPop(); });
+
 // ── Taking the pivot elsewhere ───────────────────────────────────────────────
 // All three exports work off one flattening of the table on screen, so the CSV, the HTML page and
 // the saved dataset are the same numbers laid out the same way — and a column header carries its
@@ -973,7 +1178,8 @@ function pivotTitle() {
     const what = cfg.values.map(measureLabel).join(', ') || 'Row count';
     const by = [cfg.rows.length ? 'by ' + cfg.rows.join(', ') : '', cfg.cols.length ? 'across ' + cfg.cols.join(', ') : '']
         .filter(Boolean).join(' ');
-    return SOURCE.title + ' — ' + what + (by ? ' ' + by : '');
+    const where = cfg.filters.length ? ' where ' + cfg.filters.map(GridPivot.describeFilter).join(' and ') : '';
+    return SOURCE.title + ' — ' + what + (by ? ' ' + by : '') + where;
 }
 
 function requireMatrix() {
@@ -1026,7 +1232,8 @@ function viewAsHtml() {
         + 'tr:last-child td{font-weight:600;background:#f4f5f7}'
         + '</style></head><body><h1>' + esc(title) + '</h1>'
         + '<p>' + matrix.body.length + ' row' + (matrix.body.length === 1 ? '' : 's')
-        + ' over ' + SOURCE.rows.length.toLocaleString() + ' source rows · '
+        + ' over ' + filteredRows().length.toLocaleString()
+        + (cfg.filters.length ? ' filtered (of ' + SOURCE.rows.length.toLocaleString() + ')' : '') + ' source rows · '
         + esc(new Date().toLocaleString()) + '</p>'
         + '<table><thead><tr>' + matrix.header.map(cell => '<th>' + esc(cell) + '</th>').join('') + '</tr></thead>'
         + '<tbody>' + matrix.body.map(line => '<tr>' + line.map(cell => '<td>' + esc(cell) + '</td>').join('') + '</tr>').join('')
@@ -1055,8 +1262,8 @@ function openSaveDialog() {
         + '<input type="text" id="gaDsName" placeholder="e.g. emea-settlement-breaks" autocomplete="off">'
         + '<div class="choice">'
             + '<label><input type="radio" name="gaWhat" value="source" checked>'
-                + '<span>The grid&rsquo;s rows<span class="sub">'
-                + SOURCE.rows.length.toLocaleString() + ' rows × ' + SOURCE.columns.length
+                + '<span>The grid&rsquo;s rows' + (cfg.filters.length ? ', filtered' : '') + '<span class="sub">'
+                + filteredRows().length.toLocaleString() + ' rows × ' + SOURCE.columns.length
                 + ' columns — pivot them again later, any way you like.</span></span></label>'
             + '<label><input type="radio" name="gaWhat" value="pivot">'
                 + '<span>This analysis<span class="sub">'
@@ -1107,7 +1314,7 @@ async function saveDataset(back, close) {
         body = matrix.body;
     } else {
         header = SOURCE.columns;
-        body = SOURCE.rows.map(row => SOURCE.columns.map(column => cellText(row, column)));
+        body = filteredRows().map(row => SOURCE.columns.map(column => cellText(row, column)));
     }
     if (!header.length) { say('There are no columns to save.', 'err'); return; }
 
@@ -1281,6 +1488,9 @@ $('gaClear').addEventListener('click', () => {
     cfg.rows = [];
     cfg.cols = [];
     cfg.values = [{ field: ROW_COUNT, agg: 'count' }];
+    closeFilterPop();
+    filterState = [];
+    syncFilters();
     refresh();
 });
 $('gaHtml').addEventListener('click', viewAsHtml);
@@ -1323,6 +1533,9 @@ function receive(payload) {
         rows: payload.rows || []
     };
     numericFields = detectNumeric(SOURCE.rows, SOURCE.columns);
+    distinctCache.clear();
+    filterState = [];
+    syncFilters();
     PAGE = payload.page || null;
     $('gaAddAction').style.display = PAGE ? '' : 'none';
 

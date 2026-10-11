@@ -138,6 +138,24 @@ class AppPageCompareActionTest {
                 .hasMessageContaining("compares 'UAT' against itself");
     }
 
+    /** One environment twice is a fair comparison once the two calls are sent different inputs. */
+    @Test
+    void oneEnvironmentNamedTwice_isAllowedWithSeparateInputs() {
+        AppPageAction action = compareAction("UAT", "UAT", "g");
+        action.setCompareSeparateInputs(true);
+        action.setCompareInputsB(java.util.Map.of("accountId", "${accountB}"));
+        assertThatCode(() -> AppCatalogService.validateCompareAction(page(), action, WHERE))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void candidateInputs_defaultToEmptyAndOff() {
+        AppPageAction action = compareAction("DEV", "UAT", "g");
+        assertThat(action.isCompareSeparateInputs()).isFalse();
+        action.setCompareInputsB(null);
+        assertThat(action.getCompareInputsB()).isEmpty();
+    }
+
     /**
      * Two templates spelled the same are not refused. What they come to is a question about the
      * operator's picks at run time, and the running page answers it there; refusing the page would
