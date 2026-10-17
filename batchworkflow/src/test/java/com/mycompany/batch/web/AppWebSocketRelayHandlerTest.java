@@ -177,6 +177,22 @@ class AppWebSocketRelayHandlerTest {
     }
 
     @Test
+    void connections_areListed_andAdminDisconnectTellsThePage() throws Exception {
+        command("{\"op\":\"connect\",\"key\":\"inst-1\",\"instanceId\":\"inst-1\"}");
+        await(message("subscribe"));
+        Map<String, Object> c = relay.connections().get(0);
+        assertThat(c.get("type")).isEqualTo("ws");
+        assertThat(c.get("state")).isEqualTo("OPEN");
+        assertThat(c.get("openedAt")).isNotNull();
+        assertThat(c.get("lastReceivedAt")).isNotNull();
+
+        relay.control(String.valueOf(c.get("id")), "disconnect");
+        assertThat(String.valueOf(await(status("CLOSED")).get("message"))).contains("disconnected by admin");
+        assertThat(relay.connections().get(0).get("state")).isEqualTo("CLOSED");
+        assertThat(relay.connections().get(0).get("closedAt")).isNotNull();
+    }
+
+    @Test
     void restart_beforeAnyConnect_isAnError() throws Exception {
         command("{\"op\":\"restart\",\"key\":\"inst-1\"}");
         assertThat(String.valueOf(await(status("ERROR")).get("message"))).contains("Nothing to restart");

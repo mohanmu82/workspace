@@ -24,12 +24,16 @@ import java.util.List;
  * <p>{@code source=onedrive} — {@code location} is a work OneDrive path to an .xlsx/.xls (or
  * .csv), optionally prefixed with the owner's UPN ({@code jane@mycompany.com:/Reports/x.xlsx});
  * {@code arrayElement} names the worksheet (default: first sheet). The first row is the header.
+ * <p>{@code source=dynamic} — no location; rows are upserted at runtime (a page's WebSocket feed,
+ * or the Dynamic Datasets page) by {@link #keyField}, and kept in {@code ${DATADIR}/dynamicdatasets/<name>.json}.
  */
 public class StaticDatasetDef {
 
     private String       name;
-    /** {@code file}, {@code http}, {@code paste}, {@code json} or {@code onedrive}. */
+    /** {@code file}, {@code http}, {@code paste}, {@code json}, {@code onedrive} or {@code dynamic}. */
     private String       source;
+    /** source=dynamic only — the attribute that identifies a row; an upsert with a key already held replaces that row. */
+    private String       keyField;
     /** File path (source=file), URL (source=http), raw pasted TSV text (source=paste), raw pasted JSON (source=json), or OneDrive path (source=onedrive). */
     private String       location;
     /** JSONPath selecting the row array (source=http/json), or worksheet name (source=onedrive). Ignored otherwise. */
@@ -50,6 +54,9 @@ public class StaticDatasetDef {
 
     public String getSource()                     { return source; }
     public void   setSource(String source)        { this.source = source; }
+
+    public String getKeyField()                   { return keyField; }
+    public void   setKeyField(String keyField)    { this.keyField = keyField == null || keyField.isBlank() ? null : keyField.trim(); }
 
     public String getLocation()                   { return location; }
     public void   setLocation(String location)     { this.location = location; }

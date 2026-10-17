@@ -164,6 +164,51 @@ public class StaticDatasetController {
     }
 
     // -------------------------------------------------------------------------
+    // Dynamic dataset rows. The key goes in a query parameter, since a key may hold a slash.
+    // -------------------------------------------------------------------------
+
+    @PostMapping(value = "/{name}/rows", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<?> upsertRows(@PathVariable String name, @RequestBody List<Map<String, Object>> rows) {
+        try {
+            StaticDatasetService.UpsertResult r = service.upsertRows(name, rows);
+            return ResponseEntity.ok(Map.of("upserted", r.upserted(), "skipped", r.skipped()));
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return badRequest(e.getMessage());
+        }
+    }
+
+    @PutMapping(value = "/{name}/row", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<?> replaceRow(@PathVariable String name, @RequestParam String key, @RequestBody Map<String, Object> row) {
+        try {
+            service.replaceRow(name, key, row);
+            return ResponseEntity.ok(Map.of("status", "saved"));
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return badRequest(e.getMessage());
+        }
+    }
+
+    @DeleteMapping("/{name}/row")
+    public ResponseEntity<?> deleteRow(@PathVariable String name, @RequestParam String key) {
+        try {
+            return service.deleteRow(name, key)
+                    ? ResponseEntity.ok(Map.of("status", "deleted"))
+                    : ResponseEntity.status(404).body(Map.of("error", "No row with key " + key));
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return badRequest(e.getMessage());
+        }
+    }
+
+    @DeleteMapping("/{name}/rows")
+    public ResponseEntity<?> clearRows(@PathVariable String name) {
+        try {
+            service.clearRows(name);
+            return ResponseEntity.ok(Map.of("status", "cleared"));
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return badRequest(e.getMessage());
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Internal helpers
     // -------------------------------------------------------------------------
 
@@ -197,6 +242,7 @@ public class StaticDatasetController {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("name", def.getName());
         m.put("source", def.getSource());
+        m.put("keyField", def.getKeyField());
         m.put("location", def.getLocation());
         m.put("arrayElement", def.getArrayElement());
         m.put("jsonata", def.getJsonata());

@@ -162,9 +162,11 @@ public class AppPageAction {
     public static final String WS_STOP = "STOP";
     /** {@link #wsOperation}: close the connection and open it again with what Connect last sent. */
     public static final String WS_RESTART = "RESTART";
+    /** {@link #wsOperation}: empty the grid Connect streams into; the connection stays as it is. */
+    public static final String WS_CLEAR = "CLEAR";
 
     /** Every {@link #wsOperation} there is, in the order the designer offers them. */
-    public static final List<String> WS_OPERATIONS = List.of(WS_CONNECT, WS_SEND, WS_PAUSE, WS_RESUME, WS_STOP, WS_RESTART);
+    public static final List<String> WS_OPERATIONS = List.of(WS_CONNECT, WS_SEND, WS_PAUSE, WS_RESUME, WS_STOP, WS_RESTART, WS_CLEAR);
 
     /** {@link #compareType}: each response is read as JSON — the default. */
     public static final String COMPARE_JSON = "JSON";
@@ -552,6 +554,26 @@ public class AppPageAction {
 
     /** {@link #wsMaxRows} for an action that does not set one. */
     public static final int DEFAULT_WS_MAX_ROWS = 1000;
+
+    /**
+     * {@link #WEBSOCKET} with {@link #WS_CONNECT} only — a field of each row (a dotted path is fine)
+     * that identifies it. A message whose key is already in the grid replaces that row where it
+     * stands instead of adding another; blank adds every message as a new row.
+     */
+    private String wsUniqueKey;
+
+    /**
+     * {@link #WEBSOCKET} with {@link #WS_CONNECT} only — a dynamic dataset (a static dataset whose
+     * source is {@code dynamic}) every row put in the grid is also upserted into, by that dataset's
+     * own key field. Blank saves nothing.
+     */
+    private String wsDataset;
+
+    public String getWsUniqueKey()                   { return wsUniqueKey; }
+    public void   setWsUniqueKey(String wsUniqueKey) { this.wsUniqueKey = wsUniqueKey == null || wsUniqueKey.isBlank() ? null : wsUniqueKey.trim(); }
+
+    public String getWsDataset()                 { return wsDataset; }
+    public void   setWsDataset(String wsDataset) { this.wsDataset = wsDataset == null || wsDataset.isBlank() ? null : wsDataset.trim(); }
 
     public String getWsOperation()                     { return wsOperation; }
     public void   setWsOperation(String wsOperation)   {

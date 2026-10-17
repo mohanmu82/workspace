@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WebSocket Connections</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #f4f6f9; color: #222; padding: 28px 28px 48px; }
+  header { margin-bottom: 22px; }
+  header h1 { font-size: 1.3rem; font-weight: 700; }
+  header p  { font-size: 0.82rem; color: #666; margin-top: 4px; }
+  .back { font-size: 0.8rem; color: #0078d4; text-decoration: none; }
+  .card { background: #fff; border: 1px solid #dde1e7; border-radius: 8px; padding: 20px 22px; overflow-x: auto; }
+  .bar { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; font-size: 0.82rem; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.82rem; }
+  th, td { border-bottom: 1px solid #e3e6ea; padding: 6px 8px; text-align: left; white-space: nowrap; }
+  th { background: #f0f2f5; font-size: 0.72rem; text-transform: uppercase; color: #555; }
+  td.url { font-family: Consolas, monospace; white-space: normal; word-break: break-all; min-width: 220px; }
+  .state { font-weight: 700; font-size: 0.72rem; padding: 2px 8px; border-radius: 10px; }
+  .s-OPEN { background: #d3f3e6; color: #0a6b47; }
+  .s-PAUSED { background: #fde8cf; color: #8a4b0a; }
+  .s-CONNECTING { background: #cfe2ff; color: #084298; }
+  .s-CLOSED, .s-ERROR { background: #eceff3; color: #666; }
+  .s-ERROR { background: #fbdcdc; color: #92251f; }
+  button { padding: 4px 10px; font-size: 0.72rem; font-weight: 600; border: none; border-radius: 4px; cursor: pointer; background: #0078d4; color: #fff; }
+  button.secondary { background: #6c757d; }
+  button.danger { background: #b02a37; }
+  .muted { color: #888; }
+  .err { color: #842029; }
+</style>
+</head>
+<body>
+<header>
+  <a class="back" href="index.html">&#8592; Home</a>
+  <h1>WebSocket Connections</h1>
+  <p>Every outbound WebSocket this server holds for app pages (WEBSOCKET actions), with the most recent closed ones. Pausing keeps the socket open and skips what arrives; disconnecting closes it. The page the connection feeds is told either way.</p>
+</header>
+<div class="card">
+  <div class="bar">
+    <label><input type="checkbox" id="auto" checked> Refresh every 2s</label>
+    <label><input type="checkbox" id="closed" checked onchange="render()"> Show closed</label>
+    <button class="secondary" onclick="load()">Refresh</button>
+    <span id="msg" class="muted"></span>
+  </div>
+  <div id="table" class="muted">Loading…</div>
+</div>
+<script>
+  let rows = [];
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+  function ago(ms) {
+    if (ms == null) return '—';
+    const s = Math.max(0, Math.round(ms / 1000));
+    return s < 60 ? s + 's' : s < 3600 ? Math.floor(s / 60) + 'm ' + (s % 60) + 's'
+      : Math.floor(s / 3600) + 'h ' + Math.floor(s % 3600 / 60) + 'm';
+  }
+  const time = t => t ? new Date(t).toLocaleTimeString([], { hour12: false }) : '—';
+
+  async function load() {
+    try {
+      const res = await fetch('/wsconnections');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      rows = await res.json();
+      document.getElementById('msg').textContent = 'Updated ' + time(Date.now());
+      document.getElementById('msg').className = 'muted';
+    } catch (e) {
+      document.getElementById('msg').textContent = 'Failed to load: ' + e.message;
+      document.getElementById('msg').className = 'err';
+    }
+    render();
+  }
+
+  function render() {
+    const showClosed = document.getElementById('closed').checked;
+    const live = c => c.state !== 'CLOSED' && c.state !== 'ERROR';
+    const list = rows.filter(c => showClosed || live(c));
+    const now = Date.now();
+    document.getElementById('table').innerHTML = list.length
+      ? '<table><tr><th>Status</th><th>Type</th><th>URL</th><th>Instance</th><th>Open For</th><th>Last Data</th><th>Received</th><th>Skipped</th><th>Opened</th><th></th></tr>'
+        + list.map(c => '<tr><td><span class="state s-' + esc(c.state) + '">' + esc(c.state === 'CLOSED' ? 'DISCONNECTED' : c.state) + '</span></td>'
+          + '<td>' + esc(c.type) + '</td><td class="url">' + esc(c.url) + '</td><td>' + esc(c.key) + '</td>'
+          + '<td>' + (c.openedAt ? ago((c.closedAt || now) - c.openedAt) : '—') + '</td>'
+          + '<td>' + (c.lastReceivedAt ? time(c.lastReceivedAt) + ' <span class="muted">(' + ago(now - c.lastReceivedAt) + ' ago)</span>' : '—') + '</td>'
+          + '<td>' + Number(c.received).toLocaleString() + '</td><td>' + Number(c.skipped).toLocaleString() + '</td>'
+          + '<td>' + time(c.openedAt) + '</td><td>'
+          + (!live(c) ? '' : (c.state === 'PAUSED'
+              ? '<button onclick="control(\'' + esc(c.id) + '\',\'resume\')">Resume</button> '
+              : '<button class="secondary" onclick="control(\'' + esc(c.id) + '\',\'pause\')"' + (c.state === 'OPEN' ? '' : ' disabled') + '>Pause</button> ')
+            + '<button class="danger" onclick="control(\'' + esc(c.id) + '\',\'disconnect\')">Disconnect</button>')
+          + '</td></tr>').join('') + '</table>'
+      : 'No connections' + (showClosed ? '' : ' open') + '.';
+  }
+
+  async function control(id, op) {
+    if (op === 'disconnect' && !confirm('Disconnect this WebSocket? The page it feeds stops receiving.')) return;
+    const res = await fetch('/wsconnections/' + encodeURIComponent(id) + '/' + op, { method: 'POST' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      document.getElementById('msg').textContent = data.error || 'HTTP ' + res.status;
+      document.getElementById('msg').className = 'err';
+    }
+    load();
+  }
+
+  load();
+  setInterval(() => { if (document.getElementById('auto').checked) load(); }, 2000);
+</script>
+</body>
+</html>

@@ -378,7 +378,8 @@ const WS_OPERATIONS = [
     { op: 'PAUSE',   label: 'Pause (stay connected, skip messages)' },
     { op: 'RESUME',  label: 'Resume after a pause' },
     { op: 'STOP',    label: 'Stop (close the connection)' },
-    { op: 'RESTART', label: 'Restart (reconnect as last connected)' }
+    { op: 'RESTART', label: 'Restart (reconnect as last connected)' },
+    { op: 'CLEAR',   label: 'Clear the grid (stay connected)' }
 ];
 // Mirrors AppPageAction#DEFAULT_WS_MAX_ROWS.
 const DEFAULT_WS_MAX_ROWS = 1000;
@@ -1054,6 +1055,7 @@ function hydratePage() {
     page.controls = page.controls || [];
     page.actions = page.actions || [];
     page.onLoadActionIds = page.onLoadActionIds || [];
+    page.onCloseActionIds = page.onCloseActionIds || [];
     page.transforms = page.transforms || [];
     page.variables = page.variables || [];
     // Anything but an explicit false is on, so a page saved before the switch existed opens
@@ -1317,7 +1319,7 @@ function newPage() {
  * that has just been deleted — have nothing to ask about: there is no page left to lose.
  */
 function blankPage() {
-    page = { pageName: '', title: '', description: '', controls: [], actions: [], onLoadActionIds: [],
+    page = { pageName: '', title: '', description: '', controls: [], actions: [], onLoadActionIds: [], onCloseActionIds: [],
              transforms: [], variables: [], debug: true };
     savedPageName = null;
     selectedId = null;
@@ -7639,6 +7641,7 @@ function webSocketFields(a, i, targets, fns, set) {
             : op === 'PAUSE' ? 'Keeps the connection open but skips what arrives until resumed; the grid says how many were skipped.'
             : op === 'RESUME' ? 'Shows what arrives again after a pause.'
             : op === 'STOP' ? 'Closes the connection. The grid keeps what it already shows.'
+            : op === 'CLEAR' ? 'Empties the grid this instance' + Q + 's Connect streams into; the connection stays open and new messages keep arriving.'
             : 'Closes the connection and opens it again with the environment and inputs Connect last used.');
 
     if (op === 'SEND') {
@@ -7661,7 +7664,8 @@ function webSocketFields(a, i, targets, fns, set) {
             + '</select>',
             targets.length
                 ? 'Each message becomes a row, newest at the top, with a <code>receivedAt</code> column first. A JSON '
-                    + 'message' + Q + 's fields are its columns; anything else arrives as a <code>message</code> column.'
+                    + 'message' + Q + 's fields are its columns; anything else arrives as a <code>message</code> column. '
+                    + 'For a live chart, add a <b>Time Series</b> drawing from this grid with time column <code>receivedAt</code>.'
                 : 'Nowhere to put the messages yet — drag a <b>Grid</b> onto the layout and aim this at it.')
         + '<div class="form-row" style="margin-bottom:0">'
         + field('Rows In Each Message', '<input type="text" placeholder="blank — the message is the row" value="'
@@ -7670,6 +7674,19 @@ function webSocketFields(a, i, targets, fns, set) {
         + field('Keep At Most', '<input type="number" min="1" step="100" value="' + AC.attr(String(a.wsMaxRows || DEFAULT_WS_MAX_ROWS))
             + '" oninput="' + set('wsMaxRows', 'Number(this.value) || ' + DEFAULT_WS_MAX_ROWS) + '">',
             'Rows; the oldest fall off as new ones arrive.')
+        + '</div>'
+        + '<div class="form-row" style="margin-bottom:0">'
+        + field('Unique Key', '<input type="text" placeholder="blank — every message adds a row" value="'
+            + AC.attr(a.wsUniqueKey || '') + '" oninput="' + set('wsUniqueKey', 'this.value') + '">',
+            'A field of each row, e.g. <code>symbol</code>. A row whose key is already in the grid is updated where it '
+            + 'stands instead of added again.')
+        + field('Save To Dynamic Dataset', '<select onchange="' + set('wsDataset', 'this.value') + '">'
+            + '<option value="">— don' + Q + 't save —</option>'
+            + datasets.filter(d => d.source === 'dynamic').map(d => '<option value="' + AC.attr(d.name) + '"'
+                + (d.name === a.wsDataset ? ' selected' : '') + '>' + AC.esc(d.name) + ' (key: ' + AC.esc(d.keyField || '') + ')</option>').join('')
+            + '</select>',
+            'Every row put in the grid is also upserted into this dataset by its key field. '
+            + '<a href="dynamicdatasets.html" target="_blank">Dynamic Datasets</a>')
         + '</div>';
 
     const call = (listOp, at, name, value) => fns.rows + '(' + i + ', \'excludeFilters\', \'' + listOp + '\', ' + at
@@ -8469,24 +8486,34 @@ function pageProps() {
 
     html += transformProps();
 
-    html += '<div class="props-section"><div class="props-title"><span>On Page Load</span></div>'
-         + dependencyNote(actionsByIds(page.onLoadActionIds));
+    html += pageEventSection(actions, 'On Page Load', 'onLoadActionIds',
+        'Run once as soon as the page opens — all sent at once, bound in the order '
+        + 'attached, and only after every select has filled its own options, so an action may read what '
+        + 'they settled on.');
+    html += pageEventSection(actions, 'On Page Close', 'onCloseActionIds',
+        'Run as the page closes — going back to the designer, or the tab being closed or navigated away. '
+        + 'For tidying up, e.g. a WebSocket <b>Stop</b>. On a closing tab the browser may cut off calls still in flight.');
+    return html + '</div>';
+}
+
+/** The checklist of page actions run on a page event; {@code list} is the page's array of action ids. */
+function pageEventSection(actions, title, list, hint) {
+    let html = '<div class="props-section"><div class="props-title"><span>' + title + '</span></div>'
+         + dependencyNote(actionsByIds(page[list]));
     if (!actions.length) {
         html += '<div class="empty-note">Add a page action first.</div>';
     } else {
-        const chosen = page.onLoadActionIds || [];
+        const chosen = page[list] || [];
         html += actions.map(a => {
             const on = chosen.includes(a.actionId);
             const order = on ? chosen.indexOf(a.actionId) + 1 : 0;
             return '<label class="inline-check"><input type="checkbox"' + (on ? ' checked' : '')
-                + ' onchange="togglePageLoadAction(\'' + AC.attr(a.actionId) + '\', this.checked)"> '
+                + ' onchange="togglePageLoadAction(\'' + AC.attr(a.actionId) + '\', this.checked, \'' + list + '\')"> '
                 + (order ? '<b>' + order + '.</b> ' : '') + AC.esc(a.actionLabel || a.actionId) + '</label>';
         }).join('')
-        + '<span class="hint">Run once as soon as the page opens — all sent at once, bound in the order '
-        + 'attached, and only after every select has filled its own options, so an action may read what '
-        + 'they settled on.</span>';
+        + '<span class="hint">' + hint + '</span>';
     }
-    return html + '</div></div>';
+    return html + '</div>';
 }
 
 // ── Property mutations ───────────────────────────────────────────────────
@@ -8767,7 +8794,8 @@ function blankAction(label) {
              compareType: COMPARE_JSON, comparePath: '',
              compareTolerancePercent: 0, compareReport: REPORT_DIFFERENCES,
              datasetName: '', datasetFavorite: '', datasetFilters: [],
-             wsOperation: 'CONNECT', wsMessage: '', excludeFilters: [], wsMaxRows: DEFAULT_WS_MAX_ROWS };
+             wsOperation: 'CONNECT', wsMessage: '', excludeFilters: [], wsMaxRows: DEFAULT_WS_MAX_ROWS,
+             wsUniqueKey: '', wsDataset: '' };
 }
 
 /** Page actions are referred to by id from every control that triggers them, so each needs one. */
@@ -9058,6 +9086,8 @@ function settleWsTarget(a) {
     }
     a.targetControlId = '';
     a.excludeFilters = [];
+    a.wsUniqueKey = '';
+    a.wsDataset = '';
 }
 
 /** What changing one field of an action takes with it — see #dropDatasetColumns and #settleWsTarget. */
@@ -9283,6 +9313,7 @@ function removePageAction(index) {
         });
     });
     page.onLoadActionIds = (page.onLoadActionIds || []).filter(id => id !== removed.actionId);
+    page.onCloseActionIds = (page.onCloseActionIds || []).filter(id => id !== removed.actionId);
     clearWaitsOn(removed.actionId);
     renderAll();
 }
@@ -9305,6 +9336,7 @@ function removePageAction(index) {
 function actionUsage(actionId) {
     const used = [];
     if ((page.onLoadActionIds || []).includes(actionId)) used.push('the page opening');
+    if ((page.onCloseActionIds || []).includes(actionId)) used.push('the page closing');
     page.controls.forEach(c => {
         const name = controlTitle(c);
         if ((c.actionIds || []).includes(actionId)) used.push(name);
@@ -10920,10 +10952,12 @@ function toggleControlAction(actionId, on) {
     renderCanvas();
 }
 
-function togglePageLoadAction(actionId, on) {
-    page.onLoadActionIds = page.onLoadActionIds || [];
-    page.onLoadActionIds = on ? page.onLoadActionIds.concat([actionId]).filter((id, i, all) => all.indexOf(id) === i)
-                              : page.onLoadActionIds.filter(id => id !== actionId);
+/** {@code list} is the page's onLoadActionIds or onCloseActionIds. */
+function togglePageLoadAction(actionId, on, list) {
+    list = list || 'onLoadActionIds';
+    page[list] = page[list] || [];
+    page[list] = on ? page[list].concat([actionId]).filter((id, i, all) => all.indexOf(id) === i)
+                    : page[list].filter(id => id !== actionId);
     renderProps();
 }
 
@@ -11012,6 +11046,7 @@ async function deletePage() {
 // ── Run mode ─────────────────────────────────────────────────────────────
 
 function setMode(next) {
+    if (mode === 'run' && next !== 'run') runOnClose();
     mode = next;
     // Nothing of the run survives into the designer, this least of all: it is drawn over the
     // whole screen, and the screen underneath is about to be a different one.
@@ -11022,6 +11057,17 @@ function setMode(next) {
     document.getElementById('designBtn').style.display = next === 'run' ? '' : 'none';
     if (next === 'run') startRun();
 }
+
+/** Fires the page's on-close actions, once per run — leaving run mode, or the tab going away. */
+function runOnClose() {
+    const onClose = actionsByIds(page.onCloseActionIds);
+    if (!onClose.length) return;
+    runActions(onClose, 'Page close', null).catch(e => addError('Page close: ' + (e.message || String(e))));
+}
+
+// shortcut: on a closing tab only what is sent synchronously (a relay WebSocket command, mostly) is
+// sure to leave; an HTTP call may be cancelled — move to fetch keepalive/sendBeacon if that matters.
+window.addEventListener('pagehide', () => { if (mode === 'run') runOnClose(); });
 
 /**
  * The values a link carried, written over the defaults as the page opens. "Here is the link for
@@ -13948,6 +13994,17 @@ async function runWebSocket(action, name, record) {
         return name + ': sent' + (message ? '' : ' the use case' + "'" + 's own message');
     }
 
+    // Only the grid is emptied — the relay keeps the connection, so nothing goes to the server.
+    if (op === 'CLEAR') {
+        const link = wsLinks[key];
+        if (!link) throw new Error(name + ': nothing has connected this instance on this page yet.');
+        const control = findControl(link.gridId);
+        link.pending = [];
+        setGridData(link.gridId, [], control ? control.columns : null, control ? controlTitle(control) : link.name);
+        wsPaintStatus(link);
+        return name + ': grid cleared';
+    }
+
     await wsCommand({ op: op.toLowerCase(), key: key });
     return name + ': ' + (op === 'PAUSE' ? 'paused' : op === 'RESUME' ? 'resumed'
         : op === 'STOP' ? 'stopped' : 'restarting…');
@@ -13985,8 +14042,8 @@ function wsArrived(message) {
     const link = wsLinks[message.key];
     if (!link) return;
     link.received++;
-    const receivedAt = new Date(message.at || Date.now()).toLocaleTimeString([], { hour12: false })
-        + '.' + String((message.at || Date.now()) % 1000).padStart(3, '0');
+    // A full local date-time, so a time series chart reads it with no format and a feed crossing midnight stays in order.
+    const receivedAt = tsFullLabel(message.at || Date.now());
     let payload;
     try { payload = JSON.parse(message.data); } catch (e) { payload = message.data; }
 
@@ -14029,11 +14086,12 @@ function wsFlush(link) {
         ? arrived.filter(row => !filters.some(filter => cellPasses(wsCellText(row, filter.column), filter)))
         : arrived;
     link.excluded += arrived.length - kept.length;
+    if (link.action.wsDataset && kept.length) wsSaveToDataset(link, kept.slice());
 
     const state = gridState[link.gridId];
     if (!state) {
         const control = findControl(link.gridId);
-        setGridData(link.gridId, kept.reverse().slice(0, link.action.wsMaxRows || DEFAULT_WS_MAX_ROWS),
+        setGridData(link.gridId, wsMergeRows([], kept.reverse(), link.action.wsUniqueKey, link.action.wsMaxRows || DEFAULT_WS_MAX_ROWS),
             control ? control.columns : null, control ? controlTitle(control) : link.name);
     } else if (kept.length) {
         wsPrependRows(link, state, kept.reverse());
@@ -14048,7 +14106,9 @@ function wsFlush(link) {
  */
 function wsPrependRows(link, state, rows) {
     const control = findControl(link.gridId);
-    const shown = applyDisplayFilter(rows, displayFilterOf(link.gridId));
+    const key = link.action.wsUniqueKey;
+    // With a key, the merged grid is filtered whole, so a row whose update now fails the filter goes.
+    const shown = applyDisplayFilter(key ? wsMergeRows(state.rows, rows, key, Infinity) : rows, displayFilterOf(link.gridId));
     const columns = (control && control.columns && control.columns.length) ? control.columns : columnsOf(shown.rows);
     let added = false;
     columns.forEach(column => { if (!state.baseColumns.includes(column)) { state.baseColumns.push(column); added = true; } });
@@ -14059,12 +14119,48 @@ function wsPrependRows(link, state, rows) {
         applyColumnPick(state, arranged);
     }
     const max = link.action.wsMaxRows || DEFAULT_WS_MAX_ROWS;
-    state.rows = shown.rows.concat(state.rows);
+    state.rows = key ? shown.rows : shown.rows.concat(state.rows);
     if (state.rows.length > max) state.rows.length = max;
     state.filteredOut += shown.hidden;
     state.filterError = shown.error;
     invalidateView(state);
     applyRowCheck(state, rowCheckOf(link.gridId));
+}
+
+/**
+ * {@code arrived} (newest first) laid over {@code rows}: with no key every arrival goes on top;
+ * with one, an arrival whose key the grid already holds replaces that row where it stands, and
+ * only the newest arrival of a key counts. A row with no value for the key is always added.
+ */
+function wsMergeRows(rows, arrived, key, max) {
+    if (!key) return arrived.concat(rows).slice(0, max);
+    const at = new Map();
+    rows.forEach((row, i) => at.set(wsCellText(row, key), i));
+    const done = new Set();
+    const fresh = [];
+    arrived.forEach(row => {
+        const k = wsCellText(row, key);
+        if (k === '') { fresh.push(row); return; }
+        if (done.has(k)) return;
+        done.add(k);
+        if (at.has(k)) rows[at.get(k)] = row; else fresh.push(row);
+    });
+    return fresh.concat(rows).slice(0, max);
+}
+
+/**
+ * Upserts a flush's rows (oldest first, so the newest of a key wins) into the action's dynamic
+ * dataset. Chained, so two flushes never land out of order; a failure is reported once per link.
+ */
+function wsSaveToDataset(link, rows) {
+    const name = link.action.wsDataset;
+    link.saving = (link.saving || Promise.resolve())
+        .then(() => AC.api('POST', '/staticdataset/' + encodeURIComponent(name) + '/rows', rows))
+        .then(() => { if (datasetCache) datasetCache.delete(name); })
+        .catch(e => {
+            if (!link.saveFailed) addError(link.name + ': could not save to dynamic dataset "' + name + '": ' + e.message);
+            link.saveFailed = true;
+        });
 }
 
 /** Repaints a feed's grid, unless the operator is typing in its filter row — see #wsFlush. */
@@ -19001,6 +19097,10 @@ async function addAnalysisAction(message) {
     if ((page.onLoadActionIds || []).includes(original.actionId)) {
         page.onLoadActionIds = page.onLoadActionIds.concat([copy.actionId]);
         attachedTo.push('page load');
+    }
+    if ((page.onCloseActionIds || []).includes(original.actionId)) {
+        page.onCloseActionIds = page.onCloseActionIds.concat([copy.actionId]);
+        attachedTo.push('page close');
     }
 
     const where = target === NEW_GRID ? 'a new grid each run' : '"' + controlTitle(targetControl) + '"';

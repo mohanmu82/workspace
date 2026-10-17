@@ -540,6 +540,10 @@ public class AppCatalogService {
             if (!actionIds.contains(id))
                 throw new IllegalArgumentException("The page's on-load list names an action that is not on this page: " + id);
         }
+        for (String id : page.getOnCloseActionIds()) {
+            if (!actionIds.contains(id))
+                throw new IllegalArgumentException("The page's on-close list names an action that is not on this page: " + id);
+        }
 
         for (AppPageControl control : page.getControls()) validateMenuOptions(control, actionIds);
 
@@ -1679,6 +1683,11 @@ public class AppCatalogService {
             AppDefinition app = instance == null ? null : getApp(instance.getAppName());
             validateWebSocketAction(page, action, app == null ? null : app.getAppName(),
                     app == null ? null : app.getAppMode(), where);
+            String dataset = action.getWsDataset();
+            if (dataset != null && (staticDatasets.get(dataset) == null
+                    || !"dynamic".equals(staticDatasets.get(dataset).getSource())))
+                throw new IllegalArgumentException(where + " saves into '" + dataset
+                        + "', which is not a dynamic dataset — pick one from the Dynamic Datasets page");
             return;
         }
         for (String name : action.getTransformNames()) {
@@ -2355,6 +2364,9 @@ public class AppCatalogService {
             if (target != null && !target.isBlank())
                 throw new IllegalArgumentException(where + " is a WebSocket " + action.getWsOperation().toLowerCase()
                         + ", which binds nothing — clear its target; the Connect action names the grid");
+            if (action.getWsUniqueKey() != null || action.getWsDataset() != null)
+                throw new IllegalArgumentException(where + " is a WebSocket " + action.getWsOperation().toLowerCase()
+                        + " — the unique key and dynamic dataset belong on the Connect action");
             return;
         }
         if (target == null || target.isBlank() || AppPageAction.NEW_GRID.equals(target))

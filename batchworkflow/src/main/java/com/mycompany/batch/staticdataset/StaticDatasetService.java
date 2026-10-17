@@ -10,6 +10,8 @@ import com.mycompany.batch.appcatalog.JsonataLibraryService;
 import com.mycompany.batch.config.ServerPropertiesLoader;
 import com.mycompany.batch.onedrive.OneDriveClient;
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.io.InputStream;
@@ -20,6 +22,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -191,9 +194,12 @@ public class StaticDatasetService {
     public synchronized StaticDatasetDef save(StaticDatasetDef def) throws Exception {
         if (def.getName() == null || !def.getName().matches("[\\w\\-]+"))
             throw new IllegalArgumentException("name is required and must contain only word characters or dashes");
-        if (def.getSource() == null || !List.of("file", "http", "paste", "json", "onedrive").contains(def.getSource()))
-            throw new IllegalArgumentException("source must be 'file', 'http', 'paste', 'json' or 'onedrive'");
-        if (def.getLocation() == null || def.getLocation().isBlank())
+        if (def.getSource() == null || !List.of("file", "http", "paste", "json", "onedrive", DYNAMIC).contains(def.getSource()))
+            throw new IllegalArgumentException("source must be 'file', 'http', 'paste', 'json', 'onedrive' or 'dynamic'");
+        boolean dynamic = DYNAMIC.equals(def.getSource());
+        if (dynamic && def.getKeyField() == null)
+            throw new IllegalArgumentException("keyField is required for a dynamic dataset");
+        if (!dynamic && (def.getLocation() == null || def.getLocation().isBlank()))
             throw new IllegalArgumentException("location is required");
         // Compile the expression now rather than letting a typo surface as a failed load: a dataset
         // that cannot parse its own transform is worth refusing while the person is still looking at it.
@@ -204,6 +210,7 @@ public class StaticDatasetService {
                 throw new IllegalArgumentException("jsonata does not parse: " + describe(e));
             }
         }
+        if (dynamic) rekey(def);
 
         defs.put(def.getName(), def);
         writeConfigFile();
@@ -233,6 +240,9 @@ public class StaticDatasetService {
     public synchronized void delete(String name) throws Exception {
         defs.remove(name);
         state.remove(name);
+        dynamicRows.remove(name);
+        dirty.remove(name);
+        Files.deleteIfExists(dynamicPath(name));
         writeConfigFile();
     }
 
@@ -247,6 +257,11 @@ public class StaticDatasetService {
                 case "paste" -> loadFromPaste(def.getLocation());
                 case "json"  -> extractRows(def.getLocation(), def.getArrayElement(), def.getJsonata());
                 case "onedrive" -> loadFromOneDrive(def.getLocation(), def.getArrayElement());
+                // What is held is the source — re-reading the file would lose upserts not yet written.
+                case DYNAMIC -> {
+                    LinkedHashMap<String, Map<String, Object>> held = held(name);
+                    synchronized (held) { yield new ArrayList<>(held.values()); }
+                }
                 default      -> loadFromHttp(def.getLocation(), def.getArrayElement(), def.getJsonata());
             };
 
@@ -268,6 +283,157 @@ public class StaticDatasetService {
             state.put(name, s);
             throw e;
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Dynamic datasets — rows upserted at runtime by the dataset's keyField, held here and
+    // written to ${DATADIR}/dynamicdatasets/<name>.json a moment later rather than on every
+    // upsert: a WebSocket feed upserts several times a second.
+    // -------------------------------------------------------------------------
+
+    public static final String DYNAMIC = "dynamic";
+
+    private final Map<String, LinkedHashMap<String, Map<String, Object>>> dynamicRows = new ConcurrentHashMap<>();
+    private final Set<String> dirty = ConcurrentHashMap.newKeySet();
+
+    public record UpsertResult(int upserted, int skipped) {}
+
+    /** Upserts by key, later rows winning; a row already held keeps its place. A row with no key is skipped and counted. */
+    public UpsertResult upsertRows(String name, List<Map<String, Object>> rows) {
+        String keyField = requireDynamic(name).getKeyField();
+        int upserted = 0, skipped = 0;
+        LinkedHashMap<String, Map<String, Object>> held = held(name);
+        synchronized (held) {
+            for (Map<String, Object> row : rows) {
+                String key = keyOf(row, keyField);
+                if (key == null) { skipped++; continue; }
+                held.put(key, new LinkedHashMap<>(row));
+                upserted++;
+            }
+            if (upserted > 0) changed(name, held);
+        }
+        return new UpsertResult(upserted, skipped);
+    }
+
+    /** Replaces the row held under {@code key}; a changed key field moves it, unless another row already has that key. */
+    public void replaceRow(String name, String key, Map<String, Object> row) {
+        String keyField = requireDynamic(name).getKeyField();
+        String newKey = keyOf(row, keyField);
+        if (newKey == null) throw new IllegalArgumentException("The row has no value for its key field '" + keyField + "'");
+        LinkedHashMap<String, Map<String, Object>> held = held(name);
+        synchronized (held) {
+            if (!held.containsKey(key)) throw new IllegalArgumentException("No row has " + keyField + " = " + key);
+            if (!newKey.equals(key)) {
+                if (held.containsKey(newKey)) throw new IllegalArgumentException("Another row already has " + keyField + " = " + newKey);
+                held.remove(key);
+            }
+            held.put(newKey, new LinkedHashMap<>(row));
+            changed(name, held);
+        }
+    }
+
+    public boolean deleteRow(String name, String key) {
+        requireDynamic(name);
+        LinkedHashMap<String, Map<String, Object>> held = held(name);
+        synchronized (held) {
+            if (held.remove(key) == null) return false;
+            changed(name, held);
+            return true;
+        }
+    }
+
+    public void clearRows(String name) {
+        requireDynamic(name);
+        LinkedHashMap<String, Map<String, Object>> held = held(name);
+        synchronized (held) {
+            held.clear();
+            changed(name, held);
+        }
+    }
+
+    /** Writes every dynamic dataset changed since the last write — on a timer, and once more on shutdown. */
+    @Scheduled(fixedDelay = 2000)
+    @PreDestroy
+    public synchronized void flushDynamic() {
+        for (String name : new ArrayList<>(dirty)) {
+            LinkedHashMap<String, Map<String, Object>> held = dynamicRows.get(name);
+            if (!dirty.remove(name) || held == null) continue;
+            List<Map<String, Object>> rows;
+            synchronized (held) { rows = new ArrayList<>(held.values()); }
+            try {
+                Path target = dynamicPath(name);
+                Files.createDirectories(target.getParent());
+                // Written aside and moved over, so a crash mid-write never leaves half a file to load.
+                Path tmp = target.resolveSibling(target.getFileName() + ".tmp");
+                objectMapper.writeValue(tmp.toFile(), rows);
+                Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (Exception e) {
+                dirty.add(name);  // tried again next tick
+            }
+        }
+    }
+
+    /** Under {@code held}'s lock: republishes the rows to readers and marks them for writing. */
+    private void changed(String name, LinkedHashMap<String, Map<String, Object>> held) {
+        List<Map<String, Object>> rows = new ArrayList<>(held.values());
+        state.put(name, new DatasetState(rows, computeAttributes(rows), LocalDateTime.now().format(FMT), null));
+        dirty.add(name);
+    }
+
+    private LinkedHashMap<String, Map<String, Object>> held(String name) {
+        return dynamicRows.computeIfAbsent(name, n -> readDynamicFile(n, defs.get(n).getKeyField()));
+    }
+
+    /** A file that cannot be read is an error, not an empty dataset — writing over it would lose what it holds. */
+    private LinkedHashMap<String, Map<String, Object>> readDynamicFile(String name, String keyField) {
+        LinkedHashMap<String, Map<String, Object>> held = new LinkedHashMap<>();
+        Path path = dynamicPath(name);
+        if (!Files.isRegularFile(path)) return held;
+        try (InputStream is = Files.newInputStream(path)) {
+            List<Map<String, Object>> rows = objectMapper.readValue(is, new TypeReference<List<Map<String, Object>>>() {});
+            for (Map<String, Object> row : rows) {
+                String key = keyOf(row, keyField);
+                if (key != null) held.put(key, row);
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException("Could not read " + path + ": " + describe(e), e);
+        }
+        return held;
+    }
+
+    /** A changed key field re-keys what is held, refusing rather than dropping or merging rows. */
+    private void rekey(StaticDatasetDef def) {
+        StaticDatasetDef old = defs.get(def.getName());
+        if (old == null || !DYNAMIC.equals(old.getSource()) || Objects.equals(old.getKeyField(), def.getKeyField())) return;
+        LinkedHashMap<String, Map<String, Object>> held = held(def.getName());
+        synchronized (held) {
+            LinkedHashMap<String, Map<String, Object>> rekeyed = new LinkedHashMap<>();
+            for (Map<String, Object> row : held.values()) {
+                String key = keyOf(row, def.getKeyField());
+                if (key == null || rekeyed.put(key, row) != null)
+                    throw new IllegalArgumentException("Cannot key the rows by '" + def.getKeyField() + "' — "
+                            + (key == null ? "a row has no value for it" : "two rows share the value " + key));
+            }
+            held.clear();
+            held.putAll(rekeyed);
+            dirty.add(def.getName());
+        }
+    }
+
+    private StaticDatasetDef requireDynamic(String name) {
+        StaticDatasetDef def = defs.get(name);
+        if (def == null || !DYNAMIC.equals(def.getSource()))
+            throw new IllegalArgumentException("Not a dynamic dataset: " + name);
+        return def;
+    }
+
+    private static String keyOf(Map<String, Object> row, String keyField) {
+        Object value = row == null || keyField == null ? null : row.get(keyField);
+        return value == null || String.valueOf(value).isBlank() ? null : String.valueOf(value);
+    }
+
+    private Path dynamicPath(String name) {
+        return resolveConfigPath().resolveSibling("dynamicdatasets").resolve(name + ".json");
     }
 
     // -------------------------------------------------------------------------

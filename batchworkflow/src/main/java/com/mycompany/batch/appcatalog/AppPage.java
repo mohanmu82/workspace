@@ -42,6 +42,11 @@ public class AppPage {
      */
     private List<String> onLoadActionIds = new ArrayList<>();
     /**
+     * Actions run as the page closes — the operator going back to the designer, or the tab being
+     * closed or navigated away — e.g. stopping a WebSocket feed the page started.
+     */
+    private List<String> onCloseActionIds = new ArrayList<>();
+    /**
      * Named reshaping steps actions may chain over what they bound. Held on the page rather than on
      * the action for the same reason {@link #actions} is: one reshaping of one endpoint's response
      * is one step, however many actions want it — and a step written for one chain (turning a SOAP
@@ -100,7 +105,10 @@ public class AppPage {
     public List<String> getOnLoadActionIds()                         { return onLoadActionIds; }
     public void setOnLoadActionIds(List<String> onLoadActionIds)     { this.onLoadActionIds = onLoadActionIds != null ? onLoadActionIds : new ArrayList<>(); }
 
-    public List<AppPageTransform> getTransforms()                    { return transforms; }
+    public List<String> getOnCloseActionIds()                        { return onCloseActionIds; }
+    public void setOnCloseActionIds(List<String> onCloseActionIds)   { this.onCloseActionIds = onCloseActionIds != null ? onCloseActionIds : new ArrayList<>(); }
+
+    public List<AppPageTransform> getTransforms()                   { return transforms; }
     public void setTransforms(List<AppPageTransform> transforms)     { this.transforms = transforms != null ? transforms : new ArrayList<>(); }
 
     public List<AppPageVariable> getVariables()                      { return variables; }

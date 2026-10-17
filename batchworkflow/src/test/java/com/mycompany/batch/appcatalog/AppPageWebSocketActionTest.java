@@ -58,6 +58,19 @@ class AppPageWebSocketActionTest {
     }
 
     @Test
+    void clear_bindsNothing_andTheUniqueKeyAndDatasetBelongOnConnect() {
+        assertThatCode(() -> validate(wsAction("clear", null), "WS")).doesNotThrowAnyException();
+        AppPageAction connect = wsAction("connect", "g");
+        connect.setWsUniqueKey(" symbol ");
+        connect.setWsDataset("prices");
+        assertThat(connect.getWsUniqueKey()).isEqualTo("symbol");
+        assertThatCode(() -> validate(connect, "WS")).doesNotThrowAnyException();
+        AppPageAction clear = wsAction("clear", null);
+        clear.setWsUniqueKey("symbol");
+        assertThatThrownBy(() -> validate(clear, "WS")).hasMessageContaining("belong on the Connect action");
+    }
+
+    @Test
     void connectIntoAGrid_isFine() {
         assertThatCode(() -> validate(wsAction("CONNECT", "g"), "WS")).doesNotThrowAnyException();
     }

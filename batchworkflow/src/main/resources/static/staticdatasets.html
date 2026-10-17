@@ -251,7 +251,8 @@
   async function loadList() {
     try {
       const res = await fetch('/staticdataset');
-      datasets = await res.json();
+      // Dynamic datasets have their own page (dynamicdatasets.html); this editor knows none of their fields.
+      datasets = (await res.json()).filter(d => d.source !== 'dynamic');
     } catch (e) {
       datasets = [];
       setFormStatus('Failed to load datasets: ' + e.message, 'status-err');

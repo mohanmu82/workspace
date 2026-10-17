@@ -23,9 +23,12 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
@@ -80,6 +83,10 @@ public class AppWebSocketRelayHandler extends TextWebSocketHandler {
 
     /** Per page socket: its thread-safe sender, and its connections by key. */
     private final Map<String, Page> pages = new ConcurrentHashMap<>();
+
+    /** Every upstream connection by id, for the connections admin page; closed ones linger until pruned. */
+    private final Map<String, Connection> registry = new ConcurrentHashMap<>();
+    private static final int MAX_CLOSED_KEPT = 100;
 
     public AppWebSocketRelayHandler(AppExecutionService execution, LocalServerAddress localServer, ObjectMapper objectMapper) {
         this.execution = execution;
@@ -160,7 +167,34 @@ public class AppWebSocketRelayHandler extends TextWebSocketHandler {
         WebSocketTarget target = execution.prepareWebSocket(request.instanceId(), request.environment(), request.inputs());
         Connection connection = new Connection(page, key, target);
         page.connections.put(key, connection);
+        registry.put(connection.id, connection);
+        pruneClosed();
         connection.open();
+    }
+
+    private void pruneClosed() {
+        List<Connection> closed = registry.values().stream().filter(c -> !c.live())
+                .sorted(Comparator.comparingLong(c -> c.createdAt)).toList();
+        for (int i = 0; i < closed.size() - MAX_CLOSED_KEPT; i++) registry.remove(closed.get(i).id);
+    }
+
+    /** Every connection this relay has open, and the most recent closed ones — newest first. */
+    public List<Map<String, Object>> connections() {
+        return registry.values().stream().sorted(Comparator.comparingLong((Connection c) -> c.createdAt).reversed())
+                .map(Connection::describe).toList();
+    }
+
+    /** {@code pause}, {@code resume} or {@code disconnect} a connection from the admin page; the page it feeds is told. */
+    public void control(String id, String op) {
+        Connection c = registry.get(id);
+        if (c == null) throw new IllegalArgumentException("No connection " + id);
+        if (!c.live()) throw new IllegalStateException("Connection " + id + " is already " + c.state.toLowerCase());
+        switch (op.toLowerCase()) {
+            case "pause"      -> c.pause(true);
+            case "resume"     -> c.pause(false);
+            case "disconnect" -> { c.page.connections.remove(c.key, c); c.close("disconnected by admin"); }
+            default -> throw new IllegalArgumentException("Unknown operation: " + op);
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -219,6 +253,10 @@ public class AppWebSocketRelayHandler extends TextWebSocketHandler {
         final AtomicLong skipped = new AtomicLong();
         final StringBuilder textFrames = new StringBuilder();
         final ByteArrayOutputStream binaryFrames = new ByteArrayOutputStream();
+        final String id = UUID.randomUUID().toString();
+        final long createdAt = System.currentTimeMillis();
+        volatile long openedAt, lastReceivedAt, closedAt;
+        volatile String state = "CONNECTING";
         volatile WebSocket socket;
         /** Sends chained one after another: the client allows only one outstanding at a time. */
         CompletableFuture<?> lastSend = CompletableFuture.completedFuture(null);
@@ -233,7 +271,30 @@ public class AppWebSocketRelayHandler extends TextWebSocketHandler {
         boolean current() { return page.connections.get(key) == this; }
 
         void status(String state, String message) {
+            if (live()) {
+                this.state = state;
+                if (!live()) closedAt = System.currentTimeMillis();
+            }
             page.status(key, state, message, target.url(), received.get(), skipped.get());
+        }
+
+        boolean live() { return !"CLOSED".equals(state) && !"ERROR".equals(state); }
+
+        Map<String, Object> describe() {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", id);
+            m.put("page", page.out.getId());
+            m.put("key", key);
+            m.put("url", target.url());
+            m.put("type", target.url().regionMatches(true, 0, "wss:", 0, 4) ? "wss" : "ws");
+            m.put("state", state);
+            m.put("createdAt", createdAt);
+            m.put("openedAt", openedAt == 0 ? null : openedAt);
+            m.put("lastReceivedAt", lastReceivedAt == 0 ? null : lastReceivedAt);
+            m.put("closedAt", closedAt == 0 ? null : closedAt);
+            m.put("received", received.get());
+            m.put("skipped", skipped.get());
+            return m;
         }
 
         void open() {
@@ -310,6 +371,7 @@ public class AppWebSocketRelayHandler extends TextWebSocketHandler {
         @Override
         public void onOpen(WebSocket ws) {
             socket = ws;
+            openedAt = System.currentTimeMillis();
             ws.request(1);
             status("OPEN", "Connected to " + target.url()
                     + (target.openingMessage() != null ? " — opening message sent" : ""));
@@ -362,6 +424,7 @@ public class AppWebSocketRelayHandler extends TextWebSocketHandler {
         private void deliver(String text) {
             if (!current()) return;
             received.incrementAndGet();
+            lastReceivedAt = System.currentTimeMillis();
             if (paused.get()) { skipped.incrementAndGet(); return; }
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("type", "message");

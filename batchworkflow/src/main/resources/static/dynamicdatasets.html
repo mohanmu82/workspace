@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dynamic Datasets</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #f4f6f9; color: #222; padding: 28px 28px 48px; }
+  header { margin-bottom: 22px; }
+  header h1 { font-size: 1.3rem; font-weight: 700; }
+  header p  { font-size: 0.82rem; color: #666; margin-top: 4px; }
+  .back { font-size: 0.8rem; color: #0078d4; text-decoration: none; }
+  .card { background: #fff; border: 1px solid #dde1e7; border-radius: 8px; padding: 20px 22px; margin-bottom: 20px; }
+  .card-title { font-size: 0.95rem; font-weight: 700; margin-bottom: 12px; }
+  .input-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 0.72rem; font-weight: 700; color: #666; text-transform: uppercase; letter-spacing: .04em; }
+  input[type=text] { padding: 7px 10px; font-size: 0.85rem; border: 1px solid #ccc; border-radius: 4px; font-family: inherit; }
+  button { padding: 7px 18px; font-size: 0.85rem; font-weight: 600; border: none; border-radius: 4px; cursor: pointer; background: #0078d4; color: #fff; }
+  button:hover { background: #005fa3; }
+  button.secondary { background: #6c757d; }
+  button.danger { background: #b02a37; }
+  button.small { padding: 4px 10px; font-size: 0.72rem; }
+  .status-msg { font-size: 0.82rem; margin-top: 8px; min-height: 1em; }
+  .status-ok { color: #0a5c36; } .status-err { color: #842029; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.82rem; }
+  th, td { border-bottom: 1px solid #e3e6ea; padding: 5px 8px; text-align: left; vertical-align: middle; }
+  th { background: #f0f2f5; font-size: 0.72rem; text-transform: uppercase; color: #555; }
+  td input { width: 100%; min-width: 80px; padding: 3px 6px; font-size: 0.8rem; border: 1px solid transparent; border-radius: 3px; background: transparent; font-family: Consolas, monospace; }
+  td input:focus, tr.edited td input { border-color: #ccc; background: #fff; outline: none; }
+  tr.edited { background: #fffbe6; }
+  .key { font-weight: 700; }
+  .scroll { overflow-x: auto; max-height: 65vh; overflow-y: auto; }
+  .muted { color: #888; font-size: 0.8rem; }
+  .actions { white-space: nowrap; }
+</style>
+</head>
+<body>
+<header>
+  <a class="back" href="index.html">&#8592; Home</a>
+  <h1>Dynamic Datasets</h1>
+  <p>Datasets whose rows are upserted at runtime by a key field — from a page's WebSocket feed (<b>Save To Dynamic Dataset</b> on a Connect action) or edited here. Every page that reads a static dataset can read these by name.</p>
+</header>
+
+<div class="card">
+  <div class="card-title" id="formTitle">Add Dynamic Dataset</div>
+  <div class="input-row">
+    <div class="field" style="flex:1;min-width:160px"><label>Dataset Name</label><input type="text" id="fName" placeholder="live-prices"></div>
+    <div class="field" style="flex:1;min-width:160px"><label>Key Field</label><input type="text" id="fKey" placeholder="symbol"></div>
+    <button onclick="saveDef()">Save</button>
+    <button class="secondary" onclick="resetForm()">Clear</button>
+  </div>
+  <div class="status-msg" id="formStatus"></div>
+</div>
+
+<div class="card">
+  <div class="card-title">Datasets</div>
+  <div id="list" class="muted">Loading…</div>
+</div>
+
+<div class="card" id="rowsCard" style="display:none">
+  <div class="card-title"><span id="rowsTitle"></span>
+    <button class="small" onclick="addRow()">Add Row</button>
+    <button class="small secondary" onclick="openRows(current)">Refresh</button>
+    <button class="small danger" onclick="clearRows()">Delete All Rows</button>
+  </div>
+  <div class="status-msg" id="rowsStatus"></div>
+  <div class="scroll" id="rows"></div>
+</div>
+
+<script>
+  let editing = null;   // name of the dataset in the form, when editing
+  let current = null;   // the dataset whose rows are shown: { name, keyField }
+  let shown = [];       // { key, row } — key null for a row added here and not yet saved
+  let columns = [];
+
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  const enc = encodeURIComponent;
+
+  async function api(method, url, body) {
+    const res = await fetch(url, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'HTTP ' + res.status);
+    return data;
+  }
+  function status(id, text, ok) {
+    const el = document.getElementById(id);
+    el.textContent = text || '';
+    el.className = 'status-msg ' + (ok === false ? 'status-err' : 'status-ok');
+  }
+
+  let listed = [];      // the datasets in the list, referred to by index from its buttons
+
+  async function loadList() {
+    try { listed = (await api('GET', '/staticdataset')).filter(d => d.source === 'dynamic'); }
+    catch (e) { document.getElementById('list').textContent = 'Failed to load: ' + e.message; return; }
+    document.getElementById('list').innerHTML = listed.length ? '<table><tr><th>Name</th><th>Key Field</th><th>Rows</th><th>Last Updated</th><th>Columns</th><th></th></tr>'
+      + listed.map((d, i) => '<tr><td class="key">' + esc(d.name) + '</td><td>' + esc(d.keyField) + '</td><td>' + (d.count || 0).toLocaleString()
+        + '</td><td>' + esc(d.loadedTime) + '</td><td class="muted">' + esc((d.attributes || []).join(', ')) + '</td><td class="actions">'
+        + '<button class="small" onclick="openRows(listed[' + i + '])">Rows</button> '
+        + '<button class="small secondary" onclick="editDef(listed[' + i + '])">Edit</button> '
+        + '<button class="small danger" onclick="deleteDef(listed[' + i + '].name)">Delete</button></td></tr>').join('') + '</table>'
+      : 'No dynamic datasets yet — add one above.';
+  }
+
+  function resetForm() {
+    editing = null;
+    document.getElementById('fName').value = '';
+    document.getElementById('fName').disabled = false;
+    document.getElementById('fKey').value = '';
+    document.getElementById('formTitle').textContent = 'Add Dynamic Dataset';
+    status('formStatus', '');
+  }
+  function editDef(ds) {
+    const name = ds.name, keyField = ds.keyField;
+    editing = name;
+    document.getElementById('fName').value = name;
+    document.getElementById('fName').disabled = true;
+    document.getElementById('fKey').value = keyField;
+    document.getElementById('formTitle').textContent = 'Edit "' + name + '"';
+  }
+  async function saveDef() {
+    const name = document.getElementById('fName').value.trim();
+    const keyField = document.getElementById('fKey').value.trim();
+    if (!name || !keyField) { status('formStatus', 'A name and a key field are both required.', false); return; }
+    const body = { name, source: 'dynamic', keyField };
+    try {
+      await (editing ? api('PUT', '/staticdataset/' + enc(name), body) : api('POST', '/staticdataset', body));
+      resetForm();
+      status('formStatus', 'Saved "' + name + '".');
+      loadList();
+      if (current && current.name === name) openRows({ name, keyField });
+    } catch (e) { status('formStatus', e.message, false); }
+  }
+  async function deleteDef(name) {
+    if (!confirm('Delete dynamic dataset "' + name + '" and every row it holds? Pages reading it will find nothing.')) return;
+    try {
+      await api('DELETE', '/staticdataset/' + enc(name));
+      if (current && current.name === name) { current = null; document.getElementById('rowsCard').style.display = 'none'; }
+      loadList();
+    } catch (e) { status('formStatus', e.message, false); }
+  }
+
+  // ── Rows ──────────────────────────────────────────────────────────────
+  async function openRows(ds) {
+    current = ds;
+    document.getElementById('rowsCard').style.display = '';
+    document.getElementById('rowsTitle').textContent = ds.name + ' — keyed by ' + ds.keyField + ' ';
+    status('rowsStatus', 'Loading…');
+    try {
+      const data = await api('GET', '/staticdataset/' + enc(ds.name) + '/data');
+      columns = data.attributes && data.attributes.length ? data.attributes.slice() : [ds.keyField];
+      if (!columns.includes(ds.keyField)) columns.unshift(ds.keyField);
+      shown = (data.rows || []).map(row => ({ key: String(row[ds.keyField]), row }));
+      renderRows();
+      status('rowsStatus', shown.length.toLocaleString() + ' row(s). Edit a cell, then Save its row.');
+    } catch (e) { status('rowsStatus', e.message, false); }
+  }
+  function cellText(v) { return v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v); }
+  function renderRows() {
+    document.getElementById('rows').innerHTML = '<table><tr>' + columns.map(c => '<th>' + esc(c) + '</th>').join('') + '<th></th></tr>'
+      + shown.map((s, i) => '<tr id="r' + i + '"' + (s.key === null ? ' class="edited"' : '') + '>'
+        + columns.map(c => '<td' + (c === current.keyField ? ' class="key"' : '') + '><input data-col="' + esc(c) + '" value="' + esc(cellText(s.row[c]))
+          + '" oninput="document.getElementById(\'r' + i + '\').classList.add(\'edited\')"></td>').join('')
+        + '<td class="actions"><button class="small" onclick="saveRow(' + i + ')">Save</button> '
+        + '<button class="small danger" onclick="deleteRow(' + i + ')">Delete</button></td></tr>').join('') + '</table>';
+  }
+  function addRow() {
+    shown.unshift({ key: null, row: {} });
+    renderRows();
+  }
+  /** A cell that was a number, boolean or JSON value goes back as one; anything else as text. */
+  function parseCell(text, before) {
+    if (typeof before === 'string' || before == null && !/^[\[{]/.test(text)) return text;
+    try { return JSON.parse(text); } catch (e) { return text; }
+  }
+  async function saveRow(i) {
+    const s = shown[i];
+    const row = Object.assign({}, s.row);
+    document.querySelectorAll('#r' + i + ' input').forEach(input => {
+      const c = input.dataset.col;
+      if (input.value === '' && !(c in s.row)) return;
+      row[c] = parseCell(input.value, s.row[c]);
+    });
+    const key = cellText(row[current.keyField]);
+    if (!key) { status('rowsStatus', 'The row needs a value for ' + current.keyField + '.', false); return; }
+    try {
+      if (s.key === null) {
+        if (shown.some(o => o !== s && o.key === key)) throw new Error('Another row already has ' + current.keyField + ' = ' + key);
+        await api('POST', '/staticdataset/' + enc(current.name) + '/rows', [row]);
+      } else {
+        await api('PUT', '/staticdataset/' + enc(current.name) + '/row?key=' + enc(s.key), row);
+      }
+      shown[i] = { key, row };
+      document.getElementById('r' + i).classList.remove('edited');
+      status('rowsStatus', 'Saved ' + current.keyField + ' = ' + key + '.');
+      loadList();
+    } catch (e) { status('rowsStatus', e.message, false); }
+  }
+  async function deleteRow(i) {
+    const s = shown[i];
+    try {
+      if (s.key !== null) await api('DELETE', '/staticdataset/' + enc(current.name) + '/row?key=' + enc(s.key));
+      shown.splice(i, 1);
+      renderRows();
+      status('rowsStatus', 'Deleted.');
+      loadList();
+    } catch (e) { status('rowsStatus', e.message, false); }
+  }
+  async function clearRows() {
+    if (!confirm('Delete every row of "' + current.name + '"?')) return;
+    try {
+      await api('DELETE', '/staticdataset/' + enc(current.name) + '/rows');
+      openRows(current);
+      loadList();
+    } catch (e) { status('rowsStatus', e.message, false); }
+  }
+
+  loadList();
+</script>
+</body>
+</html>
