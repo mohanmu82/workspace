@@ -73,6 +73,22 @@ class AppMonitoringPrefixTest {
     }
 
     @Test
+    void aBaseUrlOverride_replacesBothPrefixes_andKeepsTheCredentials() {
+        AppEnvironment stored = env("https://orders:8443/api", "https://orders:9443/admin");
+        stored.setUsername("svc");
+        stored.getEnvVariables().put("region", "EMEA");
+
+        AppEnvironment overridden = stored.withBaseUrl("http://devbox:8080/api");
+
+        assertThat(overridden.prefixFor(AppUseCase.PREFIX_TYPE_APPLICATION)).isEqualTo("http://devbox:8080/api");
+        assertThat(overridden.prefixFor(AppUseCase.PREFIX_TYPE_MONITORING)).isEqualTo("http://devbox:8080/api");
+        assertThat(overridden.getUsername()).isEqualTo("svc");
+        assertThat(overridden.getEnvVariables()).containsEntry("region", "EMEA");
+        // The catalog's own copy is untouched.
+        assertThat(stored.getUrlPrefix()).isEqualTo("https://orders:8443/api");
+    }
+
+    @Test
     void anEnvironmentStoredBeforeTheFieldExisted_readsBackWithNoMonitoringAddress() throws Exception {
         AppEnvironment stored = new ObjectMapper().readValue(
                 "{\"appName\":\"orders-api\",\"environment\":\"uat-emea\",\"urlPrefix\":\"https://orders:8443/api\"}",

@@ -18,6 +18,13 @@ class AppExecutionServiceTest {
     private final AppExecutionService service = new AppExecutionService(null, new ObjectMapper(), null, null);
 
     @Test
+    void bodyStringValues_areJsonEscaped_otherValuesAreNot() {
+        String body = service.substituteBody("{\"note\":\"${note}\",\"n\":${n}}",
+                Map.of("note", "say \"hi\"\\\n", "n", 5));
+        assertThat(body).isEqualTo("{\"note\":\"say \\\"hi\\\"\\\\\\n\",\"n\":5}");
+    }
+
+    @Test
     void bracedPlaceholder_isFilledInFromTheVariables() {
         String resolved = service.resolveExpression("data[id = \"${orderId}\"].lines", Map.of("orderId", "A-7"));
         assertThat(resolved).isEqualTo("data[id = \"A-7\"].lines");
@@ -71,5 +78,36 @@ class AppExecutionServiceTest {
     void nullAndEmptyExpressions_passStraightThrough() {
         assertThat(service.resolveExpression(null, Map.of())).isNull();
         assertThat(service.resolveExpression("", Map.of())).isEmpty();
+    }
+
+    @Test
+    void onlyAFailedConnect_movesOnToTheNextPrefix() {
+        assertThat(AppExecutionService.isConnectFailure(new java.net.ConnectException("refused"))).isTrue();
+        assertThat(AppExecutionService.isConnectFailure(new RuntimeException(new java.net.UnknownHostException("x")))).isTrue();
+        assertThat(AppExecutionService.isConnectFailure(new java.net.http.HttpConnectTimeoutException("slow"))).isTrue();
+        // The request may already have reached the server: retrying elsewhere could send it twice.
+        assertThat(AppExecutionService.isConnectFailure(new java.net.http.HttpTimeoutException("read"))).isFalse();
+        assertThat(AppExecutionService.isConnectFailure(new java.net.SocketTimeoutException("Read timed out"))).isFalse();
+    }
+
+    /** One TCP connect per environment: a listening port is up, a closed one is down, no prefix is an error, and the order is kept. */
+    @Test
+    void reachability_isOneTcpConnectPerEnvironment() throws Exception {
+        try (java.net.ServerSocket listening = new java.net.ServerSocket(0)) {
+            AppEnvironment up = new AppEnvironment();
+            up.setEnvironment("up");
+            up.setUrlPrefix("http://127.0.0.1:" + listening.getLocalPort() + "/api");
+            AppEnvironment down = new AppEnvironment();
+            down.setEnvironment("down");
+            down.setUrlPrefix("http://127.0.0.1:1/api");
+            AppEnvironment none = new AppEnvironment();
+            none.setEnvironment("none");
+
+            java.util.List<Map<String, Object>> results = service.checkReachability(java.util.List.of(up, down, none));
+
+            assertThat(results).extracting(r -> r.get("ok")).containsExactly(true, false, false);
+            assertThat(results.get(0)).containsEntry("port", listening.getLocalPort());
+            assertThat((String) results.get(2).get("error")).contains("No URL prefix");
+        }
     }
 }

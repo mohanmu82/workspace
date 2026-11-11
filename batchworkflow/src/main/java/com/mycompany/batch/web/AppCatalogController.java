@@ -11,6 +11,7 @@ import com.mycompany.batch.appcatalog.AppUseCase;
 import com.mycompany.batch.appcatalog.AppUseCaseInstance;
 import com.mycompany.batch.appcatalog.AppUseCaseInstanceGroup;
 import com.mycompany.batch.appcatalog.AppUseCaseInstanceOutput;
+import com.mycompany.batch.appcatalog.DbPublishService;
 import com.mycompany.batch.appcatalog.ExecuteInstancesRequest;
 import com.mycompany.batch.appcatalog.ExecutionTarget;
 import org.springframework.http.MediaType;
@@ -34,11 +35,47 @@ public class AppCatalogController {
     private final AppCatalogService service;
     private final AppExecutionService execution;
     private final ObjectMapper objectMapper;
+    private final DbPublishService dbPublish;
 
-    public AppCatalogController(AppCatalogService service, AppExecutionService execution, ObjectMapper objectMapper) {
+    public AppCatalogController(AppCatalogService service, AppExecutionService execution, ObjectMapper objectMapper,
+                                DbPublishService dbPublish) {
         this.service = service;
         this.execution = execution;
         this.objectMapper = objectMapper;
+        this.dbPublish = dbPublish;
+    }
+
+    // -------------------------------------------------------------------------
+    // Database publishing
+    // -------------------------------------------------------------------------
+
+    /** Every environment of every ORACLE or POSTGRES app — the places a grid can be published to. */
+    @GetMapping("/db/targets")
+    public List<Map<String, String>> dbTargets() {
+        List<Map<String, String>> out = new ArrayList<>();
+        for (AppDefinition app : service.listApps()) {
+            if (!app.isDatabase()) continue;
+            for (AppEnvironment env : service.listEnvironments(app.getAppName()))
+                out.add(Map.of("appName", app.getAppName(), "environment", env.getEnvironment(), "appMode", app.getAppMode()));
+        }
+        return out;
+    }
+
+    /** Body for {@code POST /appcatalog/db/publish}: a grid's rows and the table they go to. */
+    public record DbPublishRequest(String appName, String environment, String table, String source,
+                                   List<String> columns, List<Map<String, Object>> rows) {}
+
+    /** Appends the rows to the table (created on first use) under one new run_uuid; answers {table, inserted, runId}. */
+    @PostMapping(value = "/db/publish", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<?> dbPublish(@RequestBody DbPublishRequest req) {
+        try {
+            return ResponseEntity.ok(dbPublish.publish(req.appName(), req.environment(), req.table(), req.source(),
+                    req.columns(), req.rows()));
+        } catch (IllegalArgumentException e) {
+            return badRequest(e.getMessage());
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(Map.of("error", "Publish failed: " + e.getMessage()));
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -122,6 +159,12 @@ public class AppCatalogController {
     @PostMapping(value = "/environments/test-jwt", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<?> testJwt(@RequestBody AppEnvironment environment) {
         return ResponseEntity.ok(execution.testJwt(environment));
+    }
+
+    /** A TCP socket check of every environment of {@code appName} (every app when blank): is its URL prefix's port listening. */
+    @GetMapping("/environments/check")
+    public ResponseEntity<?> checkEnvironments(@RequestParam(required = false) String appName) {
+        return ResponseEntity.ok(execution.checkReachability(service.listEnvironments(appName)));
     }
 
     // -------------------------------------------------------------------------
@@ -329,9 +372,20 @@ public class AppCatalogController {
         String instanceId = request.appUseCaseInstanceId();
         if (instanceId == null || instanceId.isBlank()) return badRequest("appUseCaseInstanceId is required");
         if (service.getInstance(instanceId) == null) return notFound("Instance", instanceId);
+        if (request.repeat() != null && request.repeat() > 1) {
+            // A stress run: every copy at once, answered with the first copy to bind from and the latencies.
+            long started = System.currentTimeMillis();
+            List<AppUseCaseInstanceOutput> runs = execution.executeRepeated(instanceId, request.environment(),
+                    request.inputs(), ExecutionTarget.from(request.target()), request.agentId(),
+                    !Boolean.FALSE.equals(request.debug()), request.timeoutMs(), request.baseUrl(), request.repeat());
+            Map<String, Object> stress = AppExecutionService.latencyStats(runs, System.currentTimeMillis() - started);
+            AppUseCaseInstanceOutput first = runs.get(0);
+            return ResponseEntity.ok(Map.of("stress", stress,
+                    "result", Boolean.FALSE.equals(request.includePayload()) ? first.withoutPayload() : first));
+        }
         AppUseCaseInstanceOutput output = execution.executeWithInputs(instanceId, request.environment(),
                 request.inputs(), ExecutionTarget.from(request.target()), request.agentId(),
-                !Boolean.FALSE.equals(request.debug()), request.timeoutMs());
+                !Boolean.FALSE.equals(request.debug()), request.timeoutMs(), request.baseUrl());
         return ResponseEntity.ok(Boolean.FALSE.equals(request.includePayload()) ? output.withoutPayload() : output);
     }
 
@@ -350,10 +404,14 @@ public class AppCatalogController {
      *                       caller that has never heard of the switch behaves as it always did.
      * @param timeoutMs      this call's HTTP timeout in milliseconds, in place of the use case's own;
      *                       null or non-positive keeps the use case's configured timeout
+     * @param baseUrl        a URL prefix to call in place of the environment's own, for a deployment
+     *                       not in the environment list; null or blank keeps the environment's
+     * @param repeat         above 1, sends that many copies of the call at once (a stress run) and
+     *                       answers {@code {result, stress}} — the first copy plus the latency figures
      */
     public record PageRunRequest(String appUseCaseInstanceId, String environment, Map<String, Object> inputs,
                                  String target, String agentId, Boolean includePayload, Boolean debug,
-                                 Integer timeoutMs) {}
+                                 Integer timeoutMs, String baseUrl, Integer repeat) {}
 
     /**
      * The values a running page's built-in variables take that only this server can answer for.

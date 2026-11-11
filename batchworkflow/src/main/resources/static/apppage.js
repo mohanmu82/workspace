@@ -81,7 +81,7 @@ const PALETTE = [
 const PAGE_PARAMS = new URLSearchParams(location.search);
 // The parameters the page itself is addressed by. Everything else in the query string names a
 // field on the page and is filled into it as the page opens — see #prefillFromUrl.
-const RESERVED_PARAMS = ['page', 'mode', 'embed', 'depth'];
+const RESERVED_PARAMS = ['page', 'mode', 'embed', 'depth', 'action'];
 // Opened as the page rather than as the designer: apppage.html?page=x&mode=run, which is the link
 // handed to whoever uses the page, and the link a child page is framed by. Nothing meant for the
 // builder — the unsaved-work guard included — has any business firing there.
@@ -368,18 +368,27 @@ const PERFORMANCE_ACTION = 'PERFORMANCE';
 const COMPARE_ACTION = 'COMPARE';
 const DATASET_ACTION = 'DATASET';
 const WEBSOCKET_ACTION = 'WEBSOCKET';
+// Mirrors AppPageAction#CHAIN and AppPageChainStep#DEFAULT_CONCURRENCY / #MAX_CONCURRENCY.
+const CHAIN_ACTION = 'CHAIN';
+const DEFAULT_CHAIN_CONCURRENCY = 4;
+const MAX_CHAIN_CONCURRENCY = 50;
+// What a chain writes under each step's name, in column order.
+const CHAIN_FIELDS = ['status', 'statusCode', 'timeTaken', 'url', 'environment', 'error', 'result'];
 
 // What a WebSocket action does to its instance's connection. Every operation names the same
 // instance, and the instance id is the connection's key on the page — so a Connect button and the
 // Send, Pause and Stop buttons beside it all act on one socket. Mirrors AppPageAction#WS_OPERATIONS.
 const WS_OPERATIONS = [
     { op: 'CONNECT', label: 'Connect and stream into a grid' },
+    { op: 'OPEN',    label: 'Connect only (open the socket, send nothing)' },
     { op: 'SEND',    label: 'Send a message' },
     { op: 'PAUSE',   label: 'Pause (stay connected, skip messages)' },
     { op: 'RESUME',  label: 'Resume after a pause' },
+    { op: 'UNLISTEN', label: 'Stop listening (socket stays open for sends)' },
     { op: 'STOP',    label: 'Stop (close the connection)' },
     { op: 'RESTART', label: 'Restart (reconnect as last connected)' },
-    { op: 'CLEAR',   label: 'Clear the grid (stay connected)' }
+    { op: 'CLEAR',   label: 'Clear the grid (stay connected)' },
+    { op: 'INFO',    label: 'Details (URL, id, state… as key/value rows in a grid)' }
 ];
 // Mirrors AppPageAction#DEFAULT_WS_MAX_ROWS.
 const DEFAULT_WS_MAX_ROWS = 1000;
@@ -397,6 +406,8 @@ const DATASET_OPERATORS = [
     { op: 'endsWith',    label: 'ends with' }
 ];
 const DATASET_DEFAULT_OPERATOR = 'equals';
+// A condition's column meaning "any column". Mirrors StaticDatasetService#ANY_ATTRIBUTE.
+const DATASET_ANY_COLUMN = '*';
 
 // The columns a performance summary comes back under, in the order they are worth reading:
 // which endpoint, then how much it is used, then how it behaves. Named here so the grid is laid
@@ -515,7 +526,8 @@ const ENRICH_COLUMN_KINDS = [
     { kind: 'VLOOKUP', label: 'VLOOKUP into a dataset',   placeholder: '' },
     { kind: 'GRID_VLOOKUP', label: 'VLOOKUP into a grid', placeholder: '' },
     { kind: 'GRID_VLOOKUP_ROW', label: 'VLOOKUP a whole row from a grid', placeholder: '' },
-    { kind: 'REGEX',   label: 'Regex over a column',      placeholder: '(\\w+)-(\\d+)' }
+    { kind: 'REGEX',   label: 'Regex over a column',      placeholder: '(\\w+)-(\\d+)' },
+    { kind: 'VARIABLE', label: 'Request variable',        placeholder: 'variable name' }
 ];
 
 /** The enrichment kinds that look into another grid on the page. Mirrors AppPageEnrichColumn.GRID_KINDS. */
@@ -542,13 +554,19 @@ function isDatasetAction(a) { return !!a && a.actionKind === DATASET_ACTION; }
  * ordinary way — asked wherever the answer is "it has its own shape and its own form", which is
  * most of the places the two special kinds are asked about at all.
  */
-function isSpecialAction(a) { return isPerformanceAction(a) || isCompareAction(a) || isDatasetAction(a) || isWebSocketAction(a); }
+function isSpecialAction(a) { return isPerformanceAction(a) || isCompareAction(a) || isDatasetAction(a) || isWebSocketAction(a) || isChainAction(a); }
+
+/** Whether this action runs other page actions once per row and collects them into one grid. */
+function isChainAction(a) { return !!a && a.actionKind === CHAIN_ACTION; }
 
 /** Whether this action drives a WebSocket connection rather than making one call. */
 function isWebSocketAction(a) { return !!a && a.actionKind === WEBSOCKET_ACTION; }
 
 /** A WebSocket action's operation, CONNECT for one saved without one. */
 function wsOperationOf(a) { return (a && a.wsOperation) || 'CONNECT'; }
+
+/** Whether a WebSocket operation opens the connection — Connect or Connect only — and so may stream into a grid. */
+function wsOpens(op) { return op === 'CONNECT' || op === 'OPEN'; }
 
 // Controls that pick from a list of options. The two differ in how many may be picked and in
 // nothing else — same option sources, same designer panel, same thing an action fills — so
@@ -788,6 +806,7 @@ let instances = [];         // every instance in the catalog — a page may span
 // picking an instance can offer its variables rather than asking anyone to remember them.
 let useCases = [];
 let apps = [];               // every app — backs the app picker for a select's ENVIRONMENTS source
+let dbTargets = [];          // every ORACLE / POSTGRES app environment — where a grid can be published to
 let pages = [];
 // The static dataset library, by name and with the attributes each one carries, so a control
 // sourced from one is wired up by picking a dataset and then picking its columns rather than by
@@ -860,6 +879,8 @@ let activeTab = {};
 // controls and never become any — the page holds one tab set, and how many tabs are in it is a
 // fact about this run rather than about the design, exactly as a grid's rows are.
 let fanTabs = {};
+// Keeps the grid id of each tab an ordinary action adds to a tab set unique across runs.
+let runTabCount = 0;
 // The error check each fanned-out tab's grid puts its rows through, keyed by that grid's id. A
 // fanned-out grid is no control and has no check of its own to carry, so it takes the one written
 // on the action that made it — see #rowCheckOf.
@@ -922,6 +943,8 @@ let lastTrigger = null;
 // flattens those away and they are precisely what the Technical Details panel exists to show.
 // Null until something has run, and again after a reset. See #showTechDetails.
 let lastRun = null;
+// Every run since the page opened or was last reset, oldest first — what the JSON run report covers.
+let runHistory = [];
 // The Technical Details panel while it is open: null when shut. `secrets` decides whether
 // credentials are printed or masked, and is off every time it opens — the document this panel
 // hands over is meant to be sent to someone.
@@ -965,6 +988,7 @@ let childRuns = {};
  * whole rather than filtered by a selected app.
  */
 async function loadCatalog() {
+    AC.api('GET', '/appcatalog/db/targets').then(t => dbTargets = t || [], () => {});
     try {
         [instances, apps, pages, useCases] = await Promise.all([
             AC.listInstances(),
@@ -1062,7 +1086,7 @@ function hydratePage() {
     // keeping its detail exactly as it always did. Turning it off is a decision somebody takes.
     page.debug = page.debug !== false;
     page.transforms.forEach(t => {
-        t.type = t.type === 'XML2JSON' ? 'XML2JSON' : 'JSONATA';
+        t.type = t.type === 'XML2JSON' || t.type === 'XSL2CSV' ? t.type : 'JSONATA';
         // A blank ref is no ref: a page saved before the shared library existed has none at all,
         // and one whose step was switched back to its own expression should read the same way.
         t.jsonataRef = t.type === 'JSONATA' && t.jsonataRef ? String(t.jsonataRef).trim() || null : null;
@@ -1098,6 +1122,7 @@ function hydratePage() {
             // And absent top row means the blank "—" every select has always opened with.
             c.optionSource.topLabel = c.optionSource.topLabel || '';
             c.optionSource.topValue = c.optionSource.topValue || '';
+            c.optionSource.uniqueOnly = c.optionSource.uniqueOnly === true;
         }
         c.tabControlIds = c.tabControlIds || [];
         c.panelControlIds = c.panelControlIds || [];
@@ -1205,6 +1230,7 @@ function hydrateAction(a) {
     a.displayFilterExpression = a.displayFilterExpression || '';
     a.rowElements = a.rowElements === 'SELECTED' || a.rowElements === 'ALL' ? a.rowElements : '';
     a.rowLimit = a.rowLimit === undefined || a.rowLimit === null ? DEFAULT_ROW_LIMIT : Math.max(+a.rowLimit || 0, 0);
+    a.chainSteps = a.chainSteps || [];
     // Both only mean anything on a fan-out, and both are lists the designer appends to, so an
     // action saved before they existed needs them present rather than absent.
     a.rowFilters = a.rowFilters || [];
@@ -1241,6 +1267,11 @@ function hydrateAction(a) {
     a.datasetName = a.datasetName || '';
     a.datasetFavorite = a.datasetFavorite || '';
     a.datasetFilters = a.datasetFilters || [];
+    a.datasetReload = !!a.datasetReload;
+    a.datasetSearch = a.datasetSearch || '';
+    a.datasetSearchMode = ['TOKENS', 'LINES'].includes(a.datasetSearchMode) ? a.datasetSearchMode : 'WHOLE';
+    a.datasetLinesResult = ['MISSING', 'BOTH'].includes(a.datasetLinesResult) ? a.datasetLinesResult : 'MATCHED';
+    a.datasetSearchField = a.datasetSearchField || '';
 }
 
 /**
@@ -1372,6 +1403,10 @@ function renderAll() {
         : 'Unique across the catalog.';
     document.getElementById('pageTitle').value = page.title || '';
     document.getElementById('pageDescription').value = page.description || '';
+    document.getElementById('pageDefaultEnvironment').value = page.defaultEnvironment || '';
+    // Every environment name in the catalog, across apps — a page may span them.
+    AC.api('GET', '/appcatalog/environments').then(envs => document.getElementById('pageEnvironmentOptions').innerHTML =
+        [...new Set(envs.map(e => e.environment))].sort().map(e => '<option value="' + AC.attr(e) + '">').join(''), () => {});
     document.getElementById('deleteBtn').style.display = savedPageName ? '' : 'none';
     document.getElementById('clonePageBtn').style.display = savedPageName ? '' : 'none';
 
@@ -2278,6 +2313,8 @@ function menuPreview(c) {
 function menuProps(c) {
     const library = page.actions || [];
     const entries = c.menuOptions || [];
+    // What an entry may scroll to: the same controls the button's own Scroll To offers.
+    const focusTargets = page.controls.filter(t => t.controlId !== c.controlId && t.type !== 'hidden' && !t.hideOnRun);
     let html = '<div class="props-section"><div class="props-title"><span>Menu Entries</span>'
         + '<span class="props-jump"><button class="tool-btn" onclick="addMenuOption()">+ Add</button></span></div>'
         + '<span class="hint">Clicking the button opens this list; picking an entry runs what is attached to it. '
@@ -2327,6 +2364,12 @@ function menuProps(c) {
                         + '</select>'
                     : '')
             + '</div>'
+            + '<select onchange="setMenuOption(' + i + ', \'focusControlId\', this.value)" title="Brought into view once this entry has run">'
+                + '<option value="">' + (findControl(c.focusControlId) ? 'Scroll to: as the button (' + AC.esc(controlTitle(findControl(c.focusControlId))) + ')'
+                    : 'Scroll to: stay where the operator is') + '</option>'
+                + focusTargets.map(t => '<option value="' + AC.attr(t.controlId) + '"' + (t.controlId === o.focusControlId ? ' selected' : '') + '>'
+                    + 'Scroll to: ' + AC.esc(controlTitle(t)) + ' (' + AC.esc(t.type) + ')</option>').join('')
+            + '</select>'
             + (!(o.label || '').trim() ? '<span class="hint err-hint">This entry has no name — there would be '
                     + 'nothing on the menu to click.</span>' : '')
             + ((o.actionIds || []).length ? '' : '<span class="hint err-hint">This entry runs nothing — attach an '
@@ -2917,10 +2960,10 @@ function barRun(c, zoom) {
     if (!model || !model.categories.length) {
         return label + '<div class="grid-empty">' + (model ? 'The call returned nothing to chart.'
                 : 'Nothing charted yet — an action aimed at this chart fills it.')
-            + (model && model.problems.length ? ' Not charted: ' + AC.esc(model.problems.join(', ')) : '') + '</div>';
+            + (model && model.problems.length ? ' ⚠ ' + AC.esc(model.problems.join('; ')) : '') + '</div>';
     }
     const problems = model.problems.length
-        ? '<div class="bar-bad">Not charted: ' + AC.esc(model.problems.join(', ')) + ' — a value has to be a number, not below zero.</div>' : '';
+        ? '<div class="bar-bad">⚠ ' + AC.esc(model.problems.join('; ')) + '</div>' : '';
     const height = Math.max(box - 26 - 18 - (problems ? 16 : 0), 60);
     return label + '<div class="bar-chart">' + barLegend(model) + problems
         + barPlot(model, c.orientation === 'HORIZONTAL', height) + '</div>';
@@ -3352,16 +3395,16 @@ function tsModelOf(shape, control) {
     const problems = [];
     let problemCount = 0;
     const note = text => { problemCount++; if (problems.length < TS_PROBLEM_SAMPLES) problems.push(text); };
-    const blankOr = cell => cell === undefined || cell === null || cell === '' ? '(blank)' : cellText(cell);
     if (timed && !axis) note('no time column is set on this chart');
     else rows.forEach((row, i) => {
         // A line chart counting lines reads nothing out of the row, so a row that is not a
         // record is only a problem where a column has to be read off one.
-        if (!isObjectRow(row) && (axis || !plain)) { note('row ' + (i + 1) + ' is not a record'); return; }
+        if (!isObjectRow(row) && (axis || !plain)) { note('Row ' + (i + 1) + ' cannot be charted because it is not a record'); return; }
         const raw = axis ? rowField(row, axis) : undefined;
         let t = !axis ? i + 1 : timed ? parseTime(raw, control.timeFormat) : sliceNumber(raw);
         if (!Number.isFinite(t)) {
-            note('row ' + (i + 1) + ' ' + axis + ' = ' + blankOr(raw));
+            note(unchartable(i, axis, raw, !timed ? 'is not a number'
+                : 'is not ' + (control.timeFormat ? 'a time in "' + control.timeFormat + '"' : 'an ISO date or an epoch')));
             return;
         }
         // Where the instant is spread over two columns — a date, and the seconds or minutes into
@@ -3370,13 +3413,13 @@ function tsModelOf(shape, control) {
         // dropped: the date it carries is real, and losing the row entirely would say less.
         if (timed && offsetColumn) {
             const offset = timeOffsetFor(control, row);
-            if (offset.problem) note('row ' + (i + 1) + ' ' + offsetColumn + ' = ' + offset.problem);
+            if (offset.problem) note('Row ' + (i + 1) + ' ' + offsetColumn + ' = ' + offset.problem + ' — charted at its date only');
             t += offset.ms;
         }
         const values = counting ? null : valueFields.map(f => {
             const cell = rowField(row, f);
             const number = sliceNumber(cell);
-            if (!Number.isFinite(number)) note('row ' + (i + 1) + ' ' + f + ' = ' + blankOr(cell));
+            if (!Number.isFinite(number)) note(unchartable(i, f, cell, 'is not a number'));
             return number;
         });
         const line = keyField ? cellText(row, keyField) : '';
@@ -3731,17 +3774,11 @@ function tsRun(c, zoom) {
     if (!model || model.kind !== 'series') {
         return label + '<div class="grid-empty">Nothing charted yet — an action aimed at this chart, or the grid it is drawn from, fills it.</div>';
     }
-    // What has to be readable differs with the axis: a time series parses a time, a line chart
-    // with an x column reads a number out of it, and a line chart counting lines reads nothing
-    // at all — so there only the values can be at fault.
-    const why = isTimed(c)
-        ? 'a time has to match ' + AC.esc(c.timeFormat ? '"' + c.timeFormat + '"' : 'an ISO date or an epoch') + ', and a value has to be a number'
-        : model.axis ? AC.esc(model.axis) + ' and the values have to be numbers'
-        : 'a value has to be a number';
+    // Each warning says why its row was left out; only a sample is kept, so the rest are counted.
+    const more = model.problemCount - model.problems.length;
     const problems = model.problemCount
-        ? '<div class="bar-bad">Not charted (' + model.problemCount.toLocaleString() + '): ' + AC.esc(model.problems.join(', '))
-            + (model.problemCount > model.problems.length ? ', …' : '')
-            + ' — ' + why + '.</div>'
+        ? '<div class="bar-bad">⚠ ' + AC.esc(model.problems.join('; '))
+            + (more > 0 ? '; and ' + more.toLocaleString() + ' more' : '') + '</div>'
         : '';
     if (!model.entries.length) {
         return label + '<div class="grid-empty">The call returned nothing to chart.</div>' + problems;
@@ -4779,6 +4816,7 @@ function deleteControl(asked) {
         // And a trigger that scrolled to it goes back to leaving the operator where they are —
         // the save refuses a control naming one that is not on the page.
         if (c.focusControlId === selectedId) c.focusControlId = '';
+        (c.menuOptions || []).forEach(o => { if (o.focusControlId === selectedId) o.focusControlId = ''; });
     });
     selectedId = null;
     renderAll();
@@ -5523,7 +5561,11 @@ function selectProps(c) {
                  + '</div>'
                  + '<span class="hint">The key is what an action sends as <code>${'
                     + AC.esc(c.fieldName || 'name') + '}</code>; the label is what the operator picks it by. '
-                    + 'Leave the label blank and the key is shown as well as sent.</span>';
+                    + 'Leave the label blank and the key is shown as well as sent.</span>'
+                 + '<label class="inline-check"><input type="checkbox"' + (source.uniqueOnly ? ' checked' : '')
+                    + ' onchange="setOption(\'uniqueOnly\', this.checked)"> Unique values only</label>'
+                 + '<span class="hint" style="margin-top:-4px">One option per distinct key + label pair, so a '
+                    + 'column repeated down many rows is listed once.</span>';
         }
     }
     return html + '</div>';
@@ -6245,13 +6287,15 @@ function targetsFor(a) {
     if (isDatasetAction(a)) {
         return page.controls.filter(t => t.type === 'grid' || isSelect(t.type) || isChart(t.type));
     }
+    if (isChainAction(a)) return page.controls.filter(t => t.type === 'grid' || t.type === 'textarea');
     if (isSpecialAction(a)) return page.controls.filter(t => t.type === 'grid');
     if (a.rowSourceControlId && a.rowOutputMode === 'TABS') return page.controls.filter(t => t.type === 'tabs');
     // Collected answers are a list, and a list fills a picker as readily as a table: forty calls
     // asking which of these are still open, and the ones that are become the dropdown the next
     // click is made from.
     if (a.rowSourceControlId) return page.controls.filter(t => t.type === 'grid' || isSelect(t.type));
-    return page.controls.filter(t => TARGET_TYPES.includes(t.type));
+    // A tab set takes a grid tab per run — see #bindAction.
+    return page.controls.filter(t => TARGET_TYPES.includes(t.type) || t.type === 'tabs');
 }
 
 /**
@@ -6266,9 +6310,11 @@ function rowSourceOptions(a) {
     // would be running over whatever the last click left behind.
     const grids = page.controls.filter(t => t.type === 'grid' && t.controlId !== a.targetControlId);
     const lists = page.controls.filter(t => isSelect(t.type) && t.controlId !== a.targetControlId);
+    const texts = page.controls.filter(t => t.type === 'textarea' && t.controlId !== a.targetControlId);
     return '<option value="">— run once, against the page —</option>'
         + (grids.length ? '<optgroup label="Each row of a grid">' + grids.map(option).join('') + '</optgroup>' : '')
-        + (lists.length ? '<optgroup label="Each element of a list">' + lists.map(option).join('') + '</optgroup>' : '');
+        + (lists.length ? '<optgroup label="Each element of a list">' + lists.map(option).join('') + '</optgroup>' : '')
+        + (texts.length ? '<optgroup label="Each line of a text area">' + texts.map(option).join('') + '</optgroup>' : '');
 }
 
 // ── An action's inputs ───────────────────────────────────────────────────
@@ -6396,7 +6442,7 @@ function inputSourceOptions(a, selected) {
         + (name === selected ? ' selected' : '') + '>' + AC.esc(label || name) + '</option>';
     const controls = page.controls.filter(c => VALUE_TYPES.includes(c.type) && c.fieldName);
     const source = findControl(a.rowSourceControlId);
-    const columns = !source ? [] : isSelect(source.type) ? ['key', 'label'] : (source.columns || []);
+    const columns = !source ? [] : isSelect(source.type) ? ['key', 'label'] : source.type === 'textarea' ? ['line'] : (source.columns || []);
     const variables = (page.variables || []).map(v => v.name).filter(Boolean);
     let html = '<option value="">— pick where it comes from —</option>';
     if (columns.length) html += '<optgroup label="Each row' + Q + 's own column">'
@@ -6532,8 +6578,9 @@ function actionCard(a, i, count, fns) {
     // fan-out into one grid there is no whole grid to do it to — each answer is a row among the
     // others — so it is only offered where a grid still holds one answer: the ordinary case, and
     // a tab per row, where every tab is its own grid.
+    const tabPerRun = !fanOut && !!target && target.type === 'tabs';
     const isGridTarget = !fanOut
-        ? (a.targetControlId === NEW_GRID || (target && target.type === 'grid'))
+        ? (a.targetControlId === NEW_GRID || (target && (target.type === 'grid' || tabPerRun)))
         : perTab;
     // Adding to what a grid holds needs a grid that is still there next run, so it is offered on
     // a placed grid and nowhere else: "new grid" builds another one per run and already keeps
@@ -6562,6 +6609,7 @@ function actionCard(a, i, count, fns) {
             + '<option value="' + COMPARE_ACTION + '"' + (isCompareAction(a) ? ' selected' : '') + '>Compare two environments</option>'
             + '<option value="' + DATASET_ACTION + '"' + (isDatasetAction(a) ? ' selected' : '') + '>Load a static dataset</option>'
             + '<option value="' + WEBSOCKET_ACTION + '"' + (isWebSocketAction(a) ? ' selected' : '') + '>WebSocket: connect, send, pause, stop…</option>'
+            + '<option value="' + CHAIN_ACTION + '"' + (isChainAction(a) ? ' selected' : '') + '>Chain page actions per row</option>'
             + '</select>')
         + field('Runs After', '<select onchange="' + set('dependsOnActionId', 'this.value') + '">'
             + dependencyOptions(a) + '</select>', DEPENDS_HINT);
@@ -6574,12 +6622,17 @@ function actionCard(a, i, count, fns) {
     if (isCompareAction(a)) return head + compareFields(a, i, targets, fns, set) + '</div>';
     if (isDatasetAction(a)) return head + datasetFields(a, i, targets, target, fns, set) + '</div>';
     if (isWebSocketAction(a)) return head + webSocketFields(a, i, targets, fns, set) + '</div>';
+    if (isChainAction(a)) return head + chainFields(a, i, targets, fns, set) + '</div>';
 
     // What the call is — sent once, however many places its answer goes.
     const callPart = field('Instance', '<select onchange="' + set('appUseCaseInstanceId', 'this.value') + '">' + instanceOptions(a.appUseCaseInstanceId) + '</select>')
         + field('For Each Row Of', '<select onchange="' + set('rowSourceControlId', 'this.value') + '">'
             + rowSourceOptions(a) + '</select>',
-            fanOut && sourceIsList
+            fanOut && rowSource && rowSource.type === 'textarea'
+                ? 'Sent once per non-blank line of <b>' + AC.esc(controlTitle(rowSource)) + '</b>. Below, <code>${line}</code> '
+                    + 'is that one line, trimmed — so <code>{"orderId": "${line}"}</code> makes a call per line. '
+                    + '<code>${ROWNUM}</code> is which line it is, from 1.'
+            : fanOut && sourceIsList
                 ? 'Sent once per element of <b>' + AC.esc(controlTitle(rowSource)) + '</b>, all of them at once. Below, '
                     + '<code>${' + AC.esc(rowSource.fieldName || 'field') + '}</code> is that one element rather than every pick '
                     + 'joined together, <code>${key}</code> is its value and <code>${label}</code> the text shown for it — '
@@ -6646,8 +6699,13 @@ function actionCard(a, i, count, fns) {
             : '')
         + field('Environment', '<input type="text" value="' + AC.attr(a.environmentOverride || '') + '" placeholder="${envSelect}" oninput="' + set('environmentOverride', 'this.value') + '">',
             'Overrides which environment this run calls. <code>${fieldName}</code> picks up a control (usually a select sourced from App environments); leave blank to use the instance\'s own environment.')
+        + field('Base URL', '<input type="text" value="' + AC.attr(a.baseUrlOverride || '') + '" placeholder="${baseUrl}   or   https://myhost:8443/api" oninput="' + set('baseUrlOverride', 'this.value') + '">',
+            'Calls this URL instead of the environment\'s URL prefix — for a deployment not in the environment list. The use case\'s URL suffix is appended to it; credentials and variables still come from the environment above (or the instance\'s own). <code>${fieldName}</code> picks up a control, typically a text box; when it resolves blank the environment\'s prefix is used.')
         + field('Timeout (ms)', '<input type="text" value="' + AC.attr(a.timeoutOverride || '') + '" placeholder="${TIMEOUT_MS}" oninput="' + set('timeoutOverride', 'this.value') + '">',
             'Overrides the use case\'s HTTP timeout for this action\'s calls. A number (<code>60000</code>) or <code>${name}</code> for a page variable or control; leave blank, or let it resolve to anything but a positive whole number, to keep the use case\'s own timeout.')
+        + field('Repeat (parallel)', '<input type="text" value="' + AC.attr(a.repeatCount || '') + '" placeholder="${LOAD}" oninput="' + set('repeatCount', 'this.value') + '">',
+            'Stress test: sends this many copies of the call at once (up to 1000) and reports min / avg / p95 / max latency and throughput. A number or <code>${name}</code> for a control — e.g. a text box defaulting to 1 that a regression page sets to 100. The first copy\'s answer is what gets bound. Blank or 1 sends it once.')
+        + dbPublishEditor(a, set, field)
         + inputsEditor(a, i, fns);
 
     // Where the answer goes: the action's own target, which is the first of its targets.
@@ -6694,6 +6752,9 @@ function actionCard(a, i, count, fns) {
                     + 'hundred.'
                 : a.targetControlId === NEW_GRID
                 ? 'Every run adds its own grid below the form, newest on top, instead of replacing the last one.'
+                : tabPerRun
+                ? 'Every run adds a grid tab to this set, named by <b>Tab Name</b> below. A run whose name '
+                    + 'matches an earlier tab refills that tab instead; Reset takes them all away.'
                 : isLink
                 ? 'What this binds becomes the address the link points at, so the operator can click '
                     + 'through to whatever the call named. It opens in a new tab, and only '
@@ -6717,6 +6778,12 @@ function actionCard(a, i, count, fns) {
                     + 'slices typed into the chart itself. Those are kept and come back if this action is '
                     + 'ever taken off, so a chart can be laid out with sample numbers and wired up afterwards.'
                 : undefined)
+        + (tabPerRun
+            ? field('Tab Name', '<input type="text" placeholder="${orderId}" value="' + AC.attr(a.rowLabelTemplate || '')
+                + '" oninput="' + set('rowLabelTemplate', 'this.value') + '">',
+                'What each run' + Q + 's tab is called, read off the page as the action runs — <code>${orderId}</code> '
+                    + 'names it after the control or variable of that name. Blank numbers them.')
+            : '')
         + (singleValue
             ? field('Value Path', '<input type="text" value="' + AC.attr(a.valuePath || '') + '" placeholder="'
                     + (isLink ? (meta ? 'url' : 'data.report.href') : (meta ? 'statusCode' : 'data.order.status')) + '" oninput="' + set('valuePath', 'this.value') + '">',
@@ -6818,6 +6885,7 @@ function bindingTabs(a, ownPart, fns) {
             + bindings.map((b, at) => tab(at + 1, bindingTabTitle(b))).join('')
             + '<button type="button" class="binding-tab add" onclick="' + call('add', -1) + '" '
                 + 'title="Bind this same call' + Q + 's answer into another control">+ Add target</button>'
+            + copyTargetsPicker(fns)
         + '</div>'
         + '<div class="binding-pane">'
             + (open === 0 ? ownPart : bindingCard(bindings[open - 1], open - 1, bindings.length, call))
@@ -6825,6 +6893,31 @@ function bindingTabs(a, ownPart, fns) {
         + (count > 1 ? '' : '<span class="hint">One call, however many targets: add another to bind this same answer '
             + 'into more controls — a grid, a select, a pie chart and a text area from one response — each reading '
             + 'it on its own terms.</span>');
+}
+
+/** The page's other actions that bind somewhere — the ones whose targets can be copied onto this one. */
+function targetSources() {
+    const self = editor && editor.draft.actionId;
+    return allActions().filter(a => a.actionId && a.actionId !== self && targetsToCopy(a).length);
+}
+
+/** One action's targets, own first, each as a fresh further-target binding. */
+function targetsToCopy(action) {
+    const keys = Object.keys(blankBinding());
+    return bindingsOf(action).filter(b => b.targetControlId)
+        .map(b => Object.assign(blankBinding(), cloneValue(Object.fromEntries(keys.filter(k => b[k] != null).map(k => [k, b[k]])))));
+}
+
+/** A picker on the targets strip that appends another action's targets to this one's. */
+function copyTargetsPicker(fns) {
+    const sources = targetSources();
+    if (!sources.length) return '';
+    return '<select class="binding-tab add" title="Append copies of another action' + Q + 's targets to this one" '
+        + 'onchange="' + fns.binding + '(\'copy\', -1, null, this.value)">'
+        + '<option value="">Copy targets from…</option>'
+        + sources.map(a => '<option value="' + AC.attr(a.actionId) + '">' + AC.esc(a.actionLabel || a.actionId)
+            + ' (' + targetsToCopy(a).length + ')</option>').join('')
+        + '</select>';
 }
 
 /** Switches the action editor to one of its targets' tabs. */
@@ -7044,6 +7137,11 @@ function bindingDraft(op, at, name, value) {
     if (op === 'add') {
         bindings.push(blankBinding());
         editor.bindingTab = bindings.length;
+    } else if (op === 'copy') {
+        const source = targetSources().find(s => s.actionId === value);
+        if (!source) return renderEditor();
+        bindings.push(...targetsToCopy(source));
+        editor.bindingTab = bindings.length;
     } else if (op === 'clear') {
         bindings.length = 0;
         editor.bindingTab = 0;
@@ -7200,7 +7298,7 @@ function dropUnusablePivot(holder, tabsPerRow) {
     if (!holder || !holder.pivot) return;
     const id = holder.targetControlId;
     const target = id && id !== NEW_GRID ? findControl(id) : null;
-    const grid = id === NEW_GRID || (target && target.type === 'grid');
+    const grid = id === NEW_GRID || (target && (target.type === 'grid' || target.type === 'tabs'));
     if (!grid || tabsPerRow) holder.pivot = null;
 }
 
@@ -7216,7 +7314,7 @@ function dropUnusableBindFilters(holder, fanOut) {
     if (!id) { holder.bindFilters = []; return; }
     if (id === NEW_GRID || fanOut) return;
     const target = findControl(id);
-    if (!target || !(target.type === 'grid' || isSelect(target.type))) holder.bindFilters = [];
+    if (!target || !(target.type === 'grid' || target.type === 'tabs' || isSelect(target.type))) holder.bindFilters = [];
 }
 
 /**
@@ -7257,7 +7355,7 @@ function bindingChainDraft(at, op, step, value) {
  */
 function rowFilterEditor(a, i, fns) {
     const source = findControl(a.rowSourceControlId);
-    const known = source && isSelect(source.type) ? ['key', 'label'] : (source && source.columns) || [];
+    const known = source && isSelect(source.type) ? ['key', 'label'] : source && source.type === 'textarea' ? ['line'] : (source && source.columns) || [];
     const call = (op, at, name, value) => fns.rows + '(' + i + ', \'rowFilters\', \'' + op + '\', ' + at
         + ', ' + (name ? '\'' + name + '\'' : 'null') + ', ' + (value === undefined ? 'null' : value) + ')';
 
@@ -7411,7 +7509,7 @@ function enrichColumnEditor(columns, call, fanOut) {
                     + (k.kind === kind ? ' selected' : '') + '>' + AC.esc(k.label) + '</option>').join('')
                 + '</select>'
                 + (kind === 'META' ? metaFieldSelect(column.expression, call('set', at, 'expression', 'this.value'))
-                    : kind === 'HEADER' || kind === 'REGEX' ? text('expression', chosen.placeholder) : '')
+                    : kind === 'HEADER' || kind === 'REGEX' || kind === 'VARIABLE' ? text('expression', chosen.placeholder) : '')
                 + (at > 0 ? '<button class="tool-btn" onclick="' + call('move', at, null, '-1') + '" title="Earlier">↑</button>' : '')
                 + (at < columns.length - 1 ? '<button class="tool-btn" onclick="' + call('move', at, null, '1') + '" title="Later">↓</button>' : '')
                 + '<button class="icon-btn" onclick="' + call('remove', at) + '" title="Remove">×</button>'
@@ -7462,7 +7560,8 @@ function enrichColumnEditor(columns, call, fanOut) {
         : '<div class="empty-note">None — the grid shows the rows as they were bound.</div>')
         + '<span class="hint">Worked out for every row as the grid fills, and added beside the columns the '
         + 'response brought — a column of the same name is overwritten. A <b>call record</b> field or a '
-        + '<b>response header</b> is the same on every row '
+        + '<b>response header</b> or a <b>request variable</b> — an input sent with the call, else the one the '
+        + 'instance was saved with — is the same on every row '
         + (fanOut ? 'that one call produced, so a collected grid shows each call' + Q + 's own. '
                   : 'of the grid, since one call filled it. ')
         + 'A <b>VLOOKUP</b> takes this row' + Q + 's value in the grid column, finds the first dataset row whose '
@@ -7521,7 +7620,9 @@ function rowListSteps(actions, index, list, op, at, name, value) {
     const a = actions[index];
     const items = a[list] = a[list] || [];
     if (op === 'add') {
-        items.push(list === 'datasetFilters'
+        items.push(list === 'chainSteps'
+            ? { actionId: '', maxConcurrency: DEFAULT_CHAIN_CONCURRENCY }
+            : list === 'datasetFilters'
             ? { attribute: '', op: DATASET_DEFAULT_OPERATOR, value: '' }
             : list === 'rowFilters' || list === 'bindFilters' || list === 'excludeFilters'
             ? { column: '', operator: 'CONTAINS', value: '' }
@@ -7637,12 +7738,30 @@ function webSocketFields(a, i, targets, fns, set) {
                     + 'use case' + Q + 's suffix, its headers and the app' + Q + 's credentials on the handshake — sends the '
                     + 'use case' + Q + 's body as the opening message, if it has one, and streams every message into the grid. '
                     + 'Connecting again replaces the connection.'
-            : op === 'SEND' ? 'Sends a message over the open connection.'
+            : op === 'OPEN' ? 'Opens the connection as Connect does but sends nothing — usually run on load, for '
+                    + '<b>Send</b> actions naming this instance to go over. A grid is optional: without one, nothing '
+                    + 'arriving is shown. Connecting again replaces the connection.'
+            : op === 'SEND' ? 'Sends a message over the open connection. One sent while it is still opening waits for it.'
             : op === 'PAUSE' ? 'Keeps the connection open but skips what arrives until resumed; the grid says how many were skipped.'
             : op === 'RESUME' ? 'Shows what arrives again after a pause.'
+            : op === 'UNLISTEN' ? 'Stops showing what arrives — the grid keeps what it has — while the connection stays open '
+                    + 'for <b>Send</b>. Connect or Restart listens again.'
             : op === 'STOP' ? 'Closes the connection. The grid keeps what it already shows.'
             : op === 'CLEAR' ? 'Empties the grid this instance' + Q + 's Connect streams into; the connection stays open and new messages keep arriving.'
+            : op === 'INFO' ? 'Asks the server for this connection' + Q + 's details as JSON — URL connected to, connection id, '
+                    + 'relay session, state, opened/closed times, counts, environment and inputs — and shows them in a grid '
+                    + 'as <code>key</code>/<code>value</code> rows. The connection is left as it is.'
             : 'Closes the connection and opens it again with the environment and inputs Connect last used.');
+
+    if (op === 'INFO') {
+        return html + field('Target', '<select onchange="' + set('targetControlId', 'this.value') + '">'
+            + '<option value="">— select a grid —</option>'
+            + targets.map(t => '<option value="' + AC.attr(t.controlId) + '"' + (t.controlId === a.targetControlId ? ' selected' : '') + '>'
+                + AC.esc(controlTitle(t)) + ' (grid)</option>').join('')
+            + '</select>',
+            targets.length ? 'One row per detail, columns <code>key</code> and <code>value</code>.'
+                : 'Nowhere to put the details yet — drag a <b>Grid</b> onto the layout and aim this at it.');
+    }
 
     if (op === 'SEND') {
         return html + field('Message', '<textarea spellcheck="false" placeholder=\'{"action": "subscribe", "topic": "${topic}"}\' oninput="'
@@ -7651,14 +7770,14 @@ function webSocketFields(a, i, targets, fns, set) {
                 + '(<code>$region</code>) are filled in by the server as they are in its body. Blank sends the use '
                 + 'case' + Q + 's body again.');
     }
-    if (op !== 'CONNECT') return html;
+    if (!wsOpens(op)) return html;
 
     html += field('Environment', '<input type="text" placeholder="${envPick}   or   uat — blank uses the instance' + Q + 's own" value="'
                 + AC.attr(a.environmentOverride || '') + '" oninput="' + set('environmentOverride', 'this.value') + '">',
                 'Which of the instance' + Q + 's environments to connect to.')
         + inputsEditor(a, i, fns, 'Sent with the connection: they fill the URL, the headers and the opening message.')
         + field('Target', '<select onchange="' + set('targetControlId', 'this.value') + '">'
-            + '<option value="">— select a grid —</option>'
+            + '<option value="">' + (op === 'OPEN' ? '— no grid (don' + Q + 't listen) —' : '— select a grid —') + '</option>'
             + targets.map(t => '<option value="' + AC.attr(t.controlId) + '"' + (t.controlId === a.targetControlId ? ' selected' : '') + '>'
                 + AC.esc(controlTitle(t)) + ' (grid)</option>').join('')
             + '</select>',
@@ -7666,11 +7785,16 @@ function webSocketFields(a, i, targets, fns, set) {
                 ? 'Each message becomes a row, newest at the top, with a <code>receivedAt</code> column first. A JSON '
                     + 'message' + Q + 's fields are its columns; anything else arrives as a <code>message</code> column. '
                     + 'For a live chart, add a <b>Time Series</b> drawing from this grid with time column <code>receivedAt</code>.'
-                : 'Nowhere to put the messages yet — drag a <b>Grid</b> onto the layout and aim this at it.')
+                : 'Nowhere to put the messages yet — drag a <b>Grid</b> onto the layout and aim this at it.');
+    // Connect only with nothing listening has no rows to shape, cap, key or exclude.
+    if (op === 'OPEN' && !a.targetControlId) return html;
+
+    html += field('Transforms', chainEditor(a, i, fns),
+            'Run over each message as it arrives, before the rows are read out of it — e.g. a JSONata that reshapes it.')
         + '<div class="form-row" style="margin-bottom:0">'
         + field('Rows In Each Message', '<input type="text" placeholder="blank — the message is the row" value="'
             + AC.attr(a.arrayPath || '') + '" oninput="' + set('arrayPath', 'this.value') + '">',
-            'A path to an array when one message carries several rows, e.g. <code>data.trades</code>.')
+            'A path to an array when one message (after its transforms) carries several rows, e.g. <code>data.trades</code>.')
         + field('Keep At Most', '<input type="number" min="1" step="100" value="' + AC.attr(String(a.wsMaxRows || DEFAULT_WS_MAX_ROWS))
             + '" oninput="' + set('wsMaxRows', 'Number(this.value) || ' + DEFAULT_WS_MAX_ROWS) + '">',
             'Rows; the oldest fall off as new ones arrive.')
@@ -7697,7 +7821,46 @@ function webSocketFields(a, i, targets, fns, set) {
         + 'field of the message, and may be a dotted path into it — <code>payload.type</code> equals '
         + '<code>heartbeat</code>. Text tests ignore case. A value may be written <code>${field}</code> to test against a '
         + 'control, and is read as each batch of messages arrives, so changing that control changes what is excluded '
-        + 'from then on; one that comes out empty drops its filter.');
+        + 'from then on; one that comes out empty drops its filter.')
+        + (fns.binding ? wsFeedsEditor(a, targets, fns) : '');
+}
+
+/**
+ * Further grids a Connect streams every message into, each through its own transforms — the plain
+ * feed above, a JSONata reading of it here — either adding each message's rows or showing only the
+ * latest message's. Kept to what a stream has: no metadata, enrichment or group-by.
+ */
+function wsFeedsEditor(a, targets, fns) {
+    const bindings = a.extraBindings || [];
+    const call = (op, at, name, value) => fns.binding + '(\'' + op + '\', ' + at
+        + ', ' + (name ? '\'' + name + '\'' : 'null') + ', ' + (value === undefined ? 'null' : value) + ')';
+    const card = (b, at) => {
+        const set = (name, expr) => call('set', at, name, expr);
+        return '<div class="action-card">'
+            + '<div class="action-head"><span class="action-num">' + (at + 2) + '</span>'
+                + '<span class="sum-title">' + AC.esc(findControl(b.targetControlId) ? controlTitle(findControl(b.targetControlId)) : 'Choose a grid') + '</span>'
+                + '<button class="icon-btn" onclick="' + call('remove', at) + '" title="Remove this grid">×</button>'
+            + '</div>'
+            + field('Grid', '<select onchange="' + set('targetControlId', 'this.value') + '">'
+                + '<option value="">— select a grid —</option>'
+                + targets.filter(t => t.controlId !== a.targetControlId).map(t => '<option value="' + AC.attr(t.controlId) + '"'
+                    + (t.controlId === b.targetControlId ? ' selected' : '') + '>' + AC.esc(controlTitle(t)) + ' (grid)</option>').join('')
+                + '</select>')
+            + field('Transforms', chainEditor(b, at, { chain: 'bindingChainDraft' }),
+                'Run over each message as it arrives, e.g. a JSONata that reshapes or summarises it.')
+            + field('Rows In The Result', '<input type="text" placeholder="blank — the result is the row(s)" value="'
+                + AC.attr(b.arrayPath || '') + '" oninput="' + set('arrayPath', 'this.value') + '">')
+            + '<label class="inline-check"><input type="checkbox"' + (b.appendRows ? ' checked' : '')
+                + ' onchange="' + set('appendRows', 'this.checked') + '"> Append each message' + Q + 's rows (newest at the top)</label>'
+            + '<span class="hint">Off, the grid shows only the latest message' + Q + 's result. On, rows build up to '
+                + '<b>Keep At Most</b>, as in the grid above. Exclude filters and the unique key apply to the grid above only.</span>'
+            + '</div>';
+    };
+    return '<div class="props-title" style="margin-top:8px"><span>Also Stream To</span>'
+        + '<span class="props-jump"><button class="tool-btn" onclick="' + call('add', -1) + '">+ Add grid</button></span></div>'
+        + (bindings.length ? bindings.map(card).join('')
+            : '<div class="empty-note">Only the grid above. Add another to stream the same messages into it, '
+                + 'transformed by JSONata.</div>');
 }
 
 function performanceFields(a, i, targets, target, fns, set) {
@@ -7773,7 +7936,38 @@ function datasetFields(a, i, targets, target, fns, set) {
                 : 'None saved on this dataset yet. Save one on the <b>Static Datasets</b> page and every page '
                     + 'reading it can ask for it by name.');
 
+    html += '<label class="inline-check"><input type="checkbox"' + (a.datasetReload ? ' checked' : '')
+        + ' onchange="' + set('datasetReload', 'this.checked') + '"> Reload from source first</label>'
+        + '<span class="hint" style="margin-top:-4px">Re-reads the dataset from its file or endpoint before '
+        + 'anything else — the <b>Static Datasets</b> page' + Q + 's Reload, as a button. With no target that is '
+        + 'all it does.</span>';
+
     html += datasetFilterEditor(a, i, fns);
+
+    // After the filter editor because it reuses that editor's column list (ds-cols-i).
+    html += '<div class="props-title" style="margin-top:8px"><span>Search</span></div>'
+        + field('Search For', '<input type="text" placeholder="${searchBox}" value="' + AC.attr(a.datasetSearch || '')
+            + '" oninput="' + set('datasetSearch', 'this.value') + '">',
+            'Usually a text box on the page. Blank searches nothing. Case-insensitive "contains".')
+        + '<div class="form-row" style="margin-bottom:0">'
+        + field('Match', '<select onchange="' + set('datasetSearchMode', 'this.value') + '">'
+            + '<option value="WHOLE"' + (a.datasetSearchMode === 'WHOLE' ? ' selected' : '') + '>Entire text</option>'
+            + '<option value="TOKENS"' + (a.datasetSearchMode === 'TOKENS' ? ' selected' : '') + '>Each word narrows the last</option>'
+            + '<option value="LINES"' + (a.datasetSearchMode === 'LINES' ? ' selected' : '') + '>Each line (rows matching any line)</option>'
+            + '</select>')
+        + field('In', '<input type="text" list="ds-cols-' + i + '" placeholder="whole row" value="'
+            + AC.attr(a.datasetSearchField || '') + '" oninput="' + set('datasetSearchField', 'this.value') + '">')
+        + field('Lines', '<select onchange="' + set('datasetLinesResult', 'this.value') + '"' + (a.datasetSearchMode === 'LINES' ? '' : ' disabled') + '>'
+            + '<option value="MATCHED"' + (a.datasetLinesResult === 'MATCHED' ? ' selected' : '') + '>Matching rows only</option>'
+            + '<option value="MISSING"' + (a.datasetLinesResult === 'MISSING' ? ' selected' : '') + '>Missing lines only</option>'
+            + '<option value="BOTH"' + (a.datasetLinesResult === 'BOTH' ? ' selected' : '') + '>Matching + missing</option>'
+            + '</select>')
+        + '</div>'
+        + '<span class="hint">Each word: <code>john smith</code> finds every John, then keeps only those that also '
+        + 'say Smith. Each line: a textarea of <code>john smith</code> / <code>jane doe</code> finds the rows containing '
+        + 'either line, each line matched whole. In blank (or <code>*</code>) searches every column of the row; a column name searches only that one. '
+        + 'Lines (each line only): <i>missing</i> returns one row per line nothing matched, and <i>matching + missing</i> every '
+        + 'row with the line it answers — both carry columns <code>searchLine</code> and <code>found</code>.</span>';
 
     html += field('Target', '<select onchange="' + set('targetControlId', 'this.value') + '">'
             + '<option value="">— no target —</option>'
@@ -7816,12 +8010,18 @@ function datasetFilterEditor(a, i, fns) {
     const call = (op, at, name, value) => fns.rows + '(' + i + ', \'datasetFilters\', \'' + op + '\', ' + at
         + ', ' + (name ? '\'' + name + '\'' : 'null') + ', ' + (value === undefined ? 'null' : value) + ')';
 
+    // Typed rather than picked, so a column can also be "*" (any of them) or a ${field} — the
+    // operator choosing which column to search from a dropdown on the page.
+    const columnsList = 'ds-cols-' + i;
     return '<div class="props-title" style="margin-top:8px"><span>Only Rows Where</span>'
         + '<span class="props-jump"><button class="tool-btn" onclick="' + call('add', -1) + '">+ Add</button></span></div>'
+        + '<datalist id="' + columnsList + '"><option value="' + DATASET_ANY_COLUMN + '">any column</option>'
+        + datasetColumns(a.datasetName).map(col => '<option value="' + AC.attr(col) + '">').join('') + '</datalist>'
         + (filters.length ? filters.map((f, at) => {
             const op = f.op || DATASET_DEFAULT_OPERATOR;
             return '<div class="chain-step">'
-                + datasetColumnSelect(a.datasetName, f.attribute, call('set', at, 'attribute', 'this.value'), '— column —')
+                + '<input type="text" list="' + columnsList + '" placeholder="column, * or ${field}" value="'
+                    + AC.attr(f.attribute || '') + '" oninput="' + call('set', at, 'attribute', 'this.value') + '">'
                 + '<select onchange="' + call('set', at, 'op', 'this.value') + '">'
                 + DATASET_OPERATORS.map(o => '<option value="' + o.op + '"'
                     + (o.op === op ? ' selected' : '') + '>' + AC.esc(o.label) + '</option>').join('')
@@ -7835,8 +8035,10 @@ function datasetFilterEditor(a, i, fns) {
         + '<span class="hint">Each one has to pass, and so does the saved filter above. Written '
         + '<code>${field}</code>, a value is the page' + Q + 's own control — so a grid under a region dropdown '
         + 'reloads to that region — and one that comes out empty drops its condition rather than looking for the '
-        + 'rows whose column is blank, which makes an untouched control mean <i>any</i>. Matched in the dataset '
-        + 'library, so the rows that fail never reach this page.</span>';
+        + 'rows whose column is blank, which makes an untouched control mean <i>any</i>. The column may be '
+        + '<code>*</code> to search every column — a search box over the whole row — or a <code>${field}</code> '
+        + 'so a dropdown on the page picks which column is searched. Matched in the dataset library, so the '
+        + 'rows that fail never reach this page.</span>';
 }
 
 /**
@@ -7883,6 +8085,59 @@ function compareInputsFromText(text) {
  * a control — an array path, a key field, a chart's value field. The answer here is a fixed table
  * of differences, so there is nothing about its shape left to configure.
  */
+/**
+ * A chain's form: what it runs over, the page actions it runs for every row with how many of each
+ * may be in flight, and the grid the rows are collected into.
+ */
+function chainFields(a, i, targets, fns, set) {
+    const call = (op, at, name, value) => fns.rows + '(' + i + ', \'chainSteps\', \'' + op + '\', ' + at
+        + ', ' + (name ? '\'' + name + '\'' : 'null') + ', ' + (value === undefined ? 'null' : value) + ')';
+    // Only an ordinary page action run once makes one call per row — the catalog refuses the rest.
+    const runnable = (page.actions || []).filter(p => p.actionId !== a.actionId && !isSpecialAction(p) && !p.rowSourceControlId);
+    const texts = page.controls.filter(t => t.type === 'text' && t.controlId !== a.targetControlId);
+    const steps = (a.chainSteps || []).map((step, at) => '<div class="form-row" style="margin-bottom:4px">'
+        + '<select onchange="' + call('set', at, 'actionId', 'this.value') + '">'
+            + '<option value="">— pick a page action —</option>'
+            + runnable.map(p => '<option value="' + AC.attr(p.actionId) + '"' + (p.actionId === step.actionId ? ' selected' : '') + '>'
+                + AC.esc(p.actionLabel || p.actionId) + '</option>').join('')
+            + (step.actionId && !runnable.some(p => p.actionId === step.actionId)
+                ? '<option value="' + AC.attr(step.actionId) + '" selected>' + AC.esc(step.actionId) + ' — not runnable here</option>' : '')
+        + '</select>'
+        + '<input type="number" min="1" max="' + MAX_CHAIN_CONCURRENCY + '" step="1" style="width:70px" title="Most calls of this step at once"'
+            + ' value="' + AC.attr(step.maxConcurrency || DEFAULT_CHAIN_CONCURRENCY) + '" oninput="' + call('set', at, 'maxConcurrency', '+this.value') + '">'
+        + '<button class="icon-btn" onclick="' + call('remove', at) + '" title="Remove">×</button>'
+        + '</div>').join('');
+    return field('For Each Row Of', '<select onchange="' + set('rowSourceControlId', 'this.value') + '">'
+            + rowSourceOptions(a)
+            + (texts.length ? '<optgroup label="One value of a text box">' + texts.map(t => '<option value="' + AC.attr(t.controlId) + '"'
+                + (t.controlId === a.rowSourceControlId ? ' selected' : '') + '>' + AC.esc(controlTitle(t)) + '</option>').join('') + '</optgroup>' : '')
+            + '</select>',
+            'Usually the grid a <b>list users</b> action fills — set <b>Runs After</b> to that action — or a text box for '
+            + 'one user. In each step' + Q + 's inputs <code>${column}</code> is this row' + Q + 's cell (a text box' + Q + 's value is '
+            + '<code>${line}</code> and its own field name).')
+        + field('Most Rows', '<input type="number" min="0" step="1" value="' + AC.attr(a.rowLimit === undefined ? DEFAULT_ROW_LIMIT : a.rowLimit)
+            + '" oninput="' + set('rowLimit', '+this.value') + '">', '0 runs over every row.')
+        + field('Each Called', '<input type="text" placeholder="${id}" value="' + AC.attr(a.rowLabelTemplate || '')
+            + '" oninput="' + set('rowLabelTemplate', 'this.value') + '">', 'The <code>source</code> column of each row.')
+        + field('Steps', steps + '<button class="tool-btn" onclick="' + call('add', 0) + '">+ Add step</button>',
+            'Page actions run for every row, each with its own instance, inputs and transforms; their own targets are not '
+            + 'filled. The number is how many of that step' + Q + 's calls may be in flight at once. Steps run alongside each '
+            + 'other, and each adds <code>step.' + CHAIN_FIELDS.join('</code>, <code>step.') + '</code> columns to the row.')
+        + field('Transforms', chainEditor(a, i, fns),
+            'Optional. Run over the whole result as JSON — a list with one object per row: <code>{"source": …, "row": {…}, '
+            + '"&lt;step&gt;": {"' + CHAIN_FIELDS.join('", "') + '"}}</code> — so a JSONata step can shape exactly what '
+            + 'the grid shows (it should return a list of objects, a row each) or what the text area holds.')
+        + field('Target', '<select onchange="' + set('targetControlId', 'this.value') + '">'
+            + '<option value="">— no target —</option>'
+            + '<option value="' + NEW_GRID + '"' + (a.targetControlId === NEW_GRID ? ' selected' : '') + '>+ New grid (one per run)</option>'
+            + targets.filter(t => t.controlId !== a.rowSourceControlId).map(t => '<option value="' + AC.attr(t.controlId) + '"'
+                + (t.controlId === a.targetControlId ? ' selected' : '') + '>' + AC.esc(controlTitle(t))
+                + (t.type === 'textarea' ? ' (text area, as JSON)' : ' (grid)') + '</option>').join('')
+            + '</select>',
+            'With no transforms, a grid gets a row per run with <code>step.field</code> columns and a text area gets the '
+            + 'list above as JSON.');
+}
+
 function compareFields(a, i, targets, fns, set) {
     const xml = a.compareType === COMPARE_XML;
     const tolerance = a.compareTolerancePercent === undefined || a.compareTolerancePercent === null
@@ -8003,7 +8258,8 @@ function transformOptions(selected, blankLabel) {
 
 /** How a step's kind is written wherever one is named. */
 function transformTypeLabel(t) {
-    return t && t.type === 'XML2JSON' ? 'xml→json' : t && t.jsonataRef ? 'shared' : 'jsonata';
+    return t && t.type === 'XML2JSON' ? 'xml→json' : t && t.type === 'XSL2CSV' ? 'xsl→csv'
+        : t && t.jsonataRef ? 'shared' : 'jsonata';
 }
 
 // ── The shared JSONata library ───────────────────────────────────────────
@@ -8091,6 +8347,10 @@ function actionSummary(a, i, count, fns) {
                     ? 'static dataset "' + a.datasetName + '"'
                         + (a.datasetFavorite ? ', filtered by "' + a.datasetFavorite + '"' : '') + ' — no call made'
                     : 'no dataset chosen yet')
+               : isChainAction(a) ? ((a.chainSteps || []).length
+                    ? 'chains ' + a.chainSteps.map(s => { const p = actionNamed(s.actionId);
+                        return (p ? p.actionLabel || p.actionId : s.actionId || '?') + ' ×' + (s.maxConcurrency || DEFAULT_CHAIN_CONCURRENCY); }).join(', ')
+                    : 'no steps chosen yet')
                : instance ? (instance.instanceLabel || (instance.appUseCaseName + ' @ ' + instance.appEnvironment))
                     + (compare ? ' — ' + (a.compareEnvironmentA || 'baseline?') + ' vs ' + (a.compareEnvironmentB || 'candidate?') : '')
                     + (isWebSocketAction(a) ? ' — WebSocket ' + wsOperationOf(a).toLowerCase() : '')
@@ -8122,9 +8382,10 @@ function actionSummary(a, i, count, fns) {
     // and then the control deleted, or a new action nobody finished. Either way it is the one
     // thing about an action that cannot be told from the rest of the card, so it is marked rather
     // than left to read like any other line, and the designer decides which of the two it is.
-    // A WebSocket operation other than Connect binds nothing by design — it acts on the connection.
+    // A WebSocket operation other than Connect binds nothing by design — it acts on the connection —
+    // and Connect only may open a socket purely to send over.
     const noTarget = !performance && !compare && !dataset && !a.targetControlId && !extra.length
-        && !(isWebSocketAction(a) && wsOperationOf(a) !== 'CONNECT');
+        && !(isWebSocketAction(a) && wsOperationOf(a) !== 'CONNECT' && wsOperationOf(a) !== 'INFO');
     // Where this action is triggered from, for a page action — see #actionUsage. A control's own
     // action is run by the control it is written on and has nothing to answer here.
     const shared = isPageAction(a.actionId);
@@ -8460,6 +8721,10 @@ function pageProps() {
             ? '<button class="tool-btn" onclick="openPageCopyEditor()" title="Copy an action from this page '
                 + 'onto another page">To page…</button>'
             : '')
+        + (otherPages().length && page.controls.some(c => (c.fieldName || '').trim())
+            ? '<button class="tool-btn" onclick="openFromPagesEditor()" title="Pick a control here and add the '
+                + 'actions other pages run with it — the grid each one fills comes along">From pages…</button>'
+            : '')
         + '<button class="tool-btn" onclick="addPageAction()">+ Add</button></span></div>'
         + '<span class="hint">Actions defined once here and attached to any number of controls — a button, a '
         + 'select that reloads on change, the page opening. Select a control to attach them. Click one to open it.</span>';
@@ -8785,7 +9050,7 @@ function setHiddenColumns(text) {
 
 function blankAction(label) {
     return { actionId: newActionId(), actionLabel: label, actionKind: USECASE_ACTION, appUseCaseInstanceId: '',
-             environmentOverride: '', timeoutOverride: '', inputs: {}, targetControlId: '', arrayPath: '', valuePath: '',
+             environmentOverride: '', baseUrlOverride: '', timeoutOverride: '', repeatCount: '', inputs: {}, targetControlId: '', arrayPath: '', valuePath: '',
              keyField: '', labelField: '', valueField: '', dependsOnActionId: '',
              keyValueGrid: false, scalarsOnly: false, appendRows: false, source: 'PAYLOAD', transformNames: [], ownCall: false,
              rowSourceControlId: '', rowOutputMode: 'ROWS', rowLabelTemplate: '', rowErrorExpression: '', displayFilterExpression: '', rowElements: '', rowLimit: DEFAULT_ROW_LIMIT,
@@ -8793,9 +9058,11 @@ function blankAction(label) {
              compareEnvironmentA: '', compareEnvironmentB: '', compareSeparateInputs: false, compareInputsB: {},
              compareType: COMPARE_JSON, comparePath: '',
              compareTolerancePercent: 0, compareReport: REPORT_DIFFERENCES,
-             datasetName: '', datasetFavorite: '', datasetFilters: [],
+             datasetName: '', datasetFavorite: '', datasetFilters: [], datasetReload: false,
+             datasetSearch: '', datasetSearchMode: 'WHOLE', datasetSearchField: '', datasetLinesResult: 'MATCHED',
              wsOperation: 'CONNECT', wsMessage: '', excludeFilters: [], wsMaxRows: DEFAULT_WS_MAX_ROWS,
-             wsUniqueKey: '', wsDataset: '' };
+             wsUniqueKey: '', wsDataset: '',
+             dbPublishTarget: '', dbPublishTable: '', dbPublishEveryMinutes: 0 };
 }
 
 /** Page actions are referred to by id from every control that triggers them, so each needs one. */
@@ -8895,10 +9162,46 @@ function applyActionKind(a, kind) {
                  : kind === COMPARE_ACTION ? COMPARE_ACTION
                  : kind === DATASET_ACTION ? DATASET_ACTION
                  : kind === WEBSOCKET_ACTION ? WEBSOCKET_ACTION
+                 : kind === CHAIN_ACTION ? CHAIN_ACTION
                  : USECASE_ACTION;
     // Only a WebSocket connect receives messages to exclude, and the catalog refuses the list on
     // anything else.
     if (!isWebSocketAction(a)) a.excludeFilters = [];
+    if (!isChainAction(a)) a.chainSteps = [];
+    // A chain keeps its row source and the cap on it; everything about making and reading one call
+    // belongs to the page actions it runs.
+    if (isChainAction(a)) {
+        a.chainSteps = a.chainSteps || [];
+        a.appUseCaseInstanceId = '';
+        a.environmentOverride = '';
+        a.baseUrlOverride = '';
+        a.timeoutOverride = '';
+        a.repeatCount = '';
+        a.inputs = {};
+        a.arrayPath = '';
+        a.valuePath = '';
+        a.keyField = '';
+        a.labelField = '';
+        a.valueField = '';
+        a.transformNames = a.transformNames || [];
+        a.source = 'PAYLOAD';
+        a.keyValueGrid = false;
+        a.scalarsOnly = false;
+        a.appendRows = false;
+        a.rowOutputMode = 'ROWS';
+        a.rowColumns = [];
+        a.enrichColumns = [];
+        a.extraBindings = [];
+        a.bindFilters = [];
+        a.pivot = null;
+        a.datasetName = '';
+        a.datasetFavorite = '';
+        a.datasetFilters = [];
+        a.datasetReload = false;
+        const target = findControl(a.targetControlId);
+        if (!target || target.type !== 'textarea') clearNonGridTarget(a);
+        return;
+    }
     // A WebSocket action keeps the instance, the environment and the inputs — they mean on it what
     // they mean on a call — and loses everything about reading one response, which a socket does
     // not have: its messages stream into one grid, through its own exclude list.
@@ -8910,7 +9213,7 @@ function applyActionKind(a, kind) {
         a.keyField = '';
         a.labelField = '';
         a.valueField = '';
-        a.transformNames = [];
+        a.transformNames = a.transformNames || [];
         a.source = 'PAYLOAD';
         a.keyValueGrid = false;
         a.scalarsOnly = false;
@@ -8929,6 +9232,7 @@ function applyActionKind(a, kind) {
         a.datasetName = '';
         a.datasetFavorite = '';
         a.datasetFilters = [];
+        a.datasetReload = false;
         settleWsTarget(a);
         return;
     }
@@ -8939,7 +9243,9 @@ function applyActionKind(a, kind) {
     if (isDatasetAction(a)) {
         a.appUseCaseInstanceId = '';
         a.environmentOverride = '';
+        a.baseUrlOverride = '';
         a.timeoutOverride = '';
+        a.repeatCount = '';
         a.inputs = {};
         a.arrayPath = '';
         a.valuePath = '';
@@ -8974,12 +9280,14 @@ function applyActionKind(a, kind) {
     a.datasetName = '';
     a.datasetFavorite = '';
     a.datasetFilters = [];
+    a.datasetReload = false;
     // A comparison keeps the instance, the inputs and the transform chain — all three mean on it
     // exactly what they mean on an ordinary action, and an action switched to compare is usually
     // one somebody has already got working against one environment. What goes is the wiring that
     // reads a response into a control, since its report has a shape of its own.
     if (isCompareAction(a)) {
         a.environmentOverride = '';
+        a.baseUrlOverride = '';
         a.arrayPath = '';
         a.valuePath = '';
         a.keyField = '';
@@ -9017,7 +9325,9 @@ function applyActionKind(a, kind) {
     if (!isPerformanceAction(a)) return;
     a.appUseCaseInstanceId = '';
     a.environmentOverride = '';
+    a.baseUrlOverride = '';
     a.timeoutOverride = '';
+    a.repeatCount = '';
     a.arrayPath = '';
     a.valuePath = '';
     a.keyField = '';
@@ -9079,15 +9389,18 @@ function clearNonGridTarget(a) {
  * exclude list goes with the target, since only Connect has messages to exclude.
  */
 function settleWsTarget(a) {
-    if (wsOperationOf(a) === 'CONNECT') {
+    const op = wsOperationOf(a);
+    if (wsOpens(op) || op === 'INFO') {
         if (a.targetControlId === NEW_GRID) a.targetControlId = '';
         clearNonGridTarget(a);
-        return;
+        if (wsOpens(op)) return;
+    } else {
+        a.targetControlId = '';
     }
-    a.targetControlId = '';
     a.excludeFilters = [];
     a.wsUniqueKey = '';
     a.wsDataset = '';
+    a.extraBindings = [];
 }
 
 /** What changing one field of an action takes with it — see #dropDatasetColumns and #settleWsTarget. */
@@ -9435,7 +9748,7 @@ function transformSummary(t, i, count) {
 
     return '<div class="sum-card" onclick="openTransformEditor(' + i + ')" title="Open this transform">'
         + '<div class="sum-head">'
-            + '<span class="xform-tag' + (xml ? ' xml' : t.jsonataRef ? ' shared' : '') + '">'
+            + '<span class="xform-tag' + (xml || t.type === 'XSL2CSV' ? ' xml' : t.jsonataRef ? ' shared' : '') + '">'
                 + transformTypeLabel(t) + '</span>'
             + '<span class="sum-title">' + AC.esc(t.name || 'unnamed') + '</span>'
             + '<span class="sum-btns">'
@@ -9559,19 +9872,22 @@ function renderEditor() {
     const isToPage = editor.kind === 'topage';
     const isControls = editor.kind === 'controls';
     const isAction = editor.kind === 'action';
+    const isFromPages = editor.kind === 'frompages';
     const source = isCopy ? findControl(editor.sourceId) : null;
     const title = isCopy ? (source ? controlTitle(source) : 'nothing to copy')
-        : isToPage || isControls ? (savedPageName || page.pageName || 'this page')
+        : isToPage || isControls || isFromPages ? (savedPageName || page.pageName || 'this page')
         : isAction ? (editor.draft.actionLabel || 'Untitled action')
         : (editor.draft.name || 'Untitled transform');
     const kind = isCopy ? 'Copy actions'
         : isToPage ? 'Copy to another page'
         : isControls ? 'Copy controls to another page'
+        : isFromPages ? 'Add actions from other pages'
         : isAction ? (editor.scope === 'page' ? 'Page action' : 'Action on this control')
         : 'Transform';
     const body = isCopy ? copyEditorBody()
         : isToPage ? pageCopyBody()
         : isControls ? controlCopyBody()
+        : isFromPages ? fromPagesBody()
         : isAction ? actionCard(editor.draft, 0, 1, EDITOR_FNS)
         : transformEditorBody(editor.draft);
 
@@ -9589,29 +9905,41 @@ function renderEditor() {
                     ? '<button class="primary" onclick="applyPageCopy()">Copy</button>'
                     : isControls
                     ? '<button class="primary" onclick="applyControlCopy()">Copy</button>'
+                    : isFromPages
+                    ? '<button class="primary" onclick="applyFromPages()">Add</button>'
                     : '<button class="primary" onclick="saveEditor()">Save</button>')
                 + '<button class="secondary" onclick="closeEditor()">Cancel</button>'
                 + '<span id="editorStatus" class="status-bar"></span>'
             + '</div>'
         + '</div>'
     + '</div>';
+    host.querySelectorAll('.copy-filter').forEach(applyCopyFilter);
 }
 
 /** The transform's own fields, written against the working copy the same way an action's are. */
 function transformEditorBody(t) {
     const xml = t.type === 'XML2JSON';
+    const xsl = t.type === 'XSL2CSV';
     return '<div class="xform-card stack">'
         + field('Name', '<input type="text" value="' + AC.esc(t.name || '') + '" placeholder="flattenRows"'
             + ' oninput="setDraft(0, \'name\', this.value)">',
             'How an action names this step in its chain. Renaming it takes every chain that names it along.')
         + field('Does', '<select onchange="setDraft(0, \'type\', this.value)">'
-            + '<option value="JSONATA"' + (xml ? '' : ' selected') + '>JSONata expression</option>'
+            + '<option value="JSONATA"' + (xml || xsl ? '' : ' selected') + '>JSONata expression</option>'
             + '<option value="XML2JSON"' + (xml ? ' selected' : '') + '>XML &#8594; JSON</option>'
+            + '<option value="XSL2CSV"' + (xsl ? ' selected' : '') + '>XSL: XML &#8594; CSV rows</option>'
             + '</select>')
         + (xml
             ? '<span class="hint">Parses what it is handed as an XML document — elements become keys, repeats '
                 + 'become arrays, attributes land under <code>@attributes</code> and text under <code>#text</code>. '
                 + 'Nothing to write; it reads the body as it arrived, so it goes first in a chain.</span>'
+            : xsl
+            ? field('Stylesheet', '<textarea spellcheck="false" rows="12" placeholder="' + AC.esc(XSL_PLACEHOLDER) + '"'
+                    + ' oninput="setDraft(0, \'expression\', this.value)">' + AC.esc(t.expression || '') + '</textarea>',
+                    'An XSLT 1.0 stylesheet applied to the body as it arrived, so it goes first in a chain. Its '
+                        + 'output (<code>&lt;xsl:output method="text"/&gt;</code>) is read as CSV: the first line names '
+                        + 'the columns, each line after it is a row a grid binds as it stands — leave the action\'s path empty. '
+                        + 'Quote a value that holds a comma, a quote or a line break.')
             : expressionSourceFields(t))
         + field('Notes', '<input type="text" value="' + AC.esc(t.description || '') + '" placeholder="what it reshapes"'
             + ' oninput="setDraft(0, \'description\', this.value)">')
@@ -9804,8 +10132,13 @@ function saveEditor() {
             AC.setStatus('editorStatus', 'Another transform is already called "' + name + '".', 'error');
             return;
         }
-        const shared = (editor.draft.jsonataRef || '').trim();
-        if (shared && editor.draft.type !== 'XML2JSON' && !sharedJsonata(shared)) {
+        // Only a JSONata step can name the library; one switched to another kind drops the name.
+        const shared = editor.draft.type === 'JSONATA' ? (editor.draft.jsonataRef || '').trim() : '';
+        if (editor.draft.type === 'XSL2CSV' && !(editor.draft.expression || '').trim()) {
+            AC.setStatus('editorStatus', 'An XSL step needs a stylesheet.', 'error');
+            return;
+        }
+        if (shared && !sharedJsonata(shared)) {
             AC.setStatus('editorStatus', 'The library has nothing called "' + shared
                 + '" — pick one that is there, or write the expression on this page.', 'error');
             return;
@@ -9928,6 +10261,32 @@ function toggleCopyTarget(controlId, on) {
                         : editor.targets.filter(id => id !== controlId);
 }
 
+/**
+ * A filter box over a copy list. Typed text hides the rows that do not mention it, and is kept on
+ * the editor so a redraw — ticking something redraws the dialog — does not lose it.
+ */
+function copyFilter(key) {
+    const value = (editor.filters || {})[key] || '';
+    return '<input class="list-search copy-filter" type="text" autocomplete="off" placeholder="Filter…"'
+        + ' value="' + AC.attr(value) + '" oninput="setCopyFilter(\'' + key + '\', this)">';
+}
+
+function setCopyFilter(key, input) {
+    if (!editor) return;
+    (editor.filters = editor.filters || {})[key] = input.value;
+    applyCopyFilter(input);
+}
+
+/** Hides the rows of the list right after the box that do not mention what was typed. */
+function applyCopyFilter(input) {
+    const q = input.value.trim().toLowerCase();
+    const list = input.nextElementSibling;
+    if (!list) return;
+    list.querySelectorAll('.inline-check').forEach(row => {
+        row.style.display = !q || row.textContent.toLowerCase().includes(q) ? '' : 'none';
+    });
+}
+
 /** Where the copy is taken from, what of it, and which controls it goes onto. */
 function copyEditorBody() {
     const source = findControl(editor.sourceId);
@@ -9948,7 +10307,7 @@ function copyEditorBody() {
     if (!inline.length && !attached.length) {
         html += '<div class="empty-note">This control runs nothing.</div>';
     } else {
-        html += '<div class="copy-list">'
+        html += copyFilter('what') + '<div class="copy-list">'
             + inline.map((a, i) =>
                 '<label class="inline-check"><input type="checkbox"'
                 + (editor.indexes.includes(i) ? ' checked' : '')
@@ -9983,7 +10342,7 @@ function copyEditorBody() {
         html += '<div class="empty-note">Nowhere to copy to yet — a grid, a label, a tab set and a hidden field '
              + 'are never triggered, so nothing can be run from them. Add another button, link or select.</div>';
     } else {
-        html += '<div class="copy-list">' + targets.map(t => {
+        html += copyFilter('onto') + '<div class="copy-list">' + targets.map(t => {
             const takesOwn = ACTION_TYPES.includes(t.type);
             const takesNothing = wantsOwn && !takesOwn && !wantsPage;
             const note = wantsOwn && !takesOwn
@@ -10168,7 +10527,7 @@ function pageCopyBody() {
     if (!entries.length) {
         html += '<div class="empty-note">This page has no actions to copy.</div>';
     } else {
-        html += '<div class="copy-list">' + entries.map(e => {
+        html += copyFilter('what') + '<div class="copy-list">' + entries.map(e => {
             // An action naming no instance is refused by whichever page it is saved on, so it is
             // said here rather than arriving as a failure after the round trip. A performance
             // action is the exception and not really one: it names no instance because it calls
@@ -10196,7 +10555,7 @@ function pageCopyBody() {
     if (!destinations.length) {
         html += '<div class="empty-note">There is no other page to copy onto yet.</div>';
     } else {
-        html += '<div class="copy-list">' + destinations.map(name =>
+        html += copyFilter('onto') + '<div class="copy-list">' + destinations.map(name =>
             '<label class="inline-check"><input type="checkbox"'
             + (editor.targets.includes(name) ? ' checked' : '')
             + ' onchange="togglePageCopyTarget(\'' + AC.attr(name) + '\', this.checked)"> '
@@ -10299,7 +10658,7 @@ function controlCopyBody() {
     if (!page.controls.length) {
         html += '<div class="empty-note">This page has no controls to copy.</div>';
     } else {
-        html += '<div class="copy-list">' + page.controls.map(c => {
+        html += copyFilter('what') + '<div class="copy-list">' + page.controls.map(c => {
             const ticked = editor.controlIds.includes(c.controlId);
             // A control held by a tab set or a panel that is itself crossing comes along
             // regardless, and says so rather than looking as though it had been left out.
@@ -10327,7 +10686,7 @@ function controlCopyBody() {
     if (!destinations.length) {
         html += '<div class="empty-note">There is no other page to copy onto yet.</div>';
     } else {
-        html += '<div class="copy-list">' + destinations.map(name =>
+        html += copyFilter('onto') + '<div class="copy-list">' + destinations.map(name =>
             '<label class="inline-check"><input type="checkbox"'
             + (editor.targets.includes(name) ? ' checked' : '')
             + ' onchange="toggleControlCopyTarget(\'' + AC.attr(name) + '\', this.checked)"> '
@@ -10863,6 +11222,132 @@ async function applyPageCopy() {
     AC.setStatus('statusBar', message.trim(), failed.length ? 'error' : 'ok');
 }
 
+// ── Adding actions other pages already run with a control of this page ──
+// The next page with a userid box wants the same calls the last three pages with one make. Rather
+// than opening each of those pages and copying from there, the dialog is opened here: pick the
+// control, and every action on any other page whose inputs say ${userid} is listed. A ticked one
+// arrives as a page action, with the grid it fills brought across — into this page's panel when
+// it has one — unless a control of that name is already here, in which case it is reused.
+
+function openFromPagesEditor() {
+    const first = page.controls.find(c => (c.fieldName || '').trim());
+    const picked = findControl(selectedId);
+    editor = { kind: 'frompages', actionIds: [],
+               fieldName: picked && (picked.fieldName || '').trim() ? picked.fieldName.trim()
+                        : first ? first.fieldName.trim() : '' };
+    renderEditor();
+}
+
+function setFromPagesField(name) {
+    if (!editor) return;
+    editor.fieldName = name;
+    editor.actionIds = [];
+    renderEditor();
+}
+
+function toggleFromPagesAction(key, on) {
+    if (!editor) return;
+    editor.actionIds = on ? editor.actionIds.concat([key]) : editor.actionIds.filter(k => k !== key);
+}
+
+/**
+ * Every action on every other page that mentions ${fieldName} anywhere in what it sends — inputs,
+ * headers, body — keyed by page and action id. Read off the catalog as loaded, so what the other
+ * page saved is what is offered.
+ */
+function actionsUsing(fieldName) {
+    const needle = '${' + fieldName + '}';
+    const found = [];
+    pages.filter(p => p.pageName && p.pageName !== savedPageName).forEach(p => {
+        const add = (a, origin) => {
+            if (a.actionId && JSON.stringify(a).includes(needle))
+                found.push({ key: p.pageName + '|' + a.actionId, page: p, action: a, origin });
+        };
+        (p.actions || []).forEach(a => add(a, 'page action'));
+        (p.controls || []).forEach(c => (c.actions || []).forEach(a => add(a, 'on ' + controlTitle(c))));
+    });
+    return found;
+}
+
+function fromPagesBody() {
+    const fields = page.controls.filter(c => (c.fieldName || '').trim());
+    const entries = editor.fieldName ? actionsUsing(editor.fieldName) : [];
+
+    let html = '<div class="stack mini">';
+    html += field('Uses control', '<select onchange="setFromPagesField(this.value)">'
+        + fields.map(c => '<option value="' + AC.attr(c.fieldName.trim()) + '"'
+            + (c.fieldName.trim() === editor.fieldName ? ' selected' : '') + '>'
+            + AC.esc(controlTitle(c)) + ' — ${' + AC.esc(c.fieldName.trim()) + '}</option>').join('')
+        + '</select>', 'Actions on other pages that send this control&#39;s value are listed below.');
+
+    html += '<div class="props-section"><div class="props-title"><span>Actions On Other Pages</span></div>';
+    if (!entries.length) {
+        html += '<div class="empty-note">No other page runs an action with ${' + AC.esc(editor.fieldName) + '}.</div>';
+    } else {
+        html += copyFilter('what') + '<div class="copy-list">' + entries.map(e => {
+            const grid = (e.page.controls || []).find(c => c.controlId === e.action.targetControlId);
+            const here = grid && matchedIdOn(grid, page);
+            return '<label class="inline-check"><input type="checkbox"'
+                + (editor.actionIds.includes(e.key) ? ' checked' : '')
+                + ' onchange="toggleFromPagesAction(\'' + AC.attr(e.key) + '\', this.checked)"> '
+                + '<span class="copy-name">' + AC.esc(e.action.actionLabel || 'Untitled action') + '</span>'
+                + '<span class="badge auth">' + AC.esc(e.page.pageName) + ' · ' + AC.esc(e.origin) + '</span>'
+                + (grid ? '<span class="copy-note">fills ' + AC.esc(controlTitle(grid))
+                    + (here ? ' — already here' : ' — will be added') + '</span>' : '')
+                + '</label>';
+        }).join('') + '</div>'
+            + '<span class="hint">Each arrives as a page action in this page&#39;s library, with the transforms it '
+            + 'chains. The grid it fills is copied too, into this page&#39;s panel when there is one, unless a control '
+            + 'of the same name is already here. Select a control afterwards to attach the action.</span>';
+    }
+    return html + '</div></div>';
+}
+
+/**
+ * Does the add. The graft helpers read the source off the global page, so the other page is put
+ * there for the duration — this page is the target they mutate, and nothing is saved by it.
+ */
+function applyFromPages() {
+    if (!editor || editor.kind !== 'frompages') return;
+    const picked = actionsUsing(editor.fieldName).filter(e => editor.actionIds.includes(e.key));
+    if (!picked.length) { AC.setStatus('editorStatus', 'Nothing ticked to add.', 'error'); return; }
+
+    const here = page;
+    const holder = heldBy(selectedId) && heldBy(selectedId).type === 'panel'
+        ? heldBy(selectedId) : here.controls.find(c => c.type === 'panel');
+    let grids = 0, unbound = 0;
+    picked.forEach(e => {
+        page = e.page;
+        try {
+            const grid = findControl(e.action.targetControlId);
+            if (grid && grid.type === 'grid' && !matchedIdOn(grid, here)) {
+                const before = here.controls.length;
+                graftControls([grid], here);
+                const added = here.controls.slice(before);
+                if (holder) added.forEach(c => {
+                    // At the bottom of the panel, the way a pick from the Move To list lands.
+                    c.row = containerChildren(holder).reduce((low, k) => Math.max(low, (k.row || 0) + rowSpanOf(k)), 0);
+                    childIdsOf(holder).push(c.controlId);
+                });
+                grids += added.length;
+            }
+            const report = graftActions([e.action], here);
+            unbound += report.unbound.length;
+        } finally {
+            page = here;
+        }
+    });
+
+    const many = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
+    let message = many(picked.length, 'page action') + ' added.';
+    if (grids) message += ' ' + many(grids, 'grid') + ' added' + (holder ? ' into ' + controlTitle(holder) : '') + '.';
+    if (unbound) message += ' ' + unbound + ' bind nowhere yet — the control filled was not a grid here.';
+    editor = null;
+    renderEditor();
+    renderAll();
+    AC.setStatus('statusBar', message + ' Save to keep it.', 'ok');
+}
+
 /** Attaching appends, so the order actions are ticked in is the order they run in. */
 // ── Clickable columns ────────────────────────────────────────────────────
 // The same three things a control does — name a target, give it a value, run actions — written
@@ -10964,6 +11449,7 @@ function togglePageLoadAction(actionId, on, list) {
 function onHeaderInput() {
     page.title = document.getElementById('pageTitle').value;
     page.description = document.getElementById('pageDescription').value;
+    page.defaultEnvironment = document.getElementById('pageDefaultEnvironment').value.trim();
 }
 
 // ── Unsaved work ─────────────────────────────────────────────────────────
@@ -11160,6 +11646,7 @@ async function startRun() {
     linkUrls = {};
     lastTrigger = null;
     lastRun = null;
+    runHistory = [];
     closeTechDetails();
     document.getElementById('stackedGrids').innerHTML = '';
     page.controls.forEach(c => {
@@ -11374,6 +11861,15 @@ function renderRunTools() {
                     + oneLine(lastRun.label || '') + '" made went and what it answered. '
                     + '${DEBUG} is off on this page, so the request and response bodies were not kept.';
     }
+    const report = document.getElementById('runReportBtn');
+    if (report) {
+        report.disabled = !runHistory.length;
+        report.title = runHistory.length
+            ? 'Download every action run since the page opened as JSON: overall status, each action\'s status, inputs and output.'
+            : 'Nothing has been triggered yet.';
+    }
+    const vaultReport = document.getElementById('runReportVaultBtn');
+    if (vaultReport) vaultReport.disabled = !runHistory.length;
     const replay = document.getElementById('replayBtn');
     if (!replay) return;
     const label = lastTrigger && lastTrigger.label ? oneLine(lastTrigger.label) : '';
@@ -11944,9 +12440,8 @@ function runMenuOption(c, index, element) {
         renderErrors();
         return;
     }
-    // The setting is the control's rather than the entry's: a menu is one control whose entries
-    // are different ways of asking, and where the answer lands is a fact about the control.
-    return thenFocus(runActions(actions, label, element, true), c);
+    // An entry may name its own grid to scroll to; one that does not falls back to the button's.
+    return thenFocus(runActions(actions, label, element, true), option.focusControlId ? option : c);
 }
 
 // ── Bringing the answer into view ────────────────────────────────────────
@@ -12530,7 +13025,11 @@ async function loadSelectOptions() {
                 addError('Options for "' + controlTitle(c) + '": ' + settled.error.message);
                 continue;
             }
-            fillOptions(c, (settled.dataset.rows || []).map(r => optionOf(r, source.keyField, source.labelField)));
+            const options = (settled.dataset.rows || []).map(r => optionOf(r, source.keyField, source.labelField));
+            const seen = new Set();
+            fillOptions(c, source.uniqueOnly
+                ? options.filter(o => !seen.has(o.value + '\u0000' + o.label) && seen.add(o.value + '\u0000' + o.label))
+                : options);
             continue;
         }
         if (source.mode === 'USECASE') {
@@ -13089,13 +13588,18 @@ function setControlValue(control, text) {
  */
 function clearActionTargets(actions, triggeredById) {
     const cleared = new Set();
+    // A target that is also one of these actions' inputs keeps its value: emptied here, the
+    // request would go out with a blank where the operator's value was. The answer overwrites it.
+    const templates = JSON.stringify(actions || []);
+    const readByActions = field => !!field && new RegExp('\\$\\{' + field.replace(/[.\-]/g, '\\$&')
+        + '\\}|\\$' + field.replace(/[.\-]/g, '\\$&') + '(?![A-Za-z0-9_])').test(templates);
     (actions || []).forEach(action => bindingsOf(action).forEach(binding => {
         const id = binding.targetControlId;
         if (!id || id === NEW_GRID || id === triggeredById || cleared.has(id)) return;
         if (appendsToGrid(binding)) return;
         cleared.add(id);
         const target = findControl(id);
-        if (target) clearControl(target);
+        if (target && !readByActions(target.fieldName)) clearControl(target);
     }));
 }
 
@@ -13250,6 +13754,7 @@ async function runActions(actions, label, element, keepErrors) {
             error: ''
         }));
         lastRun = { label: label, at: Date.now(), calls: record };
+        runHistory.push(lastRun);
         // What each fan-out did, since "3 of 4 actions completed" says nothing about the forty
         // calls one of those actions turned into, or about the rows its cap left alone.
         const fanNotes = [];
@@ -13304,7 +13809,7 @@ async function runActions(actions, label, element, keepErrors) {
                 const asked = datasetQueryOf(actions[i]);
                 record[i].inputs = asked.described;
                 return Promise.resolve()
-                    .then(() => runDataset(actions[i], names[i], asked.query))
+                    .then(() => runDatasetLines(actions[i], names[i], asked.query, asked.lines))
                     .then(rows => ({ dsRows: rows }), error => ({ error: error }));
             }
             // A WebSocket action is a command to this page's relay — connect, send, pause, stop —
@@ -13314,6 +13819,13 @@ async function runActions(actions, label, element, keepErrors) {
                 return Promise.resolve()
                     .then(() => runWebSocket(actions[i], names[i], record[i]))
                     .then(note => ({ ws: note }), error => ({ error: error }));
+            }
+            // A chain is a fan-out of several page actions at once; like one, it writes its own
+            // entries into the record — one per row per step.
+            if (isChainAction(actions[i])) {
+                return Promise.resolve()
+                    .then(() => runChain(actions[i], names[i], record, i))
+                    .then(chain => ({ chain: chain }), error => ({ error: error }));
             }
             // A fan-out is one action and many calls. It resolves its own inputs a row at a
             // time and writes its own entries into the record, so nothing is resolved for it
@@ -13328,10 +13840,12 @@ async function runActions(actions, label, element, keepErrors) {
             scopes[i] = actionScope(null);
             record[i].inputs = resolveInputs(actions[i].inputs, scopes[i]);
             record[i].environment = resolveTemplate(actions[i].environmentOverride, scopes[i]);
+            record[i].baseUrl = resolveTemplate(actions[i].baseUrlOverride, scopes[i]);
+            record[i].repeat = resolveRepeat(actions[i], scopes[i]);
             return Promise.resolve()
                 .then(() => runExecution(record[i].instanceId, record[i].inputs, names[i],
                         record[i].environment, record[i].metadataOnly, actions[i].ownCall,
-                        resolveTimeout(actions[i], scopes[i])))
+                        resolveTimeout(actions[i], scopes[i]), record[i].baseUrl, record[i].repeat))
                 .then(result => ({ result: result }), error => ({ error: error }));
         };
 
@@ -13343,7 +13857,12 @@ async function runActions(actions, label, element, keepErrors) {
             const result = settled.result === undefined ? null : settled.result;
             // The record gets what is worth keeping; everything below binds from `result`
             // itself, which is whole whatever the switch says. See #runDetail.
-            if (!settled.fan && !settled.rows && !settled.cmp && !settled.dsRows && !settled.ws) record[i].result = runDetail(result);
+            if (!settled.fan && !settled.rows && !settled.cmp && !settled.dsRows && !settled.ws && !settled.chain) record[i].result = runDetail(result);
+            // A stress run's latencies go in the status whether or not its first copy succeeded.
+            if (result && result.stress) {
+                record[i].stress = result.stress;
+                fanNotes[i] = stressNote(name, result.stress);
+            }
             try {
                 if (settled.error) throw settled.error;
 
@@ -13388,6 +13907,12 @@ async function runActions(actions, label, element, keepErrors) {
                 // filled in — the same rule every other action answers to.
                 if (settled.fan) {
                     fanNotes[i] = await bindFanOut(actions[i], names[i], settled.fan);
+                    done++;
+                    return true;
+                }
+
+                if (settled.chain) {
+                    fanNotes[i] = await bindChain(action, name, settled.chain);
                     done++;
                     return true;
                 }
@@ -13483,6 +14008,7 @@ async function runActions(actions, label, element, keepErrors) {
             + (notes.length ? ' ' + notes.join(' ') : ''), 'ok');
     } finally {
         endCallBatch();
+        if (lastRun) lastRun.finishedAt = Date.now();
         if (element) element.classList.remove('busy');
         // The details button only means anything once there is a run behind it, and this is the
         // moment there is one — including when the run went badly, which is when it is read.
@@ -13786,7 +14312,7 @@ function bindPerformance(action, name, rows, call) {
     // A summary is recomputed over the whole history every run, so appending is only worth
     // ticking where the two runs summarise different things — one app's endpoints, then
     // another's — and read as one table. It is the operator's call either way.
-    bindGrid(target, grouped.rows, grouped.columns, appendsToGrid(action));
+    bindGrid(target, grouped.rows, grouped.columns, appendsToGrid(action)); publishRowsToDb(action, grouped.rows, grouped.columns);
     noteFilledBy(target.controlId, action);
 }
 
@@ -13817,15 +14343,70 @@ function datasetQueryOf(action) {
     (action.datasetFilters || []).forEach(filter => {
         if (!filter || !filter.attribute) return;
         const op = filter.op || DATASET_DEFAULT_OPERATOR;
+        // The column may be a template too — a dropdown choosing which column is searched.
+        const attribute = resolveTemplate(filter.attribute, scope).trim();
         const value = resolveTemplate(filter.value, scope);
-        if (value === '') return;
-        conditions.push({ attribute: filter.attribute, op: op, value: value });
-        described[filter.attribute + ' ' + op] = value;
+        if (attribute === '' || value === '') return;
+        conditions.push({ attribute: attribute, op: op, value: value });
+        described[(attribute === DATASET_ANY_COLUMN ? 'any column' : attribute) + ' ' + op] = value;
     });
+    const search = resolveTemplate(action.datasetSearch || '', scope).trim();
+    let lines = null;
+    if (search) {
+        const attribute = resolveTemplate(action.datasetSearchField || '', scope).trim() || DATASET_ANY_COLUMN;
+        const mode = action.datasetSearchMode;
+        if (mode === 'LINES') {
+            // One search per line, each line matched whole — the library can only AND, so the
+            // OR across lines is done by asking once per line; see #runDatasetLines.
+            lines = search.split(/\r?\n/).map(l => l.trim()).filter(l => l)
+                .map(l => ({ attribute: attribute, op: 'contains', value: l }));
+        } else {
+            // The library ANDs conditions, so one "contains" per word is each word narrowing what the
+            // one before it left — "john smith" keeps the Johns that also say Smith.
+            const terms = mode === 'TOKENS' ? search.split(/\s+/) : [search];
+            terms.forEach(t => conditions.push({ attribute: attribute, op: 'contains', value: t }));
+        }
+        described['search ' + (attribute === DATASET_ANY_COLUMN ? 'row' : attribute)
+            + (mode === 'TOKENS' ? ' (each word)' : mode === 'LINES' ? ' (each line, '
+                + ({ MISSING: 'missing only', BOTH: 'matching + missing' }[action.datasetLinesResult] || 'matching only')
+                + ')' : '')] = search;
+    }
     return {
         query: { favorite: action.datasetFavorite || '', conditions: conditions },
+        lines: lines,
         described: Object.keys(described).length ? described : null
     };
+}
+
+/**
+ * {@link #runDataset}, once per line when the search is "each line": every line's rows together,
+ * a row that matched two lines kept once. Reloaded once, before the first line, not once per line.
+ *
+ * <p>With {@code datasetLinesResult} MISSING the answer is instead one row per line nothing
+ * matched; with BOTH it is every line's rows and the misses, each row led by the line it answers
+ * and whether anything did — so a row matching two lines is listed under each.
+ */
+async function runDatasetLines(action, name, query, lines) {
+    if (!lines) return runDataset(action, name, query);
+    const ask = (line, act) => runDataset(act, name, { favorite: query.favorite, conditions: query.conditions.concat(line) });
+    const first = await ask(lines[0], action);
+    const noReload = Object.assign({}, action, { datasetReload: false });
+    const rest = await Promise.all(lines.slice(1).map(line => ask(line, noReload)));
+    const want = action.datasetLinesResult || 'MATCHED';
+    if (want === 'MATCHED') {
+        const seen = new Set();
+        return first.concat(...rest).filter(r => {
+            const key = JSON.stringify(r);
+            return !seen.has(key) && seen.add(key);
+        });
+    }
+    const out = [];
+    [first].concat(rest).forEach((rows, i) => {
+        const line = lines[i].value;
+        if (!rows.length) out.push({ searchLine: line, found: 'no' });
+        else if (want === 'BOTH') rows.forEach(r => out.push(Object.assign({ searchLine: line, found: 'yes' }, r)));
+    });
+    return out;
 }
 
 /**
@@ -13838,6 +14419,23 @@ function datasetQueryOf(action) {
  */
 async function runDataset(action, name, query) {
     if (!action.datasetName) throw new Error(name + ': no static dataset chosen.');
+    if (action.datasetReload) {
+        let reloaded;
+        try {
+            reloaded = await AC.api('POST', '/staticdataset/' + encodeURIComponent(action.datasetName) + '/reload');
+        } catch (e) {
+            throw new Error(name + ': static dataset "' + action.datasetName + '" could not be reloaded: '
+                + (e.message || String(e)));
+        }
+        // Controls wired straight to the dataset read it through this cache; their next read is fresh.
+        if (datasetCache) datasetCache.delete(action.datasetName);
+        // A refresh button and nothing more: no rows to ask for, since there is nowhere to put them.
+        if (!action.targetControlId) {
+            AC.setStatus('statusBar', 'Reloaded static dataset "' + action.datasetName + '": '
+                + ((reloaded && reloaded.count) || 0) + ' rows.', 'ok');
+            return [];
+        }
+    }
     let answer;
     try {
         answer = await AC.api('POST', '/staticdataset/' + encodeURIComponent(action.datasetName) + '/query', query);
@@ -13867,6 +14465,8 @@ async function runDataset(action, name, query) {
  * the bar saying plainly where these rows actually came from.
  */
 async function bindDataset(action, name, rows, call) {
+    // A reload with nowhere to put the rows has already done all it was for.
+    if (!action.targetControlId) return;
     const record = callRecord(null, 'SUCCESS', '', call,
         'read from static dataset "' + action.datasetName + '" — no call made');
 
@@ -13883,7 +14483,7 @@ async function bindDataset(action, name, rows, call) {
         // to say about where they came from — the same order bindAction uses for a response.
         gridMeta[target.controlId] = record;
         const grouped = await datasetGridRows(action, name, rows, target.columns, call);
-        bindGrid(target, grouped.rows, grouped.columns, appendsToGrid(action));
+        bindGrid(target, grouped.rows, grouped.columns, appendsToGrid(action)); publishRowsToDb(action, grouped.rows, grouped.columns);
         noteFilledBy(target.controlId, action);
         return;
     }
@@ -13905,8 +14505,8 @@ async function bindDataset(action, name, rows, call) {
 async function datasetGridRows(action, name, rows, columns, call) {
     const bound = rowsForGridAction(rows, action, '', name);
     const lookups = await enrichmentLookups(action, name, call);
-    return groupedForGrid(action, keptForBinding(action, enrichRows(bound.rows, action, null, lookups)),
-        withEnrichedColumns(bound.columns || columns, action));
+    return groupedForGrid(action, keptForBinding(action, enrichBound(bound, action, null, lookups)),
+        boundColumns(bound, bound.columns || columns, action));
 }
 
 // ── WebSocket actions ─────────────────────────────────────────────────────
@@ -13923,6 +14523,7 @@ const WS_FLUSH_MS = 300;
 let wsRelay = null;           // the page's socket to the relay, once asked for
 let wsRelayOpen = null;       // a promise of it being open
 const wsLinks = {};           // by connection key (instance id): what Connect set up on this page
+const wsInfoWaiters = {};     // by connection key: Details actions waiting on the relay's answer
 
 /** The relay socket, opened on first use and reopened after it drops. */
 function wsRelaySocket() {
@@ -13938,6 +14539,10 @@ function wsRelaySocket() {
         try { message = JSON.parse(event.data); } catch (e) { return; }
         if (message.type === 'message') wsArrived(message);
         else if (message.type === 'status') wsStatus(message);
+        else if (message.type === 'info' && wsInfoWaiters[message.key]) {
+            wsInfoWaiters[message.key].forEach(resolve => resolve(message.details || {}));
+            delete wsInfoWaiters[message.key];
+        }
     };
     // The server closes every upstream connection along with this socket, so each one is over.
     socket.onclose = () => {
@@ -13967,9 +14572,11 @@ async function runWebSocket(action, name, record) {
     if (!key) throw new Error(name + ': no instance chosen.');
     const op = wsOperationOf(action);
 
-    if (op === 'CONNECT') {
-        const target = findControl(action.targetControlId);
-        if (!target || target.type !== 'grid') throw new Error(name + ': its target grid is no longer on this page.');
+    if (wsOpens(op)) {
+        // Connect only may name no grid: the socket is then there to send over, and nothing listens.
+        const listens = op === 'CONNECT' || !!action.targetControlId;
+        const target = listens ? findControl(action.targetControlId) : null;
+        if (listens && (!target || target.type !== 'grid')) throw new Error(name + ': its target grid is no longer on this page.');
         const scope = actionScope(null);
         record.inputs = resolveInputs(action.inputs, scope);
         record.environment = resolveTemplate(action.environmentOverride, scope);
@@ -13978,13 +14585,29 @@ async function runWebSocket(action, name, record) {
         const previous = wsLinks[key];
         if (previous && previous.timer) clearTimeout(previous.timer);
         const link = wsLinks[key] = {
-            action: action, name: name, gridId: target.controlId, state: 'CONNECTING', message: '',
-            url: '', received: 0, excluded: 0, skipped: 0, pending: [], timer: null
+            action: action, name: name, gridId: target ? target.controlId : null, listening: listens, state: 'CONNECTING', message: '',
+            url: '', received: 0, excluded: 0, skipped: 0, pending: [], timer: null,
+            // Further grids: every message again, through each one's own transforms.
+            feeds: listens ? (action.extraBindings || []).filter(b => b && findControl(b.targetControlId))
+                .map(b => ({ binding: b, gridId: b.targetControlId, pending: [], fresh: false, work: Promise.resolve(), failed: false })) : []
         };
-        setGridData(link.gridId, [], target.columns, controlTitle(target));
+        if (target) setGridData(link.gridId, [], target.columns, controlTitle(target));
+        link.feeds.forEach(wsClearFeed);
         wsPaintStatus(link);
-        await wsCommand({ op: 'connect', key: key, instanceId: key, environment: record.environment, inputs: record.inputs });
-        return name + ': connecting…';
+        await wsCommand({ op: 'connect', key: key, instanceId: key, environment: record.environment, inputs: record.inputs,
+            opening: op === 'CONNECT', listen: listens });
+        return name + ': connecting' + (op === 'OPEN' ? ' (connect only)' : '') + '…';
+    }
+
+    // The relay stops sending what arrives; the grid keeps what it already shows.
+    if (op === 'UNLISTEN') {
+        const link = wsLinks[key];
+        if (link) {
+            link.listening = false;
+            if (link.timer) { clearTimeout(link.timer); wsFlush(link); }
+        }
+        await wsCommand({ op: 'unlisten', key: key });
+        return name + ': stopped listening';
     }
 
     if (op === 'SEND') {
@@ -13998,13 +14621,37 @@ async function runWebSocket(action, name, record) {
     if (op === 'CLEAR') {
         const link = wsLinks[key];
         if (!link) throw new Error(name + ': nothing has connected this instance on this page yet.');
+        if (!link.gridId) throw new Error(name + ': this instance was connected without a grid — there is nothing to clear.');
         const control = findControl(link.gridId);
         link.pending = [];
         setGridData(link.gridId, [], control ? control.columns : null, control ? controlTitle(control) : link.name);
+        link.feeds.forEach(feed => { feed.pending = []; feed.fresh = false; wsClearFeed(feed); });
         wsPaintStatus(link);
         return name + ': grid cleared';
     }
 
+    // The relay's details for this connection, one key/value row each; times read as local date-times.
+    if (op === 'INFO') {
+        const target = findControl(action.targetControlId);
+        if (!target || target.type !== 'grid') throw new Error(name + ': its target grid is no longer on this page.');
+        const answer = new Promise((resolve, reject) => {
+            (wsInfoWaiters[key] = wsInfoWaiters[key] || []).push(resolve);
+            setTimeout(() => reject(new Error(name + ': the server did not answer with the connection details.')), 10000);
+        });
+        await wsCommand({ op: 'info', key: key });
+        const details = await answer;
+        record.inputs = details;
+        const rows = Object.keys(details).map(k => {
+            const v = details[k];
+            return { key: k, value: /At$/.test(k) && typeof v === 'number' ? tsFullLabel(v)
+                : v !== null && typeof v === 'object' ? JSON.stringify(v) : v };
+        });
+        setGridData(target.controlId, rows, target.columns, controlTitle(target));
+        return name + ': details shown';
+    }
+
+    // Restart reconnects as last connected, so a link that had stopped listening listens again if it ever did.
+    if (op === 'RESTART' && wsLinks[key]) wsLinks[key].listening = !!wsLinks[key].gridId;
     await wsCommand({ op: op.toLowerCase(), key: key });
     return name + ': ' + (op === 'PAUSE' ? 'paused' : op === 'RESUME' ? 'resumed'
         : op === 'STOP' ? 'stopped' : 'restarting…');
@@ -14030,6 +14677,8 @@ function wsPaintStatus(link) {
     const counts = [link.received.toLocaleString() + ' received'];
     if (link.excluded) counts.push(link.excluded.toLocaleString() + ' excluded');
     if (link.skipped) counts.push(link.skipped.toLocaleString() + ' skipped while paused');
+    // Connect only with no grid has nowhere to say it; failures still reach the error list.
+    if (!link.gridId) return;
     const note = 'WebSocket ' + link.state.toLowerCase() + (link.url ? ' · ' + link.url : '') + ' · ' + counts.join(', ')
         + (link.message && link.state !== 'ERROR' ? ' — ' + link.message : '');
     gridMeta[link.gridId] = callRecord(null, link.state === 'ERROR' ? 'FAILED' : 'SUCCESS',
@@ -14040,21 +14689,75 @@ function wsPaintStatus(link) {
 /** One message off the relay: made into rows and queued for the next flush. */
 function wsArrived(message) {
     const link = wsLinks[message.key];
-    if (!link) return;
+    if (!link || !link.gridId || !link.listening) return;
     link.received++;
     // A full local date-time, so a time series chart reads it with no format and a feed crossing midnight stays in order.
     const receivedAt = tsFullLabel(message.at || Date.now());
     let payload;
     try { payload = JSON.parse(message.data); } catch (e) { payload = message.data; }
 
-    let found = link.action.arrayPath ? pathGet(payload, link.action.arrayPath) : payload;
-    if (found === undefined || found === null) found = [];
-    const items = Array.isArray(found) ? found : [found];
-    items.forEach(item => link.pending.push(item !== null && typeof item === 'object' && !Array.isArray(item)
-        ? Object.assign({ receivedAt: receivedAt }, item)
-        : { receivedAt: receivedAt, message: typeof item === 'string' ? item : JSON.stringify(item) }));
+    const toRows = out => wsRowsOf(link.action.arrayPath ? pathGet(out, link.action.arrayPath) : out, receivedAt);
+    if ((link.action.transformNames || []).length) {
+        // Chained like a feed, so an async JSONata keeps messages in order; a broken one is reported once.
+        link.work = (link.work || Promise.resolve()).then(() => applyTransforms(payload, link.action, link.name))
+            .then(out => {
+                link.pending.push(...toRows(out));
+                if (!link.timer) link.timer = setTimeout(() => wsFlush(link), WS_FLUSH_MS);
+            })
+            .catch(e => { if (!link.failed) addError(e.message || String(e)); link.failed = true; });
+    } else {
+        link.pending.push(...toRows(payload));
+    }
+
+    // Chained per feed, so an async JSONata never lets a later message land before an earlier one.
+    link.feeds.forEach(feed => {
+        feed.work = feed.work.then(() => applyTransforms(payload, feed.binding, bindingName(Object.assign({ bindingOf: link.action }, feed.binding), link.name)))
+            .then(out => {
+                const rows = wsRowsOf(feed.binding.arrayPath ? pathGet(out, feed.binding.arrayPath) : out, receivedAt);
+                feed.pending = feed.binding.appendRows ? feed.pending.concat(rows) : rows;
+                feed.fresh = true;
+                if (!link.timer) link.timer = setTimeout(() => wsFlush(link), WS_FLUSH_MS);
+            })
+            // Once per feed: a broken expression would otherwise report every message.
+            .catch(e => { if (!feed.failed) addError(e.message || String(e)); feed.failed = true; });
+    });
 
     if (!link.timer) link.timer = setTimeout(() => wsFlush(link), WS_FLUSH_MS);
+}
+
+/** What a message (or its transformed result) found at a path becomes as grid rows, each stamped with when it arrived. */
+function wsRowsOf(found, receivedAt) {
+    if (found === undefined || found === null) return [];
+    return (Array.isArray(found) ? found : [found]).map(item => item !== null && typeof item === 'object' && !Array.isArray(item)
+        ? Object.assign({ receivedAt: receivedAt }, item)
+        : { receivedAt: receivedAt, message: typeof item === 'string' ? item : JSON.stringify(item) });
+}
+
+/** Empties a further grid a feed streams into. */
+function wsClearFeed(feed) {
+    const control = findControl(feed.gridId);
+    setGridData(feed.gridId, [], control ? control.columns : null, control ? controlTitle(control) : '');
+    paintGrid(feed.gridId);
+}
+
+/**
+ * Puts what each further grid's transforms have produced since the last flush into it: on top of
+ * what it holds when it appends, capped as the main grid is; otherwise the latest message's rows alone.
+ */
+function wsFlushFeeds(link) {
+    const max = link.action.wsMaxRows || DEFAULT_WS_MAX_ROWS;
+    link.feeds.forEach(feed => {
+        if (!feed.fresh) return;
+        const rows = feed.pending;
+        feed.pending = [];
+        feed.fresh = false;
+        const state = gridState[feed.gridId];
+        const control = findControl(feed.gridId);
+        if (feed.binding.appendRows && state) wsPrependRows({ gridId: feed.gridId, action: { wsMaxRows: max } }, state, rows.reverse());
+        else setGridData(feed.gridId, (feed.binding.appendRows ? rows.reverse() : rows).slice(0, max),
+            control ? control.columns : null, control ? controlTitle(control) : link.name);
+        wsPaint({ gridId: feed.gridId });
+    });
 }
 
 /** A field of a message as text for an exclude test: by name first, then as a dotted path into it. */
@@ -14072,7 +14775,8 @@ function wsCellText(row, column) {
  */
 function wsFlush(link) {
     link.timer = null;
-    if (wsLinks[link.action.appUseCaseInstanceId] !== link || !link.pending.length) return;
+    if (wsLinks[link.action.appUseCaseInstanceId] !== link) return;
+    if (!link.pending.length) { wsFlushFeeds(link); return; }
     // Repainting the grid rebuilds its filter row, so it waits while the operator is typing in it.
     const host = document.querySelector('[data-grid="' + CSS.escape(link.gridId) + '"]');
     if (host && host.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') {
@@ -14096,6 +14800,7 @@ function wsFlush(link) {
     } else if (kept.length) {
         wsPrependRows(link, state, kept.reverse());
     }
+    wsFlushFeeds(link);
     wsPaintStatus(link);
 }
 
@@ -14587,7 +15292,7 @@ async function bindCompare(action, name, cmp, call) {
     // is read the same way too — the report is a table like any other, and "how many of each
     // status" is a fair question to put to it from Analyze.
     const grouped = groupedForGrid(action, rows, (target.columns && target.columns.length) ? null : COMPARE_COLUMNS);
-    bindGrid(target, grouped.rows, grouped.columns, appendsToGrid(action));
+    bindGrid(target, grouped.rows, grouped.columns, appendsToGrid(action)); publishRowsToDb(action, grouped.rows, grouped.columns);
     noteFilledBy(target.controlId, action);
     return summary;
 }
@@ -14620,6 +15325,7 @@ function fanOutRows(action, name) {
     const source = findControl(action.rowSourceControlId);
     if (!source) throw new Error(name + ': the control it runs over is no longer on this page.');
     if (isSelect(source.type)) return listFanOutRows(action, name, source);
+    if (source.type === 'textarea') return lineFanOutRows(action, name, source);
     const state = gridState[source.controlId];
     if (!state) {
         throw new Error(name + ': "' + controlTitle(source) + '" has no rows yet — whatever fills it has to run first.');
@@ -14645,6 +15351,19 @@ function cappedFanOut(action, source, shown, matching) {
     const rows = limit > 0 ? matching.slice(0, limit) : matching;
     return { source: source, rows: rows, skipped: matching.length - rows.length,
              filteredOut: shown.length - matching.length };
+}
+
+/** The non-blank lines of a text area a fan-out runs over, each as a row with the line under <code>line</code>. */
+function lineFanOutRows(action, name, source) {
+    const rows = String((source.fieldName && values[source.fieldName]) || '').split(/\r?\n/)
+        .map(l => l.trim()).filter(Boolean).map(l => ({ line: l }));
+    if (!rows.length) throw new Error(name + ': "' + controlTitle(source) + '" has no lines, so there is nothing to run over.');
+    const filters = activeRowFilters(action);
+    const matching = filters.length ? rows.filter(row => rowMatchesFilters(row, filters)) : rows;
+    if (!matching.length) {
+        throw new Error(name + ': no line of "' + controlTitle(source) + '" matches this action\'s filters, so there is nothing to run over.');
+    }
+    return cappedFanOut(action, source, rows, matching);
 }
 
 /**
@@ -14761,6 +15480,7 @@ function fanOutLabel(action, scope, index) {
     // An element of a list already has a name, and it is a better one than its position.
     const source = findControl(action.rowSourceControlId);
     if (source && isSelect(source.type) && scope && scope.label) return String(scope.label);
+    if (source && (source.type === 'textarea' || source.type === 'text') && scope && scope.line) return String(scope.line);
     return 'Row ' + (index + 1);
 }
 
@@ -14821,24 +15541,25 @@ async function runFanOut(action, name, record, firstAt) {
         const rowName = name + ' · ' + call.label;
         // Resolved per row, at the moment that row is sent — the same rule an ordinary action
         // follows, one row at a time.
-        let inputs, environment, timeoutMs;
+        let inputs, environment, baseUrl, timeoutMs;
         try {
             inputs = resolveInputs(action.inputs, call.scope);
             environment = resolveTemplate(action.environmentOverride, call.scope);
+            baseUrl = resolveTemplate(action.baseUrlOverride, call.scope);
             timeoutMs = resolveTimeout(action, call.scope);
         } catch (e) {
             call.error = e.message || String(e);
             return;
         }
         const entry = { name: rowName, instanceId: action.appUseCaseInstanceId,
-                        inputs: inputs, environment: environment,
+                        inputs: inputs, environment: environment, baseUrl: baseUrl,
                         metadataOnly: isMetadataOnly(action), result: null, error: '' };
         if (call.at >= 0) record[call.at] = entry;
         else { call.at = record.length; record.push(entry); }
 
         try {
             call.result = await runExecution(action.appUseCaseInstanceId, inputs, rowName,
-                    environment, entry.metadataOnly, action.ownCall, timeoutMs);
+                    environment, entry.metadataOnly, action.ownCall, timeoutMs, baseUrl);
             entry.result = runDetail(call.result);
             const failure = failureMessage(call.result, rowName);
             if (failure) {
@@ -14879,6 +15600,141 @@ async function bindFanOut(action, name, fan) {
         + (failed ? ' ' + failed + ' of them failed.' : '');
 }
 
+/**
+ * Runs every step of a chain once per row — each step through its own pool, the steps alongside
+ * each other — and hands back each step's answers in row order. Like a fan-out, every call is its
+ * own entry in the run's record, the first taking over the one the action was given.
+ */
+async function runChain(action, name, record, firstAt) {
+    const source = findControl(action.rowSourceControlId);
+    let plan;
+    if (source && source.type === 'text') {
+        // One user typed in: a run over one row.
+        const value = String((source.fieldName && values[source.fieldName]) || '').trim();
+        if (!value) throw new Error(name + ': "' + controlTitle(source) + '" is empty, so there is nothing to run over.');
+        const row = { line: value };
+        if (source.fieldName) row[source.fieldName] = value;
+        plan = { source: source, rows: [row], skipped: 0, filteredOut: 0 };
+    } else {
+        plan = fanOutRows(action, name);
+    }
+    const steps = (action.chainSteps || []).map(step => ({ step: step, action: actionNamed(step.actionId) }));
+    if (!steps.length) throw new Error(name + ': it chains no page actions.');
+    const gone = steps.find(s => !s.action);
+    if (gone) throw new Error(name + ': it chains a page action that is no longer on this page: ' + gone.step.actionId);
+
+    const scopes = plan.rows.map((row, r) => actionScope(row, r));
+    const labels = scopes.map((scope, r) => fanOutLabel(action, scope, r));
+    let nextAt = firstAt;
+    AC.setStatus('runStatus', name + ': ' + steps.length + ' step' + (steps.length === 1 ? '' : 's') + ' × '
+        + plan.rows.length + ' row' + (plan.rows.length === 1 ? '' : 's') + '…');
+
+    const answered = await Promise.all(steps.map(s => {
+        const stepName = s.action.actionLabel || s.action.actionId;
+        const limit = Math.min(+s.step.maxConcurrency || DEFAULT_CHAIN_CONCURRENCY, MAX_CHAIN_CONCURRENCY);
+        return runPooled(plan.rows, limit, async (row, r) => {
+            const callName = name + ' · ' + labels[r] + ' · ' + stepName;
+            const entry = { name: callName, instanceId: s.action.appUseCaseInstanceId, inputs: null,
+                            environment: '', metadataOnly: false, result: null, error: '' };
+            const at = nextAt >= 0 ? nextAt : record.length;
+            nextAt = -1;
+            record[at] = entry;
+            const answer = { status: 'FAILED', statusCode: '', timeTaken: '', url: '', environment: '', error: '', result: null };
+            try {
+                entry.inputs = resolveInputs(s.action.inputs, scopes[r]);
+                entry.environment = resolveTemplate(s.action.environmentOverride, scopes[r]);
+                entry.baseUrl = resolveTemplate(s.action.baseUrlOverride, scopes[r]);
+                const result = await runExecution(s.action.appUseCaseInstanceId, entry.inputs, callName, entry.environment,
+                        false, s.action.ownCall, resolveTimeout(s.action, scopes[r]), entry.baseUrl);
+                entry.result = runDetail(result);
+                const meta = metaOf(result);
+                answer.status = meta.status;
+                answer.statusCode = meta.statusCode;
+                answer.timeTaken = meta.timeTaken;
+                answer.url = meta.url;
+                answer.environment = meta.environment;
+                answer.error = entry.error = failureMessage(result, callName);
+                // A failed call's body is usually why it failed, so it is kept when there is one.
+                if (hasPayload(result)) answer.result = await rootFor(result, s.action, callName);
+            } catch (e) {
+                answer.error = entry.error = e.message || String(e);
+            }
+            return answer;
+        }).then(answers => ({ name: stepName, answers: answers }));
+    }));
+    return { source: plan.source, rows: plan.rows, labels: labels, steps: answered,
+             skipped: plan.skipped, filteredOut: plan.filteredOut };
+}
+
+/** A chain's rows: the source row, then each step's answer under <code>step.field</code> columns. */
+function chainRows(chain) {
+    return chain.rows.map((row, r) => {
+        const out = Object.assign({ source: chain.labels[r] }, isObjectRow(row) ? row : { value: row });
+        chain.steps.forEach(step => CHAIN_FIELDS.forEach(f => { out[step.name + '.' + f] = step.answers[r][f]; }));
+        return out;
+    });
+}
+
+/** A chain's result as one JSON document: a list with each row and its steps' answers nested under their names. */
+function chainDocument(chain) {
+    return chain.rows.map((row, r) => {
+        const out = { source: chain.labels[r], row: row };
+        chain.steps.forEach(step => { out[step.name] = step.answers[r]; });
+        return out;
+    });
+}
+
+/**
+ * Puts a chain's result where it was aimed and hands back a line about how it went: a text area
+ * gets JSON, a grid gets rows. With transforms, they run over {@link #chainDocument} and what they
+ * return is what goes in — a list of objects for a grid, anything at all for a text area.
+ */
+async function bindChain(action, name, chain) {
+    const transformed = (action.transformNames || []).length
+        ? await applyTransforms(chainDocument(chain), action, name) : undefined;
+    const target = findControl(action.targetControlId);
+    if (target && target.type === 'textarea') {
+        const data = transformed === undefined ? chainDocument(chain) : transformed;
+        setControlValue(target, typeof data === 'string' ? data : JSON.stringify(data, null, 2));
+        return chainNote(name, chain);
+    }
+    let rows = chainRows(chain);
+    if (transformed !== undefined) {
+        rows = Array.isArray(transformed) ? transformed : transformed && typeof transformed === 'object' ? [transformed] : null;
+        if (!rows) throw new Error(name + ': its transforms returned ' + typeof transformed
+            + ', and a grid needs a list of objects — a row each.');
+    }
+    const calls = chain.rows.length * chain.steps.length;
+    const failed = chainFailures(chain);
+    const record = callRecord(null, failed ? 'FAILED' : 'SUCCESS',
+        failed ? failed + ' of ' + calls + ' calls failed — each row says which.' : '', null,
+        calls.toLocaleString() + ' call' + (calls === 1 ? '' : 's') + ' over "' + controlTitle(chain.source) + '"');
+    if (action.targetControlId === NEW_GRID) {
+        noteFilledBy(pushStackedGrid(name, rows, null, record), action);
+    } else if (action.targetControlId) {
+        if (!target || target.type !== 'grid') throw new Error(name + ': the grid it fills is no longer on this page.');
+        gridMeta[target.controlId] = record;
+        bindGrid(target, rows, null, false);
+        noteFilledBy(target.controlId, action);
+        paintGridStatus(target.controlId);
+    }
+    return chainNote(name, chain);
+}
+
+function chainFailures(chain) {
+    return chain.steps.reduce((n, s) => n + s.answers.filter(x => x.error).length, 0);
+}
+
+/** The status line for a chain: how many steps over how many rows, what the cap left, what failed. */
+function chainNote(name, chain) {
+    const calls = chain.rows.length * chain.steps.length;
+    const failed = chainFailures(chain);
+    return name + ': ' + chain.steps.length + ' step' + (chain.steps.length === 1 ? '' : 's') + ' × '
+        + chain.rows.length + ' row' + (chain.rows.length === 1 ? '' : 's') + ' over "' + controlTitle(chain.source) + '".'
+        + (chain.skipped ? ' ' + chain.skipped + ' further row' + (chain.skipped === 1 ? '' : 's') + ' left alone by the cap.' : '')
+        + (failed ? ' ' + failed + ' of ' + calls + ' calls failed.' : '');
+}
+
 /** One grid per row, laid out as tabs inside the tab set the action targets. */
 async function bindFanOutTabs(action, name, fan) {
     const target = findControl(action.targetControlId);
@@ -14914,8 +15770,8 @@ async function bindFanOutTabs(action, name, fan) {
         try {
             const data = await rootFor(call.result, action, rowName);
             const bound = rowsForGridAction(data, action, resolvePath(action.arrayPath, rowName, call.scope), rowName);
-            setGridData(gridId, keptForBinding(action, enrichRows(bound.rows, action, call.result, lookups)),
-                withEnrichedColumns(bound.columns || target.columns, action), call.label);
+            setGridData(gridId, keptForBinding(action, enrichBound(bound, action, call.result, lookups)),
+                boundColumns(bound, bound.columns || target.columns, action), call.label);
         } catch (e) {
             const why = call.failure ? call.failure + ' Its response could not be read either: '
                     + (e.message || String(e)) : (e.message || String(e));
@@ -14984,7 +15840,7 @@ async function bindFanOutRows(action, name, fan) {
     gridMeta[target.controlId] = fanRecord(fan);
     const grouped = groupedForGrid(action, rows,
         withEnrichedColumns(withResultColumns(target.columns, columns), action));
-    bindGrid(target, grouped.rows, grouped.columns, appendsToGrid(action));
+    bindGrid(target, grouped.rows, grouped.columns, appendsToGrid(action)); publishRowsToDb(action, grouped.rows, grouped.columns);
     noteFilledBy(target.controlId, action);
     paintGridStatus(target.controlId);
 }
@@ -15387,6 +16243,25 @@ function enrichRows(rows, action, result, lookups, meta) {
 }
 
 /**
+ * The rows a grid bind produced, with the action's enriched columns added. A key/value grid read
+ * off an object gets them as further key/value rows, worked out against the object itself, rather
+ * than as the same cells repeated beside every property.
+ */
+function enrichBound(bound, action, result, lookups) {
+    if (!bound.object) return enrichRows(bound.rows, action, result, lookups);
+    const names = enrichColumnsOf(action).reduce((all, column) => all.concat(enrichColumnNames(column)), []);
+    if (!names.length) return bound.rows;
+    const enriched = enrichRows([bound.object], action, result, lookups)[0];
+    return bound.rows.concat(names.filter((n, at) => names.indexOf(n) === at).map(n => ({
+        key: n, value: isScalarCell(enriched[n]) ? enriched[n] : JSON.stringify(enriched[n]) })));
+}
+
+/** The columns that go with {@link #enrichBound}: a key/value grid keeps its two. */
+function boundColumns(bound, columns, action) {
+    return bound.object ? bound.columns : withEnrichedColumns(columns, action);
+}
+
+/**
  * The rows a grid is about to be filled with, grouped first when the action carries a pivot — see
  * AppPagePivot. The rows it was handed are read and never kept: the grid is filled with the
  * grouped table alone, under the columns the grouping produced, whatever columns the grid was
@@ -15507,6 +16382,14 @@ function enrichedCell(column, row, result, record, lookups) {
     const kind = enrichKind(column);
     if (kind === 'HEADER') return headerValue(result, column.expression);
     if (kind === 'REGEX') return regexCell(column, row);
+    if (kind === 'VARIABLE') {
+        // What the page sent wins over what the instance was saved with — the server merges them the same way.
+        const sent = (result && result.requestInputs) || {};
+        const saved = (result && result.appUseCaseInstanceInputs) || {};
+        const value = column.expression in sent ? sent[column.expression] : saved[column.expression];
+        return value === undefined || value === null ? ''
+            : typeof value === 'object' ? JSON.stringify(value) : value;
+    }
     if (kind === 'VLOOKUP' || kind === 'GRID_VLOOKUP') {
         const index = lookups && lookups.get(column);
         if (!index) return '';
@@ -15722,22 +16605,39 @@ async function bindAction(action, data, name, result, call, failure, scope) {
     if (action.targetControlId === NEW_GRID) {
         const stacked = rowsForGridAction(data, action, arrayPath, name);
         const lookups = await enrichmentLookups(action, name, call);
-        const grouped = groupedForGrid(action, keptForBinding(action, enrichRows(stacked.rows, action, result, lookups)),
-            withEnrichedColumns(stacked.columns, action));
+        const grouped = groupedForGrid(action, keptForBinding(action, enrichBound(stacked, action, result, lookups)),
+            boundColumns(stacked, stacked.columns, action));
         noteFilledBy(pushStackedGrid(name, grouped.rows, grouped.columns, callRecord(result, outcome, why, call)), action);
         return;
     }
     const target = findControl(action.targetControlId);
     if (!target) { addError(name + ': its target is no longer on this page.', call); return; }
-    if (target.type === 'grid') {
+    if (target.type === 'tabs') {
+        // A grid tab per run, named by the action's label template against the page as it stands;
+        // a run that resolves to a name this action already used refills that tab instead.
+        const tabs = fanTabs[target.controlId] = fanTabs[target.controlId] || [];
+        const own = tabs.filter(t => t.actionId === action.actionId);
+        const title = resolveTemplate(action.rowLabelTemplate, scope).trim() || name + ' #' + (own.length + 1);
+        let tab = own.find(t => t.title === title);
+        if (!tab) tabs.push(tab = { gridId: 'run-' + action.actionId + '-' + (++runTabCount), title: title, actionId: action.actionId });
+        const bound = rowsForGridAction(data, action, arrayPath, name);
+        const lookups = await enrichmentLookups(action, name, call);
+        delete gridState[tab.gridId];
+        gridMeta[tab.gridId] = callRecord(result, outcome, why, call);
+        const grouped = groupedForGrid(action, keptForBinding(action, enrichBound(bound, action, result, lookups)),
+            boundColumns(bound, bound.columns, action));
+        setGridData(tab.gridId, grouped.rows, grouped.columns, title);
+        activeTab[target.controlId] = tab.gridId;
+        paintTabs(target);
+    } else if (target.type === 'grid') {
         const bound = rowsForGridAction(data, action, arrayPath, name);
         const lookups = await enrichmentLookups(action, name, call);
         // Recorded before the rows go in, so the grid is painted once, already knowing what it
         // has to say about the call that filled it.
         gridMeta[target.controlId] = callRecord(result, outcome, why, call);
-        const grouped = groupedForGrid(action, keptForBinding(action, enrichRows(bound.rows, action, result, lookups)),
-            withEnrichedColumns(bound.columns || target.columns, action));
-        bindGrid(target, grouped.rows, grouped.columns, appendsToGrid(action));
+        const grouped = groupedForGrid(action, keptForBinding(action, enrichBound(bound, action, result, lookups)),
+            boundColumns(bound, bound.columns || target.columns, action));
+        bindGrid(target, grouped.rows, grouped.columns, appendsToGrid(action)); publishRowsToDb(action, grouped.rows, grouped.columns);
         noteFilledBy(target.controlId, action);
     } else if (isChart(target.type)) {
         // Same shape as the grid above and for the same reason: the marks are read out first, so
@@ -16076,6 +16976,18 @@ function resolveTimeout(action, row) {
     return ms > 0 ? ms : null;
 }
 
+/** An action's repeat count resolved like {@link #resolveTimeout}; 1 unless it comes to a whole number above 1. */
+function resolveRepeat(action, row) {
+    const text = resolveTemplate(action && action.repeatCount, row).trim();
+    return /^\d+$/.test(text) ? Math.max(1, parseInt(text, 10)) : 1;
+}
+
+/** One line on a stress run: how many copies came back and how long they took. */
+function stressNote(name, s) {
+    return name + ' ×' + s.repeat + ': ' + s.succeeded + ' ok, ' + s.failed + ' failed · min ' + s.minMs
+        + ' / avg ' + s.avgMs + ' / p95 ' + s.p95Ms + ' / max ' + s.maxMs + ' ms · ' + s.requestsPerSecond + ' req/s.';
+}
+
 /**
  * Runs one instance and hands back the whole execution record — the response and the call's own
  * metadata together. Whether the caller wants rows, one attribute, or the status code is a
@@ -16101,13 +17013,19 @@ function resolveTimeout(action, row) {
  *                     that re-sends something has to go out as many times as it is asked to
  * @param timeoutMs    this call's HTTP timeout in milliseconds, in place of the use case's own —
  *                     see {@link #resolveTimeout}. Null keeps the use case's configured timeout.
+ * @param baseUrl      a URL prefix to call in place of the environment's own — a deployment the
+ *                     environment list does not have. Blank keeps the environment's prefix.
+ * @param repeat       above 1, the server sends that many copies at once — see {@link #resolveRepeat}.
+ *                     The first copy comes back as the result, carrying the latency figures as
+ *                     <code>stress</code>.
  */
-async function runExecution(instanceId, inputs, name, environment, metadataOnly, ownCall, timeoutMs) {
+async function runExecution(instanceId, inputs, name, environment, metadataOnly, ownCall, timeoutMs, baseUrl, repeat) {
     if (!instanceId) throw new Error(name + ': no use case instance is configured.');
     const request = {
         appUseCaseInstanceId: instanceId,
         inputs: inputs,
         environment: environment || '',
+        baseUrl: (baseUrl || '').trim(),
         includePayload: !metadataOnly,
         // What this call needs and what the server should go on holding afterwards are two
         // different questions, which is why this is not includePayload: a DEBUG-off page still
@@ -16116,15 +17034,24 @@ async function runExecution(instanceId, inputs, name, environment, metadataOnly,
         debug: pageDebug(),
         timeoutMs: timeoutMs || null
     };
-    if (ownCall || !callCache) return AC.api('POST', '/appcatalog/pages/run', request);
+    // The inputs sent ride on the result, for an enriched column reading a request variable. A cached
+    // result shares them safely: the cache key includes them.
+    const sent = result => (result && typeof result === 'object' && (result.requestInputs = inputs || {}), result);
+    // Never shared: a stress run is the point of the call, and two of them must both go out.
+    if (repeat > 1) {
+        request.repeat = repeat;
+        const answer = await AC.api('POST', '/appcatalog/pages/run', request);
+        return sent(Object.assign({}, answer.result, { stress: answer.stress }));
+    }
+    if (ownCall || !callCache) return AC.api('POST', '/appcatalog/pages/run', request).then(sent);
 
     // Everything the server is told, with the inputs put in a fixed order so two actions that
     // happen to list them differently still recognise each other as the same call. The promise
     // is what is cached, not the result, so actions asking at the same time share one flight.
-    const key = JSON.stringify([request.appUseCaseInstanceId, request.environment, request.includePayload,
+    const key = JSON.stringify([request.appUseCaseInstanceId, request.environment, request.baseUrl, request.includePayload,
         request.timeoutMs,
         Object.keys(inputs || {}).sort().map(k => [k, inputs[k]])]);
-    if (!callCache.has(key)) callCache.set(key, AC.api('POST', '/appcatalog/pages/run', request));
+    if (!callCache.has(key)) callCache.set(key, AC.api('POST', '/appcatalog/pages/run', request).then(sent));
     return callCache.get(key);
 }
 
@@ -16285,6 +17212,8 @@ function noteOneTargetFailure(action, name, result, message, call) {
     const target = findControl(action.targetControlId);
     if (!target) return;
     if (target.type === 'tabs') {
+        // An ordinary action's earlier run tabs are each their own answer and stay; the error list says this one failed.
+        if (!action.rowSourceControlId) return;
         // A fan-out that never got as far as sending anything has no tabs to report into, so the
         // ones it left behind last time go rather than standing as this run's answer. What
         // happened is in the error list, which is where a failure with no grid to sit in belongs.
@@ -16358,6 +17287,7 @@ async function applyTransformStep(data, stepName, name) {
     const transform = transformNamed(stepName);
     if (!transform) return data;
     if (transform.type === 'XML2JSON') return xmlToJsonValue(data, stepName, name);
+    if (transform.type === 'XSL2CSV') return xslToCsvRows(data, transform.expression || '', stepName, name);
     // A step naming a shared expression the library has not got is fatal, unlike a chain naming
     // a step the page has not got: the missing step was removed from this page by whoever was
     // editing it, while the missing library entry was removed somewhere else entirely, and
@@ -16423,21 +17353,77 @@ function resolveExpression(expression, stepName, name) {
  * with this step in the wrong place is a mistake worth reading about.
  */
 function xmlToJsonValue(data, stepName, name) {
+    return xmlNodeToObj(parseXmlText(data, stepName, name, 'the response').documentElement);
+}
+
+/** XML text a first step was handed, parsed, or a reason it could not be. {@code what} names it in errors. */
+function parseXmlText(data, stepName, name, what) {
     if (data === null || data === undefined || data === '') {
-        throw new Error(name + ': transform "' + stepName + '" had no XML to convert — the response was empty.');
+        throw new Error(name + ': transform "' + stepName + '" had no XML to convert — ' + what + ' was empty.');
     }
     if (typeof data !== 'string') {
         throw new Error(name + ': transform "' + stepName + '" converts XML text, but this far along the chain '
             + 'it was handed ' + (Array.isArray(data) ? 'an array' : 'a ' + typeof data)
-            + ' — an xml→json step belongs first, on the body as it arrived.');
+            + ' — an XML step belongs first, on the body as it arrived.');
     }
     const doc = new DOMParser().parseFromString(data.trim(), 'application/xml');
     const failure = doc.querySelector('parsererror');
     if (failure) {
-        throw new Error(name + ': transform "' + stepName + '" could not parse the response as XML: '
+        throw new Error(name + ': transform "' + stepName + '" could not parse ' + what + ' as XML: '
             + failure.textContent.trim().split('\n')[0]);
     }
-    return xmlNodeToObj(doc.documentElement);
+    return doc;
+}
+
+/** What the designer's stylesheet box shows while empty: the shape of an XML → CSV stylesheet. */
+const XSL_PLACEHOLDER = '<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">\n'
+    + '  <xsl:output method="text"/>\n'
+    + '  <xsl:template match="/">\n'
+    + '    <xsl:text>id,name&#10;</xsl:text>\n'
+    + '    <xsl:for-each select="//order">\n'
+    + '      <xsl:value-of select="@id"/>,<xsl:value-of select="name"/><xsl:text>&#10;</xsl:text>\n'
+    + '    </xsl:for-each>\n'
+    + '  </xsl:template>\n'
+    + '</xsl:stylesheet>';
+
+/**
+ * The XSL step: the step's stylesheet applied to the XML text, its output read as CSV with a
+ * header line, so a grid binds the rows straight off it. The browser's own XSLT 1.0 runs it.
+ */
+function xslToCsvRows(data, stylesheet, stepName, name) {
+    const xml = parseXmlText(data, stepName, name, 'the response');
+    const processor = new XSLTProcessor();
+    processor.importStylesheet(parseXmlText(stylesheet, stepName, name, 'the stylesheet'));
+    // A stylesheet the browser rejects gives null rather than throwing, so null is the failure.
+    const out = processor.transformToFragment(xml, document);
+    if (!out) throw new Error(name + ': XSL "' + stepName + '" produced nothing — check the stylesheet is valid XSLT 1.0.');
+    return csvRows(out.textContent);
+}
+
+/** CSV text as rows keyed by its first line: quoted fields may hold commas, doubled quotes and line breaks; blank lines are skipped. Twin of AppPageOutputReader#csvRows. */
+function csvRows(text) {
+    const lines = [];
+    let line = [], field = '', quoted = false;
+    const endLine = () => {
+        line.push(field); field = '';
+        if (line.length > 1 || line[0].trim()) lines.push(line);
+        line = [];
+    };
+    for (let i = 0; i < text.length; i++) {
+        const c = text[i];
+        if (quoted) {
+            if (c !== '"') field += c;
+            else if (text[i + 1] === '"') { field += '"'; i++; }
+            else quoted = false;
+        } else if (c === '"') quoted = true;
+        else if (c === ',') { line.push(field); field = ''; }
+        else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; endLine(); }
+        else field += c;
+    }
+    endLine();
+    if (!lines.length) return [];
+    const header = lines[0].map(h => h.trim());
+    return lines.slice(1).map(values => Object.fromEntries(header.map((h, c) => [h, values[c] ?? ''])));
 }
 
 /**
@@ -16510,7 +17496,7 @@ function rowsForGridAction(data, action, arrayPath, name) {
     if (Array.isArray(found)) return { rows: found, columns: null };
     if (typeof found === 'object') {
         if (action.keyValueGrid) {
-            return { rows: keyValueRows(found, action.scalarsOnly), columns: ['key', 'value'] };
+            return { rows: keyValueRows(found, action.scalarsOnly), columns: ['key', 'value'], object: found };
         }
         if (isMetadataAction(action)) {
             return { rows: [action.scalarsOnly ? scalarProperties(found) : found], columns: null };
@@ -16714,6 +17700,12 @@ function rowField(row, field) {
     return match === undefined ? undefined : row[match];
 }
 
+/** The warning a chart shows for a row it left out: "Row 2 cannot be charted because count is blank". */
+function unchartable(index, field, cell, rule) {
+    return 'Row ' + (index + 1) + ' cannot be charted because ' + field
+        + (cell === undefined || cell === null || cell === '' ? ' is blank' : ' = ' + cellText(cell) + ' ' + rule);
+}
+
 /** One slice per distinct name, sized by how many rows carry it, in the order names first appear. */
 function tallySlices(rows, keyField) {
     const counts = new Map();
@@ -16754,7 +17746,7 @@ function barModelOf(shape) {
     rows.forEach((row, i) => {
         const raws = keyFields.length ? keyFields.map(f => rowField(row, f)) : [i + 1];
         if (keyFields.length && raws.every(blank)) {
-            problems.push('row ' + (i + 1) + ' has no "' + keyFields.join('", "') + '"');
+            problems.push('Row ' + (i + 1) + ' cannot be charted because it has no "' + keyFields.join('", "') + '"');
             return;
         }
         const category = raws.map(part).join(' / ');
@@ -16770,14 +17762,16 @@ function barModelOf(shape) {
             const cell = isObjectRow(row) ? rowField(row, s.name) : row;
             const number = sliceNumber(cell);
             if (!Number.isFinite(number) || number < 0) {
-                problems.push('"' + category + '" ' + s.name + ' = '
-                    + (cell === undefined || cell === null || cell === '' ? '(blank)' : cellText(cell)));
+                problems.push(unchartable(i, s.name, cell, Number.isFinite(number) ? 'is below zero' : 'is not a number'));
                 return;
             }
             s.values[k] = (Number.isFinite(s.values[k]) ? s.values[k] : 0) + number;
         });
     });
-    return { categories: categories, series: series, problems: problems, counting: counting };
+    // A category none of whose rows could be charted is left off rather than drawn as an empty slot.
+    const kept = categories.map((_, k) => k).filter(k => series.some(s => Number.isFinite(s.values[k])));
+    series.forEach(s => { s.values = kept.map(k => s.values[k]); });
+    return { categories: kept.map(k => categories[k]), series: series, problems: problems, counting: counting };
 }
 
 /**
@@ -17216,6 +18210,57 @@ function formatText(control, value) {
     if (format === 'XML') return prettyXml(text);
     return text;
 }
+
+/**
+ * JSON and XML buttons over the top-right corner of whichever text area has the focus, designer
+ * and running page alike, that lay its text out again. Delegated from the document rather than
+ * added where each text area is drawn, so a box rendered later gets them too. The new text is
+ * announced with an 'input' event, which is what every text area here listens on to keep its value.
+ */
+function wirePrettyTools() {
+    const bar = document.createElement('div');
+    bar.id = 'prettyTools';
+    bar.innerHTML = '<button type="button" class="tool-btn" data-pretty="JSON" title="Pretty print as JSON">{ } JSON</button>'
+        + '<button type="button" class="tool-btn" data-pretty="XML" title="Pretty print as XML">&lt;/&gt; XML</button>';
+    document.body.appendChild(bar);
+    let box = null;
+    const place = () => {
+        const r = box.getBoundingClientRect();
+        bar.style.top = (r.top + 3) + 'px';
+        bar.style.right = (document.documentElement.clientWidth - r.right + 18) + 'px';
+    };
+    document.addEventListener('focusin', e => {
+        const t = e.target;
+        if (t.tagName !== 'TEXTAREA' || t.readOnly || t.disabled) return;
+        box = t;
+        bar.style.display = 'flex';
+        place();
+    });
+    document.addEventListener('focusout', e => {
+        if (e.target === box) { box = null; bar.style.display = 'none'; }
+    });
+    document.addEventListener('scroll', () => { if (box) place(); }, true);
+    // mousedown, and default prevented, so pressing a button does not take the focus off the box.
+    bar.addEventListener('mousedown', e => {
+        const btn = e.target.closest('[data-pretty]');
+        e.preventDefault();
+        if (!btn || !box || !box.value.trim()) return;
+        const text = box.value;
+        let out = text;
+        if (btn.dataset.pretty === 'JSON') {
+            try { out = JSON.stringify(JSON.parse(text), null, 2); } catch (err) { /* left as it was */ }
+        } else {
+            out = prettyXml(text);
+        }
+        if (out === text) {
+            AC.setStatus('statusBar', 'Not valid ' + btn.dataset.pretty + ', or already laid out — left as it was.', 'error');
+            return;
+        }
+        box.value = out;
+        box.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+}
+document.addEventListener('DOMContentLoaded', wirePrettyTools);
 
 /** XML text indented two spaces a level, or the text untouched when it is not well-formed XML. */
 function prettyXml(text) {
@@ -18192,6 +19237,8 @@ function paintGrid(gridId) {
             // Pipe separated for the loaders and scripts downstream, which meet a comma inside a
             // value far more often than they meet a pipe inside one.
             + '<button class="tool-btn" data-act="psv" title="Pipe separated, quoted where a value needs it">Export PSV</button>'
+            + '<button class="tool-btn" data-act="vault" title="Write these rows as a note in the Obsidian vault">Send to Obsidian</button>'
+            + '<button class="tool-btn" data-act="db" title="Append these rows to a table in an ORACLE / POSTGRES app, stamped with a run uuid">Send to Database</button>'
             + '<button class="tool-btn" data-act="html">View as HTML</button>'
             + '<button class="tool-btn" data-act="analyze" title="Pivot these rows on their own screen">Analyze</button>'
             // Not an export: the rows stay here, in the dataset library, where anything that
@@ -18211,6 +19258,8 @@ function paintGrid(gridId) {
         if (el.dataset.act === 'csv')   exportDelimited(gridId, 'csv');
         if (el.dataset.act === 'psv')   exportDelimited(gridId, 'psv');
         if (el.dataset.act === 'html')  viewAsHtml(gridId);
+        if (el.dataset.act === 'vault') sendGridToVault(gridId);
+        if (el.dataset.act === 'db')    sendGridToDb(gridId);
         if (el.dataset.act === 'analyze') analyzeGrid(gridId);
         if (el.dataset.act === 'dataset') saveGridAsDataset(gridId);
         if (el.dataset.act === 'more')  showMore(gridId, GRID_PAGE);
@@ -18306,6 +19355,24 @@ function wireColumnChooser(host, gridId, state) {
         showGridColumn(gridId, el.dataset.colShow, el.checked)));
     host.querySelectorAll('[data-col-move]').forEach(el => el.addEventListener('click', () =>
         moveGridColumn(gridId, el.dataset.colMove, +el.dataset.colDelta)));
+    // Drag a row onto another to put it in that row's place — the long way up the list in one go.
+    host.querySelectorAll('[data-col-drag]').forEach(row => {
+        row.addEventListener('dragstart', e => {
+            e.dataTransfer.setData('text/plain', row.dataset.colDrag);
+            e.dataTransfer.effectAllowed = 'move';
+            row.classList.add('dragging');
+        });
+        row.addEventListener('dragend', () => row.classList.remove('dragging'));
+        row.addEventListener('dragover', e => { e.preventDefault(); row.classList.add('drop-over'); });
+        row.addEventListener('dragleave', () => row.classList.remove('drop-over'));
+        row.addEventListener('drop', e => {
+            e.preventDefault();
+            const column = e.dataTransfer.getData('text/plain');
+            const all = (gridState[gridId] || {}).allColumns || [];
+            const from = all.indexOf(column), to = all.indexOf(row.dataset.colDrag);
+            if (from !== -1 && to !== -1) moveGridColumn(gridId, column, to - from);
+        });
+    });
 
     if (!state.colsOpen) {
         if (state.colsCloser) {
@@ -18424,9 +19491,8 @@ function gridWrapBox(state) {
  * and is still there for the error check, a fan-out, a lookup and anything reading
  * <code>${column}</code>, exactly as a designer's hidden column is.
  *
- * <p>Ticks and arrows rather than dragging. Dragging is the better gesture for putting four things
- * in an order and the worse one for a list of thirty inside a popup inside a scrolling page, which
- * is the list this actually has to handle.
+ * <p>Ticks, arrows and dragging: a row dragged onto another takes its place, for the column that
+ * has to go from the bottom of thirty to the top; the arrows stay for the one-place nudge.
  */
 function gridColumnsBox(state) {
     const all = state.allColumns || [];
@@ -18455,7 +19521,7 @@ function gridColumnsPop(state) {
             // itself, and a name carrying an apostrophe has to survive the round trip — the same
             // reason the sort and filter headers are written this way.
             const name = AC.esc(column);
-            return '<div class="grid-cols-row' + (on ? '' : ' off') + '">'
+            return '<div class="grid-cols-row' + (on ? '' : ' off') + '" draggable="true" data-col-drag="' + name + '">'
                 + '<label><input type="checkbox" data-col-show="' + name + '"' + (on ? ' checked' : '') + '>'
                 + '<span title="' + AC.attr(column) + '">' + name + '</span></label>'
                 // Disabled at the ends rather than left out, so the rows do not change width as
@@ -18494,14 +19560,14 @@ function showGridColumn(gridId, column, on) {
     paintGrid(gridId);
 }
 
-/** Moves one column a place earlier or later, whether it is on screen or not. */
+/** Moves one column delta places earlier or later, whether it is on screen or not. */
 function moveGridColumn(gridId, column, delta) {
     const state = gridState[gridId];
     if (!state) return;
     const at = state.allColumns.indexOf(column);
     const to = at + delta;
-    if (at === -1 || to < 0 || to >= state.allColumns.length) return;
-    [state.allColumns[at], state.allColumns[to]] = [state.allColumns[to], state.allColumns[at]];
+    if (at === -1 || to < 0 || to >= state.allColumns.length || to === at) return;
+    state.allColumns.splice(to, 0, state.allColumns.splice(at, 1)[0]);
     applyColumnPick(state, null);
     paintGrid(gridId);
 }
@@ -18814,6 +19880,182 @@ function delimitedCell(text, delimiter) {
     const value = String(text === undefined || text === null ? '' : text);
     return value.indexOf(delimiter) >= 0 || /["\r\n]/.test(value)
         ? '"' + value.replace(/"/g, '""') + '"' : value;
+}
+
+/**
+ * Every action run since the page opened, as one object: PASSED only when no action in any trigger
+ * failed, then each trigger and each action with its status, what it sent and what it answered.
+ * The output is the parsed response, so it is only there when the page's DEBUG is on (the default) —
+ * with it off the bodies were never kept, and the report says so instead.
+ */
+function runReport() {
+    const runs = runHistory.map(run => {
+        const actions = run.calls.map(call => {
+            const r = call.result;
+            const failed = !!call.error || (!!r && r.status !== 'SUCCESS');
+            return {
+                name: call.name,
+                instanceId: call.instanceId || '',
+                status: failed ? 'FAILED' : 'PASSED',
+                error: call.error || (r && r.error) || '',
+                environment: call.environment || (r && r.environment) || '',
+                url: r ? r.url : null,
+                statusCode: r ? r.statusCode : null,
+                timeTakenMs: r ? r.timeTaken : null,
+                inputs: call.inputs,
+                output: !r ? null : r.bodiesDropped ? '(not kept: DEBUG is off on this page)' : payloadOf(r),
+                stress: call.stress || undefined
+            };
+        });
+        const failed = actions.filter(a => a.status === 'FAILED').length;
+        return {
+            trigger: run.label,
+            startedAt: new Date(run.at).toISOString(),
+            durationMs: run.finishedAt ? run.finishedAt - run.at : null,
+            status: failed ? 'FAILED' : 'PASSED',
+            passed: actions.length - failed,
+            failed: failed,
+            actions: actions
+        };
+    });
+    const all = runs.flatMap(r => r.actions);
+    const failed = all.filter(a => a.status === 'FAILED').length;
+    return {
+        page: (page && page.pageName) || '',
+        generatedAt: new Date().toISOString(),
+        status: failed ? 'FAILED' : 'PASSED',
+        triggers: runs.length,
+        actions: all.length,
+        passed: all.length - failed,
+        failed: failed,
+        runs: runs
+    };
+}
+
+function downloadRunReport() {
+    const report = runReport();
+    download((report.page || 'page') + '-run-' + report.generatedAt.replace(/[:.]/g, '-') + '.json',
+        'application/json', JSON.stringify(report, null, 2));
+}
+
+// ── Publishing rows to a database table ─────────────────────────────────
+// Rows go to a table in an ORACLE / POSTGRES app environment. The server creates the table on
+// first use, adds a column for any heading it has not seen, and stamps every row with the run's
+// uuid and the time — so the same action published run after run reads back as a time series.
+
+/** The action editor's database fields: where, which table, and how often the server runs it unattended. */
+function dbPublishEditor(a, set, field) {
+    const options = '<option value="">— don\'t publish —</option>' + dbTargets.map(t => {
+        const value = t.appName + '/' + t.environment;
+        return '<option value="' + AC.attr(value) + '"' + (value === a.dbPublishTarget ? ' selected' : '') + '>'
+            + AC.esc(value) + ' (' + AC.esc(t.appMode) + ')</option>';
+    }).join('');
+    return field('Publish To Database', '<select onchange="' + set('dbPublishTarget', 'this.value') + '">' + options + '</select>',
+            'Every run also appends the rows this action puts in its grid to the table below, each run under its own '
+            + '<code>run_uuid</code> with a <code>captured_at</code> stamp — a history to read a trend from. '
+            + (dbTargets.length ? '' : 'No ORACLE / POSTGRES app has an environment yet — add one in the App Catalog.'))
+        + '<div class="form-row" style="margin-bottom:0">'
+        + field('Table', '<input type="text" value="' + AC.attr(a.dbPublishTable || '') + '" placeholder="order_status_history" oninput="'
+            + set('dbPublishTable', 'this.value') + '">',
+            'Created on the first publish; a new grid column becomes a new table column.')
+        + field('Run Every (minutes)', '<input type="number" min="0" step="1" value="' + AC.attr(String(a.dbPublishEveryMinutes || 0))
+            + '" placeholder="60" oninput="' + set('dbPublishEveryMinutes', 'Number(this.value) || 0') + '">',
+            'Above 0, this server runs the action by itself that often — no browser needed — and publishes what it answers. '
+            + '0 publishes only when the page runs it.')
+        + '</div>';
+}
+
+function postToDb(appName, environment, table, source, columns, rows) {
+    AC.setStatus('runStatus', 'Publishing ' + rows.length.toLocaleString() + ' row' + (rows.length === 1 ? '' : 's') + ' to ' + table + '…');
+    return AC.api('POST', '/appcatalog/db/publish', {
+        appName, environment, table, source, columns,
+        rows: rows.map(row => Object.fromEntries(columns.map(column => [column, cellText(row, column)])))
+    }).then(res => AC.setStatus('runStatus', 'Published ' + res.inserted + ' rows to ' + res.table + ' as run ' + res.runId, 'ok'),
+            e => AC.setStatus('runStatus', 'Publish to database failed: ' + e.message, 'error'));
+}
+
+/** Splits a target saved as app/environment. shortcut: an environment name containing "/" splits wrongly; store two fields if one ever does. */
+function splitDbTarget(target) {
+    const slash = target.lastIndexOf('/');
+    return [target.slice(0, slash), target.slice(slash + 1)];
+}
+
+/** After an action fills its grid: the same rows, to the table its designer named on the action. */
+function publishRowsToDb(action, rows, columns) {
+    if (!action || !action.dbPublishTarget || !action.dbPublishTable || !rows || !rows.length) return;
+    const [appName, environment] = splitDbTarget(action.dbPublishTarget);
+    const cols = (columns && columns.length) ? columns : Object.keys(rows[0]);
+    postToDb(appName, environment, action.dbPublishTable,
+        ((page && page.pageName) || '') + '/' + (action.actionLabel || action.actionId || ''), cols, rows);
+}
+
+function sendGridToDb(gridId) {
+    const state = gridState[gridId];
+    if (!state) return;
+    if (!dbTargets.length) {
+        AC.setStatus('runStatus', 'No ORACLE / POSTGRES app environment to publish to — add one in the App Catalog.', 'error');
+        return;
+    }
+    const names = dbTargets.map(t => t.appName + '/' + t.environment);
+    const target = (prompt('Database (app/environment):\n' + names.join('\n'), names[0]) || '').trim();
+    if (!names.includes(target)) return;
+    const table = (prompt('Table name:', String(state.title || 'grid').replace(/[^A-Za-z0-9_]+/g, '_').toLowerCase()) || '').trim();
+    if (!table) return;
+    const [appName, environment] = splitDbTarget(target);
+    postToDb(appName, environment, table, ((page && page.pageName) || '') + '/' + (state.title || gridId),
+        state.columns, visibleRows(state));
+}
+
+// ── Sending to the Obsidian vault ────────────────────────────────────────
+// The server writes the note under its configured vault folder: front matter for the summary,
+// a markdown table for the rows.
+
+/** A vault-relative note path: letters, digits, . - _ and spaces, one folder per part. */
+function vaultPath(...parts) {
+    return parts.map(p => String(p || '').replace(/[^\w.\- ]+/g, '_').trim() || '_').join('/');
+}
+
+async function postToVault(path, properties, columns, rows) {
+    AC.setStatus('runStatus', 'Sending ' + rows.length.toLocaleString() + ' row'
+        + (rows.length === 1 ? '' : 's') + ' to Obsidian…');
+    try {
+        const res = await AC.api('POST', '/vault/note', { path, properties, columns, rows });
+        AC.setStatus('runStatus', 'Written to ' + res.file, 'ok');
+    } catch (e) {
+        AC.setStatus('runStatus', 'Send to Obsidian failed: ' + e.message, 'error');
+    }
+}
+
+function sendGridToVault(gridId) {
+    const state = gridState[gridId];
+    if (!state) return;
+    const rows = visibleRows(state).map(row =>
+        Object.fromEntries(state.columns.map(column => [column, cellText(row, column)])));
+    const stamp = new Date().toISOString();
+    const path = prompt('Note path in the vault:', vaultPath('Pages', page && page.pageName,
+        (state.title || 'grid') + ' ' + stamp.slice(0, 19).replace(/:/g, '-')));
+    if (!path || !path.trim()) return;
+    postToVault(path.trim(), {
+        source: 'app-page',
+        page: (page && page.pageName) || '',
+        grid: state.title || '',
+        status: gridOutcome(gridId) || '',
+        rows: rows.length,
+        exportedAt: stamp
+    }, state.columns, rows);
+}
+
+/** The run report as a note: the overall verdict as front matter, a table row per action called. */
+function sendRunReportToVault() {
+    const report = runReport();
+    const rows = report.runs.flatMap(run => run.actions.map(a => ({
+        trigger: run.trigger, startedAt: run.startedAt, action: a.name, status: a.status,
+        statusCode: a.statusCode, timeTakenMs: a.timeTakenMs, environment: a.environment, error: a.error
+    })));
+    const { runs, ...summary } = report;
+    postToVault(vaultPath('Runs', report.page || 'page', 'run ' + report.generatedAt.slice(0, 19).replace(/:/g, '-')),
+        Object.assign({ source: 'app-page-run' }, summary),
+        ['trigger', 'startedAt', 'action', 'status', 'statusCode', 'timeTakenMs', 'environment', 'error'], rows);
 }
 
 function download(name, type, content) {
@@ -19761,5 +21003,21 @@ async function start() {
         document.body.classList.add('standalone');
         if (isChildPage()) document.body.classList.add('child-page');
         setMode('run');
+    } else if (PAGE_PARAMS.get('action')) {
+        openActionByKey(PAGE_PARAMS.get('action'));
     }
+}
+
+/**
+ * Opens the action an MCP tool is published from (appmcp.html links here with &action=). The key is
+ * the server's AppPageMcpTools#keyOf: the action id, else action_<index> on the page or <controlId>_<n> inline.
+ */
+function openActionByKey(key) {
+    const own = (page.actions || []).findIndex((a, i) => (a.actionId || 'action_' + i) === key);
+    if (own >= 0) return openPageActionEditor(own);
+    for (const c of page.controls || []) {
+        const i = (c.actions || []).findIndex((a, n) => (a.actionId || c.controlId + '_' + (n + 1)) === key);
+        if (i >= 0) { selectControl(c.controlId); return openControlActionEditor(i); }
+    }
+    AC.setStatus('statusBar', 'Action "' + key + '" is no longer on this page.', 'error');
 }

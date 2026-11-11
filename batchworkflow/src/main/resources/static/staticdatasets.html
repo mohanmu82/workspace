@@ -368,6 +368,18 @@
     loadList();
   }
 
+  async function sendDatasetToVault(name) {
+    setFormStatus('Sending "' + name + '" to Obsidian…');
+    try {
+      const res = await fetch('/vault/dataset/' + encodeURIComponent(name), { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) { setFormStatus('Send of "' + name + '" failed: ' + (data.error || res.status), 'status-err'); return; }
+      setFormStatus('Written to ' + data.file, 'status-ok');
+    } catch (e) {
+      setFormStatus('Send of "' + name + '" failed: ' + e.message, 'status-err');
+    }
+  }
+
   async function deleteDataset(name) {
     if (!confirm('Delete static dataset "' + name + '"?')) return;
     try {
@@ -617,6 +629,7 @@
     switch (btn.dataset.action) {
       case 'view': viewGrid(name); break;
       case 'reload': reloadDataset(name); break;
+      case 'vault': sendDatasetToVault(name); break;
       case 'edit': editDataset(name); break;
       case 'delete': deleteDataset(name); break;
     }
@@ -698,6 +711,7 @@
         '<div class="ds-footer">' +
           '<button class="small" data-action="view" data-name="' + escapeHtml(ds.name) + '">View Grid</button>' +
           '<button class="small" data-action="reload" data-name="' + escapeHtml(ds.name) + '">Reload</button>' +
+          '<button class="small" data-action="vault" data-name="' + escapeHtml(ds.name) + '" title="Write the loaded rows to Datasets/' + escapeHtml(ds.name) + '.md in the Obsidian vault">To Obsidian</button>' +
           '<button class="small" data-action="edit" data-name="' + escapeHtml(ds.name) + '">Edit</button>' +
           '<button class="small danger" data-action="delete" data-name="' + escapeHtml(ds.name) + '">Delete</button>' +
         '</div>' +

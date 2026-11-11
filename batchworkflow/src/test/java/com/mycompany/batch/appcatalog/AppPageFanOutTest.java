@@ -81,13 +81,15 @@ class AppPageFanOutTest {
     void aRowSourceThatIsNotAGrid_hasNoRowsToRunOver() {
         assertThatThrownBy(() -> AppCatalogService.validateRowSource(page(), action("box", AppPageAction.ROWS, "out"), WHERE))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("only a grid, a select or a multi-select has rows");
+                .hasMessageContaining("only a grid, a select, a multi-select or a text area");
     }
 
     @Test
     void aFanOutOverTheElementsOfASelectOrMultiSelect_isFine() {
         AppPage page = new AppPage();
-        page.setControls(List.of(control("pick", "select"), control("picks", "multiselect"), control("out", "grid")));
+        page.setControls(List.of(control("pick", "select"), control("picks", "multiselect"), control("lines", "textarea"), control("out", "grid")));
+        assertThatCode(() -> AppCatalogService.validateRowSource(page, action("lines", AppPageAction.ROWS, "out"), WHERE))
+                .doesNotThrowAnyException();
         assertThatCode(() -> AppCatalogService.validateRowSource(page, action("pick", AppPageAction.ROWS, "out"), WHERE))
                 .doesNotThrowAnyException();
         assertThatCode(() -> AppCatalogService.validateRowSource(page, action("picks", AppPageAction.ROWS, "out"), WHERE))
@@ -163,10 +165,16 @@ class AppPageFanOutTest {
     }
 
     @Test
-    void anOrdinaryActionAimedAtATabSet_isSentToOneOfItsGridsInstead() {
-        assertThatThrownBy(() -> AppCatalogService.validateActionTarget(page(), action("", null, "tabs"), WHERE))
+    void anOrdinaryActionAimedAtATabSet_addsAGridTabPerRun() {
+        assertThatCode(() -> AppCatalogService.validateActionTarget(page(), action("", null, "tabs"), WHERE))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void aRowPerCallAimedAtATabSet_isStillRefused() {
+        assertThatThrownBy(() -> AppCatalogService.validateActionTarget(page(), action("src", AppPageAction.ROWS, "tabs"), WHERE))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("one of the grids inside");
+                .hasMessageContaining("must target a grid");
     }
 
     @Test

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connect Claude Code</title>
+    <link rel="stylesheet" href="appcatalog.css">
+    <style>
+        .help { max-width: 860px; }
+        .help h2 { font-size: 16px; margin: 26px 0 8px; }
+        .help p, .help li { font-size: 13px; line-height: 1.55; color: #172b4d; }
+        .help ol, .help ul { padding-left: 20px; }
+        .cmd { position: relative; margin: 8px 0 12px; }
+        .cmd pre {
+            font-family: "Cascadia Code", "Fira Code", Consolas, monospace; font-size: 12px;
+            background: #f4f5f7; border: 1px solid #dfe1e6; border-radius: 4px;
+            padding: 10px 70px 10px 12px; margin: 0; white-space: pre-wrap; word-break: break-all;
+        }
+        .cmd button { position: absolute; top: 6px; right: 6px; }
+        .note { background: #fffae6; border-left: 3px solid #ffab00; padding: 8px 12px; font-size: 13px; margin: 10px 0; }
+        table.opts { border-collapse: collapse; font-size: 13px; }
+        table.opts td, table.opts th { border: 1px solid #dfe1e6; padding: 6px 10px; text-align: left; vertical-align: top; }
+        table.opts th { background: #f4f5f7; }
+    </style>
+</head>
+<body>
+
+<div class="page-nav"><a href="appmcp.html">&larr; MCP Tools</a></div>
+<h1>Connect Claude Code</h1>
+<div class="subtitle">Point the Claude command line at this server and every enabled page action becomes a tool Claude can call.
+    Commands below are filled in with this server's address. <a href="appmcp.html">Manage the tools &rarr;</a></div>
+
+<div class="help">
+
+    <h2>1. Add the server</h2>
+    <p>Run this once in a terminal. <code>batch</code> is the name Claude Code will know the server by. Keep it short:
+        tools appear as <code>mcp__batch__&lt;tool&gt;</code>, and the whole name has to fit in 64 characters.</p>
+    <div class="cmd"><pre data-tpl="claude mcp add --transport http batch {origin}/mcp"></pre><button class="tool-btn">Copy</button></div>
+
+    <p>If your client only speaks the older HTTP+SSE transport, use the SSE endpoint instead. It serves the same tools:</p>
+    <div class="cmd"><pre data-tpl="claude mcp add --transport sse batch {origin}/sse"></pre><button class="tool-btn">Copy</button></div>
+
+    <p>Where the setting is kept is up to you:</p>
+    <table class="opts">
+        <tr><th>Option</th><th>Who gets it</th></tr>
+        <tr><td><code>--scope local</code> (default)</td><td>You, in the current project only.</td></tr>
+        <tr><td><code>--scope project</code></td><td>Everyone working in the repo. Written to <code>.mcp.json</code>, which you can commit.</td></tr>
+        <tr><td><code>--scope user</code></td><td>You, in every project on this machine.</td></tr>
+    </table>
+
+    <p>The project file it writes looks like this; you can also write it by hand:</p>
+    <div class="cmd"><pre data-tpl='{
+  "mcpServers": {
+    "batch": { "type": "http", "url": "{origin}/mcp" }
+  }
+}'></pre><button class="tool-btn">Copy</button></div>
+
+    <h2>2. Trust the HTTPS certificate</h2>
+    <p>This server runs on HTTPS. If its certificate is self-signed or issued by an internal CA, Claude Code (a Node.js
+        program) refuses the connection until it is told to trust it. Export the certificate and point Node at it before
+        starting <code>claude</code>:</p>
+    <div class="cmd"><pre>keytool -exportcert -rfc -keystore keystore.p12 -storetype PKCS12 -alias taskmanagement -file batch-cert.pem</pre><button class="tool-btn">Copy</button></div>
+    <div class="cmd"><pre># macOS / Linux / Git Bash
+export NODE_EXTRA_CA_CERTS=/path/to/batch-cert.pem
+
+# PowerShell
+$env:NODE_EXTRA_CA_CERTS = "C:\path\to\batch-cert.pem"</pre><button class="tool-btn">Copy</button></div>
+    <div class="note">Don't use <code>NODE_TLS_REJECT_UNAUTHORIZED=0</code> outside a throwaway local test. It turns off
+        certificate checks for everything Claude Code connects to, not just this server.</div>
+
+    <h2>3. Check it is connected</h2>
+    <div class="cmd"><pre>claude mcp list
+claude mcp get batch</pre><button class="tool-btn">Copy</button></div>
+    <p>Inside a Claude Code session, type <code>/mcp</code> to see the server's status and its tools.</p>
+
+    <h2>4. Use it</h2>
+    <p>Ask in plain language. Claude picks a tool from its description, which you can rewrite on the
+        <a href="appmcp.html">MCP Tools</a> page. When there are many tools, Claude can call <code>search_tools</code> to
+        find one by keyword. For example:</p>
+    <ul>
+        <li>"Using the batch tools, look up order 12345 in UAT."</li>
+        <li>"Search the batch tools for anything about settlement, then run the status check in prod."</li>
+    </ul>
+    <p>Every argument is optional. One Claude leaves out keeps the value saved on the use case instance, just as a
+        blank field on the page does. <code>environment</code> picks which of the instance's environments to call.</p>
+
+    <h2>5. Permissions</h2>
+    <p>Claude Code asks before each tool call. To stop being asked for some tools, allow them in
+        <code>.claude/settings.json</code>. Allowing <code>mcp__batch</code> allows every tool on the server:</p>
+    <div class="cmd"><pre>{
+  "permissions": {
+    "allow": ["mcp__batch__search_tools"]
+  }
+}</pre><button class="tool-btn">Copy</button></div>
+    <div class="note">Tools run real calls against real environments, production included. A tool whose use case is
+        <code>POST</code>, <code>PUT</code> or <code>DELETE</code> changes things. Leave those on "ask", and switch off
+        anything Claude shouldn't run on the <a href="appmcp.html">MCP Tools</a> page.</div>
+
+    <h2>Troubleshooting</h2>
+    <table class="opts">
+        <tr><th>Symptom</th><th>Check</th></tr>
+        <tr><td>Connection failed / certificate error</td><td>Step 2. Also check that the address opens in a browser from the same machine.</td></tr>
+        <tr><td>Server connects but has no tools</td><td>Only <code>USECASE</code> actions become tools. Check they are enabled on the MCP Tools page. New page actions show up within 30 seconds.</td></tr>
+        <tr><td>A tool's response says <code>truncated</code></td><td>Responses are cut to 50,000 characters. Pick a narrower output on the MCP Tools page, or add a JSONata transform to the use case.</td></tr>
+        <tr><td>Calls time out</td><td>The server waits up to <code>MCP_REQUEST_TIMEOUT</code> (120s by default). Slow endpoints may need a timeout override on the page action.</td></tr>
+        <tr><td>Endpoint returns 404</td><td>The server was started with <code>MCP_ENABLED=false</code>.</td></tr>
+    </table>
+</div>
+
+<script src="appcatalog.js"></script>
+<script>
+    document.querySelectorAll('pre[data-tpl]').forEach(pre => {
+        pre.textContent = pre.dataset.tpl.split('{origin}').join(location.origin);
+    });
+    document.querySelectorAll('.cmd button').forEach(btn => btn.addEventListener('click', async () => {
+        try {
+            await navigator.clipboard.writeText(btn.previousElementSibling.textContent);
+            btn.textContent = 'Copied';
+        } catch (e) {
+            btn.textContent = 'Select & copy';
+        }
+        setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+    }));
+</script>
+</body>
+</html>

@@ -175,9 +175,22 @@ public class StaticDatasetService {
         return true;
     }
 
+    /**
+     * {@link FilterFavorite.FilterCondition#getAttribute()} that means "any column" — a search box
+     * over the whole row. A negated test then has to hold for every column: "not contains x"
+     * keeps the rows with no x anywhere in them.
+     */
+    public static final String ANY_ATTRIBUTE = "*";
+
     /** Case-insensitive, and a missing attribute reads as empty — the same rules the widget applied. */
     private boolean matches(Map<String, Object> row, FilterFavorite.FilterCondition c) {
-        Object raw = row.get(c.getAttribute());
+        if (!ANY_ATTRIBUTE.equals(c.getAttribute())) return matches(row.get(c.getAttribute()), c);
+        String op = c.getOp() == null ? "equals" : c.getOp();
+        if (op.startsWith("not")) return row.values().stream().allMatch(v -> matches(v, c));
+        return row.values().stream().anyMatch(v -> matches(v, c));
+    }
+
+    private boolean matches(Object raw, FilterFavorite.FilterCondition c) {
         String a = raw == null ? "" : String.valueOf(raw).toLowerCase(Locale.ROOT);
         String b = c.getValue() == null ? "" : c.getValue().toLowerCase(Locale.ROOT);
         return switch (c.getOp() == null ? "equals" : c.getOp()) {

@@ -46,15 +46,21 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <p>The page sends commands, each naming the connection by {@code key} (the instance id):
  * <pre>
- * {"op":"connect", "key":"…", "instanceId":"…", "environment":"uat", "inputs":{…}}
+ * {"op":"connect", "key":"…", "instanceId":"…", "environment":"uat", "inputs":{…}, "opening":true, "listen":true}
  * {"op":"send",    "key":"…", "message":"…"}
- * {"op":"pause" | "resume" | "stop" | "restart", "key":"…"}
+ * {"op":"pause" | "resume" | "unlisten" | "stop" | "restart" | "info", "key":"…"}
  * </pre>
  * and is sent back:
  * <pre>
  * {"type":"status",  "key":"…", "state":"CONNECTING|OPEN|PAUSED|CLOSED|ERROR", "message":"…", "url":"…", "received":n, "skipped":n}
  * {"type":"message", "key":"…", "data":"…", "at":epochMillis}
+ * {"type":"info",    "key":"…", "details":{"id":"…", "url":"…", "state":"…", "openedAt":…, …}}
  * </pre>
+ *
+ * <p>{@code opening:false} connects without sending the use case's opening message — a page's
+ * "connect only", opened for later sends — and {@code listen:false} relays nothing of what arrives;
+ * both default to true. {@code unlisten} turns listening off on an open connection, which stays
+ * open for sends. A send made while the connection is still opening waits for it to open.
  *
  * <p>Pausing keeps the upstream connection open and drops what arrives on it until resumed; the
  * count dropped is reported, so a paused grid never pretends nothing happened. Every connection a
@@ -141,6 +147,8 @@ public class AppWebSocketRelayHandler extends TextWebSocketHandler {
                 case "send"   -> requireOpen(page, key).send(String.valueOf(command.getOrDefault("message", "")));
                 case "pause"  -> requireOpen(page, key).pause(true);
                 case "resume" -> requireOpen(page, key).pause(false);
+                case "unlisten" -> requireOpen(page, key).unlisten();
+                case "info"   -> page.send(Map.of("type", "info", "key", key, "details", details(page, key)));
                 case "stop"   -> {
                     Connection c = page.connections.remove(key);
                     if (c == null) page.status(key, "CLOSED", "Not connected", null, 0, 0);
@@ -159,13 +167,39 @@ public class AppWebSocketRelayHandler extends TextWebSocketHandler {
         return c;
     }
 
+    /**
+     * What this page's connection under {@code key} is — the live one, else the latest closed one
+     * still in the registry — plus what it was last connected with. Never fails: an instance never
+     * connected reads as {@code NOT_CONNECTED}.
+     */
+    private Map<String, Object> details(Page page, String key) {
+        Connection c = page.connections.get(key);
+        if (c == null) c = registry.values().stream().filter(r -> r.page == page && r.key.equals(key))
+                .max(Comparator.comparingLong(r -> r.createdAt)).orElse(null);
+        Map<String, Object> m = c == null ? new LinkedHashMap<>(Map.of("key", key, "state", "NOT_CONNECTED")) : c.describe();
+        if (c != null) {
+            m.put("candidateUrls", c.target.urls());
+            m.put("subprotocol", c.socket == null ? null : c.socket.getSubprotocol());
+            m.put("listening", c.listening.get());
+            m.put("paused", c.paused.get());
+            m.put("sendsOpening", c.sendsOpening);
+        }
+        ConnectRequest last = page.lastRequests.get(key);
+        if (last != null) {
+            m.put("instanceId", last.instanceId());
+            m.put("environment", last.environment());
+            m.put("inputs", last.inputs());
+        }
+        return m;
+    }
+
     /** Closes whatever this key had open and opens it again from {@code request}. */
     private void connect(Page page, String key, ConnectRequest request) throws Exception {
         Connection previous = page.connections.remove(key);
         if (previous != null) previous.close("reconnecting");
 
         WebSocketTarget target = execution.prepareWebSocket(request.instanceId(), request.environment(), request.inputs());
-        Connection connection = new Connection(page, key, target);
+        Connection connection = new Connection(page, key, target, request.opening(), request.listen());
         page.connections.put(key, connection);
         registry.put(connection.id, connection);
         pruneClosed();
@@ -199,7 +233,7 @@ public class AppWebSocketRelayHandler extends TextWebSocketHandler {
 
     // -------------------------------------------------------------------------
 
-    private record ConnectRequest(String instanceId, String environment, Map<String, Object> inputs) {
+    private record ConnectRequest(String instanceId, String environment, Map<String, Object> inputs, boolean opening, boolean listen) {
         @SuppressWarnings("unchecked")
         static ConnectRequest of(Map<String, Object> command) {
             Object id = command.get("instanceId");
@@ -207,7 +241,8 @@ public class AppWebSocketRelayHandler extends TextWebSocketHandler {
             Object env = command.get("environment");
             Object inputs = command.get("inputs");
             return new ConnectRequest(String.valueOf(id), env == null ? null : String.valueOf(env),
-                    inputs instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of());
+                    inputs instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of(),
+                    !Boolean.FALSE.equals(command.get("opening")), !Boolean.FALSE.equals(command.get("listen")));
         }
     }
 
@@ -248,6 +283,9 @@ public class AppWebSocketRelayHandler extends TextWebSocketHandler {
         final String key;
         final WebSocketTarget target;
         final AtomicBoolean paused = new AtomicBoolean();
+        final AtomicBoolean listening;
+        /** Whether the use case's opening message is sent on open — false for a page's "connect only". */
+        final boolean sendsOpening;
         final AtomicBoolean closedByUs = new AtomicBoolean();
         final AtomicLong received = new AtomicLong();
         final AtomicLong skipped = new AtomicLong();
@@ -258,13 +296,22 @@ public class AppWebSocketRelayHandler extends TextWebSocketHandler {
         volatile long openedAt, lastReceivedAt, closedAt;
         volatile String state = "CONNECTING";
         volatile WebSocket socket;
+        /** The candidate URL being tried, or the one connected to. */
+        volatile String url;
+        /** The socket once open; a send made before then waits on it. */
+        final CompletableFuture<WebSocket> opened = new CompletableFuture<>();
         /** Sends chained one after another: the client allows only one outstanding at a time. */
         CompletableFuture<?> lastSend = CompletableFuture.completedFuture(null);
 
-        Connection(Page page, String key, WebSocketTarget target) {
+        Connection(Page page, String key, WebSocketTarget target, boolean sendsOpening, boolean listen) {
             this.page = page;
             this.key = key;
             this.target = target;
+            this.url = target.urls().get(0);
+            this.sendsOpening = sendsOpening && target.openingMessage() != null;
+            this.listening = new AtomicBoolean(listen);
+            // Queued first, so it goes ahead of any send the page makes while still connecting.
+            if (this.sendsOpening) enqueue(target.openingMessage());
         }
 
         /** Whether this is still the connection the page has under this key — not one replaced by a restart. */
@@ -275,7 +322,7 @@ public class AppWebSocketRelayHandler extends TextWebSocketHandler {
                 this.state = state;
                 if (!live()) closedAt = System.currentTimeMillis();
             }
-            page.status(key, state, message, target.url(), received.get(), skipped.get());
+            page.status(key, state, message, url, received.get(), skipped.get());
         }
 
         boolean live() { return !"CLOSED".equals(state) && !"ERROR".equals(state); }
@@ -285,8 +332,8 @@ public class AppWebSocketRelayHandler extends TextWebSocketHandler {
             m.put("id", id);
             m.put("page", page.out.getId());
             m.put("key", key);
-            m.put("url", target.url());
-            m.put("type", target.url().regionMatches(true, 0, "wss:", 0, 4) ? "wss" : "ws");
+            m.put("url", url);
+            m.put("type", url.regionMatches(true, 0, "wss:", 0, 4) ? "wss" : "ws");
             m.put("state", state);
             m.put("createdAt", createdAt);
             m.put("openedAt", openedAt == 0 ? null : openedAt);
@@ -297,11 +344,15 @@ public class AppWebSocketRelayHandler extends TextWebSocketHandler {
             return m;
         }
 
-        void open() {
-            status("CONNECTING", "Connecting to " + target.url());
-            URI uri = URI.create(target.url());
+        void open() { open(0); }
+
+        /** Tries {@code target.urls()} from {@code index} on, moving to the next when one cannot be reached. */
+        private void open(int index) {
+            url = target.urls().get(index);
+            status("CONNECTING", "Connecting to " + url);
+            URI uri = URI.create(url);
             // A wss:// address of this server itself needs the client that trusts its own certificate.
-            String asHttps = target.url().replaceFirst("(?i)^wss://", "https://");
+            String asHttps = url.replaceFirst("(?i)^wss://", "https://");
             HttpClient client = localServer.clientFor(asHttps, HTTP);
 
             WebSocket.Builder builder = client.newWebSocketBuilder()
@@ -319,30 +370,36 @@ public class AppWebSocketRelayHandler extends TextWebSocketHandler {
 
             builder.buildAsync(uri, this).whenComplete((ws, error) -> {
                 if (error != null) {
+                    if (index + 1 < target.urls().size() && current() && !closedByUs.get()) {
+                        log.info("WebSocket {} unreachable ({}), trying next URL", url, rootMessage(error));
+                        open(index + 1);
+                        return;
+                    }
+                    opened.completeExceptionally(error);
                     if (current()) {
                         page.connections.remove(key, this);
-                        status("ERROR", "Could not connect to " + target.url() + ": " + rootMessage(error));
+                        status("ERROR", "Could not connect to " + String.join(", ", target.urls()) + ": " + rootMessage(error));
                     }
                     return;
                 }
                 if (!current()) { ws.abort(); return; }
                 socket = ws;
+                opened.complete(ws);
             });
         }
 
         void send(String message) {
-            WebSocket ws = socket;
-            if (ws == null) throw new IllegalStateException("Still connecting — try again once the connection is open");
             // A message typed on the page may use the use case's own variables, as its body does.
             String text = execution.substitute(message.isBlank() && target.openingMessage() != null
                     ? target.openingMessage() : message, target.variables());
             if (text == null || text.isBlank()) throw new IllegalArgumentException("Nothing to send — the message is empty");
-            enqueue(ws, text);
+            enqueue(text);
         }
 
-        private synchronized void enqueue(WebSocket ws, String text) {
+        private synchronized void enqueue(String text) {
             lastSend = lastSend.handle((r, e) -> null)
-                    .thenCompose(x -> ws.sendText(text, true))
+                    .thenCompose(x -> opened)
+                    .thenCompose(ws -> ws.sendText(text, true))
                     .whenComplete((r, e) -> {
                         if (e != null && current()) status("ERROR", "Send failed: " + rootMessage(e));
                     });
@@ -355,8 +412,14 @@ public class AppWebSocketRelayHandler extends TextWebSocketHandler {
                     : "Resumed" + (skipped.get() > 0 ? " — " + skipped.get() + " message(s) skipped while paused" : ""));
         }
 
+        void unlisten() {
+            listening.set(false);
+            status(state, "Not listening — the connection stays open for sends, and what arrives is not shown");
+        }
+
         void close(String why) {
             closedByUs.set(true);
+            opened.cancel(false);
             WebSocket ws = socket;
             if (ws != null) {
                 ws.sendClose(WebSocket.NORMAL_CLOSURE, why)
@@ -373,9 +436,9 @@ public class AppWebSocketRelayHandler extends TextWebSocketHandler {
             socket = ws;
             openedAt = System.currentTimeMillis();
             ws.request(1);
-            status("OPEN", "Connected to " + target.url()
-                    + (target.openingMessage() != null ? " — opening message sent" : ""));
-            if (target.openingMessage() != null) enqueue(ws, target.openingMessage());
+            opened.complete(ws);
+            status("OPEN", "Connected to " + url
+                    + (sendsOpening ? " — opening message sent" : !listening.get() ? " — not listening" : ""));
         }
 
         @Override
@@ -425,6 +488,7 @@ public class AppWebSocketRelayHandler extends TextWebSocketHandler {
             if (!current()) return;
             received.incrementAndGet();
             lastReceivedAt = System.currentTimeMillis();
+            if (!listening.get()) return;
             if (paused.get()) { skipped.incrementAndGet(); return; }
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("type", "message");

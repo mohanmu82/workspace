@@ -24,6 +24,7 @@ import com.mycompany.batch.auth.KerberosAuthProvider;
 import com.mycompany.batch.auth.NtlmAuthProvider;
 import com.mycompany.batch.config.BatchProperties;
 import com.mycompany.batch.config.ServerPropertiesLoader;
+import com.mycompany.batch.vault.VaultService;
 import com.mycompany.batch.xpath.XPathColumn;
 import com.mycompany.batch.xpath.XPathExtractor;
 import com.dashjoin.jsonata.Jsonata;
@@ -31,10 +32,9 @@ import com.mycompany.batch.appcatalog.JsonataLibraryService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.networknt.schema.JsonSchema;
-import com.networknt.schema.JsonSchemaFactory;
-import com.networknt.schema.SpecVersionDetector;
-import com.networknt.schema.ValidationMessage;
+import com.networknt.schema.Schema;
+import com.networknt.schema.SchemaRegistry;
+import com.networknt.schema.SpecificationVersion;
 import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Service;
 
@@ -1416,6 +1416,25 @@ public class BatchService {
         java.nio.file.OpenOption[] options = append
                 ? new java.nio.file.OpenOption[]{java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND}
                 : new java.nio.file.OpenOption[]{java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.TRUNCATE_EXISTING};
+        // A .md path (e.g. inside an Obsidian vault) gets a markdown note instead of pipe-separated text.
+        if (outputFilePath.toLowerCase().endsWith(".md")) {
+            Map<String, Object> props = new LinkedHashMap<>();
+            props.put("batchUuid", batch.batchUuid());
+            props.put("timestamp", batch.timestamp());
+            props.put("status", batch.failed() > 0 ? "FAILED" : "PASSED");
+            props.put("processed", batch.processed());
+            props.put("succeeded", batch.succeeded());
+            props.put("failed", batch.failed());
+            props.put("timeTakenMs", batch.timeTakenMs());
+            List<String> cols = new ArrayList<>(columns);
+            // Appending adds a section per run; front matter can only sit at the top of the file.
+            String note = append && Files.exists(outputPath)
+                    ? "\n## " + batch.timestamp() + " — " + batch.succeeded() + " passed, " + batch.failed() + " failed\n\n"
+                        + VaultService.table(cols, batch.results())
+                    : VaultService.render(props, cols, batch.results());
+            Files.writeString(outputPath, note, options);
+            return;
+        }
         try (BufferedWriter writer = Files.newBufferedWriter(outputPath, options)) {
             writer.write(String.join("|", columns));
             writer.newLine();
@@ -3246,13 +3265,13 @@ public class BatchService {
             List<String> errors;
             try {
                 JsonNode schemaNode = objectMapper.readTree(schemaContent);
-                JsonSchemaFactory factory = JsonSchemaFactory.getInstance(SpecVersionDetector.detect(schemaNode));
-                JsonSchema schema = factory.getSchema(schemaNode);
+                // The schema's own $schema picks its draft; one without it is read as 2020-12.
+                Schema schema = SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12).getSchema(schemaNode);
                 JsonNode dataNode = objectMapper.readTree(resolvedJson);
-                java.util.Set<ValidationMessage> validationMessages = schema.validate(dataNode);
+                List<com.networknt.schema.Error> validationMessages = schema.validate(dataNode);
                 valid = validationMessages.isEmpty();
                 errors = validationMessages.stream()
-                        .map(ValidationMessage::getMessage)
+                        .map(com.networknt.schema.Error::getMessage)
                         .collect(Collectors.toList());
                 errorMessage = errors.isEmpty() ? "" : errors.get(0);
                 statusCode   = valid ? 200 : 400;

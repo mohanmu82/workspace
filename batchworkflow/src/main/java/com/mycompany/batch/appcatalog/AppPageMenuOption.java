@@ -38,6 +38,15 @@ public class AppPageMenuOption {
     public List<String> getActionIds()                       { return actionIds; }
     public void setActionIds(List<String> actionIds)         { this.actionIds = actionIds != null ? actionIds : new ArrayList<>(); }
 
+    /**
+     * The control brought into view once this entry's actions finish — the grid it fills, usually.
+     * Blank falls back to the multi-button's own {@link AppPageControl#getFocusControlId()}.
+     */
+    private String focusControlId;
+
+    public String getFocusControlId()                      { return focusControlId; }
+    public void   setFocusControlId(String focusControlId) { this.focusControlId = focusControlId == null || focusControlId.isBlank() ? null : focusControlId.trim(); }
+
     public String getColor()              { return color; }
     public void   setColor(String color)  { this.color = color == null || color.isBlank() ? null : color.trim(); }
 }

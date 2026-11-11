@@ -687,9 +687,15 @@ public class AppCatalogService {
      * opens the tab it is behind on the way to it, which is most of the point of the setting.
      */
     static void validateFocusControl(AppPage page, AppPageControl control) {
-        String focus = control.getFocusControlId();
-        if (focus == null || focus.isBlank()) return;
         String where = "Control '" + describe(control) + "'";
+        validateFocus(page, control, control.getFocusControlId(), where);
+        // A multi-button entry may scroll somewhere of its own, held to the same rule.
+        for (AppPageMenuOption option : control.getMenuOptions())
+            validateFocus(page, control, option.getFocusControlId(), where + " menu entry '" + option.getLabel() + "'");
+    }
+
+    private static void validateFocus(AppPage page, AppPageControl control, String focus, String where) {
+        if (focus == null || focus.isBlank()) return;
         if (focus.equals(control.getControlId()))
             throw new IllegalArgumentException(where + " is set to scroll to itself after it runs, "
                     + "which is where the operator already is. Name the grid the run fills instead.");
@@ -1642,6 +1648,11 @@ public class AppCatalogService {
     static void validateTransformExpression(AppPageTransform transform, Predicate<String> libraryHolds) {
         if (transform.isXml2Json()) return;
         String where = "Transform '" + transform.getName() + "'";
+        if (transform.isXsl2Csv()) {
+            if (transform.getExpression() == null || transform.getExpression().isBlank())
+                throw new IllegalArgumentException(where + " has no XSL stylesheet");
+            return;
+        }
         if (transform.getJsonataRef() != null) {
             if (!libraryHolds.test(transform.getJsonataRef()))
                 throw new IllegalArgumentException(where + " names a shared JSONata that is not in the library: "
@@ -1674,6 +1685,15 @@ public class AppCatalogService {
             validateDatasetAction(page, action, name -> staticDatasets.get(name) != null, where);
             return;
         }
+        // Runs other page actions rather than an instance of its own; those are validated as themselves.
+        if (action.isChain()) {
+            for (String name : action.getTransformNames()) {
+                if (!transformNames.contains(name))
+                    throw new IllegalArgumentException(where + " applies a transform that is not on this page: " + name);
+            }
+            validateChainAction(page, action, where);
+            return;
+        }
         if (!action.isWebSocket() && !action.getExcludeFilters().isEmpty())
             throw new IllegalArgumentException(where + " excludes messages, which only a WebSocket connect action "
                     + "receives — take the exclude filters off");
@@ -1703,6 +1723,58 @@ public class AppCatalogService {
         }
         validateRowSource(page, action, where);
         validateActionTarget(page, action, where);
+    }
+
+    /**
+     * What a chain has to name: rows to run over (a grid, a list, a text area, or a text box for one
+     * row), at least one step that is an ordinary page action run once, a sane concurrency per step,
+     * and a grid to collect into.
+     */
+    static void validateChainAction(AppPage page, AppPageAction action, String where) {
+        String sourceId = action.getRowSourceControlId();
+        if (sourceId == null)
+            throw new IllegalArgumentException(where + " chains page actions but has no rows to run them over — "
+                    + "pick a grid, a list, a text area or a text box under \"for each row of\"");
+        AppPageControl source = page.getControls().stream()
+                .filter(c -> sourceId.equals(c.getControlId())).findFirst().orElse(null);
+        if (source == null)
+            throw new IllegalArgumentException(where + " runs over a control that is not on this page: " + sourceId);
+        if (!"grid".equals(source.getType()) && !isSelect(source.getType())
+                && !"textarea".equals(source.getType()) && !"text".equals(source.getType()))
+            throw new IllegalArgumentException(where + " runs over a " + source.getType()
+                    + " — only a grid, a select, a multi-select, a text area or a text box has rows to run over");
+        if (sourceId.equals(action.getTargetControlId()))
+            throw new IllegalArgumentException(where + " reads its rows from the same grid it fills");
+
+        if (action.getChainSteps().isEmpty())
+            throw new IllegalArgumentException(where + " chains no page actions — add at least one step");
+        for (AppPageChainStep step : action.getChainSteps()) {
+            AppPageAction run = step == null || step.actionId() == null ? null : page.getActions().stream()
+                    .filter(a -> step.actionId().equals(a.getActionId())).findFirst().orElse(null);
+            if (run == null)
+                throw new IllegalArgumentException(where + " chains a page action that is not on this page"
+                        + (step == null || step.actionId() == null ? "" : ": " + step.actionId()));
+            if (!AppPageAction.USECASE.equals(run.getActionKind()) || run.isRowFanOut())
+                throw new IllegalArgumentException(where + " chains '" + (run.getActionLabel() != null ? run.getActionLabel()
+                        : run.getActionId()) + "', which is not an ordinary action run once — a chain step has to "
+                        + "make one call per row");
+            if (step.maxConcurrency() > AppPageChainStep.MAX_CONCURRENCY)
+                throw new IllegalArgumentException(where + " lets " + step.maxConcurrency() + " calls of one step go at "
+                        + "once — at most " + AppPageChainStep.MAX_CONCURRENCY);
+        }
+
+        String target = action.getTargetControlId();
+        if (target == null || target.isBlank())
+            throw new IllegalArgumentException(where + " chains page actions but has nowhere to put the rows — "
+                    + "aim it at a grid, or at a new grid.");
+        if (AppPageAction.NEW_GRID.equals(target)) return;
+        AppPageControl targetControl = page.getControls().stream()
+                .filter(c -> target.equals(c.getControlId())).findFirst().orElse(null);
+        if (targetControl == null)
+            throw new IllegalArgumentException(where + " targets a control that is not on this page");
+        if (!"grid".equals(targetControl.getType()) && !"textarea".equals(targetControl.getType()))
+            throw new IllegalArgumentException(where + " fills a row per run with a subsection per step, so it must "
+                    + "target a grid or a text area (as JSON), not a " + targetControl.getType());
     }
 
     /**
@@ -1796,6 +1868,10 @@ public class AppCatalogService {
                 if (!transformNames.contains(name))
                     throw new IllegalArgumentException(on + " applies a transform that is not on this page: " + name);
             }
+            if (page.getControls().stream().anyMatch(c -> binding.getTargetControlId().equals(c.getControlId())
+                    && "tabs".equals(c.getType())))
+                throw new IllegalArgumentException(on + " targets a tab set — only the action's own target can "
+                        + "add a tab per run; aim this one at a grid inside instead");
             AppPageAction shadow = new AppPageAction();
             shadow.setTargetControlId(binding.getTargetControlId());
             validateActionTarget(page, shadow, on);
@@ -1883,9 +1959,11 @@ public class AppCatalogService {
         validateDatasetFilters(action, where);
 
         String target = action.getTargetControlId();
+        // A reload is worth running on its own: it is the Static Datasets page's Reload as a button.
+        if ((target == null || target.isBlank()) && action.isDatasetReload()) return;
         if (target == null || target.isBlank())
             throw new IllegalArgumentException(where + " reads a static dataset but has nowhere to put it — "
-                    + "aim it at a grid, a new grid, a dropdown or a chart.");
+                    + "aim it at a grid, a new grid, a dropdown or a chart, or tick \"reload from source\".");
         if (AppPageAction.NEW_GRID.equals(target)) return;
 
         AppPageControl targetControl = page.getControls().stream()
@@ -1933,10 +2011,9 @@ public class AppCatalogService {
                         + targetControl.getType());
             return;
         }
-        if ("tabs".equals(targetControl.getType()))
-            throw new IllegalArgumentException(where + " targets a tab set, which only an action giving each row "
-                    + "of a grid its own tab may do — aim it at one of the grids inside instead");
-        if (!TARGET_TYPES.contains(targetControl.getType()))
+        // An ordinary action aimed at a tab set adds a grid tab per run, named by its row label template.
+        if ("tabs".equals(targetControl.getType()) && !action.isRowFanOut()) return;
+        if (!TARGET_TYPES.contains(targetControl.getType()) && !"tabs".equals(targetControl.getType()))
             throw new IllegalArgumentException(where
                     + " must target a grid, select, text, text area, link, pie chart, bar chart, time series"
                     + " or line chart, not a "
@@ -1961,9 +2038,9 @@ public class AppCatalogService {
                 .filter(c -> sourceId.equals(c.getControlId())).findFirst().orElse(null);
         if (source == null)
             throw new IllegalArgumentException(where + " runs once per row of a grid that is not on this page: " + sourceId);
-        if (!"grid".equals(source.getType()) && !isSelect(source.getType()))
+        if (!"grid".equals(source.getType()) && !isSelect(source.getType()) && !"textarea".equals(source.getType()))
             throw new IllegalArgumentException(where + " runs once per row of a " + source.getType()
-                    + " — only a grid, a select or a multi-select has rows to run over");
+                    + " — only a grid, a select, a multi-select or a text area (a line per run) has rows to run over");
         if (sourceId.equals(action.getTargetControlId()))
             throw new IllegalArgumentException(where + " reads its rows from the same grid it fills, "
                     + "so each run would be over whatever the last one left behind");
@@ -2030,7 +2107,8 @@ public class AppCatalogService {
         if (control == null)
             throw new IllegalArgumentException(where + " targets a control that is not on this page");
         String type = control.getType();
-        boolean holdsRows = tabsPerRow ? "tabs".equals(type) : "grid".equals(type) || isSelect(type);
+        // A tab set holds rows either way: a grid per fanned-out row, or a grid per ordinary run.
+        boolean holdsRows = "tabs".equals(type) || (!tabsPerRow && ("grid".equals(type) || isSelect(type)));
         if (!holdsRows)
             throw new IllegalArgumentException(where + " filters the rows it binds, which only a grid or a "
                     + "dropdown takes a list of — its target is a " + type);
@@ -2108,10 +2186,12 @@ public class AppCatalogService {
             if (action.isDataset()) {
                 for (AppPageEnrichColumn column : action.getEnrichColumns()) {
                     String kind = column == null ? null : column.kindOrDefault();
-                    if (AppPageEnrichColumn.META.equals(kind) || AppPageEnrichColumn.HEADER.equals(kind))
+                    if (AppPageEnrichColumn.META.equals(kind) || AppPageEnrichColumn.HEADER.equals(kind)
+                            || AppPageEnrichColumn.VARIABLE.equals(kind))
                         throw new IllegalArgumentException(where + " reads a static dataset, which makes no call — so "
                                 + "its column '" + column.name() + "' has no "
-                                + (AppPageEnrichColumn.META.equals(kind) ? "call record" : "response header")
+                                + (AppPageEnrichColumn.META.equals(kind) ? "call record"
+                                    : AppPageEnrichColumn.HEADER.equals(kind) ? "response header" : "request variable")
                                 + " to read. Take it off, or look the value up in a dataset or another grid.");
                 }
             }
@@ -2147,7 +2227,8 @@ public class AppCatalogService {
         if (control == null)
             throw new IllegalArgumentException(where + " targets a control that is not on this page");
         String wanted = tabsPerRow ? "tabs" : "grid";
-        if (!wanted.equals(control.getType()) && !(collectedList && isSelect(control.getType())))
+        if (!wanted.equals(control.getType()) && !"tabs".equals(control.getType())
+                && !(collectedList && isSelect(control.getType())))
             throw new IllegalArgumentException(where + " has enriched columns, which only a grid has rows for — "
                     + "its target is a " + control.getType());
     }
@@ -2180,7 +2261,8 @@ public class AppCatalogService {
             if (!AppPageEnrichColumn.VLOOKUP.equals(kind) && !intoGrid) {
                 if (isBlank(column.expression()))
                     throw new IllegalArgumentException(label + " does not say which "
-                            + (AppPageEnrichColumn.HEADER.equals(kind) ? "header" : "call record field") + " to read");
+                            + (AppPageEnrichColumn.HEADER.equals(kind) ? "header"
+                                : AppPageEnrichColumn.VARIABLE.equals(kind) ? "request variable" : "call record field") + " to read");
                 continue;
             }
             String source = intoGrid ? "grid" : "dataset";
@@ -2293,7 +2375,7 @@ public class AppCatalogService {
                 .filter(c -> target.equals(c.getControlId())).findFirst().orElse(null);
         if (control == null)
             throw new IllegalArgumentException(where + " targets a control that is not on this page");
-        if (!"grid".equals(control.getType()))
+        if (!"grid".equals(control.getType()) && !"tabs".equals(control.getType()))
             throw new IllegalArgumentException(where + " groups its rows into a table, which only a grid can show — "
                     + "its target is a " + control.getType());
     }
@@ -2333,8 +2415,9 @@ public class AppCatalogService {
      * app, and — for the one operation that binds anything — a placed grid to stream into.
      *
      * <p>Everything about reading one response is refused, since a socket has no one response: no
-     * fan-out, no transforms, no further targets, no enriched columns, no group-by, no keep-filters
-     * (its filters are the exclude list). A new grid is refused too — every message would stack
+     * fan-out, no transforms, no enriched columns, no group-by, no keep-filters (its filters are the
+     * exclude list). A listening Connect may take further targets: each is another placed grid every
+     * message also streams into, through that target's own transforms and path. A new grid is refused too — every message would stack
      * another one.
      *
      * @param appName the app the action's instance belongs to, or null when it is not in the catalog
@@ -2348,19 +2431,29 @@ public class AppCatalogService {
         if (action.isRowFanOut() || !action.getRowFilters().isEmpty() || !action.getRowColumns().isEmpty())
             throw new IllegalArgumentException(where + " drives a WebSocket, which is one connection rather than "
                     + "a call per row — clear its \"for each row of\"");
-        if (!action.getTransformNames().isEmpty() || !action.getExtraBindings().isEmpty()
-                || !action.getEnrichColumns().isEmpty() || action.hasPivot() || !action.getBindFilters().isEmpty())
-            throw new IllegalArgumentException(where + " drives a WebSocket, whose messages stream into one grid — "
-                    + "take off its transforms, further targets, enriched columns, group-by and keep-filters");
+        if (!action.getEnrichColumns().isEmpty() || action.hasPivot() || !action.getBindFilters().isEmpty())
+            throw new IllegalArgumentException(where + " drives a WebSocket, whose messages stream into a grid as they arrive — "
+                    + "take off its enriched columns, group-by and keep-filters");
 
-        boolean connect = AppPageAction.WS_CONNECT.equals(action.getWsOperation());
+        boolean connect = action.isWsOpening();
+        if (!connect && !action.getTransformNames().isEmpty())
+            throw new IllegalArgumentException(where + " transforms messages, but only Connect receives any — "
+                    + "put the transforms on the Connect action");
         if (!connect && !action.getExcludeFilters().isEmpty())
             throw new IllegalArgumentException(where + " excludes messages, but only Connect receives any — "
                     + "put the exclude filters on the Connect action");
         checkRowFilters(action.getExcludeFilters(), where);
 
         String target = action.getTargetControlId();
-        if (!connect) {
+        // Details binds a grid as Connect does, but its rows are the connection's, not messages.
+        boolean info = AppPageAction.WS_INFO.equals(action.getWsOperation());
+        if (info && (action.getWsUniqueKey() != null || action.getWsDataset() != null))
+            throw new IllegalArgumentException(where + " is a WebSocket info — the unique key and dynamic dataset "
+                    + "belong on the Connect action");
+        if (!connect && !action.getExtraBindings().isEmpty())
+            throw new IllegalArgumentException(where + " is a WebSocket " + action.getWsOperation().toLowerCase()
+                    + " — further grids belong on the Connect action, which streams into them");
+        if (!connect && !info) {
             if (target != null && !target.isBlank())
                 throw new IllegalArgumentException(where + " is a WebSocket " + action.getWsOperation().toLowerCase()
                         + ", which binds nothing — clear its target; the Connect action names the grid");
@@ -2369,9 +2462,16 @@ public class AppCatalogService {
                         + " — the unique key and dynamic dataset belong on the Connect action");
             return;
         }
+        // Connect only may open a socket purely to send over, with nothing listening.
+        if (AppPageAction.WS_OPEN.equals(action.getWsOperation()) && (target == null || target.isBlank())) {
+            if (!action.getExtraBindings().isEmpty())
+                throw new IllegalArgumentException(where + " connects without listening, so its further grids would "
+                        + "never receive anything — give it a grid or remove them");
+            return;
+        }
         if (target == null || target.isBlank() || AppPageAction.NEW_GRID.equals(target))
-            throw new IllegalArgumentException(where + " connects a WebSocket but has no grid to stream into — "
-                    + "aim it at a grid placed on the page");
+            throw new IllegalArgumentException(where + (info ? " shows WebSocket details" : " connects a WebSocket")
+                    + " but has no grid to stream into — aim it at a grid placed on the page");
         AppPageControl control = page.getControls().stream()
                 .filter(c -> target.equals(c.getControlId())).findFirst().orElse(null);
         if (control == null)
@@ -2379,6 +2479,16 @@ public class AppCatalogService {
         if (!"grid".equals(control.getType()))
             throw new IllegalArgumentException(where + " streams WebSocket messages, which are rows — so it must "
                     + "target a grid, not a " + control.getType());
+        // Each further grid gets every message too, through its own transforms and path.
+        int n = 1;
+        for (AppPageBinding binding : action.getExtraBindings()) {
+            String on = where + " target " + (++n);
+            String id = binding.getTargetControlId();
+            if (target.equals(id))
+                throw new IllegalArgumentException(on + " streams into the same grid as the action itself — pick another grid");
+            if (id == null || page.getControls().stream().noneMatch(c -> id.equals(c.getControlId()) && "grid".equals(c.getType())))
+                throw new IllegalArgumentException(on + " streams WebSocket messages, which are rows — aim it at a grid placed on the page");
+        }
     }
 
     private void requireInstance(String instanceId, String where) {

@@ -99,4 +99,18 @@ class AppPageFocusControlTest {
         AppPage page = page(button, tabs, control("g1", "grid"));
         assertThatCode(() -> AppCatalogService.validateFocusControl(page, button)).doesNotThrowAnyException();
     }
+
+    @Test
+    void aMenuEntry_mayScrollToItsOwnGrid_heldToTheSameRule() {
+        AppPageControl menu = control("m1", "multibutton");
+        AppPageMenuOption entry = new AppPageMenuOption();
+        entry.setLabel("Orders");
+        entry.setFocusControlId("g1");
+        menu.setMenuOptions(List.of(entry));
+        AppPage page = page(menu, control("g1", "grid"));
+        assertThatCode(() -> AppCatalogService.validateFocusControl(page, menu)).doesNotThrowAnyException();
+        entry.setFocusControlId("gone");
+        assertThatThrownBy(() -> AppCatalogService.validateFocusControl(page, menu))
+                .hasMessageContaining("menu entry 'Orders'").hasMessageContaining("gone");
+    }
 }

@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCP Client</title>
+    <link rel="stylesheet" href="appcatalog.css">
+    <style>
+        .mono, pre {
+            font-family: "Cascadia Code", "Fira Code", Consolas, monospace; font-size: 12px;
+        }
+        pre {
+            background: #f4f5f7; border: 1px solid #dfe1e6; border-radius: 4px; padding: 8px 10px;
+            white-space: pre-wrap; word-break: break-word; max-height: 480px; overflow: auto;
+        }
+        .tabs { display: flex; gap: 4px; border-bottom: 1px solid #dfe1e6; margin-bottom: 12px; }
+        .tabs button { background: none; color: #5e6c84; border-radius: 4px 4px 0 0; padding: 7px 14px; }
+        .tabs button.active { color: #0052cc; border-bottom: 2px solid #0052cc; font-weight: 600; }
+        .tab { display: none; }
+        .tab.active { display: block; }
+        .desc { font-size: 13px; color: #42526e; white-space: pre-wrap; margin-bottom: 10px; }
+        .req { color: #de350b; }
+        .info-grid { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 13px; }
+        .info-grid div:nth-child(odd) { color: #5e6c84; font-weight: 600; }
+        .result-item { margin-bottom: 10px; }
+        .result-item img { max-width: 100%; border: 1px solid #dfe1e6; border-radius: 4px; }
+        .log-entry { border-bottom: 1px solid #f0f1f3; padding: 6px 0; font-size: 12px; }
+        .log-entry summary { cursor: pointer; }
+        .row-inline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+        .row-inline input, .row-inline select { width: auto; }
+        #connectUrl { flex: 1; min-width: 260px; }
+        input[type=checkbox] { width: auto; }
+    </style>
+</head>
+<body>
+
+<div class="page-nav"><a href="index.html" target="_top">&larr; Home</a></div>
+<h1>MCP Client</h1>
+<div class="subtitle">Connect to any MCP server over streamable HTTP or HTTP+SSE, browse its tools, resources and prompts,
+    and call them. Requests go through this server, so remote MCP servers need no CORS setup.</div>
+
+<div class="panel">
+    <div class="panel-title"><span>Connection</span><span id="connBadge" class="badge inactive">Disconnected</span></div>
+    <div class="row-inline" style="margin-bottom:10px">
+        <input id="connectUrl" type="text" placeholder="http://host:port/mcp">
+        <select id="transport">
+            <option value="streamable">Streamable HTTP</option>
+            <option value="sse">HTTP + SSE (legacy)</option>
+        </select>
+        <label class="hint">Timeout (s) <input id="timeout" type="number" value="60" min="1" style="width:70px"></label>
+        <button class="primary" id="connectBtn" onclick="connect()">Connect</button>
+        <button class="danger" id="disconnectBtn" onclick="disconnect()" disabled>Disconnect</button>
+        <button class="tool-btn" id="pingBtn" onclick="ping()" disabled>Ping</button>
+    </div>
+    <div class="form-row">
+        <div class="form-group">
+            <label>Headers (one <code>Name: value</code> per line)</label>
+            <textarea id="headers" placeholder="Authorization: Bearer …"></textarea>
+        </div>
+        <div class="form-group">
+            <label>Open sessions on this server</label>
+            <div class="row-inline">
+                <select id="sessionSelect" style="flex:1"></select>
+                <button class="tool-btn" onclick="attach()">Use</button>
+                <button class="tool-btn" onclick="loadSessions()">Refresh</button>
+            </div>
+            <span class="hint">Sessions stay open server-side until you disconnect, so you can reattach after a reload.</span>
+        </div>
+    </div>
+    <div class="row-inline hint">
+        Presets:
+        <button class="tool-btn" onclick="preset('/mcp','streamable')">This app (streamable /mcp)</button>
+        <button class="tool-btn" onclick="preset('/sse','sse')">This app (SSE /sse)</button>
+    </div>
+    <div class="status-bar" id="status"></div>
+</div>
+
+<div class="panel" id="serverPanel" style="display:none">
+    <div class="panel-title"><span>Server</span>
+        <span class="row-inline">
+            <label class="hint">Log level
+                <select id="logLevel" onchange="setLogLevel()">
+                    <option value="">—</option><option>debug</option><option>info</option><option>notice</option>
+                    <option>warning</option><option>error</option><option>critical</option>
+                </select>
+            </label>
+        </span>
+    </div>
+    <div class="info-grid" id="serverInfo"></div>
+</div>
+
+<div class="panel" id="workPanel" style="display:none">
+    <div class="tabs">
+        <button data-tab="tools" class="active" onclick="showTab('tools')">Tools <span id="toolCount"></span></button>
+        <button data-tab="resources" onclick="showTab('resources')">Resources <span id="resCount"></span></button>
+        <button data-tab="prompts" onclick="showTab('prompts')">Prompts <span id="promptCount"></span></button>
+        <button data-tab="raw" onclick="showTab('raw')">Raw request</button>
+        <button data-tab="log" onclick="showTab('log')">Log</button>
+    </div>
+
+    <!-- Tools -->
+    <div class="tab active" id="tab-tools">
+        <div class="split">
+            <div>
+                <div class="row-inline" style="margin-bottom:8px">
+                    <input class="list-search" id="toolSearch" placeholder="Search tools…" oninput="renderTools()" style="flex:1;margin:0">
+                    <button class="tool-btn" onclick="listTools()">Refresh</button>
+                </div>
+                <div class="record-list" id="toolList"></div>
+            </div>
+            <div id="toolDetail"><div class="empty-note">Select a tool.</div></div>
+        </div>
+    </div>
+
+    <!-- Resources -->
+    <div class="tab" id="tab-resources">
+        <div class="split">
+            <div>
+                <div class="row-inline" style="margin-bottom:8px">
+                    <input class="list-search" id="resUri" placeholder="Resource URI to read…" style="flex:1;margin:0">
+                    <button class="tool-btn" onclick="readResource(document.getElementById('resUri').value)">Read</button>
+                    <button class="tool-btn" onclick="listResources()">Refresh</button>
+                </div>
+                <div class="record-list" id="resList"></div>
+            </div>
+            <div id="resDetail"><div class="empty-note">Select a resource, or type a URI (fill in a template) and Read.</div></div>
+        </div>
+    </div>
+
+    <!-- Prompts -->
+    <div class="tab" id="tab-prompts">
+        <div class="split">
+            <div>
+                <div class="row-inline" style="margin-bottom:8px">
+                    <button class="tool-btn" onclick="listPrompts()">Refresh</button>
+                </div>
+                <div class="record-list" id="promptList"></div>
+            </div>
+            <div id="promptDetail"><div class="empty-note">Select a prompt.</div></div>
+        </div>
+    </div>
+
+    <!-- Raw -->
+    <div class="tab" id="tab-raw">
+        <div class="form-row">
+            <div class="form-group">
+                <label>Method</label>
+                <select id="rawMethod">
+                    <option>tools/list</option><option>tools/call</option>
+                    <option>resources/list</option><option>resources/templates/list</option><option>resources/read</option>
+                    <option>prompts/list</option><option>prompts/get</option>
+                    <option>logging/setLevel</option><option>ping</option>
+                </select>
+            </div>
+            <div class="form-group wide">
+                <label>Params (JSON)</label>
+                <textarea id="rawParams" class="tall">{}</textarea>
+            </div>
+        </div>
+        <button class="primary" onclick="sendRaw()">Send</button>
+        <div class="status-bar" id="rawStatus"></div>
+        <pre id="rawResult" style="display:none"></pre>
+    </div>
+
+    <!-- Log -->
+    <div class="tab" id="tab-log">
+        <div class="row-inline" style="margin-bottom:8px"><button class="tool-btn" onclick="clearLog()">Clear</button></div>
+        <div id="log"></div>
+    </div>
+</div>
+
+<script src="appcatalog.js"></script>
+<script>
+    const esc = AC.esc;
+    let sessionId = null, tools = [], resources = [], templates = [], prompts = [], selectedTool = null;
+
+    const $ = id => document.getElementById(id);
+    const pretty = v => JSON.stringify(v, null, 2);
+
+    function setStatus(msg, cls, el = 'status') {
+        $(el).textContent = msg;
+        $(el).className = 'status-bar' + (cls ? ' ' + cls : '');
+    }
+
+    async function api(method, url, body) {
+        const r = await fetch(url, {
+            method, headers: body ? { 'Content-Type': 'application/json' } : {},
+            body: body ? JSON.stringify(body) : undefined
+        });
+        const text = await r.text();
+        let data; try { data = text ? JSON.parse(text) : {}; } catch { data = { error: text }; }
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        return data;
+    }
+
+    /** Sends one MCP request on the open session and logs it. Returns the result object. */
+    async function mcp(method, params = {}) {
+        if (!sessionId) throw new Error('Not connected');
+        const at = new Date().toLocaleTimeString();
+        try {
+            const data = await api('POST', `/mcpclient/sessions/${sessionId}/call`, { method, params });
+            addLog(at, method, params, data.result, data.elapsedMs);
+            return data.result;
+        } catch (e) {
+            addLog(at, method, params, { error: e.message });
+            if (/Session not found/.test(e.message)) setConnected(null);
+            throw e;
+        }
+    }
+
+    // ── Connection ─────────────────────────────────────────────────────────
+
+    function preset(path, transport) {
+        $('connectUrl').value = location.origin + path;
+        $('transport').value = transport;
+    }
+
+    function parseHeaders() {
+        const h = {};
+        $('headers').value.split('\n').forEach(line => {
+            const i = line.indexOf(':');
+            if (i > 0) h[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+        });
+        return h;
+    }
+
+    async function connect() {
+        const url = $('connectUrl').value.trim();
+        if (!url) return setStatus('Enter a server URL.', 'error');
+        try { localStorage.setItem('mcpclient.last', JSON.stringify({ url, transport: $('transport').value, headers: $('headers').value })); } catch {}
+        setStatus('Connecting…');
+        $('connectBtn').disabled = true;
+        try {
+            const s = await api('POST', '/mcpclient/connect', {
+                url, transport: $('transport').value, headers: parseHeaders(), timeoutSeconds: +$('timeout').value || 60
+            });
+            setStatus(`Connected to ${s.serverInfo?.name || url} (protocol ${s.initialize?.protocolVersion || '?'})`, 'ok');
+            await useSession(s);
+            loadSessions();
+        } catch (e) {
+            setStatus('Connect failed: ' + e.message, 'error');
+        } finally {
+            $('connectBtn').disabled = false;
+        }
+    }
+
+    async function disconnect() {
+        if (!sessionId) return;
+        try { await api('DELETE', `/mcpclient/sessions/${sessionId}`); } catch {}
+        setConnected(null);
+        setStatus('Disconnected.');
+        loadSessions();
+    }
+
+    async function loadSessions() {
+        try {
+            const list = await api('GET', '/mcpclient/sessions');
+            $('sessionSelect').innerHTML = list.length
+                ? list.map(s => `<option value="${esc(s.id)}">${esc(s.serverInfo?.name || '?')} — ${esc(s.url)} (${esc(s.transport)})</option>`).join('')
+                : '<option value="">(none)</option>';
+            $('sessionSelect')._sessions = list;
+        } catch (e) { setStatus(e.message, 'error'); }
+    }
+
+    function attach() {
+        const s = ($('sessionSelect')._sessions || []).find(x => x.id === $('sessionSelect').value);
+        if (s) { useSession(s); setStatus('Using session ' + s.id, 'ok'); }
+    }
+
+    function setConnected(s) {
+        sessionId = s ? s.id : null;
+        $('connBadge').className = 'badge ' + (s ? 'ok' : 'inactive');
+        $('connBadge').textContent = s ? 'Connected' : 'Disconnected';
+        $('disconnectBtn').disabled = $('pingBtn').disabled = !s;
+        $('serverPanel').style.display = $('workPanel').style.display = s ? '' : 'none';
+    }
+
+    async function useSession(s) {
+        setConnected(s);
+        const caps = s.capabilities || {};
+        $('serverInfo').innerHTML = [
+            ['Name', s.serverInfo?.name], ['Version', s.serverInfo?.version], ['URL', s.url], ['Transport', s.transport],
+            ['Session', s.id], ['Capabilities', Object.keys(caps).filter(k => caps[k] != null).join(', ') || '—'],
+            ['Instructions', s.instructions || '—']
+        ].map(([k, v]) => `<div>${k}</div><div class="${k === 'Session' ? 'mono' : ''}" style="white-space:pre-wrap">${esc(v)}</div>`).join('');
+        // only ask for what the server advertises, so an older server does not error on unknown methods
+        tools = resources = templates = prompts = [];
+        renderTools(); renderResources(); renderPrompts();
+        if (caps.tools) await listTools().catch(() => {});
+        if (caps.resources) await listResources().catch(() => {});
+        if (caps.prompts) await listPrompts().catch(() => {});
+    }
+
+    async function ping() {
+        try { await mcp('ping'); setStatus('Ping OK', 'ok'); } catch (e) { setStatus('Ping failed: ' + e.message, 'error'); }
+    }
+
+    async function setLogLevel() {
+        const level = $('logLevel').value;
+        if (!level) return;
+        try { await mcp('logging/setLevel', { level }); setStatus('Log level set to ' + level, 'ok'); }
+        catch (e) { setStatus(e.message, 'error'); }
+    }
+
+    function showTab(name) {
+        document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+        document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.id === 'tab-' + name));
+    }
+
+    // ── Tools ──────────────────────────────────────────────────────────────
+
+    async function listTools() {
+        const r = await mcp('tools/list');
+        tools = r.tools || [];
+        renderTools();
+    }
+
+    function renderTools() {
+        $('toolCount').textContent = tools.length ? `(${tools.length})` : '';
+        const q = $('toolSearch').value.toLowerCase();
+        const shown = tools.filter(t => !q || (t.name + ' ' + (t.title || '') + ' ' + (t.description || '')).toLowerCase().includes(q));
+        $('toolList').innerHTML = shown.length ? shown.map(t => `
+            <div class="record ${selectedTool === t.name ? 'selected' : ''}" onclick="selectTool('${AC.attr(t.name)}')">
+                <div class="record-name">${esc(t.title || t.name)}</div>
+                <div class="record-meta">${esc((t.description || '').slice(0, 120))}</div>
+            </div>`).join('') : '<div class="empty-note">No tools.</div>';
+    }
+
+    function selectTool(name) {
+        selectedTool = name;
+        renderTools();
+        const t = tools.find(x => x.name === name);
+        const schema = t.inputSchema || {};
+        const props = schema.properties || {};
+        const required = schema.required || [];
+        $('toolDetail').innerHTML = `
+            <div class="record-name mono" style="margin-bottom:6px">${esc(t.name)}</div>
+            <div class="desc">${esc(t.description || '')}</div>
+            <div class="form-row">${Object.entries(props).map(([k, p]) => fieldHtml(k, p, required.includes(k))).join('')
+                || '<div class="hint">This tool takes no arguments.</div>'}</div>
+            <div class="row-inline" style="margin-bottom:10px">
+                <button class="primary" id="callBtn" onclick="callTool()">Call tool</button>
+                <label class="hint"><input type="checkbox" id="rawArgsToggle" onchange="toggleRawArgs()"> Edit arguments as JSON</label>
+                <button class="tool-btn" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display?'':'none'">Schema</button>
+                <pre style="display:none;width:100%">${esc(pretty(schema))}</pre>
+            </div>
+            <textarea id="rawArgs" class="tall" style="display:none"></textarea>
+            <div class="status-bar" id="toolStatus"></div>
+            <div id="toolResult"></div>`;
+    }
+
+    function fieldHtml(name, p, required) {
+        const label = `<label>${esc(name)}${required ? ' <span class="req">*</span>' : ''}</label>`;
+        const hint = p.description ? `<span class="hint">${esc(p.description)}</span>` : '';
+        const type = Array.isArray(p.type) ? p.type.find(x => x !== 'null') : p.type;
+        const def = p.default !== undefined ? p.default : '';
+        let input;
+        if (p.enum) {
+            input = `<select data-arg="${esc(name)}" data-type="enum"><option value=""></option>${p.enum.map(v =>
+                `<option ${v === def ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>`;
+        } else if (type === 'boolean') {
+            input = `<select data-arg="${esc(name)}" data-type="boolean"><option value=""></option>
+                <option ${def === true ? 'selected' : ''}>true</option><option ${def === false ? 'selected' : ''}>false</option></select>`;
+        } else if (type === 'object' || type === 'array') {
+            input = `<textarea data-arg="${esc(name)}" data-type="json" placeholder="${type === 'array' ? '[ … ]' : '{ … }'}">${def !== '' ? esc(pretty(def)) : ''}</textarea>`;
+        } else {
+            input = `<input data-arg="${esc(name)}" data-type="${esc(type || 'string')}" type="${type === 'number' || type === 'integer' ? 'number' : 'text'}" value="${esc(def)}">`;
+        }
+        return `<div class="form-group ${type === 'object' || type === 'array' ? 'wide' : ''}">${label}${input}${hint}</div>`;
+    }
+
+    /** Arguments from the form; empty fields are left out so the server applies its own defaults. */
+    function formArgs() {
+        const args = {};
+        document.querySelectorAll('#toolDetail [data-arg]').forEach(el => {
+            const v = el.value;
+            if (v === '') return;
+            const t = el.dataset.type;
+            if (t === 'number' || t === 'integer') args[el.dataset.arg] = Number(v);
+            else if (t === 'boolean') args[el.dataset.arg] = v === 'true';
+            else if (t === 'json') {
+                try { args[el.dataset.arg] = JSON.parse(v); }
+                catch { throw new Error(`${el.dataset.arg}: invalid JSON`); }
+            } else args[el.dataset.arg] = v;
+        });
+        return args;
+    }
+
+    function toggleRawArgs() {
+        const on = $('rawArgsToggle').checked;
+        if (on) {
+            try { $('rawArgs').value = pretty(formArgs()); } catch { $('rawArgs').value = '{}'; }
+        }
+        $('rawArgs').style.display = on ? '' : 'none';
+        document.querySelector('#toolDetail .form-row').style.display = on ? 'none' : '';
+    }
+
+    async function callTool() {
+        let args;
+        try { args = $('rawArgsToggle').checked ? JSON.parse($('rawArgs').value || '{}') : formArgs(); }
+        catch (e) { return setStatus(e.message, 'error', 'toolStatus'); }
+        setStatus('Calling…', '', 'toolStatus');
+        $('callBtn').disabled = true;
+        const t0 = performance.now();
+        try {
+            const r = await mcp('tools/call', { name: selectedTool, arguments: args });
+            setStatus(`${r.isError ? 'Tool returned an error' : 'OK'} — ${Math.round(performance.now() - t0)} ms`,
+                r.isError ? 'error' : 'ok', 'toolStatus');
+            $('toolResult').innerHTML = renderContent(r.content) +
+                (r.structuredContent ? `<label class="hint">structuredContent</label>${dataHtml(r.structuredContent)}` : '') +
+                rawToggle(r);
+        } catch (e) {
+            setStatus(e.message, 'error', 'toolStatus');
+            $('toolResult').innerHTML = '';
+        } finally {
+            $('callBtn').disabled = false;
+        }
+    }
+
+    // ── Result rendering ───────────────────────────────────────────────────
+
+    function renderContent(content = []) {
+        return content.map(c => {
+            let body;
+            if (c.type === 'text') {
+                let parsed; try { parsed = JSON.parse(c.text); } catch {}
+                body = parsed !== undefined && typeof parsed === 'object' ? dataHtml(parsed) : `<pre>${esc(c.text)}</pre>`;
+            } else if (c.type === 'image') {
+                body = `<img src="data:${esc(c.mimeType)};base64,${esc(c.data)}">`;
+            } else if (c.type === 'audio') {
+                body = `<audio controls src="data:${esc(c.mimeType)};base64,${esc(c.data)}"></audio>`;
+            } else if (c.type === 'resource') {
+                body = renderResourceContents([c.resource]);
+            } else {
+                body = `<pre>${esc(pretty(c))}</pre>`;
+            }
+            return `<div class="result-item"><span class="badge auth">${esc(c.type)}</span>${body}</div>`;
+        }).join('') || '<div class="empty-note">No content.</div>';
+    }
+
+    /** An array of objects reads best as a table; anything else as JSON. */
+    function dataHtml(v) {
+        const rows = Array.isArray(v) ? v : null;
+        if (rows && rows.length && rows.every(r => r && typeof r === 'object' && !Array.isArray(r))) {
+            const cols = [...new Set(rows.flatMap(Object.keys))];
+            const cell = x => esc(x !== null && typeof x === 'object' ? JSON.stringify(x) : x);
+            return `<div class="hint">${rows.length} rows</div><div class="table-wrap" style="max-height:480px;overflow:auto"><table>
+                <thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead>
+                <tbody>${rows.map(r => `<tr>${cols.map(c => `<td>${cell(r[c])}</td>`).join('')}</tr>`).join('')}</tbody>
+            </table></div>`;
+        }
+        return `<pre>${esc(pretty(v))}</pre>`;
+    }
+
+    function rawToggle(obj) {
+        return `<div class="row-inline" style="margin-top:6px">
+            <button class="tool-btn" onclick="this.parentElement.nextElementSibling.style.display=this.parentElement.nextElementSibling.style.display?'':'none'">Raw response</button>
+            <button class="tool-btn" onclick="navigator.clipboard.writeText(this.parentElement.nextElementSibling.textContent)">Copy</button>
+        </div><pre style="display:none">${esc(pretty(obj))}</pre>`;
+    }
+
+    // ── Resources ──────────────────────────────────────────────────────────
+
+    async function listResources() {
+        const r = await mcp('resources/list');
+        resources = r.resources || [];
+        try { templates = (await mcp('resources/templates/list')).resourceTemplates || []; } catch { templates = []; }
+        renderResources();
+    }
+
+    function renderResources() {
+        $('resCount').textContent = resources.length + templates.length ? `(${resources.length + templates.length})` : '';
+        $('resList').innerHTML = resources.map(r => `
+            <div class="record" onclick="readResource('${AC.attr(r.uri)}')">
+                <div class="record-name">${esc(r.name || r.uri)}</div>
+                <div class="record-meta mono">${esc(r.uri)}</div>
+                <div class="record-meta">${esc(r.mimeType || '')} ${esc(r.description || '')}</div>
+            </div>`).join('') + templates.map(t => `
+            <div class="record" onclick="document.getElementById('resUri').value='${AC.attr(t.uriTemplate)}'">
+                <div class="record-name">${esc(t.name || t.uriTemplate)} <span class="badge warn">template</span></div>
+                <div class="record-meta mono">${esc(t.uriTemplate)}</div>
+                <div class="record-meta">${esc(t.description || '')}</div>
+            </div>`).join('') || '<div class="empty-note">No resources.</div>';
+    }
+
+    async function readResource(uri) {
+        if (!uri) return;
+        $('resUri').value = uri;
+        $('resDetail').innerHTML = '<div class="empty-note">Reading…</div>';
+        try {
+            const r = await mcp('resources/read', { uri });
+            $('resDetail').innerHTML = `<div class="record-name mono" style="margin-bottom:6px">${esc(uri)}</div>`
+                + renderResourceContents(r.contents) + rawToggle(r);
+        } catch (e) {
+            $('resDetail').innerHTML = `<div class="status-bar error">${esc(e.message)}</div>`;
+        }
+    }
+
+    function renderResourceContents(contents = []) {
+        return contents.map(c => {
+            if (c.text !== undefined) {
+                let parsed; try { parsed = JSON.parse(c.text); } catch {}
+                return parsed !== undefined && typeof parsed === 'object' ? dataHtml(parsed) : `<pre>${esc(c.text)}</pre>`;
+            }
+            if (c.blob && /^image\//.test(c.mimeType || '')) return `<img src="data:${esc(c.mimeType)};base64,${esc(c.blob)}">`;
+            return `<div class="hint">Binary ${esc(c.mimeType || '')} (${c.blob ? c.blob.length : 0} base64 chars)</div>`;
+        }).join('');
+    }
+
+    // ── Prompts ────────────────────────────────────────────────────────────
+
+    async function listPrompts() {
+        const r = await mcp('prompts/list');
+        prompts = r.prompts || [];
+        renderPrompts();
+    }
+
+    function renderPrompts() {
+        $('promptCount').textContent = prompts.length ? `(${prompts.length})` : '';
+        $('promptList').innerHTML = prompts.map(p => `
+            <div class="record" onclick="selectPrompt('${AC.attr(p.name)}')">
+                <div class="record-name">${esc(p.title || p.name)}</div>
+                <div class="record-meta">${esc(p.description || '')}</div>
+            </div>`).join('') || '<div class="empty-note">No prompts.</div>';
+    }
+
+    function selectPrompt(name) {
+        const p = prompts.find(x => x.name === name);
+        $('promptDetail').innerHTML = `
+            <div class="record-name mono" style="margin-bottom:6px">${esc(p.name)}</div>
+            <div class="desc">${esc(p.description || '')}</div>
+            <div class="form-row">${(p.arguments || []).map(a => `
+                <div class="form-group"><label>${esc(a.name)}${a.required ? ' <span class="req">*</span>' : ''}</label>
+                <input data-parg="${esc(a.name)}"><span class="hint">${esc(a.description || '')}</span></div>`).join('')}</div>
+            <button class="primary" onclick="getPrompt('${AC.attr(p.name)}')">Get prompt</button>
+            <div id="promptResult" style="margin-top:10px"></div>`;
+    }
+
+    async function getPrompt(name) {
+        const args = {};
+        document.querySelectorAll('[data-parg]').forEach(el => { if (el.value) args[el.dataset.parg] = el.value; });
+        try {
+            const r = await mcp('prompts/get', { name, arguments: args });
+            $('promptResult').innerHTML = (r.description ? `<div class="desc">${esc(r.description)}</div>` : '')
+                + (r.messages || []).map(m => `<div class="result-item"><span class="badge http">${esc(m.role)}</span>${renderContent([m.content])}</div>`).join('')
+                + rawToggle(r);
+        } catch (e) {
+            $('promptResult').innerHTML = `<div class="status-bar error">${esc(e.message)}</div>`;
+        }
+    }
+
+    // ── Raw + log ──────────────────────────────────────────────────────────
+
+    async function sendRaw() {
+        let params;
+        try { params = JSON.parse($('rawParams').value || '{}'); } catch { return setStatus('Params: invalid JSON', 'error', 'rawStatus'); }
+        try {
+            const r = await mcp($('rawMethod').value, params);
+            setStatus('OK', 'ok', 'rawStatus');
+            $('rawResult').style.display = '';
+            $('rawResult').textContent = pretty(r);
+        } catch (e) {
+            setStatus(e.message, 'error', 'rawStatus');
+            $('rawResult').style.display = 'none';
+        }
+    }
+
+    function addLog(at, method, params, result, ms) {
+        const err = result && result.error;
+        $('log').insertAdjacentHTML('afterbegin', `<details class="log-entry">
+            <summary>${esc(at)} <b>${esc(method)}</b> <span class="badge ${err ? 'err' : 'ok'}">${err ? 'error' : 'ok'}</span>
+                ${ms !== undefined ? esc(ms) + ' ms' : ''}</summary>
+            <label class="hint">params</label><pre>${esc(pretty(params))}</pre>
+            <label class="hint">${err ? 'error' : 'result'}</label><pre>${esc(pretty(result))}</pre>
+        </details>`);
+    }
+
+    function clearLog() { $('log').innerHTML = ''; }
+
+    // ── Init ───────────────────────────────────────────────────────────────
+
+    (function init() {
+        let last = null;
+        try { last = JSON.parse(localStorage.getItem('mcpclient.last')); } catch {}
+        if (last) {
+            $('connectUrl').value = last.url || '';
+            $('transport').value = last.transport || 'streamable';
+            $('headers').value = last.headers || '';
+        } else {
+            preset('/mcp', 'streamable');
+        }
+        loadSessions();
+    })();
+</script>
+</body>
+</html>

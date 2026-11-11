@@ -31,6 +31,7 @@ import java.util.List;
  *                     and names its columns after the ones it found
  * @param kind         one of {@link #KINDS}
  * @param expression   {@link #META}: which call-record field; {@link #HEADER}: which header;
+ *                     {@link #VARIABLE}: which request variable;
  *                     {@link #REGEX}: the pattern. Unused by the lookups.
  * @param datasetName  {@link #VLOOKUP}: the static dataset looked into
  * @param lookupColumn the lookups: the grid column whose value is looked up. {@link #REGEX}: the grid
@@ -112,7 +113,13 @@ public record AppPageEnrichColumn(String name, String kind, String expression, S
      */
     public static final String REGEX = "REGEX";
 
-    public static final List<String> KINDS = List.of(META, HEADER, VLOOKUP, GRID_VLOOKUP, GRID_VLOOKUP_ROW, REGEX);
+    /**
+     * One variable passed in the request, by name ({@link #expression}): the input the page sent with
+     * the call, else the value the instance was saved with. The same on every row one call filled.
+     */
+    public static final String VARIABLE = "VARIABLE";
+
+    public static final List<String> KINDS = List.of(META, HEADER, VLOOKUP, GRID_VLOOKUP, GRID_VLOOKUP_ROW, REGEX, VARIABLE);
 
     /** The kinds that look into another grid on the page rather than into a static dataset. */
     public static final List<String> GRID_KINDS = List.of(GRID_VLOOKUP, GRID_VLOOKUP_ROW);

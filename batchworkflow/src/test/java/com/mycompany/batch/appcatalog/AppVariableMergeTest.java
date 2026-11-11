@@ -192,6 +192,27 @@ class AppVariableMergeTest {
         assertThat(merged.get("payload")).isEqualTo(xml);
     }
 
+    /** A required input with no default fails the run until someone passes it in. */
+    @Test
+    void aRequiredInput_withoutDefault_mustBeSupplied() {
+        AppUseCase useCase = useCaseDeclaring(new AppUseCaseInput("orderId", "string", null, true));
+        Map<String, Object> merged = service.mergeVariables(null, null, useCase, null);
+        assertThat(merged).doesNotContainKey("orderId");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> AppExecutionService.requireInputs(useCase, merged))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("orderId");
+        merged.put("orderId", "7");
+        AppExecutionService.requireInputs(useCase, merged);
+    }
+
+    /** A required input keeps its default, and the default satisfies the requirement. */
+    @Test
+    void aRequiredInput_withDefault_isSatisfiedByIt() {
+        AppUseCase useCase = useCaseDeclaring(new AppUseCaseInput("orderId", "string", "42", true));
+        Map<String, Object> merged = service.mergeVariables(null, null, useCase, null);
+        assertThat(merged).containsEntry("orderId", "42");
+        AppExecutionService.requireInputs(useCase, merged);
+    }
+
     @Test
     void variablesSurviveTheirTypes_soANumberComparesAsANumber() {
         Map<String, Object> merged = service.mergeVariables(

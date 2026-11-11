@@ -82,7 +82,7 @@ class AppWebSocketRelayHandlerTest {
 
         AppExecutionService execution = mock(AppExecutionService.class);
         when(execution.prepareWebSocket(eq("inst-1"), any(), any())).thenReturn(new WebSocketTarget(
-                "ws://localhost:" + port + "/echo", Map.of("X-Test", "1"), "subscribe", "json",
+                List.of("ws://localhost:1/unreachable", "ws://localhost:" + port + "/echo"), Map.of("X-Test", "1"), "subscribe", "json",
                 "prices", "dev", "feed", 5000, Map.of()));
         when(execution.substitute(anyString(), any())).thenAnswer(call -> call.getArgument(0));
         LocalServerAddress localServer = mock(LocalServerAddress.class);
@@ -143,6 +143,31 @@ class AppWebSocketRelayHandlerTest {
         await(status("OPEN"));
         command("{\"op\":\"send\",\"key\":\"inst-1\",\"message\":\"hello\"}");
         await(message("hello"));
+    }
+
+    @Test
+    void connectOnly_sendsNoOpeningMessage_andASendMadeWhileOpeningWaitsForIt() throws Exception {
+        command("{\"op\":\"connect\",\"key\":\"inst-1\",\"instanceId\":\"inst-1\",\"opening\":false}");
+        command("{\"op\":\"send\",\"key\":\"inst-1\",\"message\":\"first\"}");
+        command("{\"op\":\"send\",\"key\":\"inst-1\",\"message\":\"second\"}");
+        await(message("first"));
+        await(message("second"));
+        assertThat(sent).noneMatch(message("subscribe"));
+        assertThat(String.valueOf(await(status("OPEN")).get("message"))).doesNotContain("opening message sent");
+    }
+
+    @Test
+    void unlisten_stopsRelaying_butTheSocketStaysOpenForSends() throws Exception {
+        command("{\"op\":\"connect\",\"key\":\"inst-1\",\"instanceId\":\"inst-1\"}");
+        await(message("subscribe"));
+        command("{\"op\":\"unlisten\",\"key\":\"inst-1\"}");
+        await(m -> status("OPEN").test(m) && String.valueOf(m.get("message")).startsWith("Not listening"));
+        command("{\"op\":\"send\",\"key\":\"inst-1\",\"message\":\"unheard\"}");
+        long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (((Number) relay.connections().get(0).get("received")).intValue() < 2 && System.nanoTime() < until) Thread.sleep(20);
+        assertThat(((Number) relay.connections().get(0).get("received")).intValue()).isEqualTo(2);
+        assertThat(sent).noneMatch(message("unheard"));
+        assertThat(relay.connections().get(0).get("state")).isEqualTo("OPEN");
     }
 
     @Test

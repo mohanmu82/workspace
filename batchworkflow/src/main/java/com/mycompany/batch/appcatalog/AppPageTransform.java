@@ -35,13 +35,20 @@ public class AppPageTransform {
      */
     public static final String XML2JSON = "XML2JSON";
 
+    /**
+     * {@link #type}: apply {@link #expression} as an XSL stylesheet to the XML text it was handed and
+     * read what it outputs as CSV — first line the column names, each line after it a row — so an
+     * XML response lands in a grid as rows. Takes the raw response text, so it belongs first.
+     */
+    public static final String XSL2CSV = "XSL2CSV";
+
     /** How an action names this step. Unique within the page, and required. */
     private String name;
     /** What the step is for, shown next to it in the designer. Free text, optional. */
     private String description;
-    /** {@link #JSONATA} or {@link #XML2JSON}; anything unrecognised reads as JSONATA. */
+    /** {@link #JSONATA}, {@link #XML2JSON} or {@link #XSL2CSV}; anything unrecognised reads as JSONATA. */
     private String type = JSONATA;
-    /** The JSONata itself, e.g. {@code data.items.{"id": id, "who": owner.name}}. JSONATA only. */
+    /** The JSONata itself, e.g. {@code data.items.{"id": id, "who": owner.name}}; for XSL2CSV, the stylesheet. */
     private String expression;
     /**
      * The name of a {@link JsonataLibraryService shared library} expression to run instead of
@@ -59,7 +66,9 @@ public class AppPageTransform {
     public void   setDescription(String description)  { this.description = description; }
 
     public String getType()              { return type; }
-    public void   setType(String type)   { this.type = XML2JSON.equalsIgnoreCase(type) ? XML2JSON : JSONATA; }
+    public void   setType(String type)   {
+        this.type = XML2JSON.equalsIgnoreCase(type) ? XML2JSON : XSL2CSV.equalsIgnoreCase(type) ? XSL2CSV : JSONATA;
+    }
 
     public String getExpression()                   { return expression; }
     public void   setExpression(String expression)  { this.expression = expression; }
@@ -72,6 +81,9 @@ public class AppPageTransform {
     /** Whether this step converts XML rather than evaluating an expression. */
     public boolean isXml2Json()   { return XML2JSON.equals(type); }
 
+    /** Whether this step applies an XSL stylesheet and reads its output as CSV rows. */
+    public boolean isXsl2Csv()    { return XSL2CSV.equals(type); }
+
     /** Whether this step's expression comes from the shared library rather than from the page. */
-    public boolean isLibraryRef() { return !isXml2Json() && jsonataRef != null; }
+    public boolean isLibraryRef() { return JSONATA.equals(type) && jsonataRef != null; }
 }

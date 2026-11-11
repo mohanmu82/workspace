@@ -1032,7 +1032,7 @@
             const value = values && values[input.name] !== undefined
                 ? values[input.name]
                 : (input.defaultValue !== null && input.defaultValue !== undefined ? input.defaultValue : '');
-            return inputFieldHtml(input.name, input.type || 'string', value, '');
+            return inputFieldHtml(input.name, input.type || 'string', value, input.required ? 'required' : '');
         });
 
         rows.push(...undeclared.map(name =>

@@ -1,5 +1,7 @@
 package com.mycompany.batch.appcatalog;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -18,9 +20,11 @@ public class AppDefinition {
     private String appName;
     private String appDescription;
     /**
-     * HTTP, SOLACE or WS. HTTP use cases are called once per run; WS use cases are WebSocket
-     * subscriptions, opened from a page's WEBSOCKET action — the environment's URL prefix is then
-     * the {@code ws://} or {@code wss://} address. SOLACE is not executable server-side.
+     * HTTP, SOLACE, WS, ORACLE or POSTGRES. HTTP use cases are called once per run; WS use cases are
+     * WebSocket subscriptions, opened from a page's WEBSOCKET action — the environment's URL prefix is
+     * then the {@code ws://} or {@code wss://} address. ORACLE and POSTGRES use cases are SQL statements
+     * run over JDBC: the environment's URL prefix is the JDBC URL, its username and password the login,
+     * and the use case's body the statement. SOLACE is not executable server-side.
      */
     private String appMode = "HTTP";
     /** ACTIVE or INACTIVE — INACTIVE apps stay in the catalog but are blocked from executing. */
@@ -35,6 +39,10 @@ public class AppDefinition {
 
     public String getAppDescription()                        { return appDescription; }
     public void   setAppDescription(String appDescription)   { this.appDescription = appDescription; }
+
+    /** ORACLE or POSTGRES — a use case is SQL run over JDBC rather than an HTTP call. */
+    @JsonIgnore
+    public boolean isDatabase() { return "ORACLE".equalsIgnoreCase(appMode) || "POSTGRES".equalsIgnoreCase(appMode); }
 
     public String getAppMode()                    { return appMode; }
     public void   setAppMode(String appMode)      { this.appMode = appMode != null ? appMode : "HTTP"; }

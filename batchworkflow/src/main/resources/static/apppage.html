@@ -766,6 +766,7 @@
         .copy-list .inline-check.off { color: #97a0af; }
         .copy-list .copy-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .copy-note { font-size: 10px; color: #97a0af; font-style: italic; }
+        .copy-filter { margin-bottom: 5px; }
 
         /* ── Run mode ───────────────────────────────────────────────────────── */
 
@@ -912,6 +913,7 @@
             position: absolute; top: calc(100% + 4px); left: 0; z-index: 30;
             background: #fff; border: 1px solid #dfe1e6; border-radius: 4px;
             box-shadow: 0 4px 12px rgba(9, 30, 66, .2); padding: 6px; width: 250px;
+            text-align: left;
         }
         /* Right-hand grids would otherwise open their chooser off the edge of the page. */
         .grid-cols-pop.from-right { left: auto; right: 0; }
@@ -926,7 +928,11 @@
         }
         .grid-cols-row label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .grid-cols-row.off label span { color: #97a0af; }
-        .grid-cols-row input { margin: 0; cursor: pointer; }
+        /* appcatalog.css makes every input full-width and padded; a tick box must not be. */
+        .grid-cols-row input { margin: 0; cursor: pointer; width: auto; padding: 0; flex: none; }
+        .grid-cols-row[draggable] { cursor: grab; }
+        .grid-cols-row.dragging { opacity: .4; }
+        .grid-cols-row.drop-over { box-shadow: inset 0 2px 0 #0052cc; }
         .grid-cols-row .tool-btn { padding: 1px 6px; font-size: 11px; line-height: 16px; }
         .grid-cols-row .tool-btn[disabled] { opacity: .35; cursor: default; }
         .grid-cols-foot {
@@ -996,6 +1002,11 @@
         body.standalone > h1,
         body.standalone > .subtitle,
         body.standalone #identityPanel { display: none; }
+
+        /* The pretty-print buttons that sit on whichever text area has the focus — see #wirePrettyTools. */
+        #prettyTools { position: fixed; z-index: 1000; display: none; gap: 4px; }
+        #prettyTools .tool-btn { padding: 1px 6px; font-size: 10px; line-height: 14px; opacity: .85; }
+        #prettyTools .tool-btn:hover { opacity: 1; }
     </style>
 </head>
 <body>
@@ -1023,6 +1034,12 @@
         <div class="form-group wide">
             <label for="pageDescription">Description</label>
             <input id="pageDescription" type="text" placeholder="Look an order up by id and re-send its confirmation." oninput="onHeaderInput()">
+        </div>
+        <div class="form-group">
+            <label for="pageDefaultEnvironment">Default Environment</label>
+            <input id="pageDefaultEnvironment" type="text" list="pageEnvironmentOptions" placeholder="uat-emea" autocomplete="off" oninput="onHeaderInput()">
+            <datalist id="pageEnvironmentOptions"></datalist>
+            <span class="hint">Used by this page's MCP tools when no environment is given and the action sets none.</span>
         </div>
     </div>
     <div class="toolbar">
@@ -1090,6 +1107,8 @@
             <button class="secondary" id="replayBtn" onclick="replayLastTrigger()">Replay Last Trigger</button>
             <button class="secondary" id="shareLinkBtn" onclick="copyRunLink()" style="display:none">Copy Link</button>
             <button class="secondary" id="techBtn" onclick="showTechDetails()">Technical Details</button>
+            <button class="secondary" id="runReportBtn" onclick="downloadRunReport()" disabled>Run Report (JSON)</button>
+            <button class="secondary" id="runReportVaultBtn" onclick="sendRunReportToVault()" title="Write the run summary and each action's status as a note in the Obsidian vault" disabled>Run Report to Obsidian</button>
         </div>
         <div id="pageErrors"></div>
         <div id="runStatus" class="status-bar" style="margin:0 0 12px"></div>

@@ -79,6 +79,14 @@ public class AppPageOptionSource {
      * picks something. Blank sends nothing, exactly as the plain row always has.
      */
     private String topValue;
+    /**
+     * DATASET mode only — drop rows whose key and label repeat one already listed, so a column of
+     * repeated values ("EMEA" on every desk in it) becomes one option each. Off for older pages.
+     */
+    private boolean uniqueOnly;
+
+    public boolean isUniqueOnly()                    { return uniqueOnly; }
+    public void    setUniqueOnly(boolean uniqueOnly) { this.uniqueOnly = uniqueOnly; }
 
     public String getTopLabel()                 { return topLabel; }
     public void   setTopLabel(String topLabel)  { this.topLabel = topLabel == null || topLabel.isBlank() ? null : topLabel; }

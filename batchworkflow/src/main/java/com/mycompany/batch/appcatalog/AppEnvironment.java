@@ -90,6 +90,28 @@ public class AppEnvironment {
         return prefix != null && !prefix.isBlank() ? prefix : null;
     }
 
+    /**
+     * A copy of this environment calling {@code baseUrl} instead of either of its own prefixes —
+     * what a page action's base URL override runs against. Everything else (credentials, variables,
+     * status) is this environment's.
+     */
+    public AppEnvironment withBaseUrl(String baseUrl) {
+        AppEnvironment copy = new AppEnvironment();
+        copy.appName = appName;
+        copy.environment = environment;
+        copy.envClass = envClass;
+        copy.urlPrefix = baseUrl;
+        copy.monitoringUrlPrefix = baseUrl;
+        copy.jwtUrl = jwtUrl;
+        copy.jwtMethod = jwtMethod;
+        copy.username = username;
+        copy.password = password;
+        copy.envStatus = envStatus;
+        copy.envVariables = new LinkedHashMap<>(envVariables);
+        copy.comments = comments;
+        return copy;
+    }
+
     private static String nullToEmpty(String s) { return s == null ? "" : s; }
 
     public String getJwtUrl()                 { return jwtUrl; }

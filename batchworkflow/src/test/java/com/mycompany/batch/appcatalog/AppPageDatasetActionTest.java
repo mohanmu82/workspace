@@ -106,6 +106,13 @@ class AppPageDatasetActionTest {
     }
 
     @Test
+    void noTarget_isFine_whenTheActionReloadsTheDataset_sinceTheReloadIsWhatItIsFor() {
+        AppPageAction action = datasetAction("");
+        action.setDatasetReload(true);
+        assertThatCode(() -> validate(page(), action)).doesNotThrowAnyException();
+    }
+
+    @Test
     void aTargetThatIsNoLongerOnThePage_isRefused() {
         assertThatThrownBy(() -> validate(page(), datasetAction("deleted")))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -273,5 +280,15 @@ class AppPageDatasetActionTest {
         assertThatThrownBy(() -> AppCatalogService.validateEnrichColumns(page(), action, LIBRARY, "Action 'x'"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("response header");
+    }
+
+    @Test
+    void anEnrichedColumnReadingARequestVariable_isRefusedForTheSameReason() {
+        AppPageAction action = datasetAction("g");
+        action.setEnrichColumns(List.of(new AppPageEnrichColumn(
+                "acct", AppPageEnrichColumn.VARIABLE, "accountId", null, null, null, null)));
+        assertThatThrownBy(() -> AppCatalogService.validateEnrichColumns(page(), action, LIBRARY, "Action 'x'"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("request variable");
     }
 }

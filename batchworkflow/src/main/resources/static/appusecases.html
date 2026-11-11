@@ -75,9 +75,11 @@
         /* A json or xml input's default goes in a textarea under its row rather than in the one-line
            box the other types share — see .input-doc in appcatalog.css. */
         .input-def { margin-bottom: 6px; }
-        .input-def .kv-row { margin-bottom: 0; }
+        .input-def .kv-row { margin-bottom: 0; grid-template-columns: 1fr 120px 1fr 90px 32px; }
+        .input-def .req { display: flex; align-items: center; gap: 4px; font-size: 12px; white-space: nowrap; }
         /* No one-line default to hold a column open, so the name gets the width instead. */
-        .input-def .kv-row.doc-row { grid-template-columns: 1fr 120px 32px; }
+        .input-def .kv-row.doc-row { grid-template-columns: 1fr 120px 90px 32px; }
+        @media (max-width: 700px) { .input-def .kv-row, .input-def .kv-row.doc-row { grid-template-columns: 1fr; } }
     </style>
 </head>
 <body>
@@ -287,18 +289,31 @@
         httpBody:     'Opening Message (sent on connect)',
         outputFormat: 'Message Format'
     };
+    // A database app's use case is one SQL statement: the body is the statement; the method, URL
+    // suffix and headers are not used; the answer is always JSON (a query's rows, or updatedRows).
+    const DB_LABELS = {
+        httpMethod:   'HTTP Method (not used)',
+        timeout:      'Query Timeout (ms)',
+        httpHeaders:  'HTTP Headers (not used)',
+        httpBody:     'SQL Statement',
+        urlSuffix:    'URL Suffix (not used)',
+        outputFormat: 'Output Format (always json)'
+    };
     const HTTP_LABELS = {};
 
     function applyAppModeLabels() {
         const ws = !!currentApp && currentApp.appMode === 'WS';
-        Object.keys(WS_LABELS).forEach(id => {
+        const db = !!currentApp && (currentApp.appMode === 'ORACLE' || currentApp.appMode === 'POSTGRES');
+        const labels = ws ? WS_LABELS : db ? DB_LABELS : {};
+        new Set([...Object.keys(WS_LABELS), ...Object.keys(DB_LABELS)]).forEach(id => {
             const label = document.querySelector('label[for="' + id + '"]');
             if (!label) return;
             if (!(id in HTTP_LABELS)) HTTP_LABELS[id] = label.textContent;
-            label.textContent = ws ? WS_LABELS[id] : HTTP_LABELS[id];
+            label.textContent = labels[id] || HTTP_LABELS[id];
         });
-        document.getElementById('httpMethod').disabled = ws;
-        document.getElementById('httpBody').placeholder = ws ? '{"action": "subscribe", "topic": "$topic"}' : '{"orderId": "$orderId"}';
+        document.getElementById('httpMethod').disabled = ws || db;
+        document.getElementById('httpBody').placeholder = ws ? '{"action": "subscribe", "topic": "$topic"}'
+            : db ? "SELECT order_id, status FROM orders WHERE client = '$clientId'" : '{"orderId": "$orderId"}';
     }
 
     async function onAppChange() {
@@ -502,7 +517,7 @@
     const INPUT_TYPES = ['string', 'number', 'boolean', 'json', 'xml'];
 
     function addInputRow(input) {
-        inputRows.push(input || { name: '', type: 'string', defaultValue: '' });
+        inputRows.push(input || { name: '', type: 'string', defaultValue: '', required: false });
         renderInputRows();
     }
 
@@ -526,6 +541,10 @@
         renderInputRows();
     }
 
+    function changeInputRequired(index, required) {
+        inputRows[index].required = required;
+    }
+
     function renderInputRows() {
         const container = document.getElementById('inputRows');
         if (!inputRows.length) {
@@ -545,7 +564,10 @@
                         INPUT_TYPES.map(t => '<option value="' + t + '"' + (type === t ? ' selected' : '') + '>' + t + '</option>').join('') +
                     '</select>' +
                     (isDoc ? '' : '<input type="text" placeholder="default (optional)" value="' + AC.esc(value) + '" ' +
-                                         'oninput="updateInputRow(' + index + ', \'defaultValue\', this.value)">') +
+                                 'oninput="updateInputRow(' + index + ', \'defaultValue\', this.value)">') +
+                    '<label class="req" title="A run fails unless a value is supplied — the default counts">' +
+                        '<input type="checkbox"' + (input.required ? ' checked' : '') + ' ' +
+                               'onchange="changeInputRequired(' + index + ', this.checked)"> required</label>' +
                     '<button class="icon-btn" title="Remove" onclick="removeInputRow(' + index + ')">&times;</button>' +
                 '</div>' +
                 (isDoc
@@ -698,7 +720,7 @@
         renderJsonataSource(sharedName);
         document.getElementById('deleteBtn').style.display = '';
         document.getElementById('cloneBtn').style.display = '';
-        inputRows = (uc.appUseCaseInputs || []).map(i => ({ name: i.name, type: i.type || 'string', defaultValue: i.defaultValue || '' }));
+        inputRows = (uc.appUseCaseInputs || []).map(i => ({ name: i.name, type: i.type || 'string', defaultValue: i.defaultValue || '', required: !!i.required }));
         renderInputRows();
         renderUseCaseList();
         AC.setStatus('statusBar', '');
@@ -753,7 +775,7 @@
             timeout:     parseInt(document.getElementById('timeout').value, 10) || 5000,
             outputFormat: document.getElementById('outputFormat').value,
             appUseCaseVariables: AC.parseJsonObject(document.getElementById('useCaseVariables').value, 'Use Case Variables'),
-            appUseCaseInputs: named.map(r => ({ name: r.name.trim(), type: r.type || 'string', defaultValue: r.defaultValue || null })),
+            appUseCaseInputs: named.map(r => ({ name: r.name.trim(), type: r.type || 'string', defaultValue: r.defaultValue || null, required: !!r.required })),
             jsonataTransform: jsonata ? { key: null, value: jsonata, source: null } : null
         };
     }

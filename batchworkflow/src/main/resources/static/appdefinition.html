@@ -5,6 +5,25 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>App Definitions</title>
     <link rel="stylesheet" href="appcatalog.css">
+    <style>
+        /* One thin line per app, the same shape as the environment list on the Environments tab. */
+        #appList { gap: 2px; max-height: 70vh; }
+        #appList .record {
+            flex-direction: row; align-items: center; gap: 6px;
+            padding: 2px 6px; min-height: 24px; border-color: #ebecf0; border-radius: 3px; font-size: 12px;
+        }
+        #appList .record .badge { flex: none; font-size: 10px; padding: 0 5px; }
+        #appList .record .badge.mode { min-width: 38px; text-align: center; }
+        #appList .record .record-name {
+            font-size: 12px; flex: none; max-width: 45%;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; word-break: normal;
+        }
+        #appList .record.off .record-name { color: #97a0af; }
+        #appList .record .desc {
+            flex: 1; min-width: 0; color: #5e6c84; font-size: 11px;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+    </style>
 </head>
 <body>
 
@@ -39,9 +58,12 @@
                     <option value="HTTP">HTTP</option>
                     <option value="SOLACE">SOLACE</option>
                     <option value="WS">WS (WebSocket)</option>
+                    <option value="ORACLE">ORACLE (JDBC)</option>
+                    <option value="POSTGRES">POSTGRES (JDBC)</option>
                 </select>
                 <span class="hint">WS: each environment's URL is the <code>ws://</code> / <code>wss://</code> address, and
-                    use cases are subscriptions a page connects to.</span>
+                    use cases are subscriptions a page connects to. ORACLE / POSTGRES: each environment's URL is a JDBC URL
+                    with a username and password, and use cases are SQL statements.</span>
             </div>
             <div class="form-group">
                 <label for="appStatus">App Status</label>
@@ -118,18 +140,23 @@
         list.innerHTML = apps
             .slice()
             .sort((a, b) => a.appName.localeCompare(b.appName))
-            .map(app =>
-                '<div class="record' + (app.appName === editingAppName ? ' selected' : '') + '" ' +
-                     'onclick="editApp(\'' + AC.attr(app.appName) + '\')">' +
-                    '<div class="record-name">' + AC.esc(app.appName) + '</div>' +
-                    '<div class="record-meta">' +
-                        '<span class="badge ' + app.appMode.toLowerCase() + '">' + AC.esc(app.appMode) + '</span>' +
-                        '<span class="badge ' + app.appStatus.toLowerCase() + '">' + AC.esc(app.appStatus) + '</span>' +
-                        '<span class="badge auth">' + AC.esc(app.authMethod) + '</span>' +
-                    '</div>' +
-                    (app.appDescription ? '<div class="record-meta">' + AC.esc(app.appDescription) + '</div>' : '') +
-                '</div>'
-            ).join('');
+            .map(app => {
+                const inactive = app.appStatus !== 'ACTIVE';
+                const tip = [
+                    app.appName + ' — ' + app.appMode + (inactive ? ' · INACTIVE' : '') + ' · auth ' + app.authMethod,
+                    app.appDescription || ''
+                ].filter(Boolean).join('\n');
+                return '<div class="record' + (app.appName === editingAppName ? ' selected' : '')
+                         + (inactive ? ' off' : '') + '" '
+                         + 'title="' + AC.esc(tip) + '" '
+                         + 'onclick="editApp(\'' + AC.attr(app.appName) + '\')">'
+                     + '<span class="badge mode ' + app.appMode.toLowerCase() + '">' + AC.esc(app.appMode) + '</span>'
+                     + '<span class="record-name">' + AC.esc(app.appName) + '</span>'
+                     + (inactive ? '<span class="badge inactive">off</span>' : '')
+                     + '<span class="badge auth">' + AC.esc(app.authMethod) + '</span>'
+                     + '<span class="desc">' + AC.esc(app.appDescription || '') + '</span>'
+                     + '</div>';
+            }).join('');
     }
 
     function renderAuthHint() {

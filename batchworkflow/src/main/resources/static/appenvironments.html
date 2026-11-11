@@ -42,6 +42,8 @@
         }
         #envList .record .badge { flex: none; font-size: 10px; padding: 0 5px; }
         #envList .record .badge.cls { min-width: 38px; text-align: center; }
+        #envList .record .badge.up   { background: #e3fcef; color: #006644; }
+        #envList .record .badge.down { background: #ffebe6; color: #bf2600; }
         #envList .record .record-name {
             font-size: 12px; flex: none; max-width: 45%;
             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; word-break: normal;
@@ -97,6 +99,8 @@
         <div class="panel-title">
             <span>Environments</span>
             <button class="tool-btn" onclick="newEnvironment()">+ New</button>
+            <button class="tool-btn" id="checkBtn" onclick="checkReachability()"
+                    title="Open a TCP socket to each environment's URL prefix host and port — is anything listening there">Check reachability</button>
             <button class="tool-btn" id="summaryBtn" onclick="toggleSummary()"
                     title="Write these environments up as one HTML page to send on">Summary&hellip;</button>
         </div>
@@ -162,7 +166,8 @@
                             style="flex:none; white-space:nowrap">This Server</button>
                 </div>
                 <span class="hint" id="urlPrefixHint">Each use case's URL suffix is appended to this verbatim. Start with <code>/</code>
-                    (e.g. <code>/api</code>) to call this server — its scheme, host and port are filled in at run time.</span>
+                    (e.g. <code>/api</code>) to call this server — its scheme, host and port are filled in at run time.
+                    List several, comma-separated, to fall back in order: the first that accepts the connection is used.</span>
             </div>
 
             <div class="form-group wide">
@@ -175,7 +180,7 @@
                 <span class="hint">A second address for this same deployment's admin endpoints. Only the use cases
                     that set their URL Base to <strong>Monitoring</strong> are built against it — leave it empty if this
                     environment has no separate admin address. A value starting with <code>/</code> resolves against
-                    this server's management port.</span>
+                    this server's management port. Comma-separate several to fall back in order.</span>
             </div>
 
             <div class="form-group wide" id="jwtUrlGroup">
@@ -266,6 +271,8 @@
     // ordinary new environment that happens to arrive with every field already filled in, and once
     // it is saved there is nothing left to remember about where it came from.
     let cloneFrom = null;
+    // The last reachability check, by environment name; emptied when the app changes.
+    let reach = {};
     let cloneApp = null;
 
     async function loadApps() {
@@ -288,6 +295,7 @@
         const appName = document.getElementById('appSelect').value;
         AC.setSelectedApp(appName);
         currentApp = apps.find(a => a.appName === appName) || null;
+        reach = {};
         document.getElementById('appAuthMethod').value = currentApp ? currentApp.authMethod : '';
         applyAuthFields();
         newEnvironment();
@@ -309,7 +317,9 @@
     // address its use cases subscribe to; the original wording and placeholder are kept for the rest.
     const URL_PREFIX_DEFAULT = { label: null, placeholder: null, hint: null };
 
-    /** Relabels the URL prefix for a WebSocket app, and puts it back for any other. */
+    function isDatabaseApp(app) { return !!app && (app.appMode === 'ORACLE' || app.appMode === 'POSTGRES'); }
+
+    /** Relabels the URL prefix for a WebSocket or database app, and puts it back for any other. */
     function applyAppModeFields() {
         const label = document.getElementById('urlPrefixLabel');
         const input = document.getElementById('urlPrefix');
@@ -320,13 +330,18 @@
             URL_PREFIX_DEFAULT.hint = hint.innerHTML;
         }
         const ws = !!currentApp && currentApp.appMode === 'WS';
-        label.textContent = ws ? 'WebSocket URL' : URL_PREFIX_DEFAULT.label;
-        input.placeholder = ws ? 'wss://feed-uat.example.com/stream   or   /ws' : URL_PREFIX_DEFAULT.placeholder;
+        const db = isDatabaseApp(currentApp);
+        label.textContent = ws ? 'WebSocket URL' : db ? 'JDBC URL' : URL_PREFIX_DEFAULT.label;
+        input.placeholder = ws ? 'wss://feed-uat.example.com/stream   or   /ws'
+            : db ? (currentApp.appMode === 'ORACLE' ? 'jdbc:oracle:thin:@//host:1521/SERVICE' : 'jdbc:postgresql://host:5432/dbname')
+            : URL_PREFIX_DEFAULT.placeholder;
         hint.innerHTML = ws
             ? 'The <code>ws://</code> or <code>wss://</code> address this app\'s use cases subscribe to; each use case\'s '
               + 'URL suffix is appended to it. An <code>http(s)://</code> address is turned into <code>ws(s)://</code>, and '
               + 'one starting with <code>/</code> connects to this server. The connection is made from this server, so the '
-              + 'credentials below and the use case\'s headers go on the handshake.'
+              + 'credentials below and the use case\'s headers go on the handshake. List several, comma-separated, '
+              + 'to fall back in order: the first that accepts the connection is used.'
+            : db ? 'The JDBC URL this app\'s use cases run their SQL against; the username and password below are the login.'
             : URL_PREFIX_DEFAULT.hint;
     }
 
@@ -336,8 +351,10 @@
         applyAppModeFields();
 
         document.getElementById('jwtUrlGroup').style.display   = config.jwtUrl ? '' : 'none';
-        document.getElementById('usernameGroup').style.display = config.credentials ? '' : 'none';
-        document.getElementById('passwordGroup').style.display = config.credentials ? '' : 'none';
+        // A database app logs in with these whatever its auth method says.
+        const credentials = config.credentials || isDatabaseApp(currentApp);
+        document.getElementById('usernameGroup').style.display = credentials ? '' : 'none';
+        document.getElementById('passwordGroup').style.display = credentials ? '' : 'none';
 
         document.getElementById('jwtUrlLabel').textContent   = config.jwtUrlLabel || 'JWT URL';
         document.getElementById('usernameLabel').textContent = config.usernameLabel || 'Username';
@@ -400,11 +417,46 @@
                      + (inactive ? '<span class="badge inactive">off</span>' : '')
                      + (env.monitoringUrlPrefix ? '<span class="badge">mon</span>' : '')
                      + (varCount ? '<span class="badge">' + varCount + ' var' + (varCount === 1 ? '' : 's') + '</span>' : '')
+                     + reachBadge(reach[env.environment])
                      + '<span class="prefix">' + AC.esc(env.urlPrefix || '') + '</span>'
                      + (env.comments ? '<span class="note">&#9998;</span>' : '')
                      + '</div>';
             }).join('');
     }
+
+    /** The up/down badge of the last reachability check, with the reason on hover; nothing before a check. */
+    function reachBadge(r) {
+        if (!r) return '';
+        const tip = r.ok ? 'TCP ' + r.host + ':' + r.port + ' answered in ' + r.timeTaken + ' ms'
+                         : (r.host ? r.host + ':' + r.port + ' — ' : '') + (r.error || 'unreachable');
+        return '<span class="badge ' + (r.ok ? 'up' : 'down') + '" title="' + AC.attr(tip) + '">' + (r.ok ? 'up' : 'down') + '</span>';
+    }
+
+    /**
+     * Asks the server to open a TCP socket to every environment of this app — is the host there
+     * and the port listening — and marks each row up or down. A socket check only: a port that
+     * answers with an error page still reads as up, and a wrong path is never seen.
+     */
+    async function checkReachability() {
+        if (!currentApp) { AC.setStatus('statusBar', 'Select an app first.', 'error'); return; }
+        const button = document.getElementById('checkBtn');
+        button.disabled = true;
+        AC.setStatus('statusBar', 'Checking ' + environments.length + ' environment(s)…');
+        try {
+            const results = await AC.api('GET', '/appcatalog/environments/check?appName=' + encodeURIComponent(currentApp.appName));
+            reach = {};
+            results.forEach(r => { reach[r.environment] = r; });
+            const down = results.filter(r => !r.ok).length;
+            AC.setStatus('statusBar', down ? down + ' of ' + results.length + ' unreachable — hover a badge for why.'
+                                            : 'All ' + results.length + ' reachable.', down ? 'error' : 'ok');
+        } catch (e) {
+            AC.setStatus('statusBar', 'Reachability check failed: ' + e.message, 'error');
+        } finally {
+            button.disabled = false;
+            renderEnvList();
+        }
+    }
+
     function newEnvironment() {
         editingEnvironment = null;
         cloneFrom = null;

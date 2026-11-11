@@ -83,6 +83,12 @@ public class AppPage {
      * behaving as it always did: the detail is there until it is turned off deliberately.
      */
     private boolean debug = true;
+    /**
+     * The DEFAULT environment an MCP tool on this page calls when Claude names none. It takes the
+     * place of the action's and instance's environment, which only the page itself uses; blank keeps
+     * that old behaviour.
+     */
+    private String defaultEnvironment;
 
     public String getPageName()                  { return pageName; }
     public void   setPageName(String pageName)   { this.pageName = pageName; }
@@ -116,4 +122,7 @@ public class AppPage {
 
     public boolean isDebug()                                         { return debug; }
     public void setDebug(boolean debug)                              { this.debug = debug; }
+
+    public String getDefaultEnvironment()                            { return defaultEnvironment; }
+    public void setDefaultEnvironment(String defaultEnvironment)     { this.defaultEnvironment = defaultEnvironment; }
 }

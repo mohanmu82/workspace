@@ -26,6 +26,8 @@ import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -382,12 +384,86 @@ public class AppExecutionService {
                                                       Map<String, Object> inputs,
                                                       ExecutionTarget target, String agentId,
                                                       boolean keepBodies, Integer timeoutMs) {
+        return executeWithInputs(instanceId, environment, inputs, target, agentId, keepBodies, timeoutMs, null);
+    }
+
+    /**
+     * The same run, called at {@code baseUrl} instead of the environment's own URL prefix — a page
+     * pointing a use case at a deployment the environment list does not have. The environment (the
+     * one named, or the instance's first) still supplies credentials and variables.
+     *
+     * @param baseUrl a URL prefix in place of the environment's own; null or blank keeps it
+     */
+    public AppUseCaseInstanceOutput executeWithInputs(String instanceId, String environment,
+                                                      Map<String, Object> inputs,
+                                                      ExecutionTarget target, String agentId,
+                                                      boolean keepBodies, Integer timeoutMs, String baseUrl) {
         AppUseCaseInstance instance = catalog.getInstance(instanceId);
         String chosen = environment != null && !environment.isBlank() ? environment
                 : instance != null ? firstEnvironment(instance) : null;
         return execute(new RunPlan(instanceId, chosen, 1, 1, inputs != null ? inputs : Map.of(),
-                        timeoutMs != null && timeoutMs > 0 ? timeoutMs : null),
+                        timeoutMs != null && timeoutMs > 0 ? timeoutMs : null,
+                        baseUrl != null && !baseUrl.isBlank() ? baseUrl.trim() : null),
                 target, agentId, keepBodies);
+    }
+
+    /** The most copies of one page call a stress run may send at once. */
+    static final int MAX_REPEAT = 1000;
+
+    /**
+     * The same page call sent {@code repeat} times all at once — one thread per copy, so every copy
+     * is in flight together and the latencies say how the endpoint holds up under that much
+     * concurrency. Results come back in repeat order. {@code repeat} is capped at {@link #MAX_REPEAT}.
+     */
+    public List<AppUseCaseInstanceOutput> executeRepeated(String instanceId, String environment,
+                                                          Map<String, Object> inputs,
+                                                          ExecutionTarget target, String agentId,
+                                                          boolean keepBodies, Integer timeoutMs, String baseUrl,
+                                                          int repeat) {
+        int n = Math.max(1, Math.min(repeat, MAX_REPEAT));
+        AppUseCaseInstance instance = catalog.getInstance(instanceId);
+        String chosen = environment != null && !environment.isBlank() ? environment
+                : instance != null ? firstEnvironment(instance) : null;
+        List<RunPlan> plans = new ArrayList<>(n);
+        for (int i = 1; i <= n; i++) {
+            plans.add(new RunPlan(instanceId, chosen, i, n, inputs != null ? inputs : Map.of(),
+                    timeoutMs != null && timeoutMs > 0 ? timeoutMs : null,
+                    baseUrl != null && !baseUrl.isBlank() ? baseUrl.trim() : null));
+        }
+        return executePlans(plans, target, agentId, n, keepBodies);
+    }
+
+    /**
+     * Latency figures for a set of repeated runs: how many succeeded, min / avg / percentiles / max of
+     * each call's {@code timeTaken}, and the throughput over {@code wallMs}, the time the whole set took.
+     */
+    public static Map<String, Object> latencyStats(List<AppUseCaseInstanceOutput> runs, long wallMs) {
+        long[] times = runs.stream().mapToLong(AppUseCaseInstanceOutput::timeTaken).sorted().toArray();
+        long ok = runs.stream().filter(r -> "SUCCESS".equals(r.status())).count();
+        Map<String, Object> stats = new LinkedHashMap<>();
+        stats.put("repeat", runs.size());
+        stats.put("succeeded", ok);
+        stats.put("failed", runs.size() - ok);
+        stats.put("minMs", times.length == 0 ? 0 : times[0]);
+        stats.put("avgMs", times.length == 0 ? 0 : Math.round(java.util.Arrays.stream(times).average().orElse(0)));
+        stats.put("p50Ms", percentile(times, 50));
+        stats.put("p90Ms", percentile(times, 90));
+        stats.put("p95Ms", percentile(times, 95));
+        stats.put("p99Ms", percentile(times, 99));
+        stats.put("maxMs", times.length == 0 ? 0 : times[times.length - 1]);
+        stats.put("wallMs", wallMs);
+        stats.put("requestsPerSecond", wallMs > 0 ? Math.round(runs.size() * 10000.0 / wallMs) / 10.0 : 0);
+        // In repeat order, so a chart of them shows whether the later copies waited longer.
+        stats.put("timings", runs.stream().map(AppUseCaseInstanceOutput::timeTaken).toList());
+        stats.put("statusCodes", runs.stream().map(AppUseCaseInstanceOutput::statusCode).toList());
+        return stats;
+    }
+
+    /** Nearest-rank percentile of an already sorted array; 0 when it is empty. */
+    static long percentile(long[] sorted, int pct) {
+        if (sorted.length == 0) return 0;
+        int rank = (int) Math.ceil(pct / 100.0 * sorted.length);
+        return sorted[Math.max(0, Math.min(sorted.length, rank) - 1)];
     }
 
     // -------------------------------------------------------------------------
@@ -401,7 +477,7 @@ public class AppExecutionService {
      * (typically the subscribe request). {@code variables} is kept so a message sent later can be
      * written against the same values.
      */
-    public record WebSocketTarget(String url, Map<String, String> headers, String openingMessage,
+    public record WebSocketTarget(List<String> urls, Map<String, String> headers, String openingMessage,
                                   String outputFormat, String appName, String environment,
                                   String useCaseName, int connectTimeoutMs, Map<String, Object> variables) {}
 
@@ -443,18 +519,26 @@ public class AppExecutionService {
 
         Map<String, Object> variables = mergeVariables(app, env, useCase, instance);
         if (inputs != null) variables.putAll(inputs);
+        requireInputs(useCase, variables);
         resolveVariableValues(variables);
 
         String authorization = applyAuth(app, env, useCase, variables);
-        String url = toWebSocketScheme(substitute(nullToEmpty(localServer.resolve(prefix, isMonitoring(useCase), false))
-                + nullToEmpty(useCase.getUrlSuffix()), variables));
+        // A comma-separated prefix lists fallbacks: the relay connects to the first that answers.
+        List<String> urls = new ArrayList<>();
+        for (String one : prefix.split(",")) {
+            if (one.isBlank()) continue;
+            urls.add(toWebSocketScheme(substitute(nullToEmpty(localServer.resolve(one.trim(), isMonitoring(useCase), false))
+                    + nullToEmpty(useCase.getUrlSuffix()), variables)));
+        }
+        if (urls.isEmpty())
+            throw new IllegalArgumentException("Environment '" + env.getEnvironment() + "' has no WebSocket URL");
         Map<String, String> headers = parseHeaders(useCase.getHttpHeaders(), variables);
         if (authorization != null && !containsHeaderIgnoreCase(headers, "Authorization"))
             headers.put("Authorization", authorization);
         String opening = useCase.getHttpBody() != null && !useCase.getHttpBody().isBlank()
-                ? substitute(useCase.getHttpBody(), variables) : null;
+                ? substituteBody(useCase.getHttpBody(), variables) : null;
 
-        return new WebSocketTarget(url, headers, opening, useCase.getOutputFormat(), app.getAppName(),
+        return new WebSocketTarget(urls, headers, opening, useCase.getOutputFormat(), app.getAppName(),
                 env.getEnvironment(), useCase.getUseCaseName(), useCase.getTimeout(), variables);
     }
 
@@ -482,13 +566,16 @@ public class AppExecutionService {
      *                    populated when a page button hands over what the operator typed.
      * @param timeoutOverrideMs
      *                    this run's HTTP timeout in place of the use case's own, or null to keep it
+     * @param baseUrlOverride
+     *                    a URL prefix to call in place of the environment's own, or null to keep it
      */
     private record RunPlan(String instanceId, String environment, int runIndex, int runCount,
-                           Map<String, Object> inputOverrides, Integer timeoutOverrideMs) {
+                           Map<String, Object> inputOverrides, Integer timeoutOverrideMs,
+                           String baseUrlOverride) {
 
         RunPlan(String instanceId, String environment, int runIndex, int runCount,
                 Map<String, Object> inputOverrides) {
-            this(instanceId, environment, runIndex, runCount, inputOverrides, null);
+            this(instanceId, environment, runIndex, runCount, inputOverrides, null, null);
         }
     }
 
@@ -531,13 +618,19 @@ public class AppExecutionService {
      */
     private List<AppUseCaseInstanceOutput> executePlans(List<RunPlan> plans, ExecutionTarget target, String agentId,
                                                          Integer threadCount) {
+        return executePlans(plans, target, agentId, threadCount, true);
+    }
+
+    /** @param keepBodies see {@link #execute(RunPlan, ExecutionTarget, String, boolean)} */
+    private List<AppUseCaseInstanceOutput> executePlans(List<RunPlan> plans, ExecutionTarget target, String agentId,
+                                                         Integer threadCount, boolean keepBodies) {
         if (plans.isEmpty()) return List.of();
 
         int effectiveThreadCount = threadCount != null && threadCount > 0 ? threadCount : defaultThreadCount;
         try (ExecutorService pool = Executors.newFixedThreadPool(Math.min(plans.size(), effectiveThreadCount))) {
             List<Future<AppUseCaseInstanceOutput>> futures = new ArrayList<>(plans.size());
             for (RunPlan runPlan : plans) {
-                futures.add(pool.submit(() -> execute(runPlan, target, agentId)));
+                futures.add(pool.submit(() -> execute(runPlan, target, agentId, keepBodies)));
             }
             List<AppUseCaseInstanceOutput> out = new ArrayList<>(futures.size());
             for (int i = 0; i < futures.size(); i++) {
@@ -575,6 +668,7 @@ public class AppExecutionService {
         AppDefinition  app     = catalog.getApp(instance.getAppName());
         AppUseCase     useCase = catalog.getUseCase(instance.getAppName(), instance.getAppUseCaseName());
         AppEnvironment env     = catalog.getEnvironment(instance.getAppName(), runPlan.environment());
+        if (env != null && runPlan.baseUrlOverride() != null) env = env.withBaseUrl(runPlan.baseUrlOverride());
 
         if (app == null)     return errorOutput(runPlan, instance, "Unknown app: " + instance.getAppName(), env, useCase);
         if (useCase == null) return errorOutput(runPlan, instance, "Unknown use case: " + instance.getAppUseCaseName(), env, useCase);
@@ -587,8 +681,8 @@ public class AppExecutionService {
         if ("WS".equalsIgnoreCase(app.getAppMode()))
             return errorOutput(runPlan, instance, "App '" + app.getAppName() + "' is a WebSocket app — its use cases are "
                     + "subscriptions, opened from a page's WebSocket action rather than run as a single call", env, useCase);
-        if (!"HTTP".equalsIgnoreCase(app.getAppMode()))
-            return errorOutput(runPlan, instance, "App mode '" + app.getAppMode() + "' cannot be executed — only HTTP is supported", env, useCase);
+        if (!"HTTP".equalsIgnoreCase(app.getAppMode()) && !app.isDatabase())
+            return errorOutput(runPlan, instance, "App mode '" + app.getAppMode() + "' cannot be executed — only HTTP, ORACLE and POSTGRES are supported", env, useCase);
         // A monitoring use case against an environment that never got a monitoring address would
         // otherwise fall back to the application prefix and quietly call the wrong endpoint.
         if (isMonitoring(useCase) && env.prefixFor(useCase.getUrlPrefixType()) == null)
@@ -604,6 +698,7 @@ public class AppExecutionService {
         try {
             Map<String, Object> variables = mergeVariables(app, env, useCase, instance);
             variables.putAll(runPlan.inputOverrides());
+            requireInputs(useCase, variables);
             // An override may itself be written against a variable — ${DATESTAMP} typed into a page input.
             resolveVariableValues(variables);
 
@@ -612,25 +707,48 @@ public class AppExecutionService {
             // The same token the templates saw, reported on the output so it can be replayed by hand.
             jwtToken = variables.get("jwtToken") instanceof String token ? token : null;
 
-            url = substitute(nullToEmpty(localServer.resolve(env.prefixFor(useCase.getUrlPrefixType()),
-                    isMonitoring(useCase), target == ExecutionTarget.AGENT)) + nullToEmpty(useCase.getUrlSuffix()), variables);
-            requestBody = useCase.getHttpBody() != null ? substitute(useCase.getHttpBody(), variables) : null;
+            // A SQL statement is substituted verbatim: JSON escaping would mangle a quoted value.
+            requestBody = useCase.getHttpBody() == null ? null
+                    : app.isDatabase() ? substitute(useCase.getHttpBody(), variables) : substituteBody(useCase.getHttpBody(), variables);
             requestHeaders = parseHeaders(useCase.getHttpHeaders(), variables);
             if (authorization != null && !containsHeaderIgnoreCase(requestHeaders, "Authorization")) {
                 requestHeaders.put("Authorization", authorization);
             }
 
-            String method = useCase.getHttpMethod();
+            String method = app.isDatabase() ? "SQL" : useCase.getHttpMethod();
             int timeoutMs = runPlan.timeoutOverrideMs() != null ? runPlan.timeoutOverrideMs() : useCase.getTimeout();
             NtlmAuthProvider ntlm = ntlmFor(app, env);
             if (ntlm != null && target == ExecutionTarget.AGENT)
                 throw new IllegalArgumentException("NTLM auth cannot run through an agent: the handshake is bound to the "
                         + "connection, and the agent only forwards a finished request. Run this app locally.");
-            HttpOutcome outcome = target == ExecutionTarget.AGENT
-                    ? sendViaAgent(method, url, requestHeaders, requestBody, timeoutMs, agentId)
-                    : ntlm != null
-                    ? sendLocallyWithNtlm(method, url, requestHeaders, requestBody, timeoutMs, ntlm)
-                    : sendLocally(method, url, requestHeaders, requestBody, timeoutMs);
+
+            // A comma-separated prefix lists fallbacks: the first that accepts the connection is used.
+            // Only a failed connect moves on, so a request that reached a server is never sent twice.
+            List<String> prefixes = new ArrayList<>();
+            for (String one : nullToEmpty(env.prefixFor(useCase.getUrlPrefixType())).split(","))
+                if (!one.isBlank()) prefixes.add(one.trim());
+            if (prefixes.isEmpty()) prefixes.add("");
+            HttpOutcome outcome = null;
+            if (app.isDatabase()) {
+                if (target == ExecutionTarget.AGENT)
+                    throw new IllegalArgumentException("A database app runs its SQL from this server, not through an agent");
+                url = substitute(nullToEmpty(env.getUrlPrefix()), variables);
+                outcome = new HttpOutcome(200, DbPublishService.runSql(objectMapper, env, url, nullToEmpty(requestBody), timeoutMs),
+                        Map.of(), "LOCAL");
+            }
+            for (int i = 0; outcome == null; i++) {
+                url = substitute(nullToEmpty(localServer.resolve(prefixes.get(i), isMonitoring(useCase),
+                        target == ExecutionTarget.AGENT)) + nullToEmpty(useCase.getUrlSuffix()), variables);
+                try {
+                    outcome = target == ExecutionTarget.AGENT
+                            ? sendViaAgent(method, url, requestHeaders, requestBody, timeoutMs, agentId)
+                            : ntlm != null
+                            ? sendLocallyWithNtlm(method, url, requestHeaders, requestBody, timeoutMs, ntlm)
+                            : sendLocally(method, url, requestHeaders, requestBody, timeoutMs);
+                } catch (Exception e) {
+                    if (i == prefixes.size() - 1 || !isConnectFailure(e)) throw e;
+                }
+            }
             long elapsed = System.currentTimeMillis() - started;
 
             Object transformed = null;
@@ -709,6 +827,15 @@ public class AppExecutionService {
 
     /** What came back from the endpoint, however the call was made. */
     private record HttpOutcome(int statusCode, String body, Map<String, List<String>> headers, String executedVia) {}
+
+    /** The host was never reached — unknown, refused, or silent past the connect timeout. */
+    static boolean isConnectFailure(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause())
+            if (t instanceof java.net.ConnectException || t instanceof java.net.UnknownHostException
+                    || t instanceof java.net.http.HttpConnectTimeoutException || t instanceof java.net.SocketTimeoutException
+                       && "connect timed out".equals(t.getMessage())) return true;
+        return false;
+    }
 
     private HttpOutcome sendLocally(String method, String url, Map<String, String> headers,
                                     String body, int timeoutMs) throws Exception {
@@ -896,6 +1023,19 @@ public class AppExecutionService {
         return resolveVariableValues(merged);
     }
 
+    /** A required input must end up with a value — from its default, the instance or the caller. */
+    static void requireInputs(AppUseCase useCase, Map<String, Object> variables) {
+        List<String> missing = new ArrayList<>();
+        for (AppUseCaseInput input : useCase.getAppUseCaseInputs()) {
+            if (!input.required() || input.name() == null) continue;
+            Object v = variables.get(input.name());
+            if (v == null || (v instanceof String s && s.isBlank())) missing.add(input.name());
+        }
+        if (!missing.isEmpty())
+            throw new IllegalArgumentException("Required input" + (missing.size() > 1 ? "s " : " ") + String.join(", ", missing)
+                    + " not supplied for use case '" + useCase.getUseCaseName() + "'");
+    }
+
     /**
      * The variables every run has without anyone declaring them — the same names and formats a page
      * resolves ({@code AppPageVariable#BUILT_IN}, {@code refreshGlobals} in apppage.js): the machine
@@ -1001,6 +1141,18 @@ public class AppExecutionService {
      * resulting URL or body rather than silently becoming an empty string.
      */
     public String substitute(String template, Map<String, Object> variables) {
+        return substitute(template, variables, false);
+    }
+
+    /**
+     * {@link #substitute} for a request body: string values are JSON-escaped ({@code "} → {@code \"},
+     * {@code \} → {@code \\}, newlines …) so they can sit inside a quoted {@code "${name}"} as written.
+     */
+    String substituteBody(String template, Map<String, Object> variables) {
+        return substitute(template, variables, true);
+    }
+
+    private String substitute(String template, Map<String, Object> variables, boolean jsonEscape) {
         if (template == null || template.isEmpty()) return template;
 
         Matcher matcher = VARIABLE.matcher(template);
@@ -1008,7 +1160,8 @@ public class AppExecutionService {
         while (matcher.find()) {
             String name = matcher.group(1) != null ? matcher.group(1) : matcher.group(2);
             Object value = variables.get(name);
-            String replacement = value == null ? matcher.group() : stringify(value);
+            String replacement = value == null ? matcher.group()
+                    : jsonEscape && value instanceof String s ? jsonEscape(s) : stringify(value);
             matcher.appendReplacement(out, Matcher.quoteReplacement(replacement));
         }
         matcher.appendTail(out);
@@ -1030,6 +1183,16 @@ public class AppExecutionService {
             if (!names.contains(name)) names.add(name);
         }
         return names;
+    }
+
+    /** The inside of a JSON string literal — Jackson's quoting with the outer quotes taken off. */
+    private String jsonEscape(String s) {
+        try {
+            String quoted = objectMapper.writeValueAsString(s);
+            return quoted.substring(1, quoted.length() - 1);
+        } catch (Exception e) {
+            return s;
+        }
     }
 
     private String stringify(Object value) {
@@ -1118,8 +1281,10 @@ public class AppExecutionService {
                 // Reuses the shared provider: username is the principal, password the keytab path,
                 // and the target service principal is derived from the host actually being called —
                 // which, for a monitoring use case, is the monitoring prefix's host, not the app's.
+                // shortcut: a comma-separated prefix takes the first entry's host, which assumes every fallback shares one SPN.
                 String servicePrincipal = "HTTP@" + URI.create(nullToEmpty(localServer.resolve(
-                        env.prefixFor(useCase == null ? null : useCase.getUrlPrefixType()), isMonitoring(useCase), true))).getHost();
+                        nullToEmpty(env.prefixFor(useCase == null ? null : useCase.getUrlPrefixType())).split(",")[0].trim(),
+                        isMonitoring(useCase), true))).getHost();
                 return new KerberosAuthProvider(env.getUsername(), env.getPassword(), servicePrincipal)
                         .getAuthorizationHeader();
             }
@@ -1178,6 +1343,49 @@ public class AppExecutionService {
             result.put("error", rootMessage(e));
             result.put("jwtUrl", env == null ? null : env.getJwtUrl());
             result.put("jwtMethod", env == null ? null : env.getJwtMethod());
+        }
+        result.put("timeTaken", System.currentTimeMillis() - started);
+        return result;
+    }
+
+    /**
+     * Opens a plain TCP socket to each environment's URL-prefix host and port and says whether it
+     * answered — reachability only, no HTTP, so a listening port behind a broken app still reads
+     * as up. Checked in parallel so a dozen dead hosts cost one timeout rather than twelve. Never
+     * throws: an unreachable host is the answer.
+     */
+    public List<Map<String, Object>> checkReachability(List<AppEnvironment> environments) {
+        try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            return environments.stream()
+                    .map(env -> pool.submit(() -> checkReachability(env)))
+                    .toList().stream()
+                    .map(f -> { try { return f.get(); } catch (Exception e) { throw new IllegalStateException(e); } })
+                    .toList();
+        }
+    }
+
+    private Map<String, Object> checkReachability(AppEnvironment env) {
+        long started = System.currentTimeMillis();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("appName", env.getAppName());
+        result.put("environment", env.getEnvironment());
+        try {
+            if (env.getUrlPrefix() == null || env.getUrlPrefix().isBlank())
+                throw new IllegalArgumentException("No URL prefix to check.");
+            String prefix = env.getUrlPrefix().trim();
+            URI uri = URI.create(LocalServerAddress.isRelative(prefix) ? localServer.resolve(prefix, false, false) : prefix);
+            if (uri.getHost() == null)
+                throw new IllegalArgumentException("No host in URL prefix '" + env.getUrlPrefix() + "'.");
+            int port = uri.getPort() != -1 ? uri.getPort() : "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
+            result.put("host", uri.getHost());
+            result.put("port", port);
+            try (Socket socket = new Socket()) {
+                socket.connect(new InetSocketAddress(uri.getHost(), port), 3000);
+            }
+            result.put("ok", true);
+        } catch (Exception e) {
+            result.put("ok", false);
+            result.put("error", rootMessage(e));
         }
         result.put("timeTaken", System.currentTimeMillis() - started);
         return result;

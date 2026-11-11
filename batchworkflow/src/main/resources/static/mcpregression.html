@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCP Tools Regression</title>
+    <link rel="stylesheet" href="appcatalog.css">
+    <style>
+        .mono, pre, textarea.args {
+            font-family: "Cascadia Code", "Fira Code", Consolas, monospace; font-size: 12px;
+        }
+        pre {
+            background: #f4f5f7; border: 1px solid #dfe1e6; border-radius: 4px; padding: 8px 10px;
+            white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow: auto; margin: 4px 0 0;
+        }
+        textarea.args { min-height: 54px; width: 100%; min-width: 220px; }
+        .row-inline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+        .row-inline input, .row-inline select { width: auto; }
+        #connectUrl { flex: 1; min-width: 260px; }
+        input[type=checkbox] { width: auto; }
+        .summary { display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; margin-top: 10px; }
+        .summary b { font-size: 16px; display: block; }
+        td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+        .slower { color: #de350b; }
+        .faster { color: #006644; }
+        .tool-desc { font-size: 12px; color: #5e6c84; max-width: 320px; }
+        details summary { cursor: pointer; font-size: 12px; color: #0052cc; }
+        .table-wrap { overflow-x: auto; }
+    </style>
+</head>
+<body>
+
+<div class="page-nav"><a href="index.html" target="_top">&larr; Home</a> · <a href="mcpclient.html">MCP Client</a></div>
+<h1>MCP Tools Regression</h1>
+<div class="subtitle">Calls every tool on an MCP server and records the time taken, the request parameters and the result.
+    Arguments are prefilled from each tool's input schema (default, example, first enum value) and can be edited; edits and
+    the last run are kept in this browser so the next run compares against it. Tools run for real: "Read-only only" keeps to tools
+    annotated <code>readOnlyHint</code> (tag them on the MCP Tools page); untick it to run read / write tools too.</div>
+
+<div class="panel">
+    <div class="panel-title"><span>Connection</span><span id="connBadge" class="badge inactive">Disconnected</span></div>
+    <div class="row-inline" style="margin-bottom:10px">
+        <input id="connectUrl" type="text" placeholder="http://host:port/mcp">
+        <select id="transport">
+            <option value="streamable">Streamable HTTP</option>
+            <option value="sse">HTTP + SSE (legacy)</option>
+        </select>
+        <label class="hint">Timeout (s) <input id="timeout" type="number" value="120" min="1" style="width:70px"></label>
+        <button class="primary" id="connectBtn" onclick="connect()">Connect &amp; list tools</button>
+    </div>
+    <div class="form-group">
+        <label>Headers (one <code>Name: value</code> per line)</label>
+        <textarea id="headers" placeholder="Authorization: Bearer …"></textarea>
+    </div>
+    <div class="row-inline hint">
+        Presets:
+        <button class="tool-btn" onclick="preset('/mcp','streamable')">This app (streamable /mcp)</button>
+        <button class="tool-btn" onclick="preset('/sse','sse')">This app (SSE /sse)</button>
+    </div>
+    <div class="status-bar" id="status"></div>
+</div>
+
+<div class="panel" id="runPanel" style="display:none">
+    <div class="panel-title"><span>Tools <span id="toolCount"></span></span>
+        <span class="row-inline">
+            <input class="list-search" id="filter" placeholder="Filter…" oninput="render()" style="margin:0;width:180px">
+            <label class="hint" title="Only tools whose readOnlyHint annotation is true are listed and run"><input type="checkbox" id="readOnlyOnly" checked onchange="render()"> Read-only only</label>
+            <label class="hint"><input type="checkbox" id="checkAll" checked onchange="checkAll(this.checked)"> All</label>
+            <button class="primary" id="runBtn" onclick="runAll()">Run selected</button>
+            <button class="danger" id="stopBtn" onclick="stop = true" disabled>Stop</button>
+            <button class="tool-btn" onclick="exportJson()">Export JSON</button>
+            <button class="tool-btn" onclick="resetArgs()">Reset arguments</button>
+        </span>
+    </div>
+    <div class="summary" id="summary"></div>
+    <div class="table-wrap">
+        <table>
+            <thead><tr>
+                <th></th><th>#</th><th>Tool</th><th>Request parameters</th><th>Status</th>
+                <th class="num">Server ms</th><th class="num">Round trip ms</th><th class="num">Previous ms</th>
+                <th class="num">Size</th><th>Started</th><th>Result</th><th></th>
+            </tr></thead>
+            <tbody id="rows"></tbody>
+        </table>
+    </div>
+</div>
+
+<script src="appcatalog.js"></script>
+<script>
+    const $ = id => document.getElementById(id);
+    const esc = AC.esc;
+    const pretty = v => JSON.stringify(v, null, 2);
+    const store = {
+        get(k) { try { return JSON.parse(localStorage.getItem('mcpregression.' + k)); } catch { return null; } },
+        set(k, v) { try { localStorage.setItem('mcpregression.' + k, JSON.stringify(v)); } catch {} }
+    };
+
+    let sessionId = null, server = null, tools = [], results = {}, stop = false;
+    let args = {}, baseline = {}; // keyed by server URL then tool name
+
+    function setStatus(msg, cls) {
+        $('status').textContent = msg;
+        $('status').className = 'status-bar' + (cls ? ' ' + cls : '');
+    }
+
+    async function api(method, url, body) {
+        const r = await fetch(url, {
+            method, headers: body ? { 'Content-Type': 'application/json' } : {},
+            body: body ? JSON.stringify(body) : undefined
+        });
+        const text = await r.text();
+        let data; try { data = text ? JSON.parse(text) : {}; } catch { data = { error: text }; }
+        if (!r.ok) { const e = new Error(data.error || ('HTTP ' + r.status)); e.data = data; throw e; }
+        return data;
+    }
+
+    function preset(path, transport) {
+        $('connectUrl').value = location.origin + path;
+        $('transport').value = transport;
+    }
+
+    function parseHeaders() {
+        const h = {};
+        $('headers').value.split('\n').forEach(line => {
+            const i = line.indexOf(':');
+            if (i > 0) h[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+        });
+        return h;
+    }
+
+    async function connect() {
+        const url = $('connectUrl').value.trim();
+        if (!url) return setStatus('Enter a server URL.', 'error');
+        store.set('last', { url, transport: $('transport').value, headers: $('headers').value });
+        if (sessionId) { api('DELETE', `/mcpclient/sessions/${sessionId}`).catch(() => {}); sessionId = null; }
+        setStatus('Connecting…');
+        $('connectBtn').disabled = true;
+        try {
+            server = await api('POST', '/mcpclient/connect', {
+                url, transport: $('transport').value, headers: parseHeaders(), timeoutSeconds: +$('timeout').value || 120
+            });
+            sessionId = server.id;
+            const list = await api('POST', `/mcpclient/sessions/${sessionId}/call`, { method: 'tools/list', params: {} });
+            tools = (list.result.tools || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+            args = store.get('args:' + url) || {};
+            baseline = store.get('baseline:' + url) || {};
+            results = {};
+            tools.forEach(t => { t.checked = true; if (!(t.name in args)) args[t.name] = pretty(sampleArgs(t.inputSchema)); });
+            $('connBadge').className = 'badge ok';
+            $('connBadge').textContent = 'Connected';
+            $('runPanel').style.display = '';
+            setStatus(`Connected to ${server.serverInfo?.name || url} — ${tools.length} tools listed in ${list.elapsedMs} ms`, 'ok');
+            render();
+        } catch (e) {
+            $('connBadge').className = 'badge inactive';
+            $('connBadge').textContent = 'Disconnected';
+            setStatus('Connect failed: ' + e.message, 'error');
+        } finally {
+            $('connectBtn').disabled = false;
+        }
+    }
+
+    /** Arguments a schema accepts: required properties and any with a default/example; empty ones get a typed blank. */
+    function sampleArgs(schema) {
+        const out = {}, props = schema?.properties || {}, req = new Set(schema?.required || []);
+        Object.entries(props).forEach(([k, p]) => {
+            const v = sampleValue(p);
+            if (req.has(k) || v.known) out[k] = v.value;
+        });
+        return out;
+    }
+
+    function sampleValue(p = {}) {
+        if (p.default !== undefined) return { known: true, value: p.default };
+        if (Array.isArray(p.examples) && p.examples.length) return { known: true, value: p.examples[0] };
+        if (p.example !== undefined) return { known: true, value: p.example };
+        if (Array.isArray(p.enum) && p.enum.length) return { known: true, value: p.enum[0] };
+        const type = Array.isArray(p.type) ? p.type.find(x => x !== 'null') : p.type;
+        if (type === 'object') return { known: false, value: sampleArgs(p) };
+        const blank = { number: 0, integer: 0, boolean: false, array: [] }[type];
+        return { known: false, value: blank !== undefined ? blank : '' };
+    }
+
+    const isReadOnly = t => t.annotations?.readOnlyHint === true;
+    const runnable = t => !$('readOnlyOnly').checked || isReadOnly(t);
+
+    function visibleTools() {
+        const q = $('filter').value.trim().toLowerCase();
+        return tools.filter(t => runnable(t) && (!q || (t.name + ' ' + (t.description || '')).toLowerCase().includes(q)));
+    }
+
+    function checkAll(on) { visibleTools().forEach(t => t.checked = on); render(); }
+
+    function resetArgs() {
+        if (!confirm('Replace every tool\'s arguments with ones generated from its schema?')) return;
+        tools.forEach(t => args[t.name] = pretty(sampleArgs(t.inputSchema)));
+        store.set('args:' + server.url, args);
+        render();
+    }
+
+    function setArgs(name, value) {
+        args[name] = value;
+        store.set('args:' + server.url, args);
+    }
+
+    function statusBadge(r) {
+        if (!r) return '<span class="badge inactive">Not run</span>';
+        if (r.running) return '<span class="badge warn">Running…</span>';
+        if (r.error) return '<span class="badge err">Failed</span>';
+        if (r.isError) return '<span class="badge err">Tool error</span>';
+        return '<span class="badge ok">OK</span>';
+    }
+
+    function render() {
+        const list = visibleTools();
+        $('toolCount').textContent = `(${list.length}${list.length !== tools.length ? ' of ' + tools.length : ''})`;
+        $('rows').innerHTML = list.map(t => {
+            const i = tools.indexOf(t), r = results[t.name], b = baseline[t.name];
+            const prev = b ? `${b.serverMs ?? '—'}${b.ok ? '' : ' ✗'}` : '—';
+            let delta = '';
+            if (r && r.serverMs != null && b && b.serverMs) {
+                const pct = Math.round((r.serverMs - b.serverMs) / b.serverMs * 100);
+                if (Math.abs(pct) >= 20) delta = ` <span class="${pct > 0 ? 'slower' : 'faster'}">${pct > 0 ? '+' : ''}${pct}%</span>`;
+            }
+            return `<tr>
+                <td><input type="checkbox" ${t.checked ? 'checked' : ''} onchange="tools[${i}].checked=this.checked"></td>
+                <td class="num">${i + 1}</td>
+                <td><div class="mono"><b>${esc(t.name)}</b> <span class="badge ${isReadOnly(t) ? 'ok' : 'warn'}">${isReadOnly(t) ? 'RO' : 'RW'}</span></div><div class="tool-desc">${esc((t.description || '').slice(0, 160))}</div>
+                    <details><summary>Schema</summary><pre>${esc(pretty(t.inputSchema || {}))}</pre></details></td>
+                <td><textarea class="args" onchange="setArgs(${esc(JSON.stringify(t.name))}, this.value)">${esc(args[t.name] || '{}')}</textarea></td>
+                <td>${statusBadge(r)}</td>
+                <td class="num">${r?.serverMs ?? '—'}${delta}</td>
+                <td class="num">${r?.roundTripMs ?? '—'}</td>
+                <td class="num">${esc(prev)}</td>
+                <td class="num">${r?.bytes != null ? fmtBytes(r.bytes) : '—'}</td>
+                <td class="mono">${esc(r?.startedAt ? new Date(r.startedAt).toLocaleTimeString() : '—')}</td>
+                <td>${r && !r.running ? resultHtml(r) : ''}</td>
+                <td><button class="tool-btn" onclick="runOne(tools[${i}]).then(finishRun)">Run</button></td>
+            </tr>`;
+        }).join('') || '<tr><td colspan="12" class="empty-note">No tools.</td></tr>';
+        renderSummary();
+    }
+
+    function resultHtml(r) {
+        const text = r.error || (r.result?.content || []).map(c => c.type === 'text' ? c.text : `[${c.type}]`).join('\n');
+        return `<div class="mono ${r.error || r.isError ? 'slower' : ''}">${esc(text.slice(0, 120))}${text.length > 120 ? '…' : ''}</div>
+            <details><summary>Full response</summary><pre>${esc(pretty(r.result ?? { error: r.error }))}</pre></details>`;
+    }
+
+    function fmtBytes(n) { return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(1) + ' MB'; }
+
+    function renderSummary() {
+        const done = Object.values(results).filter(r => !r.running);
+        if (!done.length) { $('summary').innerHTML = ''; return; }
+        const ms = done.map(r => r.serverMs).filter(v => v != null).sort((a, b) => a - b);
+        const pct = p => ms.length ? ms[Math.min(ms.length - 1, Math.floor(p * ms.length))] : '—';
+        const passed = done.filter(r => !r.error && !r.isError).length;
+        const regressions = done.filter(r => baseline[r.name]?.ok && (r.error || r.isError)).length;
+        const items = [
+            ['Run', done.length], ['Passed', passed], ['Failed', done.length - passed], ['Newly failing', regressions],
+            ['Total server ms', ms.reduce((a, b) => a + b, 0)], ['Avg ms', ms.length ? Math.round(ms.reduce((a, b) => a + b, 0) / ms.length) : '—'],
+            ['p50 ms', pct(0.5)], ['p95 ms', pct(0.95)], ['Max ms', ms.length ? ms[ms.length - 1] : '—']
+        ];
+        $('summary').innerHTML = items.map(([k, v]) => `<div><b class="${(k === 'Failed' || k === 'Newly failing') && v ? 'slower' : ''}">${v}</b>${k}</div>`).join('');
+    }
+
+    async function runOne(t) {
+        let params;
+        try { params = JSON.parse(args[t.name] || '{}'); }
+        catch (e) { results[t.name] = { name: t.name, error: 'Invalid JSON arguments: ' + e.message, startedAt: Date.now() }; render(); return; }
+        results[t.name] = { name: t.name, running: true };
+        render();
+        const startedAt = Date.now(), t0 = performance.now();
+        const r = { name: t.name, arguments: params, startedAt };
+        try {
+            const data = await api('POST', `/mcpclient/sessions/${sessionId}/call`, { method: 'tools/call', params: { name: t.name, arguments: params } });
+            r.serverMs = data.elapsedMs;
+            r.result = data.result;
+            r.isError = !!data.result?.isError;
+            r.bytes = new Blob([JSON.stringify(data.result)]).size;
+        } catch (e) {
+            r.serverMs = e.data?.elapsedMs;
+            r.error = e.message;
+        }
+        r.roundTripMs = Math.round(performance.now() - t0);
+        results[t.name] = r;
+        render();
+    }
+
+    /** Saves the finished results as the baseline for the next run; the on-screen one stays the previous run's. */
+    function finishRun() {
+        const next = store.get('baseline:' + server.url) || {};
+        Object.values(results).forEach(r => {
+            if (!r.running) next[r.name] = { serverMs: r.serverMs, ok: !r.error && !r.isError, at: r.startedAt };
+        });
+        store.set('baseline:' + server.url, next);
+    }
+
+    async function runAll() {
+        const selected = tools.filter(t => t.checked && runnable(t));
+        if (!selected.length) return setStatus('No tools selected.', 'error');
+        stop = false;
+        $('runBtn').disabled = true; $('stopBtn').disabled = false;
+        results = {};
+        baseline = store.get('baseline:' + server.url) || {};
+        const t0 = performance.now();
+        for (let i = 0; i < selected.length && !stop; i++) {
+            setStatus(`Running ${i + 1} / ${selected.length}: ${selected[i].name}`);
+            await runOne(selected[i]);
+        }
+        const n = Object.keys(results).length;
+        setStatus(`${stop ? 'Stopped after' : 'Finished'} ${n} tool${n === 1 ? '' : 's'} in ${Math.round(performance.now() - t0)} ms`, stop ? 'error' : 'ok');
+        finishRun();
+        $('runBtn').disabled = false; $('stopBtn').disabled = true;
+    }
+
+    function exportJson() {
+        const report = {
+            server: { url: server.url, transport: server.transport, serverInfo: server.serverInfo },
+            exportedAt: new Date().toISOString(),
+            results: tools.filter(t => results[t.name]).map(t => {
+                const r = results[t.name];
+                return {
+                    tool: t.name, arguments: r.arguments, status: r.error ? 'failed' : r.isError ? 'tool-error' : 'ok',
+                    serverMs: r.serverMs, roundTripMs: r.roundTripMs, previousMs: baseline[t.name]?.serverMs,
+                    bytes: r.bytes, startedAt: new Date(r.startedAt).toISOString(), error: r.error, result: r.result
+                };
+            })
+        };
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([pretty(report)], { type: 'application/json' }));
+        a.download = `mcp-regression-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+    }
+
+    (function init() {
+        const last = store.get('last');
+        if (last) {
+            $('connectUrl').value = last.url || '';
+            $('transport').value = last.transport || 'streamable';
+            $('headers').value = last.headers || '';
+        } else {
+            preset('/mcp', 'streamable');
+        }
+    })();
+</script>
+</body>
+</html>

@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCP Tools</title>
+    <link rel="stylesheet" href="appcatalog.css">
+    <style>
+        .list-search { margin-bottom: 8px; }
+        .list-filters { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; font-size: 12px; color: #5e6c84; flex-wrap: wrap; }
+        .list-filters select { width: auto; flex: 1; min-width: 120px; padding: 4px 8px; font-size: 12px; }
+
+        /* One thin line per tool, the same shape as the Environments list: page, then action. */
+        #toolList { gap: 2px; max-height: 70vh; }
+        #toolList .record {
+            flex-direction: row; align-items: center; gap: 6px;
+            padding: 2px 6px; min-height: 24px; border-color: #ebecf0; border-radius: 3px; font-size: 12px;
+        }
+        #toolList .record .record-name {
+            font-size: 12px; flex: none; max-width: 50%;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; word-break: normal;
+        }
+        #toolList .record .action {
+            flex: 1; min-width: 0; color: #5e6c84;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        #toolList .record.disabled .record-name, #toolList .record.disabled .action { color: #97a0af; }
+        #toolList .record .problem { flex: none; }
+        /* appcatalog.css gives every input width:100%, which would push the names off the line. */
+        .switch { width: auto; padding: 0; margin: 0; cursor: pointer; flex: none; }
+        .list-filters input[type=checkbox] { width: auto; padding: 0; }
+        .arg-row { display: flex; gap: 8px; align-items: center; width: 100%; }
+        .arg-row .badge { flex: none; min-width: 110px; }
+        .arg-row input { flex: 1; }
+        .mono {
+            font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+            font-size: 12px; background: #f4f5f7; border: 1px solid #dfe1e6; border-radius: 4px;
+            padding: 6px 9px; word-break: break-all; user-select: all;
+        }
+        textarea.desc { min-height: 120px; }
+        .arg-list { display: flex; flex-wrap: wrap; gap: 6px; }
+        .endpoints { display: grid; grid-template-columns: max-content 1fr; gap: 6px 10px; align-items: center; font-size: 12px; }
+        .problem { color: #bf2600; font-size: 12px; }
+    </style>
+</head>
+<body>
+
+<div class="page-nav"><a href="app.html">&larr; App Catalog</a></div>
+<h1>MCP Tools</h1>
+<div class="subtitle">Every use-case action on every page, published as a tool Claude can call over MCP. Switch a tool off,
+    say in your own words what it does, and for an action that fills several controls pick which output it returns.
+    <a href="appmcphelp.html">How to connect Claude Code &rarr;</a></div>
+
+<div class="split">
+
+    <div class="panel">
+        <div class="panel-title">
+            <span>Tools</span>
+            <button class="tool-btn" onclick="loadTools()">Refresh</button>
+        </div>
+        <input class="list-search" id="listSearch" type="text" placeholder="Search by tool, page, use case or description…"
+               oninput="renderList()" autocomplete="off">
+        <div class="list-filters">
+            <select id="pageFilter" onchange="renderList()"></select>
+            <label><input type="checkbox" id="onlyEnabled" onchange="renderList()"> Enabled only</label>
+            <select id="rwFilter" onchange="renderList()" style="flex:none;min-width:0">
+                <option value="">RO + RW</option><option value="ro">Read only</option><option value="rw">Read / write</option>
+            </select>
+            <span id="counts"></span>
+        </div>
+        <div class="list-filters" id="pageBulk" style="display:none">
+            <button class="tool-btn" onclick="setPageEnabled(true)">Enable all on page</button>
+            <button class="tool-btn" onclick="setPageEnabled(false)">Disable all on page</button>
+            <button class="tool-btn" onclick="setPageReadOnly(true)">All read only</button>
+            <button class="tool-btn" onclick="setPageReadOnly(false)">All read / write</button>
+        </div>
+        <div class="record-list" id="toolList"></div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-title"><span id="editorTitle">Select a tool</span></div>
+        <div id="editor" style="display:none">
+            <div class="form-row">
+                <div class="form-group wide">
+                    <label>Tool name</label>
+                    <div class="mono" id="toolName"></div>
+                    <span class="hint">Follows the action's label. Claude Code shows it as <code>mcp__&lt;server&gt;__<span id="toolNameHint"></span></code>.</span>
+                </div>
+                <div class="form-group wide">
+                    <label>Calls</label>
+                    <div id="toolCalls"></div>
+                    <div class="problem" id="toolProblem"></div>
+                    <span class="hint"><a id="openPage" target="_blank">Open page &#8599;</a> · <a id="openAction" target="_blank">Open action &#8599;</a></span>
+                </div>
+                <div class="form-group wide">
+                    <label>Arguments</label>
+                    <div class="arg-list" id="toolArgs"></div>
+                    <span class="hint">The page fields the action's inputs read. All optional: one Claude leaves out keeps the instance's saved value.
+                        Type alternate names, comma separated (e.g. <code>ddlevel</code> for <code>drilldownlevel</code>), to accept those too.</span>
+                </div>
+                <div class="form-group wide">
+                    <label><input type="checkbox" id="toolEnabled"> Enabled — published to Claude</label>
+                    <label><input type="checkbox" id="toolReadOnly"> Read only — changes no data, so Tools Regression may run it</label>
+                    <span class="hint">Published as the tool's <code>readOnlyHint</code>. Untouched tools are read only when the use case is a GET.</span>
+                </div>
+                <div class="form-group wide">
+                    <label for="toolDescription">Description</label>
+                    <textarea id="toolDescription" class="desc" placeholder=""></textarea>
+                    <span class="hint">What Claude reads to decide when to use the tool. Leave blank to use the generated one shown
+                        greyed out; say when to use it and what the arguments mean.</span>
+                </div>
+                <div class="form-group wide" id="outputGroup">
+                    <label for="toolOutput">Output</label>
+                    <select id="toolOutput"></select>
+                    <span class="hint">This action fills several controls from one call. "All" returns what each would show (transforms, enriched columns and
+                        filters applied), keyed by target, and lets Claude pass "target" to ask for one; picking one here always returns only that one.</span>
+                </div>
+            </div>
+            <div class="toolbar">
+                <button class="primary" onclick="saveTool()">Save</button>
+                <button class="secondary" onclick="resetDescription()">Use generated description</button>
+            </div>
+            <div id="statusBar" class="status-bar"></div>
+        </div>
+
+        <div style="margin-top:18px">
+            <div class="panel-title"><span>Endpoints</span></div>
+            <div class="endpoints">
+                <span>Streamable HTTP</span><div class="mono" id="epHttp"></div>
+                <span>HTTP + SSE</span><div class="mono" id="epSse"></div>
+                <span>Registry search</span><div class="mono" id="epSearch"></div>
+            </div>
+            <span class="hint">Both MCP endpoints serve the same tools, plus <code>search_tools</code> for finding one by keyword.</span>
+        </div>
+    </div>
+
+</div>
+
+<script src="appcatalog.js"></script>
+<script>
+    // The registry is the server's (GET /appcatalog/mcp/tools): every page action it would publish, with what
+    // the operator has said about each. Saving one republishes it straight away.
+
+    let tools = [];
+    /** pageName + '::' + actionKey of the tool being edited. */
+    let editingKey = null;
+
+    // Not '\u0000': the key goes into an onclick attribute and the HTML parser turns NUL into U+FFFD.
+    const keyOf = t => t.pageName + '::' + t.actionKey;
+
+    async function loadTools() {
+        try {
+            tools = await AC.api('GET', '/appcatalog/mcp/tools');
+            renderPageFilter();
+            renderList();
+            if (editingKey) editTool(editingKey);
+        } catch (e) {
+            AC.setStatus('statusBar', 'Failed to load tools: ' + e.message, 'error');
+        }
+    }
+
+    function matches(t, query) {
+        const hay = [t.name, t.pageName, t.label, t.useCase, t.description, t.urlSuffix].join(' ').toLowerCase();
+        return query.toLowerCase().split(/\s+/).filter(Boolean).every(w => hay.includes(w));
+    }
+
+    function renderPageFilter() {
+        const sel = document.getElementById('pageFilter');
+        const current = sel.value;
+        const pages = [...new Set(tools.map(t => t.pageName))].sort((a, b) => a.localeCompare(b));
+        sel.innerHTML = '<option value="">All pages</option>'
+            + pages.map(p => '<option value="' + AC.esc(p) + '">' + AC.esc(p) + '</option>').join('');
+        sel.value = pages.includes(current) ? current : '';
+    }
+
+    function renderList() {
+        const query = document.getElementById('listSearch').value || '';
+        const onlyEnabled = document.getElementById('onlyEnabled').checked;
+        const page = document.getElementById('pageFilter').value;
+        const inScope = tools.filter(t => !page || t.pageName === page);
+        const rw = document.getElementById('rwFilter').value;
+        const shown = inScope.filter(t => matches(t, query) && (!onlyEnabled || t.enabled)
+            && (!rw || t.readOnly === (rw === 'ro')));
+        document.getElementById('pageBulk').style.display = page ? '' : 'none';
+        document.getElementById('counts').textContent =
+            inScope.filter(t => t.enabled).length + ' of ' + inScope.length + ' enabled';
+        const list = document.getElementById('toolList');
+        if (!shown.length) {
+            list.innerHTML = '<div class="empty-note">'
+                + (tools.length ? 'Nothing matches that.' : 'No page has a use-case action yet.') + '</div>';
+            return;
+        }
+        list.innerHTML = shown.map(t => {
+            const key = AC.attr(keyOf(t));
+            // The hover carries what the line has no room for.
+            const tip = [t.name, t.problem || t.description].filter(Boolean).join('\n');
+            return '<div class="record' + (keyOf(t) === editingKey ? ' selected' : '') + (t.enabled ? '' : ' disabled') + '"'
+                + ' title="' + AC.esc(tip) + '" onclick="editTool(\'' + key + '\')">'
+                + '<input type="checkbox" class="switch" title="Enabled"' + (t.enabled ? ' checked' : '')
+                + (t.problem ? ' disabled' : '')
+                + ' onclick="event.stopPropagation(); toggleTool(\'' + key + '\', this.checked)">'
+                + '<span class="record-name">' + AC.esc(t.pageName) + '</span>'
+                + '<span class="action">' + AC.esc(t.label) + '</span>'
+                + '<span class="badge ' + (t.readOnly ? 'ok' : 'warn') + '" style="flex:none">' + (t.readOnly ? 'RO' : 'RW') + '</span>'
+                + (t.problem ? '<span class="problem">&#9888;</span>' : '')
+                + '</div>';
+        }).join('');
+    }
+
+    function editTool(key) {
+        const t = tools.find(x => keyOf(x) === key);
+        if (!t) return;
+        editingKey = key;
+        document.getElementById('editor').style.display = '';
+        document.getElementById('editorTitle').textContent = t.pageName + ' · ' + t.label;
+        document.getElementById('toolName').textContent = t.name;
+        document.getElementById('toolNameHint').textContent = t.name;
+        document.getElementById('toolCalls').innerHTML = t.httpMethod
+            ? '<span class="badge ' + AC.methodClass(t.httpMethod) + '">' + AC.esc(t.httpMethod) + '</span> '
+                + AC.esc(t.urlSuffix || '') + ' <span class="hint">(' + AC.esc(t.appName) + ' / ' + AC.esc(t.useCase) + ')</span>'
+            : '';
+        document.getElementById('toolProblem').textContent = t.problem || '';
+        const pageUrl = 'apppage.html?page=' + encodeURIComponent(t.pageName);
+        document.getElementById('openPage').href = pageUrl;
+        document.getElementById('openAction').href = pageUrl + '&action=' + encodeURIComponent(t.actionKey);
+        const aliases = t.aliases || {};
+        document.getElementById('toolArgs').innerHTML = t.arguments
+            .map(a => '<div class="arg-row"><span class="badge auth">' + AC.esc(a) + '</span>'
+                + '<input type="text" data-arg="' + AC.esc(a) + '" placeholder="alternate names"'
+                + ' value="' + AC.esc((aliases[a] || []).join(', ')) + '" autocomplete="off"></div>')
+            .concat(t.environments && t.environments.length ? ['<span class="badge auth">environment</span>'] : [])
+            .join('')
+            || '<span class="empty-note">None</span>';
+        document.getElementById('toolEnabled').checked = t.enabled;
+        document.getElementById('toolEnabled').disabled = !!t.problem;
+        document.getElementById('toolReadOnly').checked = t.readOnly;
+        const desc = document.getElementById('toolDescription');
+        desc.placeholder = t.generatedDescription || '';
+        desc.value = t.description && t.description !== t.generatedDescription ? t.description : '';
+
+        const outputs = t.outputs || [];
+        document.getElementById('outputGroup').style.display = outputs.length > 1 ? '' : 'none';
+        document.getElementById('toolOutput').innerHTML =
+            '<option value="ALL">All targets</option>'
+            + outputs.map(o => '<option value="' + AC.esc(o.id) + '">' + AC.esc(o.label)
+                + (o.path ? ' — ' + AC.esc(o.path) : '') + (o.source === 'METADATA' ? ' (call metadata)' : '')
+                + '</option>').join('');
+        document.getElementById('toolOutput').value = t.output || 'ALL';
+        AC.setStatus('statusBar', '');
+        renderList();
+    }
+
+    async function save(t, enabled, description, output, aliases, readOnly) {
+        return AC.api('PUT', '/appcatalog/mcp/tools',
+            { pageName: t.pageName, actionKey: t.actionKey, enabled, description, output, aliases, readOnly });
+    }
+
+    /** The alias boxes as { argument: [names] }, empty ones left out. */
+    function readAliases() {
+        const out = {};
+        document.querySelectorAll('#toolArgs input[data-arg]').forEach(i => {
+            const names = i.value.split(',').map(s => s.trim()).filter(Boolean);
+            if (names.length) out[i.dataset.arg] = names;
+        });
+        return out;
+    }
+
+    async function setPageEnabled(enabled) {
+        const page = document.getElementById('pageFilter').value;
+        if (!page) return;
+        try {
+            const r = await AC.api('PUT', '/appcatalog/mcp/tools/enabled?pageName=' + encodeURIComponent(page)
+                + '&enabled=' + enabled);
+            await loadTools();
+            AC.setStatus('statusBar', (enabled ? 'Enabled ' : 'Disabled ') + r.count + ' tool(s) on ' + page + '.', 'ok');
+        } catch (e) {
+            AC.setStatus('statusBar', 'Could not ' + (enabled ? 'enable' : 'disable') + ' page: ' + e.message, 'error');
+        }
+    }
+
+    async function setPageReadOnly(readOnly) {
+        const page = document.getElementById('pageFilter').value;
+        if (!page) return;
+        try {
+            const r = await AC.api('PUT', '/appcatalog/mcp/tools/readonly?pageName=' + encodeURIComponent(page)
+                + '&readOnly=' + readOnly);
+            await loadTools();
+            AC.setStatus('statusBar', 'Tagged ' + r.count + ' tool(s) on ' + page + (readOnly ? ' read only.' : ' read / write.'), 'ok');
+        } catch (e) {
+            AC.setStatus('statusBar', 'Could not tag page: ' + e.message, 'error');
+        }
+    }
+
+    async function saveTool() {
+        const t = tools.find(x => keyOf(x) === editingKey);
+        if (!t) return;
+        try {
+            await save(t, document.getElementById('toolEnabled').checked,
+                document.getElementById('toolDescription').value.trim(),
+                document.getElementById('toolOutput').value, readAliases(),
+                document.getElementById('toolReadOnly').checked);
+            await loadTools();
+            AC.setStatus('statusBar', 'Saved and republished.', 'ok');
+        } catch (e) {
+            AC.setStatus('statusBar', 'Save failed: ' + e.message, 'error');
+        }
+    }
+
+    /** The list's switch: flips enabled and keeps whatever description and output were saved. */
+    async function toggleTool(key, enabled) {
+        const t = tools.find(x => keyOf(x) === key);
+        if (!t) return;
+        try {
+            const custom = t.description !== t.generatedDescription ? t.description : '';
+            await save(t, enabled, custom, t.output, t.aliases, t.readOnly);
+            await loadTools();
+        } catch (e) {
+            AC.setStatus('statusBar', 'Could not ' + (enabled ? 'enable' : 'disable') + ': ' + e.message, 'error');
+            renderList();
+        }
+    }
+
+    function resetDescription() {
+        document.getElementById('toolDescription').value = '';
+    }
+
+    const origin = location.origin;
+    document.getElementById('epHttp').textContent = origin + '/mcp';
+    document.getElementById('epSse').textContent = origin + '/sse';
+    document.getElementById('epSearch').textContent = origin + '/appcatalog/mcp/tools?q=order';
+    loadTools();
+</script>
+</body>
+</html>

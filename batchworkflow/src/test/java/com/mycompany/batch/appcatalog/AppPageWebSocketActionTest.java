@@ -25,7 +25,7 @@ class AppPageWebSocketActionTest {
 
     private static AppPage page() {
         AppPage page = new AppPage();
-        page.setControls(List.of(control("g", "grid"), control("pick", "select")));
+        page.setControls(List.of(control("g", "grid"), control("g2", "grid"), control("pick", "select")));
         return page;
     }
 
@@ -97,10 +97,28 @@ class AppPageWebSocketActionTest {
 
     @Test
     void theOtherOperations_bindNothing() {
-        for (String op : List.of("SEND", "PAUSE", "RESUME", "STOP", "RESTART")) {
+        for (String op : List.of("SEND", "PAUSE", "RESUME", "UNLISTEN", "STOP", "RESTART")) {
             assertThatCode(() -> validate(wsAction(op, null), "WS")).doesNotThrowAnyException();
             assertThatThrownBy(() -> validate(wsAction(op, "g"), "WS")).hasMessageContaining("binds nothing");
         }
+    }
+
+    @Test
+    void connectOnly_mayNameNoGrid_butAGridItNamesMustBeOne() {
+        assertThatCode(() -> validate(wsAction("open", ""), "WS")).doesNotThrowAnyException();
+        assertThatCode(() -> validate(wsAction("OPEN", "g"), "WS")).doesNotThrowAnyException();
+        assertThatThrownBy(() -> validate(wsAction("OPEN", "pick"), "WS")).hasMessageContaining("must target a grid");
+        assertThatThrownBy(() -> validate(wsAction("OPEN", AppPageAction.NEW_GRID), "WS")).hasMessageContaining("no grid to stream into");
+    }
+
+    @Test
+    void info_needsAGrid_butNoKeyOrDataset() {
+        assertThatCode(() -> validate(wsAction("info", "g"), "WS")).doesNotThrowAnyException();
+        assertThatThrownBy(() -> validate(wsAction("INFO", ""), "WS")).hasMessageContaining("no grid to stream into");
+        assertThatThrownBy(() -> validate(wsAction("INFO", "pick"), "WS")).hasMessageContaining("must target a grid");
+        AppPageAction info = wsAction("INFO", "g");
+        info.setWsUniqueKey("symbol");
+        assertThatThrownBy(() -> validate(info, "WS")).hasMessageContaining("belong on the Connect action");
     }
 
     @Test
@@ -118,9 +136,40 @@ class AppPageWebSocketActionTest {
     }
 
     @Test
-    void readingOneResponse_isRefused() {
+    void transforms_belongOnConnectAlone() {
+        AppPageAction connect = wsAction("CONNECT", "g");
+        connect.setTransformNames(List.of("flatten"));
+        assertThatCode(() -> validate(connect, "WS")).doesNotThrowAnyException();
+
+        AppPageAction send = wsAction("SEND", null);
+        send.setTransformNames(List.of("flatten"));
+        assertThatThrownBy(() -> validate(send, "WS")).hasMessageContaining("only Connect receives any");
+    }
+
+    private static AppPageBinding grid(String id) {
+        AppPageBinding binding = new AppPageBinding();
+        binding.setTargetControlId(id);
+        binding.setTransformNames(List.of("flatten"));
+        binding.setAppendRows(true);
+        return binding;
+    }
+
+    @Test
+    void connect_mayStreamIntoFurtherGrids() {
         AppPageAction action = wsAction("CONNECT", "g");
-        action.setTransformNames(List.of("flatten"));
-        assertThatThrownBy(() -> validate(action, "WS")).hasMessageContaining("take off its transforms");
+        action.setExtraBindings(List.of(grid("g2")));
+        assertThatCode(() -> validate(action, "WS")).doesNotThrowAnyException();
+
+        action.setExtraBindings(List.of(grid("g")));
+        assertThatThrownBy(() -> validate(action, "WS")).hasMessageContaining("same grid");
+        action.setExtraBindings(List.of(grid("pick")));
+        assertThatThrownBy(() -> validate(action, "WS")).hasMessageContaining("aim it at a grid");
+
+        AppPageAction open = wsAction("OPEN", null);
+        open.setExtraBindings(List.of(grid("g2")));
+        assertThatThrownBy(() -> validate(open, "WS")).hasMessageContaining("without listening");
+        AppPageAction send = wsAction("SEND", null);
+        send.setExtraBindings(List.of(grid("g2")));
+        assertThatThrownBy(() -> validate(send, "WS")).hasMessageContaining("belong on the Connect action");
     }
 }

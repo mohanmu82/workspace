@@ -144,29 +144,55 @@ public class AppPageAction {
      * {@code AppWebSocketRelayHandler} — so the use case's URL, headers and credentials are
      * resolved exactly as an HTTP call's would be, and the browser only ever sees the messages.
      *
-     * <p>Only {@link #WS_CONNECT} binds anything. Its messages stream into a placed grid, newest
-     * at the top, up to {@link #wsMaxRows}; {@link #arrayPath} picks the rows out of a message that
-     * carries several, and {@link #excludeFilters} drop the messages nobody wants to see.
+     * <p>Only {@link #WS_CONNECT} and {@link #WS_OPEN} bind anything. Their messages stream into a
+     * placed grid, newest at the top, up to {@link #wsMaxRows}; {@link #arrayPath} picks the rows
+     * out of a message that carries several, and {@link #excludeFilters} drop the messages nobody
+     * wants to see. Open may name no grid at all: the socket is then there only to send over.
+     * {@link #extraBindings} stream every message into further grids too, each through its own
+     * transforms (JSONata) and path, and — with {@link AppPageBinding#isAppendRows()} — either
+     * accumulating rows or showing only the latest message's.
      */
     public static final String WEBSOCKET = "WEBSOCKET";
 
+    /**
+     * {@link #actionKind}: run other page actions once per row of {@link #rowSourceControlId} — the
+     * users a "list users" action put in a grid, or the one user typed into a text box — and fill
+     * one grid with a row per source row, carrying a subsection per {@link #chainSteps step}: its
+     * status, HTTP status code, time taken, URL, error and result. Each step sends its calls at most
+     * {@link AppPageChainStep#maxConcurrency()} at a time; the steps run alongside each other.
+     */
+    public static final String CHAIN = "CHAIN";
+
     /** {@link #wsOperation}: open the connection and stream its messages into the target grid. */
     public static final String WS_CONNECT = "CONNECT";
+    /**
+     * {@link #wsOperation}: connect only — open the connection without sending the use case's
+     * opening message, typically on load, for later Send actions to go over. A target grid is
+     * optional; without one nothing arriving is shown.
+     */
+    public static final String WS_OPEN = "OPEN";
     /** {@link #wsOperation}: send {@link #wsMessage} over the open connection. */
     public static final String WS_SEND = "SEND";
     /** {@link #wsOperation}: keep the connection open but stop showing what arrives on it. */
     public static final String WS_PAUSE = "PAUSE";
     /** {@link #wsOperation}: show what arrives again after a pause. */
     public static final String WS_RESUME = "RESUME";
+    /** {@link #wsOperation}: stop listening — what arrives is no longer relayed, but the socket stays open for sends. */
+    public static final String WS_UNLISTEN = "UNLISTEN";
     /** {@link #wsOperation}: close the connection. */
     public static final String WS_STOP = "STOP";
     /** {@link #wsOperation}: close the connection and open it again with what Connect last sent. */
     public static final String WS_RESTART = "RESTART";
     /** {@link #wsOperation}: empty the grid Connect streams into; the connection stays as it is. */
     public static final String WS_CLEAR = "CLEAR";
+    /**
+     * {@link #wsOperation}: ask the relay for the connection's details — URL, state, ids, times,
+     * counts — as JSON, shown in the target grid as key/value rows. The connection is untouched.
+     */
+    public static final String WS_INFO = "INFO";
 
     /** Every {@link #wsOperation} there is, in the order the designer offers them. */
-    public static final List<String> WS_OPERATIONS = List.of(WS_CONNECT, WS_SEND, WS_PAUSE, WS_RESUME, WS_STOP, WS_RESTART, WS_CLEAR);
+    public static final List<String> WS_OPERATIONS = List.of(WS_CONNECT, WS_OPEN, WS_SEND, WS_PAUSE, WS_RESUME, WS_UNLISTEN, WS_STOP, WS_RESTART, WS_CLEAR, WS_INFO);
 
     /** {@link #compareType}: each response is read as JSON — the default. */
     public static final String COMPARE_JSON = "JSON";
@@ -227,6 +253,8 @@ public class AppPageAction {
 
     /** Stable id, unique within the page — how a control names a page-level action it triggers. */
     private String actionId;
+    /** {@link #CHAIN} only — the page actions run for every row, in column order. */
+    private List<AppPageChainStep> chainSteps = new ArrayList<>();
     private String actionLabel;
     /**
      * What this action does when it runs: {@link #USECASE} — the default, and what every action
@@ -249,6 +277,32 @@ public class AppPageAction {
      */
     private List<AppPageDatasetFilter> datasetFilters = new ArrayList<>();
     /**
+     * {@link #DATASET} only — reload the dataset from its source (file, HTTP, OneDrive) before reading
+     * it, which is the Static Datasets page's Reload as a button. With no target the action does only
+     * that, and reports how many rows the dataset now holds.
+     */
+    private boolean datasetReload;
+    /**
+     * {@link #DATASET} only — text to search for, usually a {@code ${field}} template. Blank searches
+     * nothing. Sent as "contains" conditions, AND-ed with {@link #datasetFilters}.
+     */
+    private String datasetSearch;
+    /**
+     * {@link #DATASET} only — {@code WHOLE} looks for the text as typed; {@code TOKENS} splits it on
+     * whitespace and each word narrows what the one before it left, so "john smith" keeps the Johns
+     * that also say Smith. {@code LINES} searches each line of the text whole and returns the rows
+     * matching any of them — one query per line, since the library only ANDs.
+     */
+    private String datasetSearchMode = "WHOLE";
+    /** {@link #DATASET} only — the column searched; blank or {@code *} searches the whole row. */
+    private String datasetSearchField;
+    /**
+     * {@link #DATASET} only, with {@code LINES} — {@code MATCHED} returns the rows the lines found;
+     * {@code MISSING} returns one row per line that found nothing; {@code BOTH} returns every
+     * line's rows and the misses, each row carrying the line it answers and whether it was found.
+     */
+    private String datasetLinesResult = "MATCHED";
+    /**
      * Overrides which of the instance's environments this run calls — the same {@code ${field}}
      * template grammar as {@link #inputs}. Typically points at a select control sourced from
      * {@code ENVIRONMENTS}, so the operator's pick on the page decides where the call goes instead
@@ -257,12 +311,40 @@ public class AppPageAction {
      */
     private String environmentOverride;
     /**
+     * A base URL to call in place of the environment's own URL prefix — for a deployment that is not
+     * in the app's environment list (a developer's box, a short-lived feature stack). The same
+     * {@code ${field}} template grammar as {@link #environmentOverride}, so it is usually a text box
+     * on the page. When it resolves to something non-blank it replaces both the environment's
+     * {@code urlPrefix} and its {@code monitoringUrlPrefix}; credentials and environment variables
+     * still come from the environment the call would otherwise have gone to. Blank leaves the
+     * environment's prefix alone.
+     */
+    private String baseUrlOverride;
+    /**
      * Overrides the use case's own HTTP timeout for this action's calls, in milliseconds — the same
      * {@code ${field}} template grammar as {@link #environmentOverride}, so it can be a literal
      * ({@code 60000}) or a page variable ({@code ${TIMEOUT_MS}}). Blank, or anything that does not
      * resolve to a positive whole number, keeps the use case's configured timeout.
      */
     private String timeoutOverride;
+    /**
+     * How many copies of this action's call are sent at once, for stress testing — the same template
+     * grammar as {@link #timeoutOverride}, so a regression page can drive it from a control
+     * ({@code ${LOAD}}) whose default is 1. Blank, or anything but a whole number above 1, sends it once.
+     */
+    private String repeatCount;
+    /**
+     * A database app environment, as {@code appName/environment}, that every row this action puts in
+     * its grid is also appended to — in the table {@link #dbPublishTable} — under one {@code run_uuid}
+     * per run. Blank publishes nothing.
+     */
+    private String dbPublishTarget;
+    private String dbPublishTable;
+    /**
+     * Minutes between runs of this action by the server itself, with no browser open, each published
+     * to {@link #dbPublishTable}; 0 never. What turns an action's answer into a time series.
+     */
+    private int dbPublishEveryMinutes;
     private Map<String, String> inputs = new LinkedHashMap<>();
     private String targetControlId;
     /**
@@ -521,6 +603,7 @@ public class AppPageAction {
                 : COMPARE.equalsIgnoreCase(actionKind) ? COMPARE
                 : DATASET.equalsIgnoreCase(actionKind) ? DATASET
                 : WEBSOCKET.equalsIgnoreCase(actionKind) ? WEBSOCKET
+                : CHAIN.equalsIgnoreCase(actionKind) ? CHAIN
                 : USECASE;
     }
 
@@ -593,14 +676,31 @@ public class AppPageAction {
     /** Whether this action drives a WebSocket connection rather than making one call. */
     public boolean isWebSocket() { return WEBSOCKET.equals(actionKind); }
 
+    /** Whether this WebSocket action opens the connection — Connect or Connect only — and so may bind a grid. */
+    public boolean isWsOpening() { return WS_CONNECT.equals(wsOperation) || WS_OPEN.equals(wsOperation); }
+
     public String getAppUseCaseInstanceId()                              { return appUseCaseInstanceId; }
     public void   setAppUseCaseInstanceId(String appUseCaseInstanceId)   { this.appUseCaseInstanceId = appUseCaseInstanceId; }
 
     public String getEnvironmentOverride()                                  { return environmentOverride; }
     public void   setEnvironmentOverride(String environmentOverride)        { this.environmentOverride = environmentOverride; }
 
+    public String getBaseUrlOverride()                                      { return baseUrlOverride; }
+    public void   setBaseUrlOverride(String baseUrlOverride)                { this.baseUrlOverride = baseUrlOverride; }
+
+    public String getDbPublishTarget()                                      { return dbPublishTarget; }
+    public void   setDbPublishTarget(String dbPublishTarget)                { this.dbPublishTarget = dbPublishTarget == null || dbPublishTarget.isBlank() ? null : dbPublishTarget.trim(); }
+
+    public String getDbPublishTable()                                       { return dbPublishTable; }
+    public void   setDbPublishTable(String dbPublishTable)                  { this.dbPublishTable = dbPublishTable == null || dbPublishTable.isBlank() ? null : dbPublishTable.trim(); }
+
+    public int  getDbPublishEveryMinutes()                                  { return dbPublishEveryMinutes; }
+    public void setDbPublishEveryMinutes(int dbPublishEveryMinutes)         { this.dbPublishEveryMinutes = Math.max(0, dbPublishEveryMinutes); }
+
     public String getTimeoutOverride()                                      { return timeoutOverride; }
     public void   setTimeoutOverride(String timeoutOverride)                { this.timeoutOverride = timeoutOverride; }
+    public String getRepeatCount()                                          { return repeatCount; }
+    public void   setRepeatCount(String repeatCount)                        { this.repeatCount = repeatCount; }
 
     public Map<String, String> getInputs()                        { return inputs; }
     public void setInputs(Map<String, String> inputs)             { this.inputs = inputs != null ? inputs : new LinkedHashMap<>(); }
@@ -785,6 +885,9 @@ public class AppPageAction {
      * the value of the leading {@code source} column under {@link #ROWS}. Resolved against the row
      * that produced it, so {@code ${orderId}} names each tab after its own order. Blank falls back
      * to the row's place in the grid, which at least tells two tabs apart.
+     *
+     * <p>An ordinary action aimed at a tab set reads it too: every run adds a grid tab named by it,
+     * resolved against the page's controls, and a run resolving to a name already used refills that tab.
      */
     private String rowLabelTemplate;
 
@@ -826,6 +929,12 @@ public class AppPageAction {
     /** Whether this action binds a static dataset's rows instead of running an instance. */
     public boolean isDataset() { return DATASET.equals(actionKind); }
 
+    /** Whether this action runs other page actions per row rather than an instance of its own. */
+    public boolean isChain() { return CHAIN.equals(actionKind); }
+
+    public List<AppPageChainStep> getChainSteps()                 { return chainSteps; }
+    public void setChainSteps(List<AppPageChainStep> chainSteps)  { this.chainSteps = chainSteps != null ? chainSteps : new ArrayList<>(); }
+
     public String getDatasetName()                     { return datasetName; }
     public void   setDatasetName(String datasetName)   {
         this.datasetName = datasetName == null || datasetName.isBlank() ? null : datasetName.trim();
@@ -839,6 +948,31 @@ public class AppPageAction {
     public List<AppPageDatasetFilter> getDatasetFilters()    { return datasetFilters; }
     public void setDatasetFilters(List<AppPageDatasetFilter> datasetFilters) {
         this.datasetFilters = datasetFilters != null ? datasetFilters : new ArrayList<>();
+    }
+
+    public boolean isDatasetReload()                     { return datasetReload; }
+    public void    setDatasetReload(boolean datasetReload) { this.datasetReload = datasetReload; }
+
+    public String getDatasetSearch()                     { return datasetSearch; }
+    public void   setDatasetSearch(String datasetSearch) {
+        this.datasetSearch = datasetSearch == null || datasetSearch.isBlank() ? null : datasetSearch;
+    }
+
+    public String getDatasetSearchMode()                         { return datasetSearchMode; }
+    public void   setDatasetSearchMode(String datasetSearchMode) {
+        this.datasetSearchMode = "TOKENS".equalsIgnoreCase(datasetSearchMode) ? "TOKENS"
+                : "LINES".equalsIgnoreCase(datasetSearchMode) ? "LINES" : "WHOLE";
+    }
+
+    public String getDatasetLinesResult()                          { return datasetLinesResult; }
+    public void   setDatasetLinesResult(String datasetLinesResult) {
+        this.datasetLinesResult = "MISSING".equalsIgnoreCase(datasetLinesResult) ? "MISSING"
+                : "BOTH".equalsIgnoreCase(datasetLinesResult) ? "BOTH" : "MATCHED";
+    }
+
+    public String getDatasetSearchField()                          { return datasetSearchField; }
+    public void   setDatasetSearchField(String datasetSearchField) {
+        this.datasetSearchField = datasetSearchField == null || datasetSearchField.isBlank() ? null : datasetSearchField.trim();
     }
 
     /** Whether this action reads the call's metadata rather than its response body. */

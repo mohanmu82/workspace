@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SSE / MCP Connections</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #f4f6f9; color: #222; padding: 28px 28px 48px; }
+  header { margin-bottom: 22px; }
+  header h1 { font-size: 1.3rem; font-weight: 700; }
+  header p  { font-size: 0.82rem; color: #666; margin-top: 4px; }
+  h2 { font-size: 0.95rem; margin-bottom: 10px; }
+  .back { font-size: 0.8rem; color: #0078d4; text-decoration: none; }
+  .card { background: #fff; border: 1px solid #dde1e7; border-radius: 8px; padding: 20px 22px; overflow-x: auto; margin-bottom: 18px; }
+  .bar { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; font-size: 0.82rem; flex-wrap: wrap; }
+  input[type=text] { padding: 4px 8px; font-size: 0.82rem; border: 1px solid #ccd; border-radius: 4px; width: 260px; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.82rem; }
+  th, td { border-bottom: 1px solid #e3e6ea; padding: 6px 8px; text-align: left; white-space: nowrap; vertical-align: top; }
+  th { background: #f0f2f5; font-size: 0.72rem; text-transform: uppercase; color: #555; }
+  td.mono { font-family: Consolas, monospace; white-space: normal; word-break: break-all; min-width: 220px; max-width: 520px; }
+  td.mono details summary { cursor: pointer; }
+  .state { font-weight: 700; font-size: 0.72rem; padding: 2px 8px; border-radius: 10px; }
+  .s-OPEN { background: #d3f3e6; color: #0a6b47; }
+  .s-DONE, .s-CLOSED, .s-OK { background: #eceff3; color: #666; }
+  .s-ERROR, .s-TIMEOUT { background: #fbdcdc; color: #92251f; }
+  .proto { font-size: 0.72rem; font-weight: 600; padding: 2px 6px; border-radius: 4px; background: #cfe2ff; color: #084298; }
+  .proto.sse { background: #fde8cf; color: #8a4b0a; }
+  button { padding: 4px 10px; font-size: 0.72rem; font-weight: 600; border: none; border-radius: 4px; cursor: pointer; background: #0078d4; color: #fff; }
+  button.secondary { background: #6c757d; }
+  .muted { color: #888; }
+  .err { color: #842029; }
+</style>
+</head>
+<body>
+<header>
+  <a class="back" href="index.html" target="_top">&#8592; Home</a>
+  <h1>SSE / MCP Connections</h1>
+  <p>Every HTTP request on the MCP endpoints (<code>/mcp</code> streamable HTTP, <code>/sse</code> + <code>/mcp/message</code> HTTP+SSE) and every server-sent-event stream this server serves, plus each MCP tool call. The latest 500 of each are kept in memory; a restart clears them.</p>
+</header>
+<div class="bar">
+  <label><input type="checkbox" id="auto" checked> Refresh every 2s</label>
+  <input type="text" id="filter" placeholder="Filter by session, tool, path, params…" oninput="render()">
+  <button class="secondary" onclick="load()">Refresh</button>
+  <button class="secondary" onclick="clearLog()">Clear finished</button>
+  <span id="msg" class="muted"></span>
+</div>
+<div class="card">
+  <h2>Tool calls</h2>
+  <div id="calls" class="muted">Loading…</div>
+</div>
+<div class="card">
+  <h2>Connections &amp; requests</h2>
+  <div class="bar"><label><input type="checkbox" id="open" onchange="render()"> Open only</label></div>
+  <div id="conns" class="muted">Loading…</div>
+</div>
+<script>
+  let data = { connections: [], toolCalls: [] };
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  const ts = t => t ? new Date(t).toLocaleString([], { hour12: false }) : '—';
+  const dur = ms => ms == null ? '—' : ms < 1000 ? ms + ' ms' : ms < 60000 ? (ms / 1000).toFixed(1) + ' s'
+    : Math.floor(ms / 60000) + 'm ' + Math.round(ms % 60000 / 1000) + 's';
+  const proto = p => p ? '<span class="proto' + (p === 'SSE' ? ' sse' : '') + '">' + esc(p) + '</span>' : '<span class="muted">—</span>';
+  // Long text folds behind its first 80 characters.
+  const fold = s => !s ? '<span class="muted">—</span>' : s.length <= 80 ? esc(s)
+    : '<details><summary>' + esc(s.slice(0, 80)) + '…</summary>' + esc(s) + '</details>';
+
+  async function load() {
+    const msg = document.getElementById('msg');
+    try {
+      const res = await fetch('/connectionlog');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      data = await res.json();
+      msg.textContent = 'Updated ' + new Date().toLocaleTimeString([], { hour12: false });
+      msg.className = 'muted';
+    } catch (e) {
+      msg.textContent = 'Failed to load: ' + e.message;
+      msg.className = 'err';
+    }
+    render();
+  }
+
+  function matches(o) {
+    const q = document.getElementById('filter').value.trim().toLowerCase();
+    return !q || JSON.stringify(o).toLowerCase().includes(q);
+  }
+
+  function render() {
+    // Selecting text or an opened <details> would be lost on every auto refresh.
+    if (document.querySelector('details[open]') || String(window.getSelection())) return;
+    const calls = data.toolCalls.filter(matches);
+    document.getElementById('calls').innerHTML = calls.length
+      ? '<table><tr><th>Timestamp</th><th>Protocol</th><th>Session ID</th><th>Client</th><th>Tool</th><th>Request Parameters</th><th>Time Taken</th><th>Result</th></tr>'
+        + calls.map(c => '<tr><td>' + ts(c.startedAt) + '</td><td>' + proto(c.protocol) + '</td>'
+          + '<td class="mono">' + fold(c.sessionId) + '</td><td>' + esc(c.client) + '</td><td><b>' + esc(c.tool) + '</b></td>'
+          + '<td class="mono">' + fold(c.arguments) + '</td><td>' + dur(c.durationMs) + '</td>'
+          + '<td class="mono"><span class="state s-' + (c.error ? 'ERROR' : 'OK') + '">' + (c.error ? 'ERROR' : 'OK') + '</span> ' + fold(c.result) + '</td></tr>').join('')
+        + '</table>'
+      : 'No tool calls yet.';
+
+    const now = Date.now();
+    const openOnly = document.getElementById('open').checked;
+    const conns = data.connections.filter(c => (!openOnly || c.state === 'OPEN') && matches(c));
+    document.getElementById('conns').innerHTML = conns.length
+      ? '<table><tr><th>Timestamp</th><th>Protocol</th><th>State</th><th>Session ID</th><th>Request</th><th>JSON-RPC</th><th>Request Parameters</th><th>Time Taken</th><th>HTTP</th><th>Client</th></tr>'
+        + conns.map(c => '<tr><td>' + ts(c.startedAt) + '</td><td>' + proto(c.protocol) + '</td>'
+          + '<td><span class="state s-' + esc(c.state) + '">' + esc(c.state) + '</span></td>'
+          + '<td class="mono">' + fold(c.sessionId) + '</td><td>' + esc(c.method) + ' ' + esc(c.path) + '</td>'
+          + '<td>' + esc(c.rpcMethod || '') + '</td><td class="mono">' + fold(c.request) + '</td>'
+          + '<td>' + (c.state === 'OPEN' ? dur(now - c.startedAt) + ' <span class="muted">(open)</span>' : dur(c.durationMs)) + '</td>'
+          + '<td>' + esc(c.status ?? '') + '</td><td class="mono">' + esc(c.remoteAddr) + '<br><span class="muted">' + esc(c.userAgent) + '</span></td></tr>').join('')
+        + '</table>'
+      : 'No connections' + (openOnly ? ' open' : '') + '.';
+  }
+
+  async function clearLog() {
+    await fetch('/connectionlog', { method: 'DELETE' });
+    load();
+  }
+
+  load();
+  setInterval(() => { if (document.getElementById('auto').checked) load(); }, 2000);
+</script>
+</body>
+</html>
