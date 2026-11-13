@@ -296,8 +296,7 @@ public class AppPageMcpTools {
             value = VALUE_TYPES.contains(c.getType());
         }
         Binding read = value ? new Binding(false, false, false, List.of(), List.of(), false) : binding;
-        outputs.add(new Output(target, label, AppPageAction.METADATA.equals(source) ? AppPageAction.METADATA
-                : AppPageAction.PAYLOAD, nullToEmpty(value ? valuePath : arrayPath),
+        outputs.add(new Output(target, label, AppPageAction.sourceOf(source), nullToEmpty(value ? valuePath : arrayPath),
                 transforms == null ? List.of() : transforms, read));
     }
 

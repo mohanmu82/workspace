@@ -530,6 +530,9 @@ const ENRICH_COLUMN_KINDS = [
     { kind: 'VARIABLE', label: 'Request variable',        placeholder: 'variable name' }
 ];
 
+/** The enrichment kinds that read the call behind the rows — a dataset action makes none, and the catalog refuses them on it. */
+const CALL_ENRICH_KINDS = ['META', 'HEADER', 'VARIABLE'];
+
 /** The enrichment kinds that look into another grid on the page. Mirrors AppPageEnrichColumn.GRID_KINDS. */
 const GRID_LOOKUP_KINDS = ['GRID_VLOOKUP', 'GRID_VLOOKUP_ROW'];
 
@@ -6712,8 +6715,11 @@ function actionCard(a, i, count, fns) {
     const bindPart = field('Bind From', '<select onchange="' + fns.source + '(' + i + ', this.value)">'
             + '<option value="PAYLOAD"' + (meta ? '' : ' selected') + '>Response payload</option>'
             + '<option value="METADATA"' + (meta ? ' selected' : '') + '>Call metadata (URL, status, timing)</option>'
+            + '<option value="HEADERS"' + (a.source === 'HEADERS' ? ' selected' : '') + '>Response headers only</option>'
             + '</select>',
-            meta
+            a.source === 'HEADERS'
+                ? 'Binds only the response headers, a row per header — for a call that answers with no body. The body is never sent to the browser, and a failed call still binds. Leave the path blank for all of them, or name one header.'
+            : meta
                 ? 'Binds the call\'s own record instead of its body — and the body is never sent to the browser at all, so this stays cheap however large the response is. A failed call still binds, which is the point: the status code is what you came for. Fields: <code>'
                     + META_FIELDS.join('</code>, <code>') + '</code>.'
                 : 'The response body, as every action has always bound.')
@@ -6984,6 +6990,7 @@ function bindingCard(b, at, count, call) {
         + field('Bind From', '<select onchange="' + set('source', 'this.value') + '">'
             + '<option value="PAYLOAD"' + (meta ? '' : ' selected') + '>Response payload</option>'
             + '<option value="METADATA"' + (meta ? ' selected' : '') + '>Call metadata (URL, status, timing)</option>'
+            + '<option value="HEADERS"' + (b.source === 'HEADERS' ? ' selected' : '') + '>Response headers only</option>'
             + '</select>')
         + field('Transforms', chainEditor(b, at, { chain: 'bindingChainDraft' }))
         + field('Target', '<select onchange="' + set('targetControlId', 'this.value') + '">'
@@ -7159,7 +7166,7 @@ function bindingDraft(op, at, name, value) {
     } else if (op === 'set' && bindings[at]) {
         bindings[at][name] = value;
         // As on the action itself: a metadata record reads best down the page as key/value.
-        if (name === 'source') bindings[at].keyValueGrid = value === 'METADATA';
+        if (name === 'source') bindings[at].keyValueGrid = value !== 'PAYLOAD';
         if (name === 'targetControlId') {
             dropUnusablePivot(bindings[at], false);
             dropUnusableBindFilters(bindings[at], false);
@@ -7481,7 +7488,7 @@ function resultColumnEditor(a, i, fns) {
  * @param call    builds the handler text for (op, at, name, valueExpression)
  * @param fanOut  whether the grid is filled once per row, which changes whose record a row reads
  */
-function enrichColumnEditor(columns, call, fanOut) {
+function enrichColumnEditor(columns, call, fanOut, noCall) {
     return '<div class="props-title" style="margin-top:8px"><span>Enriched Columns</span>'
         + '<span class="props-jump"><button class="tool-btn" onclick="' + call('add', -1) + '">+ Add</button></span></div>'
         + (columns.length ? columns.map((column, at) => {
@@ -7505,7 +7512,7 @@ function enrichColumnEditor(columns, call, fanOut) {
                     : '<input type="text" placeholder="column name" value="' + AC.attr(column.name || '')
                         + '" oninput="' + call('set', at, 'name', 'this.value') + '">')
                 + '<select onchange="' + call('set', at, 'kind', 'this.value') + '">'
-                + ENRICH_COLUMN_KINDS.map(k => '<option value="' + k.kind + '"'
+                + ENRICH_COLUMN_KINDS.filter(k => !noCall || !CALL_ENRICH_KINDS.includes(k.kind)).map(k => '<option value="' + k.kind + '"'
                     + (k.kind === kind ? ' selected' : '') + '>' + AC.esc(k.label) + '</option>').join('')
                 + '</select>'
                 + (kind === 'META' ? metaFieldSelect(column.expression, call('set', at, 'expression', 'this.value'))
@@ -7627,7 +7634,9 @@ function rowListSteps(actions, index, list, op, at, name, value) {
             : list === 'rowFilters' || list === 'bindFilters' || list === 'excludeFilters'
             ? { column: '', operator: 'CONTAINS', value: '' }
             : list === 'enrichColumns'
-            ? { name: 'enriched' + (items.length + 1), kind: 'META', expression: META_FIELDS[0],
+            // A dataset action has no call record to read, so its new column starts as a lookup.
+            ? { name: 'enriched' + (items.length + 1), kind: isDatasetAction(a) ? 'VLOOKUP' : 'META',
+                expression: isDatasetAction(a) ? '' : META_FIELDS[0],
                 datasetName: '', lookupColumn: '', keyColumn: '', returnColumn: '', gridControlId: '',
                 prefix: '', replacement: '' }
             : { name: 'column' + (items.length + 1), kind: 'PATH', expression: '' });
@@ -7992,6 +8001,11 @@ function datasetFields(a, i, targets, target, fns, set) {
             + 'text the operator reads. The filter above narrows the rows; these two decide what is left of each.</span>';
     } else if (chartTarget) {
         html += chartFieldsEditor(target.type, a, set);
+    } else if (a.targetControlId) {
+        // A grid or a new grid: the same list an ordinary action edits, less the kinds that read a call.
+        html += enrichColumnEditor(a.enrichColumns || [], (op, at, name, value) => fns.rows + '(' + i
+            + ', \'enrichColumns\', \'' + op + '\', ' + at + ', ' + (name ? '\'' + name + '\'' : 'null')
+            + ', ' + (value === undefined ? 'null' : value) + ')', false, true);
     }
 
     return html + '<span class="hint">Read straight out of the dataset library, which does the filtering — a page '
@@ -9267,7 +9281,7 @@ function applyActionKind(a, kind) {
         // refuses them rather than letting a column sit quietly empty down every row.
         a.enrichColumns = (a.enrichColumns || []).filter(column => {
             const columnKind = String((column && column.kind) || 'META').toUpperCase();
-            return columnKind !== 'META' && columnKind !== 'HEADER';
+            return !CALL_ENRICH_KINDS.includes(columnKind);
         });
         // One list, so one control it goes in.
         a.extraBindings = [];
@@ -9435,7 +9449,7 @@ function setDraftKind(index, kind) {
 function setActionSource(index, value) {
     const a = findControl(selectedId).actions[index];
     a.source = value;
-    a.keyValueGrid = value === 'METADATA';
+    a.keyValueGrid = value !== 'PAYLOAD';
     renderProps();
     renderCanvas();
 }
@@ -9576,7 +9590,7 @@ function setPageAction(index, name, value) {
 function setPageActionSource(index, value) {
     const a = page.actions[index];
     a.source = value;
-    a.keyValueGrid = value === 'METADATA';
+    a.keyValueGrid = value !== 'PAYLOAD';
     renderProps();
 }
 
@@ -10106,7 +10120,7 @@ function setDraftInputVar(index, name, what, value) {
 function setDraftSource(index, value) {
     if (!editor) return;
     editor.draft.source = value;
-    editor.draft.keyValueGrid = value === 'METADATA';
+    editor.draft.keyValueGrid = value !== 'PAYLOAD';
     renderEditor();
 }
 
@@ -16729,7 +16743,7 @@ function bindingName(binding, name) {
  * a body of some megabytes is parsed once however many of the action's targets read it untouched.
  */
 function sharedRoot(roots, result, binding, name) {
-    const key = JSON.stringify([isMetadataAction(binding), binding.transformNames || []]);
+    const key = JSON.stringify([binding.source || 'PAYLOAD', binding.transformNames || []]);
     if (!roots.has(key)) roots.set(key, rootFor(result, binding, name));
     return roots.get(key);
 }
@@ -17259,7 +17273,8 @@ function formatBytes(bytes) {
  * plain array a grid wants and the path can stay empty.
  */
 async function rootFor(result, action, name) {
-    const root = isMetadataAction(action) ? metaOf(result) : payloadOf(result);
+    const root = action.source === 'HEADERS' ? headersOf(result)
+        : isMetadataAction(action) ? metaOf(result) : payloadOf(result);
     return applyTransforms(root, action, name);
 }
 
@@ -17454,8 +17469,19 @@ function xmlNodeToObj(node) {
     return keys.length === 1 && keys[0] === '#text' ? obj['#text'] : obj;
 }
 
+/**
+ * Whether an action reads the call rather than its body — its record, or its response headers
+ * alone. Both need no body shipped and both bind a call that failed.
+ */
 function isMetadataAction(action) {
-    return (action && action.source) === 'METADATA';
+    const source = action && action.source;
+    return source === 'METADATA' || source === 'HEADERS';
+}
+
+/** The response headers as a flat object, repeats joined — what a HEADERS source binds. */
+function headersOf(result) {
+    const headers = (result && result.responseHeaders) || {};
+    return Object.fromEntries(Object.keys(headers).map(k => [k, headerValue(result, k)]));
 }
 
 /**
@@ -19299,6 +19325,10 @@ function paintGrid(gridId) {
         invalidateView(state);
         paintGrid(gridId);
     }));
+    host.querySelectorAll('[data-copy-col]').forEach(el => el.addEventListener('click', event => {
+        event.stopPropagation(); // the button sits in the sortable header
+        copyGridColumn(gridId, el.dataset.copyCol, el.dataset.copySep === 'comma' ? ',' : '\n');
+    }));
     host.querySelectorAll('[data-top]').forEach(el => el.addEventListener('input', () => {
         state.topRows = normalizeTopRows(el.value);
         // Debounced for the reason the column filters are: "250" is typed as 2, then 25, then
@@ -19322,6 +19352,33 @@ function paintGrid(gridId) {
             refreshGridRows(gridId);
         }, FILTER_DEBOUNCE);
     }));
+}
+
+/**
+ * One column to the clipboard as plain text: every row the filters, sort and Top leave in play —
+ * the same rows the exports write — not just the window currently drawn.
+ */
+async function copyGridColumn(gridId, column, separator) {
+    const state = gridState[gridId];
+    if (!state) return;
+    const rows = visibleRows(state);
+    // shortcut: values are joined raw, so a value holding a comma or newline is not quoted; use Export CSV when that matters.
+    const text = rows.map(row => cellText(row, column)).join(separator);
+    try {
+        await navigator.clipboard.writeText(text);
+    } catch (e) {
+        // The clipboard API is refused outside a secure context (plain http), so fall back to
+        // the old selection copy, which is not.
+        const area = document.createElement('textarea');
+        area.value = text;
+        area.style.cssText = 'position:fixed;opacity:0';
+        document.body.appendChild(area);
+        area.select();
+        const ok = document.execCommand('copy');
+        area.remove();
+        if (!ok) { AC.setStatus('runStatus', 'Could not copy "' + column + '": the browser refused the clipboard.', 'error'); return; }
+    }
+    AC.setStatus('runStatus', 'Copied "' + column + '" — ' + rows.length.toLocaleString() + ' value' + (rows.length === 1 ? '' : 's') + '.', 'ok');
 }
 
 /**
@@ -19636,7 +19693,12 @@ function gridTable(state, rows, gridId) {
             // Plain escaping, not attr(): these come back through dataset as the column key
             // itself, and a name carrying an apostrophe has to survive the round trip.
             '<th class="sortable" data-sort="' + AC.esc(column) + '" title="Sort by ' + AC.esc(column) + '">'
-            + AC.esc(column) + arrow(column) + '</th>').join('') + '</tr>'
+            + AC.esc(column) + arrow(column)
+            + '<button type="button" class="col-copy" data-copy-col="' + AC.esc(column) + '" data-copy-sep="line"'
+            + ' title="Copy this column, one value per line">⧉</button>'
+            + '<button type="button" class="col-copy" data-copy-col="' + AC.esc(column) + '" data-copy-sep="comma"'
+            + ' title="Copy this column, comma separated">⧉,</button>'
+            + '</th>').join('') + '</tr>'
         + '<tr class="filter-row">' + state.columns.map(column =>
             '<th><input type="text" placeholder="filter" data-filter="' + AC.esc(column) + '"'
             + ' value="' + AC.esc(state.filters[column] || '') + '"></th>').join('') + '</tr>'

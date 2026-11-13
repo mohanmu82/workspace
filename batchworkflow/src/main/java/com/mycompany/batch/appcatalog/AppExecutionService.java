@@ -682,7 +682,8 @@ public class AppExecutionService {
             return errorOutput(runPlan, instance, "App '" + app.getAppName() + "' is a WebSocket app — its use cases are "
                     + "subscriptions, opened from a page's WebSocket action rather than run as a single call", env, useCase);
         if (!"HTTP".equalsIgnoreCase(app.getAppMode()) && !app.isDatabase())
-            return errorOutput(runPlan, instance, "App mode '" + app.getAppMode() + "' cannot be executed — only HTTP, ORACLE and POSTGRES are supported", env, useCase);
+            return errorOutput(runPlan, instance, "App mode '" + app.getAppMode() + "' cannot be executed — only HTTP, ORACLE and POSTGRES are supported"
+                    + ("TCP".equalsIgnoreCase(app.getAppMode()) ? "; a TCP app is checked with 'Check reachability' on its environments" : ""), env, useCase);
         // A monitoring use case against an environment that never got a monitoring address would
         // otherwise fall back to the application prefix and quietly call the wrong endpoint.
         if (isMonitoring(useCase) && env.prefixFor(useCase.getUrlPrefixType()) == null)
@@ -1373,9 +1374,14 @@ public class AppExecutionService {
             if (env.getUrlPrefix() == null || env.getUrlPrefix().isBlank())
                 throw new IllegalArgumentException("No URL prefix to check.");
             String prefix = env.getUrlPrefix().trim();
-            URI uri = URI.create(LocalServerAddress.isRelative(prefix) ? localServer.resolve(prefix, false, false) : prefix);
+            // A TCP app's environment is a bare host:port, which URI would read as scheme:path.
+            boolean bare = !LocalServerAddress.isRelative(prefix) && !prefix.contains("://");
+            URI uri = URI.create(LocalServerAddress.isRelative(prefix) ? localServer.resolve(prefix, false, false)
+                    : bare ? "tcp://" + prefix : prefix);
             if (uri.getHost() == null)
                 throw new IllegalArgumentException("No host in URL prefix '" + env.getUrlPrefix() + "'.");
+            if (uri.getPort() == -1 && "tcp".equalsIgnoreCase(uri.getScheme()))
+                throw new IllegalArgumentException("No port in '" + env.getUrlPrefix() + "' — a TCP check needs host:port.");
             int port = uri.getPort() != -1 ? uri.getPort() : "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
             result.put("host", uri.getHost());
             result.put("port", port);

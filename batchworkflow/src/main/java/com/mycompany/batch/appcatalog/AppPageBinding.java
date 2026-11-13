@@ -62,7 +62,7 @@ public class AppPageBinding {
     public void setEnrichColumns(List<AppPageEnrichColumn> enrichColumns) { this.enrichColumns = enrichColumns != null ? enrichColumns : new ArrayList<>(); }
 
     public String getSource()               { return source; }
-    public void   setSource(String source)   { this.source = AppPageAction.METADATA.equalsIgnoreCase(source) ? AppPageAction.METADATA : AppPageAction.PAYLOAD; }
+    public void   setSource(String source)   { this.source = AppPageAction.sourceOf(source); }
 
     public List<String> getTransformNames()  { return transformNames; }
     public void setTransformNames(List<String> transformNames) {

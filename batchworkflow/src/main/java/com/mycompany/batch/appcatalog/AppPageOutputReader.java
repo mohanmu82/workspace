@@ -86,7 +86,8 @@ public class AppPageOutputReader {
     // ── The root: source, then the transform chain ───────────────────────────
 
     private Object root(AppPage page, Output o, AppUseCaseInstanceOutput out, Map<String, Object> scope) throws Exception {
-        Object data = AppPageAction.METADATA.equals(o.source()) ? record(out) : payload(out);
+        Object data = AppPageAction.METADATA.equals(o.source()) ? record(out)
+                : AppPageAction.HEADERS.equals(o.source()) ? headers(out) : payload(out);
         for (String step : o.transformNames()) data = step(page, step, data, scope);
         return data;
     }
@@ -271,7 +272,7 @@ public class AppPageOutputReader {
                 });
                 return rows;
             }
-            if (AppPageAction.METADATA.equals(o.source())) {
+            if (!AppPageAction.PAYLOAD.equals(o.source())) {
                 Map<Object, Object> row = new LinkedHashMap<>(map);
                 if (o.binding().scalarsOnly()) row.values().removeIf(v -> !isScalar(v));
                 return new ArrayList<>(List.of(row));
@@ -406,6 +407,15 @@ public class AppPageOutputReader {
         if (out.responseHeaders() == null || wanted.isEmpty()) return "";
         return out.responseHeaders().entrySet().stream().filter(e -> wanted.equalsIgnoreCase(e.getKey()))
                 .findFirst().map(e -> e.getValue() == null ? "" : String.join(", ", e.getValue())).orElse("");
+    }
+
+    /** Java twin of apppage.js#headersOf — the response headers as a flat record, repeats joined; what a HEADERS binding reads. */
+    static Map<String, Object> headers(AppUseCaseInstanceOutput out) {
+        Map<String, Object> h = new LinkedHashMap<>();
+        if (out.responseHeaders() != null) {
+            out.responseHeaders().forEach((name, values) -> h.put(name, values == null ? "" : String.join(", ", values)));
+        }
+        return h;
     }
 
     /** Java twin of apppage.js#regexCell: {@code /pattern/flags}, {@code g} for every match, {@code $1 $& $$} in the replacement. */

@@ -251,6 +251,17 @@ public class AppPageAction {
      */
     public static final String METADATA = "METADATA";
 
+    /**
+     * {@link #source}: bind from the response headers alone, a name to its value — for the call that
+     * answers with no body at all. Like {@link #METADATA} it needs no body and binds a failed call.
+     */
+    public static final String HEADERS = "HEADERS";
+
+    /** A source as saved: {@link #METADATA}, {@link #HEADERS}, or — for anything else — {@link #PAYLOAD}. */
+    public static String sourceOf(String source) {
+        return METADATA.equalsIgnoreCase(source) ? METADATA : HEADERS.equalsIgnoreCase(source) ? HEADERS : PAYLOAD;
+    }
+
     /** Stable id, unique within the page — how a control names a page-level action it triggers. */
     private String actionId;
     /** {@link #CHAIN} only — the page actions run for every row, in column order. */
@@ -400,7 +411,7 @@ public class AppPageAction {
      * before this existed, each run replaces the grid's rows exactly as it always did.
      */
     private boolean appendRows;
-    /** {@link #PAYLOAD} or {@link #METADATA}; anything unrecognised reads as PAYLOAD. */
+    /** {@link #PAYLOAD}, {@link #METADATA} or {@link #HEADERS}; anything unrecognised reads as PAYLOAD. */
     private String source = PAYLOAD;
     /**
      * Names the page's {@link AppPageTransform}s to run over what this action bound, in order, before
@@ -730,7 +741,7 @@ public class AppPageAction {
     public void    setAppendRows(boolean appendRows) { this.appendRows = appendRows; }
 
     public String getSource()                { return source; }
-    public void   setSource(String source)   { this.source = METADATA.equalsIgnoreCase(source) ? METADATA : PAYLOAD; }
+    public void   setSource(String source)   { this.source = sourceOf(source); }
 
     public List<String> getTransformNames()                          { return transformNames; }
     public void setTransformNames(List<String> transformNames) {

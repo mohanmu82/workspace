@@ -76,6 +76,28 @@ class AppPageMcpToolsTest {
     }
 
     @Test
+    void headersSourceBindsOnlyTheResponseHeadersOfABodilessCall() throws Exception {
+        AppPage page = mapper.readValue("""
+            {"pageName":"p","controls":[{"controlId":"g","label":"Grid","type":"grid"}],
+             "actions":[{"actionId":"a","appUseCaseInstanceId":"i","targetControlId":"g","source":"headers","keyValueGrid":true}]}
+            """, AppPage.class);
+        Map<String, List<String>> headers = new java.util.LinkedHashMap<>();
+        headers.put("Location", List.of("/orders/7"));
+        headers.put("Set-Cookie", List.of("a=1", "b=2"));
+        AppUseCaseInstanceOutput out = new AppUseCaseInstanceOutput("e", 0, "i", null, null, null, null, null, Map.of(),
+                "SUCCESS", 204, 0, 1, 5, "u", List.of(), "POST", null, null, null, null,
+                null, headers, null, null, null, null);
+        Map<String, String> problems = new java.util.LinkedHashMap<>();
+        Map<String, Object> data = new AppPageOutputReader(null, null).read(page,
+                AppPageMcpTools.keyed(AppPageMcpTools.outputsOf(page, page.getActions().get(0))), out, Map.of(), Map.of(),
+                problems, new java.util.LinkedHashSet<>());
+
+        assertEquals(Map.of(), problems);
+        assertEquals(List.of(Map.of("key", "Location", "value", "/orders/7"),
+                Map.of("key", "Set-Cookie", "value", "a=1, b=2")), data.get("Grid"));
+    }
+
+    @Test
     void readsPathsLikeThePage() throws Exception {
         Object doc = mapper.readValue("{\"items\":[{\"id\":\"A\",\"refs\":[1,2]},{\"id\":\"B\",\"refs\":[3]}],\"total\":5}", Object.class);
         assertEquals(5, AppPageOutputReader.pathGet(doc, "total"));

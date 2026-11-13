@@ -103,9 +103,18 @@ class AppExecutionServiceTest {
             AppEnvironment none = new AppEnvironment();
             none.setEnvironment("none");
 
-            java.util.List<Map<String, Object>> results = service.checkReachability(java.util.List.of(up, down, none));
+            AppEnvironment tcp = new AppEnvironment();   // a TCP app's bare host:port
+            tcp.setEnvironment("tcp");
+            tcp.setUrlPrefix("127.0.0.1:" + listening.getLocalPort());
+            AppEnvironment noPort = new AppEnvironment();
+            noPort.setEnvironment("noPort");
+            noPort.setUrlPrefix("127.0.0.1");
 
-            assertThat(results).extracting(r -> r.get("ok")).containsExactly(true, false, false);
+            java.util.List<Map<String, Object>> results = service.checkReachability(java.util.List.of(up, down, none, tcp, noPort));
+
+            assertThat(results).extracting(r -> r.get("ok")).containsExactly(true, false, false, true, false);
+            assertThat(results.get(3)).containsEntry("port", listening.getLocalPort());
+            assertThat((String) results.get(4).get("error")).contains("No port");
             assertThat(results.get(0)).containsEntry("port", listening.getLocalPort());
             assertThat((String) results.get(2).get("error")).contains("No URL prefix");
         }

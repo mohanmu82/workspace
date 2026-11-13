@@ -25,6 +25,7 @@ public class AppDefinition {
      * then the {@code ws://} or {@code wss://} address. ORACLE and POSTGRES use cases are SQL statements
      * run over JDBC: the environment's URL prefix is the JDBC URL, its username and password the login,
      * and the use case's body the statement. SOLACE is not executable server-side.
+     * TCP has no use cases to run: each environment is a host:port whose reachability is checked.
      */
     private String appMode = "HTTP";
     /** ACTIVE or INACTIVE — INACTIVE apps stay in the catalog but are blocked from executing. */

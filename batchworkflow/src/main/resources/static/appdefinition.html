@@ -60,8 +60,10 @@
                     <option value="WS">WS (WebSocket)</option>
                     <option value="ORACLE">ORACLE (JDBC)</option>
                     <option value="POSTGRES">POSTGRES (JDBC)</option>
+                    <option value="TCP">TCP (port check)</option>
                 </select>
-                <span class="hint">WS: each environment's URL is the <code>ws://</code> / <code>wss://</code> address, and
+                <span class="hint">TCP: each environment is a <code>host:port</code> on a server, tested with
+                    <em>Check reachability</em> on the environments page. WS: each environment's URL is the <code>ws://</code> / <code>wss://</code> address, and
                     use cases are subscriptions a page connects to. ORACLE / POSTGRES: each environment's URL is a JDBC URL
                     with a username and password, and use cases are SQL statements.</span>
             </div>

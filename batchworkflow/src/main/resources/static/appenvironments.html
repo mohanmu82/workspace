@@ -331,8 +331,10 @@
         }
         const ws = !!currentApp && currentApp.appMode === 'WS';
         const db = isDatabaseApp(currentApp);
-        label.textContent = ws ? 'WebSocket URL' : db ? 'JDBC URL' : URL_PREFIX_DEFAULT.label;
-        input.placeholder = ws ? 'wss://feed-uat.example.com/stream   or   /ws'
+        const tcp = !!currentApp && currentApp.appMode === 'TCP';
+        label.textContent = ws ? 'WebSocket URL' : db ? 'JDBC URL' : tcp ? 'Host and port' : URL_PREFIX_DEFAULT.label;
+        input.placeholder = tcp ? 'server01.example.com:1521'
+            : ws ? 'wss://feed-uat.example.com/stream   or   /ws'
             : db ? (currentApp.appMode === 'ORACLE' ? 'jdbc:oracle:thin:@//host:1521/SERVICE' : 'jdbc:postgresql://host:5432/dbname')
             : URL_PREFIX_DEFAULT.placeholder;
         hint.innerHTML = ws
@@ -342,6 +344,8 @@
               + 'credentials below and the use case\'s headers go on the handshake. List several, comma-separated, '
               + 'to fall back in order: the first that accepts the connection is used.'
             : db ? 'The JDBC URL this app\'s use cases run their SQL against; the username and password below are the login.'
+            : tcp ? 'One <code>host:port</code> on the server to test — one environment per server and port. '
+              + '<em>Check reachability</em> opens a TCP socket to it from this server.'
             : URL_PREFIX_DEFAULT.hint;
     }
 
